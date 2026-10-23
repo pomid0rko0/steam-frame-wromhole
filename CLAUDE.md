@@ -17,26 +17,41 @@ the branches and the wishlist.
 
 ## Branches
 
-Stacked, each on the previous one (only `controls` really needs its parent: grabbing works on
-`physics` balls). `main` has been checked in the headset (rendering and stereo, with the one-eye
-check; its tag marks the commit), the others have not; each README describes its code.
+Each wish has its own branch from `main`, so each can be checked in the headset alone. Only
+`grab` holds more: `walking` and `physics` merged (grabbing works on `physics` balls, and the
+stick takes you to them). `main` has been checked in the headset (rendering and stereo, with the
+one-eye check; its tag marks the commit), the others have not; each README describes its code.
 
 - `main` — the wormhole, static objects, walking in the room, the stereo check scene (off).
 - `refresh-rate` — the frame rate panel; a trigger steps the headset's refresh rate.
+- `walking` — the left stick walks (left trigger runs), the right stick snap-turns 30°, A goes
+  back to the start (`tests/walking_test.gd`).
+- `throat` — throat knobs: the right stick up/down changes the throat length, with the right
+  grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
-- `controls` — sticks, snap turn, throat knobs, grab and throw, hands and avatar as balls
-  (`tests/controls_test.gd`); a sketch.
-- `foveation` (from `main`) — foveated rendering on, as it was when space "breathed" in the
-  headset; the cause is not found.
+- `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
+  the avatar as balls (`tests/grab_test.gd`).
+- `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
+  cause is not found.
+- `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
+  `physics` on `refresh-rate`); don't start from it.
 
 Where the README wishes start:
 - refresh rate → `refresh-rate`;
-- stick locomotion → `controls` (smooth stick walking is there);
-- pulling objects like in Half-Life: Alyx → `controls` (grip grab and throw are there);
-- scenes with different wormholes and knobs → `controls` (throat length and fillet already on
-  the right stick);
+- stick locomotion → `walking` (smooth stick walking and snap turn are there);
+- pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw are there);
+- scenes with different wormholes and knobs → `throat` (throat length and fillet on the right
+  stick);
 - the avatar: its head ball around the eyes makes every ray inside the throat sample it finely
-  and the frame drops; it is off by default in `controls`.
+  and the frame drops; it is off by default in `grab`.
+
+When branches are put together, these overlap:
+- the left trigger: `refresh-rate` steps the rate with either trigger, `walking` runs with the
+  left one. Together the rate goes to left X (the panel's hint says which button).
+- the right stick: x turns in `walking`, y changes the throat in `throat`; that fits.
+- A resets in `walking`, `throat` and `grab`: one reset does all of it.
+- a throat change with balls (`throat` + `physics`): balls must keep their distance to the
+  edge of the curved shell, as the feet do in `set_geometry`.
 
 ## Hard rule: stereo before headset
 
@@ -50,7 +65,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~15 min).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min), `ref/test_fast.py`, `ref/test_eye.py`.
-- **Branch tests:** on `physics` and `controls`, `--fixed-fps 60 -s res://tests/physics_test.gd` and `tests/controls_test.gd`.
+- **Branch tests:** each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, started ~8 s before Godot. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface.
 - **GitHub from this environment:** branch pushes work through the session's git proxy, tag pushes are refused (403). The owner creates tags on GitHub.
@@ -58,7 +73,7 @@ draws next to ray-traced ones, check they line up the same way.
 ## Things learned the hard way
 
 - **Godot multiview.** `INV_VIEW_MATRIX` is a shared camera between the eyes; each eye's offset and rotation live in its `PROJECTION_MATRIX`; `EYE_OFFSET` is the eye in that view space. Rays must start at the eye (README, «Стерео»). Starting them at the head centre made the eyes look in different directions.
-- **The overlay's chart → play map** is computed at placement and recentre (and in `controls` after stick moves and turns), never every frame from the feet. Then it is fixed to the room, and world drift shows as green parting from white.
+- **The overlay's chart → play map** is computed at placement and recentre (and in `walking` after stick moves and turns), never every frame from the feet. Then it is fixed to the room, and world drift shows as green parting from white.
 - **Foveated rendering** (VRS, `xr/openxr/foveation_*`) made space "breathe" around the head and caused nausea on the Frame. It is off; don't turn it on without a headset check.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; it offers 72/80/90/120/144 (144 experimental). The stereo-check scene measured 9.4 ms GPU per frame at 72 Hz. `refresh-rate` has the on-headset panel and `tests/perf.gd`.
