@@ -1,7 +1,8 @@
 extends Node3D
-## Real-time wormhole for VR: walking in the room is the only way to move. Every pixel is ray
-## traced along a geodesic of the wormhole space in the shader; this script tracks where the
-## viewer is in that curved space.
+## Real-time wormhole for VR: walking in the room is the only way to move; the right stick
+## changes the throat's length and fillet (button map in the README). Every pixel is ray traced
+## along a geodesic of the wormhole space in the shader; this script tracks where the viewer is
+## in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
@@ -11,8 +12,11 @@ extends Node3D
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
-const HALF_LENGTH := 5.0
-const FILLET := 1.0
+const START_HALF_LENGTH := 5.0
+const START_FILLET := 1.0
+const HALF_LENGTH_RANGE := Vector2(0.05, 15.0)
+const FILLET_RANGE := Vector2(0.05, 2.5)
+const GEOMETRY_RATE := 1.5          # metres per second at full stick
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const DESKTOP_HEAD_HEIGHT := 1.6
@@ -21,7 +25,7 @@ const MOUSE_SENS := 0.003
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
 
-var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
+var space := WormholeSpace.new(THROAT_RADIUS, START_HALF_LENGTH, START_FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
 var xr: XRInterface
 var xr_name := "OpenXR"        # tests use "Native mobile": Godot's own stereo renderer, same multiview path
@@ -42,6 +46,11 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
+var left_hand: XRController3D
+var right_hand: XRController3D
+var button_was := {}
+var logged_profiles := {}
+var input_log_time := 0.0
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -53,6 +62,10 @@ func _ready() -> void:
 		var oxr := xr as OpenXRInterface
 		if oxr:
 			oxr.pose_recentered.connect(func() -> void: recentered = true)
+			# for godot.log: input reaches the app only while the session is focused (an open
+			# SteamVR dashboard takes the focus away)
+			oxr.session_visible.connect(func() -> void: print("XR session visible (no input focus: dashboard open?)"))
+			oxr.session_focussed.connect(func() -> void: print("XR session focused: controller input active"))
 		await_pose = true
 		# Render XR from a SubViewport. With XR on the root viewport Godot also mirrors the left
 		# eye into the desktop window, and SteamVR may show that window on a virtual screen
@@ -69,12 +82,16 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = 0.05
 	origin.add_child(camera)
+	left_hand = XRController3D.new()
+	left_hand.tracker = &"left_hand"
+	origin.add_child(left_hand)
+	right_hand = XRController3D.new()
+	right_hand.tracker = &"right_hand"
+	origin.add_child(right_hand)
 
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/wormhole.gdshader")
-	material.set_shader_parameter("wh_rho0", space.rho0)
-	material.set_shader_parameter("wh_h", space.h)
-	material.set_shader_parameter("wh_fillet", space.fillet)
+	_upload_geometry()
 	_upload_scene()
 	var quad := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -125,19 +142,27 @@ func _unhandled_input(event: InputEvent) -> void:
 		camera.basis = Basis.from_euler(Vector3(desktop_pitch, desktop_yaw, 0.0))
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
 		place(1.0, START_POS, START_FORWARD)
+	if in_xr:
+		_log_input(delta)
+	_handle_reset()
+	var moved := _handle_geometry(delta)
+
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
 	if recentered:
 		prev_head = hz
 		recentered = false
-		_update_chart_map()
+		moved = true
 	_walk(hz - prev_head)
 	prev_head = hz
+	if moved:
+		# the controls moved the world against the room; physical walking does not
+		_update_chart_map()
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
 		overlay.visible = foot_l > space.L
@@ -148,6 +173,77 @@ func _process(_delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
+
+
+## Writes the controllers' interaction profiles and stick values to godot.log.
+func _log_input(delta: float) -> void:
+	for hand: XRController3D in [left_hand, right_hand]:
+		var tracker := XRServer.get_tracker(hand.tracker) as XRControllerTracker
+		var profile: String = tracker.profile if tracker else "(no tracker)"
+		if logged_profiles.get(hand.tracker, "") != profile:
+			logged_profiles[hand.tracker] = profile
+			print(hand.tracker, " interaction profile: ", profile)
+	input_log_time -= delta
+	var ls := left_hand.get_vector2(&"primary")
+	var rs := right_hand.get_vector2(&"primary")
+	if input_log_time <= 0.0 and (ls.length() > 0.2 or rs.length() > 0.2):
+		input_log_time = 2.0
+		print("sticks left ", ls, " right ", rs, " grip ", right_hand.get_float(&"grip"))
+
+
+func _pressed_once(key: String, down: bool) -> bool:
+	var was: bool = button_was.get(key, false)
+	button_was[key] = down
+	return down and not was
+
+
+## Right A (R): the start geometry, back at the start.
+func _handle_reset() -> void:
+	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))):
+		set_geometry(START_HALF_LENGTH, START_FILLET)
+		place(1.0, START_POS, START_FORWARD)    # also redoes the chart -> play map
+
+
+## Throat half-length h (planes at w = +-h) and fillet radius (union_round radius).
+## The feet keep their distance to the edge of the curved shell: nothing moves when only h
+## changes; when the fillet changes, the outside world's objects keep their chart positions
+## and the viewer moves with the mouth (Rout = rho0 + fillet), so the chart -> play map
+## has to be redone.
+func set_geometry(half_length: float, fillet_radius: float) -> void:
+	var old_L := space.L
+	space.set_profile(THROAT_RADIUS, half_length, fillet_radius)
+	foot_l = signf(foot_l) * maxf(absf(foot_l) - old_L + space.L, 0.0)
+	_upload_geometry()
+
+
+func _upload_geometry() -> void:
+	material.set_shader_parameter("wh_rho0", space.rho0)
+	material.set_shader_parameter("wh_h", space.h)
+	material.set_shader_parameter("wh_fillet", space.fillet)
+	if show_check and overlay:
+		var grid := overlay.get_node("Grid") as MeshInstance3D
+		grid.material_override.set_shader_parameter("rout", space.Rout)
+		grid.material_override.set_shader_parameter("lsh", space.L)
+		_upload_check_balls()
+
+
+## Right stick up/down (X / Z): throat length; with the right grip held (V / C): fillet radius.
+## True if the geometry changed.
+func _handle_geometry(delta: float) -> bool:
+	var y := float(Input.is_key_pressed(KEY_X)) - float(Input.is_key_pressed(KEY_Z))
+	var yr := float(Input.is_key_pressed(KEY_V)) - float(Input.is_key_pressed(KEY_C))
+	if in_xr:
+		var stick := right_hand.get_vector2(&"primary").y
+		if absf(stick) > 0.2:
+			if right_hand.get_float(&"grip") > 0.5:
+				yr += stick
+			else:
+				y += stick
+	if y == 0.0 and yr == 0.0:
+		return false
+	set_geometry(clampf(space.h + y * GEOMETRY_RATE * delta, HALF_LENGTH_RANGE.x, HALF_LENGTH_RANGE.y),
+			clampf(space.fillet + yr * 0.5 * GEOMETRY_RATE * delta, FILLET_RANGE.x, FILLET_RANGE.y))
+	return true
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
@@ -214,28 +310,19 @@ func _add_check() -> void:
 	var ball_mat := ShaderMaterial.new()
 	ball_mat.shader = load("res://shaders/check_ball.gdshader")
 	ball_mat.render_priority = 11
-	var pos := PackedVector4Array()
-	var col := PackedVector4Array()
-	for c in CHECK_BALLS:
-		pos.append(Vector4(c.x, c.y, c.z, space.h))     # R^4 point of sheet A
-		col.append(Vector4(0.85, 0.08, 0.06, CHECK_BALL_RADIUS))
+	for i in CHECK_BALLS.size():
 		var s := SphereMesh.new()
 		s.radius = CHECK_BALL_RADIUS
 		s.height = 2.0 * CHECK_BALL_RADIUS
 		s.radial_segments = 48       # outline within 0.7 mm of a true sphere
 		s.rings = 24
 		var m := MeshInstance3D.new()
-		m.name = "Ball%d" % pos.size()
+		m.name = "Ball%d" % (i + 1)
 		m.mesh = s
 		m.material_override = ball_mat
-		m.position = c
+		m.position = CHECK_BALLS[i]
 		overlay.add_child(m)
-	while pos.size() < 12:
-		pos.append(Vector4.ZERO)
-		col.append(Vector4.ZERO)
-	material.set_shader_parameter("wh_ball", pos)
-	material.set_shader_parameter("wh_ballCol", col)
-	material.set_shader_parameter("wh_nBall", CHECK_BALLS.size())
+	_upload_check_balls()
 	# no other objects: Godot's floor lines would be drawn over them where the floor is hidden
 	var none_sph := PackedVector4Array()
 	var none_pil := PackedVector4Array()
@@ -248,6 +335,21 @@ func _add_check() -> void:
 	material.set_shader_parameter("wh_sph", none_sph)
 	material.set_shader_parameter("wh_pil", none_pil)
 	material.set_shader_parameter("wh_box", none_box)
+
+
+## The check's red balls for the ray tracer: R^4 points of sheet A (w = h).
+func _upload_check_balls() -> void:
+	var pos := PackedVector4Array()
+	var col := PackedVector4Array()
+	for c in CHECK_BALLS:
+		pos.append(Vector4(c.x, c.y, c.z, space.h))
+		col.append(Vector4(0.85, 0.08, 0.06, CHECK_BALL_RADIUS))
+	while pos.size() < 12:
+		pos.append(Vector4.ZERO)
+		col.append(Vector4.ZERO)
+	material.set_shader_parameter("wh_ball", pos)
+	material.set_shader_parameter("wh_ballCol", col)
+	material.set_shader_parameter("wh_nBall", CHECK_BALLS.size())
 
 
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a
