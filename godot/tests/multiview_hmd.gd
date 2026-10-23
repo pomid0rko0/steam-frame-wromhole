@@ -36,6 +36,8 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	if frames == 2:
+		main.overlay.get_node("Perf").visible = false     # nothing but the balls under test
 
 	if frames == 3:
 		# start where main starts, with the head pose now known

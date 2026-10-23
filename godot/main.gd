@@ -1,7 +1,8 @@
 extends Node3D
-## Real-time wormhole for VR: walking in the room is the only way to move. Every pixel is ray
-## traced along a geodesic of the wormhole space in the shader; this script tracks where the
-## viewer is in that curved space.
+## Real-time wormhole for VR: head tracking (physical walking), no stick locomotion, no objects
+## to play with; either trigger steps the headset's refresh rate, shown on a panel. Every pixel
+## is ray traced along a geodesic of the wormhole space in the shader; this script tracks
+## where the viewer is in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
@@ -42,6 +43,8 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
+var hands: Array[XRController3D] = []
+var trigger_down := false       # a press of either trigger steps the headset's refresh rate
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -69,6 +72,12 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = 0.05
 	origin.add_child(camera)
+	if in_xr:
+		for t in [&"left_hand", &"right_hand"]:
+			var c := XRController3D.new()
+			c.tracker = t
+			origin.add_child(c)
+			hands.append(c)
 
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/wormhole.gdshader")
@@ -138,6 +147,7 @@ func _process(_delta: float) -> void:
 		_update_chart_map()
 	_walk(hz - prev_head)
 	prev_head = hz
+	_rate_button()
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
 		overlay.visible = foot_l > space.L
@@ -148,6 +158,35 @@ func _process(_delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
+
+
+## Either trigger: switch the headset to its next refresh rate (after the highest, the lowest).
+func _rate_button() -> void:
+	var oxr := xr as OpenXRInterface
+	if oxr == null:
+		return
+	var v := 0.0
+	for c in hands:
+		v = maxf(v, c.get_float(&"trigger"))
+	if trigger_down:
+		trigger_down = v > 0.3
+		return
+	if v < 0.7:
+		return
+	trigger_down = true
+	var rates: Array = oxr.get_available_display_refresh_rates()
+	if not rates.is_empty():
+		oxr.display_refresh_rate = next_rate(rates, oxr.display_refresh_rate)
+
+
+## The next rate above current, or the lowest after the highest.
+static func next_rate(rates: Array, current: float) -> float:
+	var sorted := rates.duplicate()
+	sorted.sort()
+	for r in sorted:
+		if r > current + 0.5:
+			return r
+	return sorted[0]
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
@@ -180,11 +219,18 @@ func _head_forward_xz() -> Vector2:
 	return v.normalized() if v.length() > 1e-4 else Vector2(0.0, -1.0)
 
 
-## The node for things Godot draws itself among the ray-traced ones, placed in chart A
-## coordinates (the stereo check).
+## Things Godot draws itself among the ray-traced ones, placed in chart A coordinates: the
+## frame rate panel, 1.5 m straight ahead of the start and above the wormhole, facing it.
 func _build_overlay() -> void:
 	overlay = Node3D.new()
 	origin.add_child(overlay)
+	var panel: Label3D = preload("res://perf_panel.gd").new()
+	panel.name = "Perf"
+	panel.target = xr_view if in_xr else get_viewport()
+	panel.xr = xr as OpenXRInterface if in_xr else null
+	panel.transform = Transform3D(Basis(Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, 1.0), Vector3(1.0, 0.0, 0.0)),
+			Vector3(8.5, 0.0, 2.3))
+	overlay.add_child(panel)
 	_update_chart_map()
 
 

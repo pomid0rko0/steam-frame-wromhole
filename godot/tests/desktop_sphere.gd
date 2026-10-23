@@ -20,6 +20,8 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	if frames == 2:
+		main.overlay.get_node("Perf").visible = false     # nothing but the balls under test
 
 	if frames == 2:
 		main.camera.position = Vector3(0.0, 1.6, 0.0)
