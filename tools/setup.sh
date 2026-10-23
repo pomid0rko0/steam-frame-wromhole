@@ -26,11 +26,21 @@ fi
 pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/null \
 	|| pip install --quiet numpy scipy pillow moderngl
 
-missing=""
-command -v xvfb-run >/dev/null || missing="$missing xvfb"
-ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers(lavapipe)"
-if [ -n "$missing" ]; then
-	echo "also needed (apt):$missing"
-	command -v apt-get >/dev/null && { apt-get install -y xvfb mesa-vulkan-drivers || true; }
+check_apt() {   # sets $missing to the apt packages still needed
+	missing=""
+	command -v xvfb-run >/dev/null || missing="$missing xvfb"
+	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
+}
+check_apt
+if [ -n "$missing" ] && command -v apt-get >/dev/null; then
+	echo "installing (apt):$missing"
+	# a fresh container has empty package lists: without update, install finds nothing
+	{ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $missing; } || true
+	check_apt
 fi
+[ -z "$missing" ] || { echo "still missing (apt):$missing (lavapipe = mesa-vulkan-drivers)"; exit 1; }
+
+# also on PATH: the tests fall back to it when this script ran outside the repo,
+# e.g. piped from curl in an environment setup script (then ROOT is not the repo)
+ln -sf "$BIN/Godot_v$V-stable_linux.x86_64" /usr/local/bin/godot 2>/dev/null || true
 echo "ok: $BIN/Godot_v$V-stable_linux.x86_64"
