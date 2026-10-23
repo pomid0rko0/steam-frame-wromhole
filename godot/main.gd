@@ -1,14 +1,16 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
-## snap-turns (button map in the README); balls roll and bounce through the wormhole
-## (ball_world.gd). Every pixel is ray traced along a geodesic of the wormhole space in the
-## shader; this script tracks where the viewer and the balls are in that curved space.
+## snap-turns; balls roll and bounce through the wormhole (ball_world.gd); the hands grab and
+## throw them (button map in the README). Every pixel is ray traced along a geodesic of the
+## wormhole space in the shader; this script tracks where the viewer, the hands and the balls
+## are in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space and stick locomotion move the feet along
 ## floor geodesics, parallel-transporting the play-space axes; snap turns rotate those axes;
 ## the head sits head-height above the feet along the floor normal. Each eye is derived in
-## the shader from that view's own matrices (see shaders/wormhole.gdshader).
+## the shader from that view's own matrices (see shaders/wormhole.gdshader); each hand is
+## placed by a geodesic from the head along its play-space offset.
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
@@ -51,6 +53,10 @@ var await_pose := false        # XR: place the viewer once head tracking deliver
 var show_check := false         # the stereo check (see _add_check)
 var left_hand: XRController3D
 var right_hand: XRController3D
+var hand_balls: Array = []      # per tracked hand: {l, n, U, radius, tracker}, kinematic spheres
+var show_avatar := false        # head and torso as balls (seen in the throat; costly there, see README)
+var head_state: Array = []      # [l, n, frame] of the head, this frame
+var grip_was := {}
 var button_was := {}
 var snap_armed := true          # the right stick went back to the middle since the last turn
 var logged_profiles := {}
@@ -189,8 +195,11 @@ func _process(delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
+	head_state = hp
+	_update_hands(head)
 	if physics:
-		world.step(delta, [])
+		_handle_toys()
+		world.step(delta, hand_balls)
 		_upload_balls()
 
 
@@ -208,6 +217,7 @@ func _spawn_initial_balls() -> void:
 
 
 ## Every ball the shader draws: centre as a point of R^4 and radius (chord distance in R^4).
+## The balls, the hands, then the avatar's head and torso.
 func _upload_balls() -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
@@ -215,6 +225,15 @@ func _upload_balls() -> void:
 		pos.append(space.embed(b["l"], b["n"]))
 		var c: Color = b["color"]
 		col.append(Vector4(c.r, c.g, c.b, b["radius"]))
+	for hnd in hand_balls:
+		pos.append(space.embed(hnd["l"], hnd["n"]))
+		col.append(Vector4(0.95, 0.6, 0.25, hnd["radius"]))
+	if show_avatar and head_state.size() > 0:
+		pos.append(space.embed(head_state[0], head_state[1]))
+		col.append(Vector4(0.85, 0.87, 0.9, 0.11))
+		var torso := space.geodesic(head_state[0], head_state[1], -head_state[2][1], 0.5, [])
+		pos.append(space.embed(torso[0], torso[1]))
+		col.append(Vector4(0.35, 0.42, 0.55, 0.19))
 	var count := pos.size()
 	while pos.size() < 12:
 		pos.append(Vector4.ZERO)
@@ -237,7 +256,7 @@ func _log_input(delta: float) -> void:
 	var rs := right_hand.get_vector2(&"primary")
 	if input_log_time <= 0.0 and (ls.length() > 0.2 or rs.length() > 0.2):
 		input_log_time = 2.0
-		print("sticks left ", ls, " right ", rs)
+		print("sticks left ", ls, " right ", rs, " grip ", right_hand.get_float(&"grip"))
 
 
 func _pressed_once(key: String, down: bool) -> bool:
@@ -261,8 +280,8 @@ func _run_pressed() -> bool:
 	return Input.is_key_pressed(KEY_SHIFT) or (in_xr and left_hand.get_float(&"trigger") > 0.5)
 
 
-## Right stick left/right (Q / E): snap turn. Right A (R): back to the start. True if either
-## moved the viewer against the room.
+## Right stick left/right (Q / E): snap turn. Right A (R): back to the start, the five balls
+## back in place. True if either moved the viewer against the room.
 func _handle_turn_and_reset() -> bool:
 	var turn := 0.0
 	if in_xr:
@@ -277,7 +296,75 @@ func _handle_turn_and_reset() -> bool:
 		snap_armed = true
 	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))):
 		place(1.0, START_POS, START_FORWARD)    # also redoes the chart -> play map
+		if physics:
+			world.balls.clear()
+			_spawn_initial_balls()
 	return moved
+
+
+## Hand points on the manifold (geodesic from the head), their velocities, grabbing.
+func _update_hands(head: Transform3D) -> void:
+	hand_balls.clear()
+	for c: XRController3D in [left_hand, right_hand]:
+		var xf: Transform3D
+		var vel := Vector3.ZERO
+		if in_xr:
+			if not c.get_has_tracking_data():
+				continue
+			xf = c.transform
+			var pose := c.get_pose()
+			if pose:
+				vel = pose.linear_velocity
+		else:
+			var side := -1.0 if c == left_hand else 1.0
+			xf = Transform3D(head.basis, head.origin + head.basis * Vector3(0.22 * side, -0.32, -0.38))
+		var off := xf.origin - head.origin
+		var hp: Array = head_state
+		if off.length() > 1e-6:
+			var dir := WormholeSpace.combine(head_state[2], off)
+			hp = space.geodesic(head_state[0], head_state[1], dir / dir.length(), dir.length(), head_state[2])
+		var U := WormholeSpace.combine(hp[2], vel)
+		var hand := {"l": hp[0], "n": hp[1], "U": U, "radius": 0.05, "tracker": c.tracker}
+		hand_balls.append(hand)
+		# grab with grip, release to throw
+		var grip := in_xr and c.get_float(&"grip") > 0.6
+		var was: bool = grip_was.get(c.tracker, false)
+		grip_was[c.tracker] = grip
+		if grip and not was:
+			var best: Dictionary = {}
+			var best_gap := 0.12
+			for b in world.balls:
+				var g := world.gap(b, hand)
+				if g < best_gap:
+					best_gap = g
+					best = b
+			if not best.is_empty():
+				best["held"] = c.tracker
+		for b in world.balls:
+			if b["held"] == c.tracker:
+				if grip:
+					b["l"] = hand["l"]
+					b["n"] = hand["n"]
+					b["U"] = U
+				else:
+					b["held"] = &""
+
+
+func _handle_toys() -> void:
+	# right B / key F: new ball (at the right hand in VR, thrown forward on the desktop)
+	var spawn := _pressed_once("spawn", Input.is_key_pressed(KEY_F) or (in_xr and right_hand.is_button_pressed(&"by_button")))
+	if spawn and head_state.size() > 0:
+		var col: Color = BALL_COLORS[randi() % BALL_COLORS.size()]
+		if in_xr and hand_balls.size() > 0:
+			var hnd: Dictionary = hand_balls[hand_balls.size() - 1]
+			world.add(hnd["l"], hnd["n"], hnd["U"], 0.25, col)
+		else:
+			var fwd := WormholeSpace.combine(head_state[2], -camera.transform.basis.z)
+			var start := space.geodesic(head_state[0], head_state[1], fwd, 0.6, [fwd])
+			world.add(start[0], start[1], 7.0 * start[2][0] + 2.0 * head_state[2][1], 0.25, col)
+	# left Y / key T: avatar on/off
+	if _pressed_once("avatar", Input.is_key_pressed(KEY_T) or (in_xr and left_hand.is_button_pressed(&"by_button"))):
+		show_avatar = not show_avatar
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
