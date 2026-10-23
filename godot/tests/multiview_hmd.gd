@@ -31,6 +31,7 @@ func _initialize() -> void:
 	XRServer.primary_interface = hmd
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "FakeHMD"
+	main.physics = false            # this test draws its own balls
 	root.add_child(main)
 
 

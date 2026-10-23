@@ -15,6 +15,7 @@ func _initialize() -> void:
 	mode = OS.get_cmdline_user_args()[1]
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
+	main.physics = false            # this test draws its own balls
 	root.add_child(main)
 
 

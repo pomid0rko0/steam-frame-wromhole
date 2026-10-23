@@ -26,6 +26,7 @@ func _initialize() -> void:
 	XRServer.primary_interface = mvr
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "Native mobile"
+	main.physics = false            # this test draws its own balls
 	root.add_child(main)
 
 
