@@ -1,7 +1,8 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
-## snap-turns (button map in the README). Every pixel is ray traced along a geodesic of the
-## wormhole space in the shader; this script tracks where the viewer is in that curved space.
+## snap-turns (button map in the README); balls roll and bounce through the wormhole
+## (ball_world.gd). Every pixel is ray traced along a geodesic of the wormhole space in the
+## shader; this script tracks where the viewer and the balls are in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space and stick locomotion move the feet along
@@ -27,6 +28,8 @@ const CHECK_BALL_RADIUS := 0.3
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
+var world := BallWorld.new(space, scene)
+var physics := true             # simulate and draw the balls; the stereo check and tests draw their own
 var xr: XRInterface
 var xr_name := "OpenXR"        # tests use "Native mobile": Godot's own stereo renderer, same multiview path
 var in_xr := false
@@ -111,6 +114,8 @@ func _ready() -> void:
 	_build_overlay()
 	if show_check:
 		_add_check()
+	if physics:
+		_spawn_initial_balls()
 
 
 ## Put the feet at chart position pos (z = 0) on the given side, looking along forward.
@@ -184,6 +189,39 @@ func _process(delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
+	if physics:
+		world.step(delta, [])
+		_upload_balls()
+
+
+const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
+		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
+
+
+## Five balls resting on the floor between the start and the wormhole.
+func _spawn_initial_balls() -> void:
+	var spots := [Vector2(7.0, -1.5), Vector2(7.0, 0.0), Vector2(7.0, 1.5), Vector2(6.0, -0.75), Vector2(6.0, 0.75)]
+	for i in spots.size():
+		var rad := 0.25 if i < 3 else 0.35
+		var p := space.point_from_chart(1.0, Vector3(spots[i].x, spots[i].y, rad))
+		world.add(p[0], p[1], Vector4.ZERO, rad, BALL_COLORS[i % BALL_COLORS.size()])
+
+
+## Every ball the shader draws: centre as a point of R^4 and radius (chord distance in R^4).
+func _upload_balls() -> void:
+	var pos := PackedVector4Array()
+	var col := PackedVector4Array()
+	for b in world.balls:
+		pos.append(space.embed(b["l"], b["n"]))
+		var c: Color = b["color"]
+		col.append(Vector4(c.r, c.g, c.b, b["radius"]))
+	var count := pos.size()
+	while pos.size() < 12:
+		pos.append(Vector4.ZERO)
+		col.append(Vector4.ZERO)
+	material.set_shader_parameter("wh_ball", pos)
+	material.set_shader_parameter("wh_ballCol", col)
+	material.set_shader_parameter("wh_nBall", count)
 
 
 ## Writes the controllers' interaction profiles and stick values to godot.log.
@@ -284,6 +322,8 @@ func _build_overlay() -> void:
 ## draws: on the white lines of the flat floor and as a grid on three red balls. With one eye
 ## closed, green must lie exactly on white / on red; two separate grids mean wrong stereo.
 func _add_check() -> void:
+	physics = false                 # the check's red balls take the shader's ball slots
+	world.balls.clear()
 	var floor_mat := ShaderMaterial.new()
 	floor_mat.shader = load("res://shaders/check_grid.gdshader")
 	floor_mat.set_shader_parameter("rout", space.Rout)
