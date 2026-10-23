@@ -18,7 +18,8 @@ the branches and the wishlist.
 ## Branches
 
 Stacked, each on the previous one (only `controls` really needs its parent: grabbing works on
-`physics` balls). None of them has been checked in the headset; each README describes its code.
+`physics` balls). `main` has been checked in the headset (rendering and stereo, with the one-eye
+check; its tag marks the commit), the others have not; each README describes its code.
 
 - `main` — the wormhole, static objects, walking in the room, the stereo check scene (off).
 - `refresh-rate` — the frame rate panel; a trigger steps the headset's refresh rate.
