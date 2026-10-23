@@ -43,7 +43,7 @@ draws next to ray-traced ones, check they line up the same way.
 
 ## Running things
 
-- **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin`, the export templates and the pip packages; it needs xvfb and lavapipe.
+- **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb and lavapipe with apt if they are missing.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~15 min).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min), `ref/test_fast.py`, `ref/test_eye.py`.

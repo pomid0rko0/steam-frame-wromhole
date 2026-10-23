@@ -15,6 +15,7 @@ func _initialize() -> void:
 	mode = OS.get_cmdline_user_args()[1]
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
+	main.show_check = false   # its balls and grids would cover the test balls
 	root.add_child(main)
 
 
