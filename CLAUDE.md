@@ -36,12 +36,19 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
-Where the README wishes start:
-- refresh rate → `refresh-rate`;
-- stick locomotion → `walking` (smooth stick walking and snap turn are there);
-- pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw are there);
-- scenes with different wormholes and knobs → `throat` (throat length and fillet on the right
+Where the README wishes start (wishes without a branch start from `main`):
+- stick locomotion on the floor → `walking` (smooth stick walking and snap turn are there);
+- free flight in 3D with gravity on/off → `walking` (the gravity field is in `physics`);
+- pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
+  are there);
+- cubes next to balls → `physics`;
+- throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
+- refresh rate → `refresh-rate`;
+- foveated rendering → `foveation`;
+- placing wormholes by hand, several wormholes, flat portals, two-handed shooting, gun models,
+  other shapes (torus, arbitrary SDF) → `main`; several wormholes, portals and other shapes are
+  renderer work (`wormhole_core` and a reference in `ref/` first);
 - the avatar: its head ball around the eyes makes every ray inside the throat sample it finely
   and the frame drops; it is off by default in `grab`.
 
