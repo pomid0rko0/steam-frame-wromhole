@@ -17,11 +17,14 @@ window/size/viewport_height=720
 [rendering]
 
 renderer/rendering_method="mobile"
+vrs/mode=2
 textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 
 [xr]
 
 openxr/enabled=true
+openxr/foveation_level=3
+openxr/foveation_dynamic=true
 openxr/startup_alert=false
 shaders/enabled=true
