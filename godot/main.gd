@@ -1,20 +1,25 @@
 extends Node3D
-## Real-time wormhole for VR: head tracking (physical walking), no stick locomotion; balls
-## roll and bounce through the wormhole (ball_world.gd); either trigger steps the headset's
-## refresh rate, shown on a panel. Every pixel is ray traced along a geodesic of the wormhole
-## space in the shader; this script tracks where the viewer and the balls are in that curved
-## space.
+## Real-time wormhole for VR. Every pixel is ray traced along a geodesic of the wormhole space
+## in the shader; this script tracks where the viewer, the hands and the balls are in that
+## curved space (balls: ball_world.gd) and handles the controls (button map in the README).
 ##
-## Body model: the feet stay on the floor (the totally geodesic equatorial surface
-## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
-## parallel-transporting the play-space axes; the head sits head-height above the feet
-## along the floor normal. Each eye is derived in the shader from that view's own
-## matrices (see shaders/wormhole.gdshader).
+## Body model: the feet stay on the floor (the totally geodesic equatorial surface n.z = 0).
+## Physical movement in the play space and stick locomotion move the feet along floor
+## geodesics, parallel-transporting the play-space axes; snap turns rotate those axes; the
+## head sits head-height above the feet along the floor normal. Each eye is derived in the
+## shader from that view's own matrices (see shaders/wormhole.gdshader); each hand is placed
+## by a geodesic from the head along its play-space offset.
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
-const HALF_LENGTH := 5.0
-const FILLET := 1.0
+const START_HALF_LENGTH := 5.0
+const START_FILLET := 1.0
+const HALF_LENGTH_RANGE := Vector2(0.05, 15.0)
+const FILLET_RANGE := Vector2(0.05, 2.5)
+const GEOMETRY_RATE := 1.5          # metres per second at full stick
+const WALK_SPEED := 1.5
+const RUN_SPEED := 4.0
+const SNAP_ANGLE := deg_to_rad(30.0)
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const DESKTOP_HEAD_HEIGHT := 1.6
@@ -23,7 +28,7 @@ const MOUSE_SENS := 0.003
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
 
-var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
+var space := WormholeSpace.new(THROAT_RADIUS, START_HALF_LENGTH, START_FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
 var world := BallWorld.new(space, scene)
 var physics := true             # simulate and draw the balls; the stereo check and tests draw their own
@@ -46,8 +51,16 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
-var hands: Array[XRController3D] = []
-var trigger_down := false       # a press of either trigger steps the headset's refresh rate
+var left_hand: XRController3D
+var right_hand: XRController3D
+var hand_balls: Array = []      # per tracked hand: {l, n, U, radius, tracker}, kinematic spheres
+var show_avatar := false        # head and torso as balls (seen in the throat; costly there, see README)
+var head_state: Array = []      # [l, n, frame] of the head, this frame
+var grip_was := {}
+var button_was := {}
+var snap_armed := true
+var logged_profiles := {}
+var input_log_time := 0.0
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -59,6 +72,10 @@ func _ready() -> void:
 		var oxr := xr as OpenXRInterface
 		if oxr:
 			oxr.pose_recentered.connect(func() -> void: recentered = true)
+			# for godot.log: input reaches the app only while the session is focused (an open
+			# SteamVR dashboard takes the focus away)
+			oxr.session_visible.connect(func() -> void: print("XR session visible (no input focus: dashboard open?)"))
+			oxr.session_focussed.connect(func() -> void: print("XR session focused: controller input active"))
 		await_pose = true
 		# Render XR from a SubViewport. With XR on the root viewport Godot also mirrors the left
 		# eye into the desktop window, and SteamVR may show that window on a virtual screen
@@ -75,18 +92,16 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = 0.05
 	origin.add_child(camera)
-	if in_xr:
-		for t in [&"left_hand", &"right_hand"]:
-			var c := XRController3D.new()
-			c.tracker = t
-			origin.add_child(c)
-			hands.append(c)
+	left_hand = XRController3D.new()
+	left_hand.tracker = &"left_hand"
+	origin.add_child(left_hand)
+	right_hand = XRController3D.new()
+	right_hand.tracker = &"right_hand"
+	origin.add_child(right_hand)
 
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/wormhole.gdshader")
-	material.set_shader_parameter("wh_rho0", space.rho0)
-	material.set_shader_parameter("wh_h", space.h)
-	material.set_shader_parameter("wh_fillet", space.fillet)
+	_upload_geometry()
 	_upload_scene()
 	var quad := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -144,14 +159,30 @@ func _process(delta: float) -> void:
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
 		place(1.0, START_POS, START_FORWARD)
+	if in_xr:
+		_log_input(delta)
+	var moved := _handle_turn_and_reset()
+	_handle_geometry(delta)
+
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
 	if recentered:
 		prev_head = hz
 		recentered = false
-		_update_chart_map()
-	_walk(hz - prev_head)
+		moved = true
+	var step := hz - prev_head
 	prev_head = hz
+	var stick := _move_input()
+	if stick.length() > 0.15:
+		var fwd := _head_forward_xz()
+		var rgt := Vector2(-fwd.y, fwd.x)
+		var speed := RUN_SPEED if _run_pressed() else WALK_SPEED
+		step += (stick.y * fwd + stick.x * rgt) * speed * delta
+		moved = true
+	_walk(step)
+	if moved:
+		# the controls moved the world against the room; physical walking does not
+		_update_chart_map()
 	_rate_button()
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
@@ -163,9 +194,28 @@ func _process(delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
+	head_state = hp
+	_update_hands(head)
 	if physics:
-		world.step(delta, [])
+		_handle_toys()
+		world.step(delta, hand_balls)
 		_upload_balls()
+
+
+## Writes the controllers' interaction profiles and stick values to godot.log.
+func _log_input(delta: float) -> void:
+	for hand in [left_hand, right_hand]:
+		var tracker := XRServer.get_tracker(hand.tracker) as XRControllerTracker
+		var profile: String = tracker.profile if tracker else "(no tracker)"
+		if logged_profiles.get(hand.tracker, "") != profile:
+			logged_profiles[hand.tracker] = profile
+			print(hand.tracker, " interaction profile: ", profile)
+	input_log_time -= delta
+	var ls := left_hand.get_vector2(&"primary")
+	var rs := right_hand.get_vector2(&"primary")
+	if input_log_time <= 0.0 and (ls.length() > 0.2 or rs.length() > 0.2):
+		input_log_time = 2.0
+		print("sticks left ", ls, " right ", rs, " grip ", right_hand.get_float(&"grip"))
 
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
@@ -182,6 +232,7 @@ func _spawn_initial_balls() -> void:
 
 
 ## Every ball the shader draws: centre as a point of R^4 and radius (chord distance in R^4).
+## The balls, the hands, then the avatar's head and torso.
 func _upload_balls() -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
@@ -189,6 +240,15 @@ func _upload_balls() -> void:
 		pos.append(space.embed(b["l"], b["n"]))
 		var c: Color = b["color"]
 		col.append(Vector4(c.r, c.g, c.b, b["radius"]))
+	for hnd in hand_balls:
+		pos.append(space.embed(hnd["l"], hnd["n"]))
+		col.append(Vector4(0.95, 0.6, 0.25, hnd["radius"]))
+	if show_avatar and head_state.size() > 0:
+		pos.append(space.embed(head_state[0], head_state[1]))
+		col.append(Vector4(0.85, 0.87, 0.9, 0.11))
+		var torso := space.geodesic(head_state[0], head_state[1], -head_state[2][1], 0.5, [])
+		pos.append(space.embed(torso[0], torso[1]))
+		col.append(Vector4(0.35, 0.42, 0.55, 0.19))
 	var count := pos.size()
 	while pos.size() < 12:
 		pos.append(Vector4.ZERO)
@@ -198,20 +258,11 @@ func _upload_balls() -> void:
 	material.set_shader_parameter("wh_nBall", count)
 
 
-## Either trigger: switch the headset to its next refresh rate (after the highest, the lowest).
+## Left X: switch the headset to its next refresh rate (after the highest, the lowest).
 func _rate_button() -> void:
 	var oxr := xr as OpenXRInterface
-	if oxr == null:
+	if oxr == null or not _pressed_once("rate", left_hand.is_button_pressed(&"ax_button")):
 		return
-	var v := 0.0
-	for c in hands:
-		v = maxf(v, c.get_float(&"trigger"))
-	if trigger_down:
-		trigger_down = v > 0.3
-		return
-	if v < 0.7:
-		return
-	trigger_down = true
 	var rates: Array = oxr.get_available_display_refresh_rates()
 	if not rates.is_empty():
 		oxr.display_refresh_rate = next_rate(rates, oxr.display_refresh_rate)
@@ -225,6 +276,153 @@ static func next_rate(rates: Array, current: float) -> float:
 		if r > current + 0.5:
 			return r
 	return sorted[0]
+
+
+## Hand points on the manifold (geodesic from the head), their velocities, grabbing.
+func _update_hands(head: Transform3D) -> void:
+	hand_balls.clear()
+	for c: XRController3D in [left_hand, right_hand]:
+		var xf: Transform3D
+		var vel := Vector3.ZERO
+		if in_xr:
+			if not c.get_has_tracking_data():
+				continue
+			xf = c.transform
+			var pose := c.get_pose()
+			if pose:
+				vel = pose.linear_velocity
+		else:
+			var side := -1.0 if c == left_hand else 1.0
+			xf = Transform3D(head.basis, head.origin + head.basis * Vector3(0.22 * side, -0.32, -0.38))
+		var off := xf.origin - head.origin
+		var hp: Array = head_state
+		if off.length() > 1e-6:
+			var dir := WormholeSpace.combine(head_state[2], off)
+			hp = space.geodesic(head_state[0], head_state[1], dir / dir.length(), dir.length(), head_state[2])
+		var U := WormholeSpace.combine(hp[2], vel)
+		var hand := {"l": hp[0], "n": hp[1], "U": U, "radius": 0.05, "tracker": c.tracker}
+		hand_balls.append(hand)
+		# grab with grip, release to throw
+		var grip := in_xr and c.get_float(&"grip") > 0.6
+		var was: bool = grip_was.get(c.tracker, false)
+		grip_was[c.tracker] = grip
+		if grip and not was:
+			var best: Dictionary = {}
+			var best_gap := 0.12
+			for b in world.balls:
+				var g := world.gap(b, hand)
+				if g < best_gap:
+					best_gap = g
+					best = b
+			if not best.is_empty():
+				best["held"] = c.tracker
+		for b in world.balls:
+			if b["held"] == c.tracker:
+				if grip:
+					b["l"] = hand["l"]
+					b["n"] = hand["n"]
+					b["U"] = U
+				else:
+					b["held"] = &""
+
+
+func _pressed_once(key: String, down: bool) -> bool:
+	var was: bool = button_was.get(key, false)
+	button_was[key] = down
+	return down and not was
+
+
+func _handle_toys() -> void:
+	# right B / key F: new ball (at the right hand in VR, thrown forward on the desktop)
+	var spawn := _pressed_once("spawn", Input.is_key_pressed(KEY_F) or (in_xr and right_hand.is_button_pressed(&"by_button")))
+	if spawn and head_state.size() > 0:
+		var col: Color = BALL_COLORS[randi() % BALL_COLORS.size()]
+		if in_xr and hand_balls.size() > 0:
+			var hnd: Dictionary = hand_balls[hand_balls.size() - 1]
+			world.add(hnd["l"], hnd["n"], hnd["U"], 0.25, col)
+		else:
+			var fwd := WormholeSpace.combine(head_state[2], -camera.transform.basis.z)
+			var start := space.geodesic(head_state[0], head_state[1], fwd, 0.6, [fwd])
+			world.add(start[0], start[1], 7.0 * start[2][0] + 2.0 * head_state[2][1], 0.25, col)
+	# left Y / key T: avatar on/off
+	if _pressed_once("avatar", Input.is_key_pressed(KEY_T) or (in_xr and left_hand.is_button_pressed(&"by_button"))):
+		show_avatar = not show_avatar
+
+
+## Throat half-length h (planes at w = +-h) and fillet radius (union_round radius).
+## Points keep their distance to the edge of the curved shell, so nothing moves when only h
+## changes and the outside world shifts with the mouth when the fillet changes. Chart
+## positions of the feet stay put, so the overlay's chart -> play map stays valid.
+func set_geometry(half_length: float, fillet_radius: float) -> void:
+	var old_L := space.L
+	space.set_profile(THROAT_RADIUS, half_length, fillet_radius)
+	foot_l = signf(foot_l) * maxf(absf(foot_l) - old_L + space.L, 0.0)
+	for b in world.balls:
+		b["l"] = signf(b["l"]) * maxf(absf(b["l"]) - old_L + space.L, 0.0)
+	_upload_geometry()
+
+
+func _upload_geometry() -> void:
+	material.set_shader_parameter("wh_rho0", space.rho0)
+	material.set_shader_parameter("wh_h", space.h)
+	material.set_shader_parameter("wh_fillet", space.fillet)
+	var grid := overlay.get_node_or_null("Grid") if overlay else null
+	if grid:
+		grid.material_override.set_shader_parameter("rout", space.Rout)
+		grid.material_override.set_shader_parameter("lsh", space.L)
+
+
+## Right stick up/down: throat length; with the right grip held: fillet radius.
+func _handle_geometry(delta: float) -> void:
+	var y := float(Input.is_key_pressed(KEY_X)) - float(Input.is_key_pressed(KEY_Z))
+	var yr := float(Input.is_key_pressed(KEY_V)) - float(Input.is_key_pressed(KEY_C))
+	if in_xr:
+		var stick := right_hand.get_vector2(&"primary").y
+		if absf(stick) > 0.2:
+			if right_hand.get_float(&"grip") > 0.5:
+				yr += stick
+			else:
+				y += stick
+	if y == 0.0 and yr == 0.0:
+		return
+	set_geometry(clampf(space.h + y * GEOMETRY_RATE * delta, HALF_LENGTH_RANGE.x, HALF_LENGTH_RANGE.y),
+			clampf(space.fillet + yr * 0.5 * GEOMETRY_RATE * delta, FILLET_RANGE.x, FILLET_RANGE.y))
+
+
+func _move_input() -> Vector2:
+	var v := Vector2.ZERO
+	if in_xr:
+		v = left_hand.get_vector2(&"primary")
+	v.x += float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A))
+	v.y += float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S))
+	return v.limit_length(1.0)
+
+
+func _run_pressed() -> bool:
+	return Input.is_key_pressed(KEY_SHIFT) or (in_xr and left_hand.get_float(&"trigger") > 0.5)
+
+
+## Right stick left/right: snap turn. Right A / key R: back to the start. True if either moved
+## the viewer against the room.
+func _handle_turn_and_reset() -> bool:
+	var turn := 0.0
+	if in_xr:
+		turn = right_hand.get_vector2(&"primary").x
+	turn += float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q))
+	var moved := false
+	if absf(turn) > 0.7 and snap_armed:
+		_rotate_frame(signf(turn) * SNAP_ANGLE)
+		snap_armed = false
+		moved = true
+	elif absf(turn) < 0.3:
+		snap_armed = true
+	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))):
+		set_geometry(START_HALF_LENGTH, START_FILLET)
+		place(1.0, START_POS, START_FORWARD)
+		if physics:
+			world.balls.clear()
+			_spawn_initial_balls()
+	return moved
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
@@ -266,6 +464,7 @@ func _build_overlay() -> void:
 	panel.name = "Perf"
 	panel.target = xr_view if in_xr else get_viewport()
 	panel.xr = xr as OpenXRInterface if in_xr else null
+	panel.rate_hint = "X"
 	panel.transform = Transform3D(Basis(Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, 1.0), Vector3(1.0, 0.0, 0.0)),
 			Vector3(8.5, 0.0, 2.3))
 	overlay.add_child(panel)

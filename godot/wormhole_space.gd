@@ -119,6 +119,11 @@ static func orthonormalize(f: Array) -> Array:
 	return [ex.normalized(), ey, ez]
 
 
+## Linear combination c.x * f[0] + c.y * f[1] + c.z * f[2].
+static func combine(f: Array, c: Vector3) -> Vector4:
+	return c.x * f[0] + c.y * f[1] + c.z * f[2]
+
+
 ## Chart of the flat region on one side: side A (l >= L) x = r n, side B x = P r n,
 ## P = diag(-1, 1, 1). Converts a chart position to a manifold point.
 func point_from_chart(side: float, x: Vector3) -> Array:

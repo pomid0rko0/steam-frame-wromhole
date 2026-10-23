@@ -5,6 +5,7 @@ extends Label3D
 
 var target: Viewport          # the viewport the scene is rendered into
 var xr: OpenXRInterface       # null on the desktop
+var rate_hint := "курок"      # the button that steps the refresh rate
 var t := 0.0
 var frames := 0
 var gpu := 0.0
@@ -45,7 +46,7 @@ func _process(delta: float) -> void:
 		if xr:
 			var list: Array = xr.get_available_display_refresh_rates()
 			list.sort()
-			rates = "\nкурок: %s Гц" % " ".join(list.map(func(r): return "%.0f" % r))
+			rates = "\n%s: %s Гц" % [rate_hint, " ".join(list.map(func(r): return "%.0f" % r))]
 		_set_text("%.0f кадр/с  (шлем %s)\nGPU %.1f мс %s%s" % [frames / t, hz, gpu / frames, budget, rates])
 		t = 0.0
 		frames = 0
