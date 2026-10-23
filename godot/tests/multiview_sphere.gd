@@ -27,6 +27,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "Native mobile"
 	main.show_check = false   # its balls and grids would cover the test balls
+	main.physics = false            # this test draws its own balls
 	root.add_child(main)
 
 

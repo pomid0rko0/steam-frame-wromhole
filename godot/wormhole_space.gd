@@ -149,10 +149,39 @@ func w(l: float) -> float:
 	return signf(l) * (h - fillet + fillet * sin(_theta(al)))
 
 
+## dw/dl (even in l); together with dr/dl it is the unit tangent of the profile curve.
+func dw(l: float) -> float:
+	var al := absf(l)
+	if al >= L:
+		return 0.0
+	if al <= Lc:
+		return 1.0
+	return cos(_theta(al))
+
+
 ## The point (l, n) as a point of R^4.
 func embed(l: float, n: Vector3) -> Vector4:
 	var p := r(l) * n
 	return Vector4(p.x, p.y, p.z, w(l))
+
+
+## A vector of R^4 projected onto the tangent space at (l, n), in the (U_l, u) representation.
+func project(l: float, n: Vector3, D: Vector4) -> Vector4:
+	var dx := Vector3(D.x, D.y, D.z)
+	var rad := dx.dot(n)
+	var u := dx - rad * n
+	return Vector4(dr(l) * rad + dw(l) * D.w, u.x, u.y, u.z)
+
+
+## Height above the floor, H = r(l) n_z: exactly the chart height z in both flat universes,
+## extended smoothly through the throat. Its gradient (r' n_z, e_z - n_z n) has length 1 on the floor.
+func height(l: float, n: Vector3) -> float:
+	return r(l) * n.z
+
+
+func height_grad(l: float, n: Vector3) -> Vector4:
+	var u := Vector3(0.0, 0.0, 1.0) - n.z * n
+	return Vector4(dr(l) * n.z, u.x, u.y, u.z)
 
 
 ## Chart side and chart position of a point in a flat region.
@@ -161,3 +190,22 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	if l < 0.0:
 		x.x = -x.x
 	return x
+
+
+## One RK4 step of free motion under the field g = -grav * grad H (geodesic + force).
+func dynamics_step(l: float, n: Vector3, U: Vector4, dt: float, grav: float) -> Array:
+	var f := func(ll: float, nn: Vector3, UU: Vector4) -> Array:
+		var rr := r(ll)
+		var k := dr(ll) / rr
+		var v := Vector3(UU.y, UU.z, UU.w)
+		var du := -k * UU.x * v - (v.dot(v) / rr) * nn
+		var a := Vector4(k * v.dot(v), du.x, du.y, du.z) - grav * height_grad(ll, nn)
+		return [UU.x, v / rr, a]
+	var k1: Array = f.call(l, n, U)
+	var k2: Array = f.call(l + 0.5 * dt * k1[0], n + 0.5 * dt * k1[1], U + 0.5 * dt * k1[2])
+	var k3: Array = f.call(l + 0.5 * dt * k2[0], n + 0.5 * dt * k2[1], U + 0.5 * dt * k2[2])
+	var k4: Array = f.call(l + dt * k3[0], n + dt * k3[1], U + dt * k3[2])
+	var nl: float = l + dt / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
+	var nn: Vector3 = (n + dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])).normalized()
+	var nU: Vector4 = U + dt / 6.0 * (k1[2] + 2.0 * k2[2] + 2.0 * k3[2] + k4[2])
+	return [nl, nn, tangent(nn, nU)]
