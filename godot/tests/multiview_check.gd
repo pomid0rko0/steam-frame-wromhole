@@ -5,7 +5,10 @@ extends SceneTree
 ## Comparing them shows whether green lands exactly on the ray-traced white lines and red balls.
 ##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
-## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture.
+## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture;
+## 3: as 1, then the left stick walks forward and right (keys W, D) and the right stick turns
+## 30 degrees right (key E): the overlay must follow the world. Run with --fixed-fps 60, so
+## every mode walks the same distance.
 
 var main: Node3D
 var hmd
@@ -55,6 +58,18 @@ func _process(_delta: float) -> bool:
 				grid.visible = false
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05)) * hmd.head
+	if case == 3:
+		match frames:
+			5:
+				_key(KEY_W, true)
+				_key(KEY_D, true)
+			15:
+				_key(KEY_W, false)
+				_key(KEY_D, false)
+			16:
+				_key(KEY_E, true)
+			18:
+				_key(KEY_E, false)
 	if frames == 24:
 		var rid: RID = main.xr_view.get_texture().get_rid()
 		for i in 2:
@@ -64,3 +79,11 @@ func _process(_delta: float) -> bool:
 		print("saved ", mode)
 		return true
 	return false
+
+
+func _key(code: Key, down: bool) -> void:
+	var ev := InputEventKey.new()
+	ev.keycode = code
+	ev.physical_keycode = code
+	ev.pressed = down
+	Input.parse_input_event(ev)
