@@ -1,0 +1,3 @@
+# Windows scripts: stored byte for byte (CRLF, and UTF-8 with BOM for PowerShell 5.1)
+*.bat -text
+*.ps1 -text
