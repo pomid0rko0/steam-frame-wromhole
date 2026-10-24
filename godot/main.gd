@@ -207,8 +207,8 @@ func _head_forward_xz() -> Vector2:
 	return v.normalized() if v.length() > 1e-4 else Vector2(0.0, -1.0)
 
 
-## Things Godot draws itself among the ray-traced ones, placed in chart A coordinates: the
-## frame rate panel, 1.5 m straight ahead of the start and above the wormhole, facing it.
+## The node for things Godot draws itself among the ray-traced ones, placed in chart A
+## coordinates (the stereo check), and the frame rate panel, which follows the head in the room.
 func _build_overlay() -> void:
 	overlay = Node3D.new()
 	origin.add_child(overlay)
@@ -216,9 +216,9 @@ func _build_overlay() -> void:
 	perf.name = "Perf"
 	perf.target = xr_view if in_xr else get_viewport()
 	perf.xr = xr as OpenXRInterface if in_xr else null
-	perf.transform = Transform3D(Basis(Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, 1.0), Vector3(1.0, 0.0, 0.0)),
-			Vector3(8.5, 0.0, 2.3))
-	overlay.add_child(perf)
+	perf.viewer = self
+	perf.head = camera
+	origin.add_child(perf)
 	_update_chart_map()
 
 

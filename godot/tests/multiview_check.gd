@@ -39,6 +39,7 @@ func _process(_delta: float) -> bool:
 		# then the head turns back to the start yaw: the view should face the throat
 		main.place(1.0, main.START_POS, main.START_FORWARD)
 	if frames == 4:
+		main.perf.visible = false        # it follows the head: in every view
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
 		match mode:
 			"ray":

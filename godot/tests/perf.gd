@@ -26,6 +26,7 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 2:
+		main.perf.visible = false        # the scene alone
 		for sc in [80, 70]:
 			if variant.ends_with("_scale%d" % sc):
 				root.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR

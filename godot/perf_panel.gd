@@ -1,5 +1,8 @@
 extends Label3D
-## The frame rate panel: text drawn by Godot itself, fixed in the world, on a plate.
+## The frame rate panel: text drawn by Godot itself on a plate. It hangs in the room 1.3 m in
+## front of the head and a little below the eyes, and follows: as the head walks, at once; as it
+## turns, only once it has turned well away, then smoothly. So it is there at the wormhole and
+## inside it, without being glued to the view.
 ##
 ## In the headset the plate is green while the display gets a new frame from us at (nearly)
 ## every refresh, red when it does not, grey while it is still measuring. The text gives the
@@ -39,11 +42,19 @@ const DEVFREQ := "/sys/class/devfreq"                             # the kernel's
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 const SETTINGS := "user://settings.cfg"
+const DIST := 1.3               # m in front of the head
+const DROP := 0.5               # m below the eyes
+const TURN := deg_to_rad(30.0)  # the head turned this far from the panel: it comes round
 const COLOR_OK := Color(0.05, 0.33, 0.12, 0.92)
 const COLOR_BAD := Color(0.45, 0.06, 0.05, 0.92)
 const COLOR_WAIT := Color(0.05, 0.06, 0.09, 0.9)
 
 var target: Viewport            # the viewport the scene is rendered into
+var viewer: Node                # main: where the feet are (foot_l, space.L), for the log
+var head: Node3D                # the XR camera, a sibling in the play space; null: stay put
+var yaw := 0.0                  # the panel's bearing from the head
+var turning := false
+var placed := false
 var xr: OpenXRInterface         # null on the desktop
 var api: OpenXRAPIExtension     # the frame timing OpenXR predicts
 var meter := RateMeter.new()
@@ -79,7 +90,7 @@ var plate_mat: StandardMaterial3D
 func _ready() -> void:
 	no_depth_test = true
 	render_priority = 20
-	pixel_size = 0.0014
+	pixel_size = 0.0012
 	font_size = 40
 	outline_size = 0
 	modulate = Color(1.0, 0.97, 0.88)
@@ -122,6 +133,7 @@ func find_app_setting() -> void:
 
 
 func _process(delta: float) -> void:
+	_follow(delta)
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
@@ -141,6 +153,25 @@ func _process(delta: float) -> void:
 		frames = 0
 		gpu = 0.0
 		gpu_max = 0.0
+
+
+func _follow(delta: float) -> void:
+	if head == null:
+		return
+	var h := head.transform
+	var f := -h.basis.z
+	var head_yaw := atan2(-f.x, -f.z) if Vector2(f.x, f.z).length() > 0.2 else yaw
+	var d := wrapf(head_yaw - yaw, -PI, PI)
+	if not placed:
+		yaw = head_yaw
+	elif turning or absf(d) > TURN:
+		turning = absf(d) > 0.05
+		yaw += d * minf(1.0, 5.0 * delta)
+	var want := h.origin + Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, -DIST) + Vector3(0.0, -DROP, 0.0)
+	position = want if not placed else position.lerp(want, minf(1.0, 10.0 * delta))
+	# text toward the head, tilted up to the eyes
+	basis = Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, -atan2(DROP, DIST))
+	placed = true
 
 
 ## A trigger press: pick the next refresh rate.
@@ -407,7 +438,12 @@ func _log() -> void:
 		gm = maxf(gm, s[3])
 		n += s[4]
 	var eye := xr.get_render_target_size()
-	print("refresh: display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
+	var where := ""
+	if viewer:
+		var l: float = viewer.foot_l
+		var edge: float = viewer.space.L
+		where = "feet l %.1f m (%s), " % [l, "world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone")]
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
 			% [rate, meter.paced_rate(), f, r, r - f, seconds.size(), g / n if n > 0 else 0.0, gm,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds)])
