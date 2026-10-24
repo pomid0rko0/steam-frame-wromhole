@@ -1,20 +1,26 @@
 extends Node3D
-## Real-time wormhole for VR: head tracking (physical walking), no stick locomotion, no objects
-## to play with; a panel shows the headset's refresh rate and whether frames keep up, and its
-## buttons, pressed by pointing a controller and pulling the trigger, set the refresh rate and
-## the render scale (perf_panel.gd). Every pixel is ray traced along a geodesic of
-## the wormhole space in the shader; this script tracks where the viewer is in that curved space.
+## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
+## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
+## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
+## pulling the trigger, set the refresh rate and the render scale (perf_panel.gd). Every pixel is
+## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
+## viewer is in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
-## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
-## parallel-transporting the play-space axes; the head sits head-height above the feet
-## along the floor normal. Each eye is derived in the shader from that view's own
-## matrices (see shaders/wormhole_view.gdshaderinc).
+## n.z = 0). Physical movement in the play space and stick locomotion move the feet along
+## floor geodesics, parallel-transporting the play-space axes; stick turns rotate those axes;
+## the head sits head-height above the feet along the floor normal. Each eye is derived in
+## the shader from that view's own matrices (see shaders/wormhole_view.gdshaderinc).
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
+const WALK_SPEED := 1.5             # metres per second at full stick
+const RUN_SPEED := 4.0
+const STICK_DEAD_ZONE := 0.15
+const SNAP_ANGLE := deg_to_rad(30.0)
+const SMOOTH_TURN_SPEED := deg_to_rad(90.0)   # per second at full stick
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const DESKTOP_HEAD_HEIGHT := 1.6
@@ -47,10 +53,17 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
-var hands: Array[XRController3D] = []
+var hands: Array[XRController3D] = []   # left, right (XR only)
+var left_hand: XRController3D
+var right_hand: XRController3D
+var button_was := {}
+var smooth_turn := true         # false: 30-degree snaps; a right stick click switches
+var snap_armed := true          # the right stick went back to the middle since the last turn
+var logged_profiles := {}
+var input_log_time := 0.0
 var perf: Label3D               # the frame rate panel
 var bench: Node                 # the speed check, started from the panel (bench.gd)
-var hold := false               # the feet stay where they are while the head moves (the speed check)
+var hold := false               # the speed check: the feet stay while the head moves, sticks do nothing
 var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
 var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
@@ -63,7 +76,13 @@ func _ready() -> void:
 		in_xr = true
 		var oxr := xr as OpenXRInterface
 		if oxr:
-			oxr.pose_recentered.connect(func() -> void: recentered = true)
+			# methods, not lambdas: a lambda left connected to the interface corrupted memory at
+			# exit (perf_panel.gd)
+			oxr.pose_recentered.connect(_on_recentered)
+			# for godot.log: input reaches the app only while the session is focused (an open
+			# SteamVR dashboard takes the focus away)
+			oxr.session_visible.connect(_on_session_visible)
+			oxr.session_focussed.connect(_on_session_focussed)
 		await_pose = true
 		# Render XR from a SubViewport. With XR on the root viewport Godot also mirrors the left
 		# eye into the desktop window, and SteamVR may show that window on a virtual screen
@@ -87,6 +106,8 @@ func _ready() -> void:
 			c.pose = &"aim"            # the panel's buttons are pointed at
 			origin.add_child(c)
 			hands.append(c)
+		left_hand = hands[0]
+		right_hand = hands[1]
 
 	material = ShaderMaterial.new()
 	material.shader = SHADER_PLAIN
@@ -187,20 +208,38 @@ func _unhandled_input(event: InputEvent) -> void:
 		camera.basis = Basis.from_euler(Vector3(desktop_pitch, desktop_yaw, 0.0))
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
 		place(1.0, START_POS, START_FORWARD)
+	if in_xr:
+		_log_input(delta)
+	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
+	var dt := minf(delta, 0.1)
+	var moved := false if hold else _handle_turn_and_reset(dt)
+
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
 	if recentered:
 		prev_head = hz
 		recentered = false
-		_update_chart_map()
-	if not hold:
-		_walk(hz - prev_head)
+		moved = true
+	var step := hz - prev_head
 	prev_head = hz
+	var stick := Vector2.ZERO if hold else _move_input()
+	if stick.length() > STICK_DEAD_ZONE:
+		# along the stick, relative to where the head looks
+		var fwd := _head_forward_xz()
+		var rgt := Vector2(-fwd.y, fwd.x)
+		var speed := RUN_SPEED if _run_pressed() else WALK_SPEED
+		step += (stick.y * fwd + stick.x * rgt) * speed * dt
+		moved = true
+	if not hold:
+		_walk(step)
+	if moved:
+		# the controls moved the world against the room; physical walking does not
+		_update_chart_map()
 	_point_panel()
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
@@ -215,6 +254,91 @@ func _process(_delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hf))
 	material.set_shader_parameter("head_pos", head.origin)
+
+
+func _on_recentered() -> void:
+	recentered = true
+
+
+func _on_session_visible() -> void:
+	print("XR session visible (no input focus: dashboard open?)")
+
+
+func _on_session_focussed() -> void:
+	print("XR session focused: controller input active")
+
+
+## Writes the controllers' interaction profiles and stick values to godot.log.
+func _log_input(delta: float) -> void:
+	for hand: XRController3D in [left_hand, right_hand]:
+		var tracker := XRServer.get_tracker(hand.tracker) as XRControllerTracker
+		var profile: String = tracker.profile if tracker else "(no tracker)"
+		if logged_profiles.get(hand.tracker, "") != profile:
+			logged_profiles[hand.tracker] = profile
+			print(hand.tracker, " interaction profile: ", profile)
+	input_log_time -= delta
+	var ls := left_hand.get_vector2(&"primary")
+	var rs := right_hand.get_vector2(&"primary")
+	if input_log_time <= 0.0 and (ls.length() > 0.2 or rs.length() > 0.2):
+		input_log_time = 2.0
+		print("sticks left ", ls, " right ", rs)
+
+
+func _pressed_once(key: String, down: bool) -> bool:
+	var was: bool = button_was.get(key, false)
+	button_was[key] = down
+	return down and not was
+
+
+## Left stick / WASD: x right, y forward.
+func _move_input() -> Vector2:
+	var v := Vector2.ZERO
+	if in_xr:
+		v = left_hand.get_vector2(&"primary")
+	v.x += float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A))
+	v.y += float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S))
+	return v.limit_length(1.0)
+
+
+## Left trigger / Shift. Not while the left controller points at the panel: there the trigger
+## presses the panel's buttons.
+func _run_pressed() -> bool:
+	if Input.is_key_pressed(KEY_SHIFT):
+		return true
+	return in_xr and left_hand.get_float(&"trigger") > 0.5 and not (perf and perf.on_plate[0])
+
+
+## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
+## in 30-degree snaps; a right stick click (Tab) switches between the two. Right A (R): back to
+## the start. True if any of it moved the viewer against the room.
+func _handle_turn_and_reset(delta: float) -> bool:
+	var turn := 0.0
+	var mode_down := Input.is_key_pressed(KEY_TAB)
+	if in_xr:
+		turn = right_hand.get_vector2(&"primary").x
+		mode_down = mode_down or right_hand.is_button_pressed(&"primary_click")
+	turn = clampf(turn + float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)), -1.0, 1.0)
+	if _pressed_once("turn_mode", mode_down):
+		smooth_turn = not smooth_turn
+		print("right stick turns ", "smoothly" if smooth_turn else "in 30-degree snaps")
+	var moved := false
+	if smooth_turn:
+		if absf(turn) > STICK_DEAD_ZONE:
+			# from zero at the dead zone's edge to full speed at full stick
+			var amount := (absf(turn) - STICK_DEAD_ZONE) / (1.0 - STICK_DEAD_ZONE)
+			_rotate_frame(signf(turn) * amount * SMOOTH_TURN_SPEED * delta)
+			moved = true
+		# a switch to snaps while the stick is out waits for it to come back first
+		snap_armed = absf(turn) < 0.3
+	elif absf(turn) > 0.7 and snap_armed:
+		_rotate_frame(signf(turn) * SNAP_ANGLE)
+		snap_armed = false
+		moved = true
+	elif absf(turn) < 0.3:
+		snap_armed = true
+	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))):
+		place(1.0, START_POS, START_FORWARD)    # also redoes the chart -> play map
+	return moved
 
 
 ## Each controller points at the panel; its trigger presses the button it points at.
@@ -258,7 +382,8 @@ func _rotate_frame(angle: float) -> void:
 	var s := sin(angle)
 	var fx: Vector4 = frame[0]
 	var fz: Vector4 = frame[2]
-	frame = [c * fx + s * fz, frame[1], c * fz - s * fx]
+	# a smooth turn rotates a little every frame: keep round-off from adding up
+	frame = WormholeSpace.orthonormalize([c * fx + s * fz, frame[1], c * fz - s * fx])
 
 
 func _head_forward_xz() -> Vector2:

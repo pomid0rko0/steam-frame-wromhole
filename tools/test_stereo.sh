@@ -29,7 +29,11 @@ render() {   # a Godot test script, in the background
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
 	local i=$n
 	mkdir -p "$LOGS/data$i"
-	XDG_DATA_HOME=$LOGS/data$i xvfb-run -n $((90 + i)) -s "-screen 0 1280x720x24" \
+	# its own X display; one some other X server holds (a stray Xvfb left from an earlier run
+	# did) would fail this render: then 1000 further on, where no other render of this run is
+	local d=$((90 + i))
+	while [ -e /tmp/.X$d-lock ] || [ -e /tmp/.X11-unix/X$d ]; do d=$((d + 1000)); done
+	XDG_DATA_HOME=$LOGS/data$i xvfb-run -n $d -s "-screen 0 1280x720x24" \
 		"$GODOT" --path . --rendering-method mobile "$@" > "$LOGS/$i.log" 2>&1 &
 }
 verdict() {   # name, comparison command...
@@ -44,12 +48,13 @@ for m in ray mesh; do render --resolution 1280x720 -s res://tests/multiview_sphe
 for c in 0 1; do
 	for m in ray mesh; do render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c; done
 done
-for c in 0 1 2; do
-	for m in ray floor domain balls both; do render --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
+# case 3 walks and turns with the sticks' keys: --fixed-fps 60, so every mode moves the same
+for c in 0 1 2 3; do
+	for m in ray floor domain balls both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
 # the same floor lines with the shader the normal scene runs: the one without movable balls
-for c in 0 1 2; do
-	for m in ray floor domain; do render --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
+for c in 0 1 2 3; do
+	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
 wait
 # any script or shader error fails the suite
@@ -64,10 +69,10 @@ verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_bal
 for c in 0 1; do
 	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
 done
-for c in 0 1 2; do
+for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
 done
-for c in 0 1 2; do
+for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done
 
