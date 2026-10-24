@@ -133,7 +133,8 @@ def render(ctx, state, size, tan, debug):
                      wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES),
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
-        prog[k].value = v
+        if k in prog:                 # a core without cubes has no cube uniforms
+            prog[k].value = v
     tex = ctx.texture((size, size), 4, dtype='f4' if debug else 'f1')
     fbo = ctx.framebuffer([tex])
     fbo.use(); fbo.clear()
@@ -347,12 +348,13 @@ if __name__ == '__main__':
         F = np.asarray(fwd, float) / np.linalg.norm(fwd)
         up = np.array([0, 0, 1.0]) - F * F[2]; up /= np.linalg.norm(up)
         return (l0, n0, from3(F), from3(np.cross(F, up)), from3(up))
-    # close to the cubes of the throat and of the fillet, so that they cover many pixels
-    if CUBES and W.Lc > 0:
+    # close to the cubes (and balls) of the throat and of the fillet, so that they cover many pixels
+    if W.Lc > 0:
         cams['at_throat_cube'] = facing(0.4 * W.Lc + 1.4, [1.0, -0.3, 0.3], [-1.0, 0.0, -0.25])
-    if CUBES:
-        cams['at_fillet_cube'] = facing(W.L - 0.05, [1.0, 0.4, 0.35], [-1.0, 0.0, -0.3])
+    cams['at_fillet_cube'] = facing(W.L - 0.05, [1.0, 0.4, 0.35], [-1.0, 0.0, -0.3])
     tag = '_'.join(f'{v:g}' for v in PROF)
+    if os.environ.get('WH_CAMS'):             # e.g. WH_CAMS=at_throat_cube,at_fillet_cube
+        cams = {k: v for k, v in cams.items() if k in os.environ['WH_CAMS'].split(',')}
 
     os.makedirs(os.path.join(HERE, 'out'), exist_ok=True)
     for name, st in cams.items():
