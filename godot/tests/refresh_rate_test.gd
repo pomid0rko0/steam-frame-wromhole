@@ -101,5 +101,24 @@ func _initialize() -> void:
 	check("verdict: 9 missed of 180", PerfPanel.keeps_up([[81, 90], [90, 90]]), false)
 	check("verdict: half rate", PerfPanel.keeps_up([[36, 72], [36, 72]]), false)
 
+	# the GPU's clock as the kernel shows it: /sys/class/devfreq/<address>.gpu, a symlink
+	var fake := ProjectSettings.globalize_path("user://fake_devfreq")
+	OS.execute("rm", ["-rf", fake])
+	for d in ["devices/3d00000.gpu", "devices/soc:qcom,cpu-bw", "class"]:
+		DirAccess.make_dir_recursive_absolute(fake + "/" + d)
+	for f in [["cur_freq", "680000000"], ["governor", "msm-adreno-tz"], ["min_freq", "220000000"],
+			["max_freq", "1100000000"], ["available_frequencies", "220000000 680000000 1100000000"]]:
+		var w := FileAccess.open(fake + "/devices/3d00000.gpu/" + f[0], FileAccess.WRITE)
+		w.store_string(f[1] + "\n")
+		w.close()
+	OS.execute("ln", ["-s", fake + "/devices/soc:qcom,cpu-bw", fake + "/class/soc:qcom,cpu-bw"])
+	OS.execute("ln", ["-s", fake + "/devices/3d00000.gpu", fake + "/class/3d00000.gpu"])
+	var panel = PerfPanel.new()
+	panel.devfreq = fake + "/class"
+	panel._find_gpu_clock()
+	check("GPU clock found among devfreq symlinks", panel.gpu_clock, fake + "/class/3d00000.gpu")
+	check("GPU clock read in MHz", panel._gpu_mhz(), 680)
+	panel.free()
+
 	print("PASS" if ok else "FAIL")
 	quit(0 if ok else 1)

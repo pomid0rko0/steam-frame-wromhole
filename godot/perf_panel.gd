@@ -16,7 +16,12 @@ extends Label3D
 ## the press sets that, and the panel says whether the display followed or asks for a restart.
 ## Otherwise the press asks the runtime directly and the panel says whether the display followed.
 ##
-## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards.
+## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards,
+## with the GPU's clock where the kernel shows it: a GPU that lowers its clock under a light load
+## makes the same frame take longer.
+##
+## Once the session runs, the panel asks the runtime to keep the GPU and CPU at a sustained high
+## performance level (XR_EXT_performance_settings), if the runtime offers that.
 
 const RateMeter := preload("res://rate_meter.gd")
 const JUDGE_SECONDS := 5        # the colour judges up to the last 5 seconds
@@ -29,6 +34,7 @@ const FRAME_RATES := [72.0, 80.0, 90.0, 96.0, 108.0, 120.0, 144.0]   # SteamVR's
 const VRCMD := "/opt/steamvr/bin/linuxarm64/vrcmd"
 const VRSETTINGS := "/.config/openvr/config/steamvr.vrsettings"     # under $HOME
 const SETTING := "preferredRefreshRate"
+const DEVFREQ := "/sys/class/devfreq"                             # the kernel's clock-scaled devices
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
 const COLOR_OK := Color(0.05, 0.33, 0.12, 0.92)
 const COLOR_BAD := Color(0.45, 0.06, 0.05, 0.92)
@@ -58,6 +64,11 @@ var note := ""                  # what came of the last press
 var note_failed := false
 var note_left := 0
 var logged := 0
+var devfreq := DEVFREQ
+var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
+var clock_min := 0              # MHz, over the log window
+var clock_max := 0
+var perf_asked := false
 var plate: MeshInstance3D
 var plate_mat: StandardMaterial3D
 
@@ -85,6 +96,8 @@ func _ready() -> void:
 		api = OpenXRAPIExtension.new()
 		# a method, not a lambda: a lambda left connected to the interface corrupted memory at exit
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
+		xr.gpu_level_changed.connect(_on_gpu_level)
+		_find_gpu_clock()
 		find_app_setting()
 	_set_text("...")
 
@@ -105,6 +118,8 @@ func find_app_setting() -> void:
 
 func _process(delta: float) -> void:
 	if api and api.is_running():
+		if not perf_asked:
+			_ask_performance()
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
 		meter.add(now, api.get_next_frame_time() - now, reported)
@@ -251,6 +266,46 @@ func _on_runtime_rate(r: float) -> void:
 	print("refresh: runtime event, rate %.1f Hz" % r)
 
 
+func _on_gpu_level(sub_domain: int, from_level: int, to_level: int) -> void:
+	print("refresh: runtime event, GPU %s level %d -> %d" % [sub_domain, from_level, to_level])
+
+
+## Keep the GPU and CPU clocks up, if the runtime takes such a request.
+func _ask_performance() -> void:
+	perf_asked = true
+	if api.get_instance_proc_addr("xrPerfSettingsSetPerformanceLevelEXT") == 0:
+		print("refresh: the runtime does not offer XR_EXT_performance_settings")
+		return
+	print("refresh: XR_EXT_performance_settings: asking for sustained high GPU and CPU")
+	xr.set_gpu_level(OpenXRInterface.PERF_SETTINGS_LEVEL_SUSTAINED_HIGH)
+	xr.set_cpu_level(OpenXRInterface.PERF_SETTINGS_LEVEL_SUSTAINED_HIGH)
+
+
+## The GPU's clock-scaling device: its name has "gpu" in it (on msm: <address>.gpu).
+func _find_gpu_clock() -> void:
+	if not DirAccess.dir_exists_absolute(devfreq):
+		print("refresh: no %s, no GPU clock" % devfreq)
+		return
+	var names := DirAccess.get_directories_at(devfreq) + DirAccess.get_files_at(devfreq)
+	for n in names:
+		var dir := devfreq + "/" + n
+		if n.to_lower().contains("gpu") and FileAccess.file_exists(dir + "/cur_freq"):
+			gpu_clock = dir
+			var read := func(f: String) -> String:
+				return FileAccess.get_file_as_string(dir + "/" + f).strip_edges()
+			print("refresh: GPU clock %s: governor %s, %s..%s Hz, steps %s"
+					% [dir, read.call("governor"), read.call("min_freq"), read.call("max_freq"),
+					read.call("available_frequencies")])
+			return
+	print("refresh: no GPU among %s: %s" % [devfreq, names])
+
+
+func _gpu_mhz() -> int:
+	if gpu_clock == "":
+		return 0
+	return FileAccess.get_file_as_string(gpu_clock + "/cur_freq").strip_edges().to_int() / 1_000_000
+
+
 ## Once a second: close the second's counts, recolour, retext, and now and then log.
 func _second() -> void:
 	if xr:
@@ -273,6 +328,10 @@ func _second() -> void:
 		var ok: Variant = keeps_up(seconds)
 		plate_mat.albedo_color = COLOR_WAIT if ok == null else (COLOR_OK if ok else COLOR_BAD)
 	_set_text(_compose())
+	if gpu_clock != "":
+		var mhz := _gpu_mhz()
+		clock_min = mhz if clock_min == 0 else mini(clock_min, mhz)
+		clock_max = maxi(clock_max, mhz)
 	logged += 1
 	if xr and logged >= LOG_EVERY:
 		logged = 0
@@ -332,10 +391,12 @@ func _log() -> void:
 		gm = maxf(gm, s[3])
 		n += s[4]
 	var eye := xr.get_render_target_size()
-	print("refresh: display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, runtime says %.1f of %s, stored %.0f, eye %dx%d, keeps up %s"
+	print("refresh: display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d, keeps up %s"
 			% [rate, meter.paced_rate(), f, r, r - f, seconds.size(), g / n if n > 0 else 0.0, gm,
-			1000.0 / rate if rate > 0.0 else 0.0, reported,
+			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), keeps_up(seconds)])
+	clock_min = 0
+	clock_max = 0
 
 
 func _set_text(s: String) -> void:
