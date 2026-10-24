@@ -168,18 +168,6 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     return f;
 }
 
-// The path length polynomial again, for the floor's point: computed after the Newton solve
-// instead of kept through it (written differently from wh_fil, so that the compiler does not
-// share the two and keep the first alive): fewer registers during the solve.
-vec4 wh_filG(WhFil f, float b) {
-    float R = wh_fillet;
-    vec4 r = wh_Rout() - f.span * (1.0 - WH_TAU);
-    vec4 G = (2.0 * R) * r * inversesqrt((2.0 * R + wh_rho0 - r) * (r + b));
-    if (f.reg >= 1) G *= 1.41421356 * inversesqrt(2.0 * WH_TAU + 2.0 * f.mx);
-    if (f.reg == 2) G *= 1.41421356 * inversesqrt(2.0 * WH_TAU + 2.0 * f.mn);
-    return wh_coef(G);
-}
-
 // (psi, path length) from the fillet's inner end to z
 vec2 wh_filAt(WhFil f, float z, out float t) {
     vec4 m;
@@ -291,7 +279,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             float t; vec4 m;
             wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
             hitL = wh_filLW(f, t, side).x;
-            arcEnd = a0 + sa * dot(wh_filG(f, b), m);
+            arcEnd = a0 + sa * dot(f.g, m);
         }
     } else {
         // leaves the shell at its edge, on side sideC
@@ -493,83 +481,66 @@ struct WhHit {
     vec3 col;
 };
 
-// entry of x + t d (t > 1e-4) into a sphere (xyz centre, w radius), or 1e9
-float wh_sphereT(vec3 x, vec3 d, vec4 s) {
+void wh_hitSphere(vec3 x, vec3 d, vec4 s, vec3 col, inout WhHit h) {
     vec3 oc = x - s.xyz;
     float bq = dot(oc, d);
-    float disc = bq * bq - dot(oc, oc) + s.w * s.w;
-    float t = -bq - sqrt(max(disc, 0.0));
-    return disc >= 0.0 && t > 1e-4 ? t : 1e9;
+    float cq = dot(oc, oc) - s.w * s.w;
+    float disc = bq * bq - cq;
+    if (disc < 0.0) return;
+    float t = -bq - sqrt(disc);
+    if (t > 1e-4 && t < h.t) { h.t = t; h.kind = 2; h.nrm = (x + t * d - s.xyz) / s.w; h.col = col; }
 }
 
-// a ray x + t d that misses the ball (centre c, radius^2 r2) or has it behind
-bool wh_missesBall(vec3 x, vec3 d, vec3 c, float r2) {
-    vec3 oc = x - c;
-    float bq = dot(oc, d);
-    float cq = dot(oc, oc) - r2;
-    return cq > 0.0 && (bq > 0.0 || bq * bq < cq);
-}
-
-// a pillar (xy, radius, height): entry into its side, or into its flat top (top), or 1e9
-float wh_pillarT(vec3 x, vec3 d, vec4 p, out bool top) {
-    top = false;
-    if (wh_missesBall(x, d, vec3(p.xy, 0.5 * p.w), p.z * p.z + 0.25 * p.w * p.w)) return 1e9;
+void wh_hitPillar(vec3 x, vec3 d, vec4 p, vec3 col, inout WhHit h) {
     vec2 oc = x.xy - p.xy;
     float A = dot(d.xy, d.xy);
-    if (A < 1e-9) return 1e9;
+    if (A < 1e-9) return;
     float B = dot(oc, d.xy);
-    float disc = B * B - A * (dot(oc, oc) - p.z * p.z);
-    if (disc < 0.0) return 1e9;
+    float C = dot(oc, oc) - p.z * p.z;
+    float disc = B * B - A * C;
+    if (disc < 0.0) return;
     float t = (-B - sqrt(disc)) / A;
     float zz = x.z + t * d.z;
-    float ts = t > 1e-4 && zz > 0.0 && zz < p.w ? t : 1e9;
-    float tt = (p.w - x.z) / d.z;          // the top, from above
-    vec2 q = x.xy + tt * d.xy - p.xy;
-    if (d.z < 0.0 && tt > 1e-4 && tt < ts && dot(q, q) < p.z * p.z) {
-        top = true;
-        return tt;
+    if (t > 1e-4 && t < h.t && zz > 0.0 && zz < p.w) {
+        h.t = t; h.kind = 2; h.nrm = vec3((x.xy + t * d.xy - p.xy) / p.z, 0.0); h.col = col;
     }
-    return ts;
+    if (d.z < 0.0) {   // flat top
+        float tt = (p.w - x.z) / d.z;
+        vec2 q = x.xy + tt * d.xy - p.xy;
+        if (tt > 1e-4 && tt < h.t && dot(q, q) < p.z * p.z) { h.t = tt; h.kind = 2; h.nrm = vec3(0.0, 0.0, 1.0); h.col = col; }
+    }
 }
 
-// a box (centre c, half size hs): entry distance, or 1e9; tn: the slabs' entry distances
-float wh_boxT(vec3 x, vec3 d, vec3 c, float hs, out vec3 tn) {
+void wh_hitBox(vec3 x, vec3 d, vec3 c, vec3 hs, vec3 col, inout WhHit h) {
     vec3 inv = 1.0 / d;
     vec3 t0 = (c - hs - x) * inv;
     vec3 t1 = (c + hs - x) * inv;
-    tn = min(t0, t1);
+    vec3 tn = min(t0, t1);
     vec3 tf = max(t0, t1);
     float tin = max(max(tn.x, tn.y), tn.z);
     float tout = min(min(tf.x, tf.y), tf.z);
-    return tin > tout || tin < 1e-4 ? 1e9 : tin;
+    if (tin > tout || tin < 1e-4 || tin >= h.t) return;
+    h.t = tin; h.kind = 2; h.col = col;
+    h.nrm = tin == tn.x ? vec3(-sign(d.x), 0.0, 0.0) : (tin == tn.y ? vec3(0.0, -sign(d.y), 0.0) : vec3(0.0, 0.0, -sign(d.z)));
 }
 
 WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
-    float tb = 1e9;
-    int what = 0;      // 0 nothing, 1 floor, 2-4 sphere, 5-8 pillar side, 9-12 pillar top,
-                       // 13-16 box, 20 + i ball i, 40 the shell
+    WhHit h;
+    h.t = 1e9; h.kind = 0; h.idx = -1; h.nrm = vec3(0.0); h.col = vec3(0.0);
     if (d.z < 0.0) {
         float t = -x.z / d.z;
-        if (t > 0.0) { tb = t; what = 1; }
-    }
-    for (int i = 0; i < 3; i++) {
-        float t = wh_sphereT(x, d, side > 0.0 ? wh_sph[i] : wh_sph[3 + i]);
-        if (t < tb) { tb = t; what = 2 + i; }
+        if (t > 0.0) { h.t = t; h.kind = 1; h.nrm = vec3(0.0, 0.0, 1.0); }
     }
     if (side > 0.0) {
-        for (int i = 0; i < 4; i++) {
-            bool top;
-            float t = wh_pillarT(x, d, wh_pil[i], top);
-            if (t < tb) { tb = t; what = (top ? 9 : 5) + i; }
-        }
+        wh_hitSphere(x, d, wh_sph[0], vec3(0.80, 0.15, 0.10), h);
+        wh_hitSphere(x, d, wh_sph[1], vec3(0.95, 0.75, 0.15), h);
+        wh_hitSphere(x, d, wh_sph[2], vec3(0.75, 0.75, 0.78), h);
+        for (int i = 0; i < 4; i++) wh_hitPillar(x, d, wh_pil[i], vec3(0.85, 0.80, 0.70), h);
     } else {
-        for (int i = 0; i < 4; i++) {
-            vec4 bx = wh_box[i];
-            if (wh_missesBall(x, d, bx.xyz, 3.0 * bx.w * bx.w)) continue;
-            vec3 tn;
-            float t = wh_boxT(x, d, bx.xyz, bx.w, tn);
-            if (t < tb) { tb = t; what = 13 + i; }
-        }
+        wh_hitSphere(x, d, wh_sph[3], vec3(0.75, 0.15, 0.70), h);
+        wh_hitSphere(x, d, wh_sph[4], vec3(0.15, 0.75, 0.30), h);
+        wh_hitSphere(x, d, wh_sph[5], vec3(0.20, 0.35, 0.85), h);
+        for (int i = 0; i < 4; i++) wh_hitBox(x, d, wh_box[i].xyz, vec3(wh_box[i].w), vec3(0.90, 0.90, 0.95), h);
     }
 #ifndef WH_NO_BALLS
     // balls: the chord ball cut by this universe's sheet w = side*h is an ordinary sphere;
@@ -585,7 +556,7 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float disc = bq * bq - cq;
         if (cq <= 0.0 || disc < 0.0) continue;
         float t = -bq - sqrt(disc);
-        if (t > 0.0 && t < tb) { tb = t; what = 20 + i; }
+        if (t > 0.0 && t < h.t) { h.t = t; h.kind = 4; h.idx = i; h.nrm = (oc + t * d) * inversesqrt(rad2); h.col = wh_ballCol[i].rgb; }
     }
 #endif
     if (withShell) {
@@ -595,42 +566,9 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float disc = bq * bq - cq;
         if (disc > 0.0) {
             float t = -bq - sqrt(disc);
-            if (t > 0.0 && t < tb) { tb = t; what = 40; }
+            if (t > 0.0 && t < h.t) { h.t = t; h.kind = 3; }
         }
     }
-    // the nearest one: its normal and colour
-    WhHit h;
-    h.t = tb;
-    h.kind = what == 0 ? 0 : (what == 1 ? 1 : (what == 40 ? 3 : (what >= 20 ? 4 : 2)));
-    h.idx = what >= 20 && what < 40 ? what - 20 : -1;
-    h.nrm = vec3(0.0, 0.0, 1.0);
-    h.col = vec3(0.0);
-    vec3 p = x + tb * d;
-    if (what >= 2 && what <= 4) {
-        int i = what - 2;
-        vec4 sp = side > 0.0 ? wh_sph[i] : wh_sph[3 + i];
-        h.nrm = (p - sp.xyz) / sp.w;
-        h.col = side > 0.0 ? (i == 0 ? vec3(0.80, 0.15, 0.10) : (i == 1 ? vec3(0.95, 0.75, 0.15) : vec3(0.75, 0.75, 0.78)))
-                           : (i == 0 ? vec3(0.75, 0.15, 0.70) : (i == 1 ? vec3(0.15, 0.75, 0.30) : vec3(0.20, 0.35, 0.85)));
-    } else if (what >= 5 && what <= 12) {
-        vec4 pp = wh_pil[(what - 5) % 4];
-        if (what <= 8) h.nrm = vec3((p.xy - pp.xy) / pp.z, 0.0);
-        h.col = vec3(0.85, 0.80, 0.70);
-    } else if (what >= 13 && what <= 16) {
-        vec4 bx = wh_box[what - 13];
-        vec3 tn;
-        float tin = wh_boxT(x, d, bx.xyz, bx.w, tn);
-        h.nrm = tin == tn.x ? vec3(-sign(d.x), 0.0, 0.0) : (tin == tn.y ? vec3(0.0, -sign(d.y), 0.0) : vec3(0.0, 0.0, -sign(d.z)));
-        h.col = vec3(0.90, 0.90, 0.95);
-    }
-#ifndef WH_NO_BALLS
-    else if (h.kind == 4) {
-        int i = h.idx;
-        float dw = wh_ball[i].w - sheet;
-        h.nrm = (p - wh_M(side, wh_ball[i].xyz)) * inversesqrt(wh_ballCol[i].w * wh_ballCol[i].w - dw * dw);
-        h.col = wh_ballCol[i].rgb;
-    }
-#endif
     return h;
 }
 

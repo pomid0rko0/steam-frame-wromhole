@@ -29,8 +29,9 @@ extends Label3D
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. Kept in user://settings.cfg.
 ##
-## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards,
-## with the GPU's clock where the kernel shows it (a GPU that lowers its clock makes the same
+## Every second a line starting with "refresh:" goes to the log, for checking afterwards, with
+## where one stands and looks and the GPU's clock where the kernel shows it, and a line for every
+## frame that came a refresh late, with where and what the GPU and the CPU took for it (a GPU that lowers its clock makes the same
 ## frame take longer; on the Frame it stayed at its top clock while frames were too slow).
 
 const RateMeter := preload("res://rate_meter.gd")
@@ -38,7 +39,8 @@ const JUDGE_SECONDS := 5        # the colour judges up to the last 5 seconds
 const MIN_SECONDS := 2          # at a new rate, measure this long before judging
 const MISSED_OK := 0.01         # refreshes without a new frame that still count as keeping up
 const REQUEST_WAIT := 3.0       # seconds the headset gets to follow a request
-const LOG_EVERY := 5            # seconds between log lines
+const LOG_EVERY := 1            # seconds between log lines
+const LATE_LINES := 30          # late frames logged one by one per second, at most
 const NOTE_SECONDS := 8         # how long the answer to a press stays on the panel
 const FRAME_RATES := [72.0, 80.0, 90.0, 96.0, 108.0, 120.0, 144.0]   # SteamVR's per-app choices on the Frame
 const VRCMD := "/opt/steamvr/bin/linuxarm64/vrcmd"
@@ -95,6 +97,7 @@ var note := ""                  # what came of the last press
 var note_failed := false
 var note_left := 0
 var logged := 0
+var late_lines := 0             # late frames logged this second
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_min := 0              # MHz, over the log window
@@ -328,7 +331,20 @@ func _process(delta: float) -> void:
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
-		meter.add(now, api.get_next_frame_time() - now, reported)
+		var period := api.get_next_frame_time() - now
+		var missed_before := meter.missed()
+		meter.add(now, period, reported)
+		# every late frame gets a line: where, and what the GPU and the CPU took for it
+		if meter.missed() > missed_before and late_lines < LATE_LINES and not (viewer and viewer.get("bench") and viewer.bench.running):
+			late_lines += 1
+			var look: Vector2 = viewer.look_angles() if viewer else Vector2.ZERO
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process"
+					% [meter.missed() - missed_before, viewer.foot_l if viewer else 0.0, look.x, look.y,
+					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
+					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
+		if viewer and viewer.get("bench"):
+			viewer.bench.frame_timing(now, period, reported)
 	t += delta
 	frames += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
@@ -543,6 +559,7 @@ func _second() -> void:
 		if seconds.size() > JUDGE_SECONDS:
 			seconds.pop_front()
 	meter.reset_window()
+	late_lines = 0
 	note_left -= 1
 	if note_left <= 0:
 		note = ""
@@ -595,27 +612,22 @@ func _compose() -> String:
 	return joined
 
 
-## The last few seconds at the current rate, in one line of the log.
+## The last second, in one line of the log: where the feet are and where the head looks, the
+## frames and refreshes, the GPU time, and the panel's verdict over the last few seconds.
 func _log() -> void:
-	var f := 0
-	var r := 0
-	var n := 0
-	var g := 0.0
-	var gm := 0.0
-	for s in seconds:
-		f += s[0]
-		r += s[1]
-		g += s[2]
-		gm = maxf(gm, s[3])
-		n += s[4]
+	if seconds.is_empty():
+		return
+	var s: Array = seconds.back()
 	var eye := xr.get_render_target_size()
 	var where := ""
 	if viewer:
 		var l: float = viewer.foot_l
 		var edge: float = viewer.space.L
-		where = "feet l %.1f m (%s), " % [l, "world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone")]
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
-			% [rate, meter.paced_rate(), f, r, r - f, seconds.size(), g / n if n > 0 else 0.0, gm,
+		var look: Vector2 = viewer.look_angles()
+		where = "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
+				"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
+			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds)])
 	clock_min = 0

@@ -87,13 +87,17 @@ draws next to ray-traced ones, check they line up the same way.
 - **Stereo:** `tools/test_stereo.sh` (~15 min).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
-- **Comparing ray tracers in the headset:** the panel's lowest button runs `godot/bench.gd`: the
-  viewer is put at five fixed places on the axis, each timed on the GPU at 72 Hz and 100%, and
-  the log gets `bench:` lines. `tools/ab_shaders.sh <commit or dir>...` before the export puts other
-  ray tracers in the build (`godot/shaders/ab/`, not in git); each place then times all of them in
-  a palindrome order, and the panel compares the build's own with the first. Frame times from
-  walking around do not compare between builds: where one looks changes them several times over.
-  Diagnostic variants (one colour: Godot's own cost; straight rays: the flat part) split a frame.
+- **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
+  build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
+  cost depends only on the pose (l, yaw from the throat, pitch, roll), so it goes through poses:
+  (1) at 72 Hz, nine fixed poses, each timing every ray tracer in the build (`godot/shaders/ab/`,
+  not in git: earlier commits, directories, or cost checks empty/flat/noshade/noderiv/nogrid/
+  nosky made from the tree) in a palindrome order, `bench:` lines; (2) at 120 Hz, this build's
+  ray tracer on a tour (view sweeps at ten l, walks through the throat, yaw/pitch/roll on the
+  spot), a `tf` line per frame (time, pose, refreshes taken, GPU and CPU ms) and a `tour:` line
+  per second. The panel ends with whether 120 Hz held and the comparison. Frame times from
+  walking around do not compare between builds: where one looks changes them several times.
+  The panel also logs a `refresh:` line every second (with where one looks) and one per late frame.
 - **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock) and `tools/test_openxr.sh` (the panel and its buttons); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails).

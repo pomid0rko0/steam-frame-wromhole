@@ -3,7 +3,8 @@
 # in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
 # draws at the same place. Run this before handing anyone a headset build: broken stereo
 # physically hurts in a headset.
-#   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images)
+#   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images,
+#                                    JOBS=n renders at once)
 # Exit status 0 only if every check passes.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,11 +18,19 @@ failed=0
 # a fresh clone has no .godot/ yet: import once so Godot knows the project's script classes
 [ -d .godot ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
 
-run() {   # a Godot test script; any script or shader error fails the suite
-	local log; log=$(xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . --rendering-method mobile "$@" 2>&1)
-	if grep -qE "SCRIPT ERROR|SHADER ERROR" <<<"$log"; then
-		grep -E "SCRIPT ERROR|SHADER ERROR" -A3 <<<"$log"; failed=1
-	fi
+# The renders are independent Godot runs: they go in parallel, JOBS at a time (default: one per
+# core), each with its own X display and its own user data (Godot's shader cache), then the
+# comparisons run in order.
+JOBS=${JOBS:-$(nproc)}
+LOGS=$(mktemp -d)
+n=0
+render() {   # a Godot test script, in the background
+	n=$((n + 1))
+	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
+	local i=$n
+	mkdir -p "$LOGS/data$i"
+	XDG_DATA_HOME=$LOGS/data$i xvfb-run -n $((90 + i)) -s "-screen 0 1280x720x24" \
+		"$GODOT" --path . --rendering-method mobile "$@" > "$LOGS/$i.log" 2>&1 &
 }
 verdict() {   # name, comparison command...
 	local name=$1; shift
@@ -30,26 +39,35 @@ verdict() {   # name, comparison command...
 	grep -q "^PASS$" <<<"$res" || failed=1
 }
 
-for m in ray mesh; do run --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
-verdict "desktop: ray-traced ball vs Godot ball" python3 "$CMP/one_ball.py" "$OUT/dsk_ray.png" "$OUT/dsk_mesh.png"
-
-for m in ray mesh; do run --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
-verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_ball.py" \
-	"$OUT/sph_ray_left.png" "$OUT/sph_mesh_left.png" "$OUT/sph_ray_right.png" "$OUT/sph_mesh_right.png"
-
+for m in ray mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
+for m in ray mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
 for c in 0 1; do
-	for m in ray mesh; do run --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c; done
-	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
+	for m in ray mesh; do render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c; done
 done
-
 for c in 0 1 2; do
-	for m in ray floor domain balls both; do run --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
-	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
+	for m in ray floor domain balls both; do render --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
-
 # the same floor lines with the shader the normal scene runs: the one without movable balls
 for c in 0 1 2; do
-	for m in ray floor domain; do run --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
+	for m in ray floor domain; do render --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
+done
+wait
+# any script or shader error fails the suite
+if cat "$LOGS"/*.log | grep -qE "SCRIPT ERROR|SHADER ERROR"; then
+	cat "$LOGS"/*.log | grep -E "SCRIPT ERROR|SHADER ERROR" -A3; failed=1
+fi
+rm -rf "$LOGS"
+
+verdict "desktop: ray-traced ball vs Godot ball" python3 "$CMP/one_ball.py" "$OUT/dsk_ray.png" "$OUT/dsk_mesh.png"
+verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_ball.py" \
+	"$OUT/sph_ray_left.png" "$OUT/sph_mesh_left.png" "$OUT/sph_ray_right.png" "$OUT/sph_mesh_right.png"
+for c in 0 1; do
+	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
+done
+for c in 0 1 2; do
+	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
+done
+for c in 0 1 2; do
 	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done
 

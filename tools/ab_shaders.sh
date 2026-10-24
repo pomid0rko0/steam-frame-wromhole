@@ -10,8 +10,11 @@
 #                                       empty    one colour: what Godot costs without ray tracing
 #                                       flat     no wormhole, straight rays, the same shading
 #                                       noshade  the same rays, a plain colour per kind of surface
+#                                       noderiv  grid lines of a fixed width: no screen derivatives
+#                                       nogrid   no grid lines: no atan, asin or derivatives
+#                                       nosky    one colour per sky, the grid lines kept
 #   tools/ab_shaders.sh --auto <source>...   the same, and the build runs the check by itself
-#                                     shortly after it starts, twice over (a build for measuring)
+#                                     shortly after it starts (a build for measuring)
 #   tools/ab_shaders.sh --remove      a build without them
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -26,7 +29,7 @@ for src in "$@"; do
 	n=$((n + 1))
 	out=$DIR/$n
 	mkdir -p "$out"
-	if [ "$src" = empty ] || [ "$src" = flat ] || [ "$src" = noshade ]; then
+	if [[ "$src" =~ ^(empty|flat|noshade|noderiv|nogrid|nosky)$ ]]; then
 		tmp=$(mktemp -d)
 		cp "$ROOT"/godot/shaders/wormhole.gdshader "$ROOT"/godot/shaders/wormhole_view.gdshaderinc \
 			"$ROOT"/godot/shaders/wormhole_core.gdshaderinc "$tmp/"
@@ -55,6 +58,28 @@ elif kind == 'flat':
     bool shellAhead = false;
     x = wh_M(side, (max(abs(l0) - wh_Lsh(), 0.0) + wh_Rout()) * n0);
     d = wh_M(side, side * vl * n0 + w);""", "flat: no wormhole, straight rays, the same shading")
+elif kind in ('noderiv', 'nogrid', 'nosky'):
+    core = d + '/wormhole_core.gdshaderinc'
+    s = open(core).read()
+    def cut(s, start, end, new):
+        if start not in s or end not in s[s.index(start):]:
+            sys.exit('the ray tracer changed: ' + kind + ' does not apply')
+        a = s.index(start)
+        b = s.index(end, a) + len(end)
+        return s[:a] + new + s[b:]
+    if kind in ('noderiv', 'nogrid'):
+        s = cut(s, '    float cls = kind == 1 ? 10.0', 'max(fw, vec2(1e-4));     // tiny: no line, no circle',
+                '    vec2 fw = vec2(%s);' % ('0.02' if kind == 'noderiv' else '1e-4'))
+    if kind == 'nogrid':
+        s = cut(s, '    vec2 ga = kind == 1 ? fn.xy : dn.xy;', '* (180.0 / WH_PI / 15.0);',
+                '    vec2 gq = vec2(0.5) + 1e-6 * vec2(fl, fn.x);')
+    if kind == 'nosky':
+        s = cut(s, '    vec3 col;\n    if (side > 0.0) {   // A: sunset', 'clamp(-el * 8.0, 0.0, 1.0));',
+                '    vec3 col = side > 0.0 ? vec3(0.9, 0.6, 0.4) : vec3(0.5, 0.7, 1.0);')
+    open(core, 'w').write(s)
+    open(d + '/label', 'w').write({'noderiv': 'grid lines of a fixed width, no screen derivatives',
+                                   'nogrid': 'no grid lines: no atan, asin or derivatives',
+                                   'nosky': 'one colour per sky, the grid lines kept'}[kind] + '\n')
 else:
     s = open(d + '/wormhole_core.gdshaderinc').read()
     a = s.index('    if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;')

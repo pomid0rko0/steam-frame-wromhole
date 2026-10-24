@@ -6,7 +6,8 @@ extends SceneTree
 ## SteamVR's settings, and as the display stays at 20 Hz the panel asks for a restart (a display
 ## that follows is answered too); choices made while vrcmd runs end with the last one written;
 ## a scale button sets the render scale and keeps it; frames made too slow for the display
-## turn the plate red; and the speed check's button runs it through (bench.gd) and puts the
+## turn the plate red; and the speed check's button runs it through (bench.gd: the comparison at
+## 72 Hz, then the tour at 120 Hz, which Monado does not offer: it stays at 20) and puts the
 ## rate, the shader and the viewer back.
 ##   tools/test_openxr.sh
 
@@ -48,6 +49,8 @@ func _process(_delta: float) -> bool:
 		p.find_app_setting()
 		OS.set_environment("HOME", home)     # user:// follows HOME
 		check("app setting found: steam.app.%s, 90 Hz" % APP_ID, p.steam_key == "steam.app." + APP_ID and p.stored == 90.0)
+	if frames == 60:
+		p.seconds.clear()       # judge after the start: loading and compiling cost frames there
 	if frames == 100:
 		check("panel says the setting and the display differ", p.text.contains("в SteamVR задано 90 Гц, а шлем на 20"))
 		check("rate buttons: SteamVR's per-app choices", p.rate_options == p.FRAME_RATES)
@@ -118,6 +121,7 @@ func _process(_delta: float) -> bool:
 	if frames == 330:
 		b.warm = 0.1
 		b.time = 0.2
+		b.tour_scale = 0.15
 		bench_stored = p.stored
 		if bench_auto:
 			b.auto = true
@@ -132,15 +136,18 @@ func _process(_delta: float) -> bool:
 			check("speed check: its button starts it, asks for 72 Hz", b.running and p.desired == 72.0)
 	if frames > 330 and bench_auto and not bench_seen and b.running:
 		bench_seen = true
-		check("speed check: started by itself, %d rounds" % b.rounds, b.rounds == b.AUTO_ROUNDS and p.desired == 72.0)
+		check("speed check: started by itself, asks for 72 Hz", p.desired == 72.0)
 	if frames > 330 and not b.running and (bench_seen or not bench_auto):
-		var segs: int = (2 if b.variants.size() > 1 else 1) * b.rounds
+		var segs: int = 2 if b.variants.size() > 1 else 1
 		check("speed check: every place timed", b.results.size() == b.PLACES.size() and b.results.back().back().size() == segs)
+		check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
+				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
 		check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
 				and main.material.shader == main.SHADER_PLAIN)
 		check("speed check: the rate set back", p.desired == bench_stored)
-		check("speed check: the panel says it is done", p.bench_text.begins_with("замер готов") or p.bench_text.begins_with("нов"))
+		check("speed check: the panel says it is done", p.bench_text.contains("Гц") or p.bench_text.begins_with("замер готов")
+				or p.bench_text.begins_with("нов"))
 		print("PASS" if ok else "FAIL")
 		return true
 	if Time.get_ticks_msec() > 500_000:

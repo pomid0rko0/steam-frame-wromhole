@@ -50,6 +50,9 @@ var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
 var perf: Label3D               # the frame rate panel
 var bench: Node                 # the speed check, started from the panel (bench.gd)
+var hold := false               # the feet stay where they are while the head moves (the speed check)
+var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
+var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -123,14 +126,28 @@ func place(side: float, pos: Vector3, forward: Vector3) -> void:
 	_face_head()
 
 
-## Put the feet at l on the axis through the throat (n = +x), facing the throat or away from it.
-func place_on_axis(l: float, inward: bool) -> void:
+## Put the feet at l on the axis through the throat (n = +x), looking yaw degrees to the right of
+## the throat (the head's own yaw is taken out), and turn the view pitch degrees up and roll
+## degrees about the line of sight (right side down) on top of the head's own: the speed check.
+func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	foot_l = l
 	foot_n = Vector3(1.0, 0.0, 0.0)
-	var s := 1.0 if inward else -1.0
 	# right, up, back as (U_l, u): facing the throat, back is +l and right is +y of chart A
-	frame = [Vector4(0.0, 0.0, s, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(s, 0.0, 0.0, 0.0)]
+	frame = [Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)]
+	_rotate_frame(deg_to_rad(yaw))
 	_face_head()
+	view_pitch = pitch
+	view_roll = roll
+
+
+## Where the head looks: degrees from the direction to the throat along the floor, and degrees up.
+func look_angles() -> Vector2:
+	var f := -camera.transform.basis.z
+	var T: Vector4 = f.x * frame[0] + f.z * frame[2]     # along the floor, as (U_l, u)
+	var toward := -1.0 if foot_l > 0.0 else 1.0          # the throat is where |l| decreases
+	var h := T.length()
+	var yaw := rad_to_deg(acos(clampf(toward * T.x / h, -1.0, 1.0))) if h > 1e-6 else 0.0
+	return Vector2(yaw, rad_to_deg(asin(clampf(f.y, -1.0, 1.0))))
 
 
 ## Turn the frame so that the head's current yaw looks along its forward (play-space forward
@@ -151,6 +168,8 @@ func set_pose(p: Array) -> void:
 	foot_l = p[0]
 	foot_n = p[1]
 	frame = p[2].duplicate()
+	view_pitch = 0.0
+	view_roll = 0.0
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
 
@@ -179,7 +198,8 @@ func _process(_delta: float) -> void:
 		prev_head = hz
 		recentered = false
 		_update_chart_map()
-	_walk(hz - prev_head)
+	if not hold:
+		_walk(hz - prev_head)
 	prev_head = hz
 	_point_panel()
 	if overlay:
@@ -188,9 +208,12 @@ func _process(_delta: float) -> void:
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
+	var hf: Array = hp[2]
+	if view_pitch != 0.0 or view_roll != 0.0:
+		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll))
 	material.set_shader_parameter("head_l", hp[0])
 	material.set_shader_parameter("head_n", hp[1])
-	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
+	material.set_shader_parameter("head_f", PackedVector4Array(hf))
 	material.set_shader_parameter("head_pos", head.origin)
 
 
@@ -216,6 +239,17 @@ func _walk(step: Vector2) -> void:
 	var fx: Vector4 = WormholeSpace.tangent(foot_n, Vector4(res[2][0].x, res[2][0].y, res[2][0].z, 0.0))
 	var fz: Vector4 = WormholeSpace.tangent(foot_n, Vector4(res[2][2].x, res[2][2].y, res[2][2].z, 0.0))
 	frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
+
+
+## The head's frame [right, up, back] turned pitch up, then roll about the line of sight.
+static func _tilt(f: Array, pitch: float, roll: float) -> Array:
+	var c := cos(pitch)
+	var s := sin(pitch)
+	var up: Vector4 = c * f[1] + s * f[2]
+	var back: Vector4 = c * f[2] - s * f[1]
+	var cr := cos(roll)
+	var sr := sin(roll)
+	return [cr * f[0] + sr * up, cr * up - sr * f[0], back]
 
 
 func _rotate_frame(angle: float) -> void:
