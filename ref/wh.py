@@ -149,14 +149,14 @@ class Wormhole:
     # Fillet in u = s^2 = (r - rho0) / 2R, s = sin(th/2), sig = (b - rho0) / 2R:
     #   dpsi = F(u) dv, dlength = G(u) dv, dv = du / (2 sqrt(u (u - sig))),
     #   F = b sqrt(2R) / (r sqrt((1 - u)(r + b))), G = r^2 / b F.
-    # Product integration: F, G interpolated in tau = (u - ua) / (0.5 - ua) at 5 nodes (squares of
+    # Product integration: F, G interpolated in tau = (u - ua) / (0.5 - ua) at 4 nodes (squares of
     # the Gauss-Legendre nodes on [0, 1]); moments of tau^k against the exact weight
     # w = 1 / (2 sqrt((tau + al)(tau + ga))) are elementary. A factor 1/sqrt(tau + c) with c >= 1 is
     # smooth and goes into the interpolated part instead (regimes 1, 2), where the moment
     # recursion would be unstable. z: int w (regime 0), sqrt(tau + mn) (regimes 1, 2).
-    _X = (np.polynomial.legendre.leggauss(5)[0] + 1) / 2
+    _X = (np.polynomial.legendre.leggauss(4)[0] + 1) / 2
     TAU = _X * _X
-    A = np.linalg.inv(np.vander(TAU, 5, increasing=True))
+    A = np.linalg.inv(np.vander(TAU, 4, increasing=True))
 
     def fil(self, b, turn):
         f = dict(ra=b if turn else self.rmin)
@@ -184,7 +184,7 @@ class Wormhole:
         return np.sqrt(t + f['mn'])
 
     def fil_mom(self, f, z):
-        """tau at z and the moments int_0^tau t^k w dt, k = 0..4"""
+        """tau at z and the moments int_0^tau t^k w dt, k = 0..3"""
         al, ga, mn, mx = f['al'], f['ga'], f['mn'], f['mx']
         if f['reg'] == 0:
             E = f['E0'] * np.exp(z)
@@ -193,16 +193,16 @@ class Wormhole:
             S = sm * (E - sm)
             B, C = al + ga, al * ga
             D = [2 * z, S - np.sqrt(C) - 0.5 * B * 2 * z]
-            for k in range(2, 5):
+            for k in range(2, 4):
                 D.append((t ** (k - 1) * S - (k - 0.5) * B * D[k - 1] - (k - 1) * C * D[k - 2]) / k)
             return t, 0.5 * np.array(D)
         t = max(z * z - mn, 0.0)
         if f['reg'] == 1:
             n = [t / (z + np.sqrt(mn))]
-            for k in range(1, 5):
+            for k in range(1, 4):
                 n.append((t ** k * z - 2 * k * mn * n[-1]) / (2 * k + 1))
             return t, np.array(n)
-        return t, np.array([t ** (k + 1) / (2 * (k + 1)) for k in range(5)])
+        return t, np.array([t ** (k + 1) / (2 * (k + 1)) for k in range(4)])
 
     def fil_at(self, f, z):
         """(psi, path length, tau) from the fillet's inner end to z"""

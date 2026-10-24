@@ -30,6 +30,7 @@ varying flat vec3 v_n;
 varying flat vec4 v_f0;
 varying flat vec4 v_f1;
 varying flat vec4 v_f2;
+varying vec4 v_ray;
 
 void vertex() {
 	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
@@ -46,19 +47,19 @@ void vertex() {
 		wh_geodesic(l, n, dir, len, f0, f1, f2);
 	}
 	v_l = l; v_n = n; v_f0 = f0; v_f1 = f1; v_f2 = f2;
+	// this corner's ray: the line from the eye, EYE_OFFSET, through the corner unprojected at two
+	// depths (the far point, whatever the depth convention). Unnormalised, it is affine in the
+	// screen position, so the interpolated value is each pixel's ray exactly.
+	vec4 pa = INV_PROJECTION_MATRIX * vec4(VERTEX.xy, 0.001, 1.0);
+	vec4 pb = INV_PROJECTION_MATRIX * vec4(VERTEX.xy, 0.999, 1.0);
+	vec3 qa = pa.xyz / pa.w;
+	vec3 qb = pb.xyz / pb.w;
+	vec3 pd = mat3(INV_VIEW_MATRIX) * ((dot(qa, qa) > dot(qb, qb) ? qa : qb) - EYE_OFFSET);   // play space
+	v_ray = pd.x * f0 + pd.y * f1 + pd.z * f2;
 }
 
 void fragment() {
-	// unproject the pixel at two depths and use the far point (independent of the depth
-	// convention); the ray runs from the eye, EYE_OFFSET, through it
-	vec2 ndc = SCREEN_UV * 2.0 - 1.0;
-	vec4 pa = INV_PROJECTION_MATRIX * vec4(ndc, 0.001, 1.0);
-	vec4 pb = INV_PROJECTION_MATRIX * vec4(ndc, 0.999, 1.0);
-	vec3 qa = pa.xyz / pa.w;
-	vec3 qb = pb.xyz / pb.w;
-	vec3 vd = normalize((dot(qa, qa) > dot(qb, qb) ? qa : qb) - EYE_OFFSET);
-	vec3 pd = normalize((INV_VIEW_MATRIX * vec4(vd, 0.0)).xyz);   // play-space direction
-	vec4 V = pd.x * v_f0 + pd.y * v_f1 + pd.z * v_f2;
+	vec4 V = normalize(v_ray);
 	vec4 dbg;
 	ALBEDO = wh_render(v_l, v_n, V.x, V.yzw, dbg);
 }

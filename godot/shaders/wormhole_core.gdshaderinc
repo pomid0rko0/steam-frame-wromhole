@@ -57,7 +57,7 @@ vec3 wh_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
 //   F = b sqrt(2R) / (r sqrt((1 - u)(r + b))),  G = r^2 / b F.
 // F and G are smooth on the fillet; all the trouble (the turning point, the log at b -> rmin) is in
 // dv. So the integral is "product integration": F and G are interpolated by polynomials in
-// tau = (u - ua) / (0.5 - ua) in [0, 1] (5 nodes: squares of the Gauss-Legendre nodes on [0, 1]),
+// tau = (u - ua) / (0.5 - ua) in [0, 1] (4 nodes: squares of the Gauss-Legendre nodes on [0, 1]),
 // and their moments against the exact weight, int t^k w(t) dt, are elementary:
 //   w(t) = 1 / (2 sqrt((t + al)(t + ga)))     (regime 0)
 // ua is where the fillet path starts: the turning point u = sig, or the fillet's inner end s0^2.
@@ -67,20 +67,17 @@ vec3 wh_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
 // the integral up to any point is the same closed form: the floor crossing is a Newton solve on it.
 // v ("z" below) is the variable in which that solve and the ball sampling run: in regime 0
 // z = int w dt, in regimes 1 and 2 z = sqrt(t + mn).
-const vec4 WH_TAU = vec4(0.002200555327023207, 0.05325264442858103, 0.25, 0.591721954534264);
-const float WH_TAU4 = 0.9083804012656871;
-// e = A f: polynomial coefficients from the node values (rows of A, last column separate)
-const vec4 WH_A0 = vec4(1.0588606416692881, -0.063935690184285882, 0.0057424854194706382, -0.00077474136833661849);
-const vec4 WH_A1 = vec4(-27.07427615536303, 29.488520673334943, -2.7334230596680218, 0.37056655711715591);
-const vec4 WH_A2 = vec4(148.81762147854241, -198.13617990011565, 56.597936294302258, -8.4847073372281177);
-const vec4 WH_A3 = vec4(-266.84152120802975, 378.87399788238878, -141.81641991924585, 35.337406007188051);
-const vec4 WH_A4 = vec4(147.96949085133747, -216.21489953396227, 91.167698519515142, -29.112232498306184);
-const vec4 WH_A_4 = vec4(0.00010730446386377504, -0.051388015421005573, 1.2053294644990042, -5.5534627623011819);
-const float WH_A44 = 6.1899426614158344;
+// With 4 nodes the error in psi is below 0.004 degrees (0.0001 typical) on the profiles in use.
+const vec4 WH_TAU = vec4(0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785);
+// e = A f: polynomial coefficients from the node values (the rows of A)
+const vec4 WH_A0 = vec4(1.0635954209629264, -0.06994895315294707, 0.0072202981818859785, -0.0008667659918653305);
+const vec4 WH_A1 = vec4(-13.363790651033874, 14.746483787306632, -1.5723807203730116, 0.1896875841002548);
+const vec4 WH_A2 = vec4(35.770406476784, -49.259940350673936, 15.558746458518186, -2.0692125846282434);
+const vec4 WH_A3 = vec4(-25.12406687051129, 37.32760503465092, -15.881390739642725, 3.6778525755030924);
 
 struct WhFil {
-    vec4 e; float e4;      // psi integrand (times the factor moved out of the weight), powers of tau
-    vec4 g; float g4;      // path length integrand, the same
+    vec4 e;                // psi integrand (times the factor moved out of the weight), powers of tau
+    vec4 g;                // path length integrand, the same
     float al; float ga; float mn; float mx;
     int reg;
     float E0;              // sqrt(al) + sqrt(ga)
@@ -89,25 +86,25 @@ struct WhFil {
     float ra; float span;  // r = ra + span tau
 };
 
-// tau and the moments int_0^tau t^k w dt, k = 0..3 in m and 4 in m4, at z
-void wh_filMom(WhFil f, float z, out float t, out vec4 m, out float m4) {
+// regime 0: the moments from z, tau and S = sqrt((t + al)(t + ga))
+vec4 wh_filRec(WhFil f, float z, float t, float S) {
+    float B = f.al + f.ga;
+    float C = f.al * f.ga;
+    float D0 = 2.0 * z;
+    float D1 = S - sqrt(C) - 0.5 * B * D0;
+    float tS = t * S;
+    float D2 = 0.5 * (tS - 1.5 * B * D1 - C * D0);
+    float D3 = (tS * t - 2.5 * B * D2 - 2.0 * C * D1) / 3.0;
+    return 0.5 * vec4(D0, D1, D2, D3);
+}
+
+// tau and the moments int_0^tau t^k w dt, k = 0..3, at z
+void wh_filMom(WhFil f, float z, out float t, out vec4 m) {
     if (f.reg == 0) {
         float Es = f.E0 * exp(z);                      // sqrt(t + al) + sqrt(t + ga)
         float sm = 0.5 * (Es - (f.mx - f.mn) / Es);    // sqrt(t + mn)
         t = max(sm * sm - f.mn, 0.0);
-        float S = sm * (Es - sm);                      // sqrt((t + al)(t + ga))
-        float B = f.al + f.ga;
-        float C = f.al * f.ga;
-        float D0 = 2.0 * z;
-        float D1 = S - sqrt(C) - 0.5 * B * D0;
-        float tS = t * S;
-        float D2 = 0.5 * (tS - 1.5 * B * D1 - C * D0);
-        tS *= t;
-        float D3 = (tS - 2.5 * B * D2 - 2.0 * C * D1) / 3.0;
-        tS *= t;
-        float D4 = 0.25 * (tS - 3.5 * B * D3 - 3.0 * C * D2);
-        m = 0.5 * vec4(D0, D1, D2, D3);
-        m4 = 0.5 * D4;
+        m = wh_filRec(f, z, t, sm * (Es - sm));
     } else {
         t = max(z * z - f.mn, 0.0);
         if (f.reg == 1) {                              // w = 1 / (2 sqrt(t + mn))
@@ -116,24 +113,32 @@ void wh_filMom(WhFil f, float z, out float t, out vec4 m, out float m4) {
             float n1 = (ty - 2.0 * f.mn * n0) / 3.0;
             ty *= t;
             float n2 = (ty - 4.0 * f.mn * n1) / 5.0;
-            ty *= t;
-            float n3 = (ty - 6.0 * f.mn * n2) / 7.0;
-            ty *= t;
-            m = vec4(n0, n1, n2, n3);
-            m4 = (ty - 8.0 * f.mn * n3) / 9.0;
+            m = vec4(n0, n1, n2, (ty * t - 6.0 * f.mn * n2) / 7.0);
         } else {                                       // w = 1/2
             float t2 = t * t;
             m = vec4(0.5 * t, 0.25 * t2, t2 * t / 6.0, 0.125 * t2 * t2);
-            m4 = 0.1 * t2 * t2 * t;
         }
     }
 }
 
-float wh_filZ(WhFil f, float t) {
-    return f.reg == 0 ? log((sqrt(t + f.al) + sqrt(t + f.ga)) / f.E0) : sqrt(t + f.mn);
+// z at tau = t and the moments there
+float wh_filMomT(WhFil f, float t, out vec4 m) {
+    if (f.reg == 0) {
+        float sa = sqrt(t + f.al);
+        float sg = sqrt(t + f.ga);
+        float z = log((sa + sg) / f.E0);
+        m = wh_filRec(f, z, t, sa * sg);
+        return z;
+    }
+    float z = sqrt(t + f.mn);
+    float tz;
+    wh_filMom(f, z, tz, m);
+    return z;
 }
 
-float wh_poly(vec4 c, float c4, float t) { return c.x + t * (c.y + t * (c.z + t * (c.w + t * c4))); }
+float wh_poly(vec4 c, float t) { return c.x + t * (c.y + t * (c.z + t * c.w)); }
+
+vec4 wh_coef(vec4 v) { return vec4(dot(WH_A0, v), dot(WH_A1, v), dot(WH_A2, v), dot(WH_A3, v)); }
 
 // the fillet of a ray with impact parameter b; turn: it turns around inside the fillet (b > rmin)
 WhFil wh_fil(float b, bool turn, float rmin) {
@@ -149,34 +154,37 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     f.reg = f.mx < 1.0 ? 0 : (f.mn < 1.0 ? 1 : 2);
     f.E0 = max(sqrt(f.al) + sqrt(f.ga), 1e-6);
     vec4 r = f.ra + f.span * WH_TAU;
-    float r4 = f.ra + f.span * WH_TAU4;
     vec4 u = (r - rho0) / (2.0 * R);
-    float u4 = (r4 - rho0) / (2.0 * R);
-    float k = sqrt(2.0 * R);
-    vec4 G = k * r * inversesqrt((1.0 - u) * (r + b));
-    float G4 = k * r4 * inversesqrt((1.0 - u4) * (r4 + b));
-    if (f.reg >= 1) { G *= inversesqrt(WH_TAU + f.mx); G4 *= inversesqrt(WH_TAU4 + f.mx); }
-    if (f.reg == 2) { G *= inversesqrt(WH_TAU + f.mn); G4 *= inversesqrt(WH_TAU4 + f.mn); }
-    vec4 F = b * G / (r * r);
-    float F4 = b * G4 / (r4 * r4);
-    f.e = vec4(dot(WH_A0, F), dot(WH_A1, F), dot(WH_A2, F), dot(WH_A3, F)) + WH_A_4 * F4;
-    f.e4 = dot(WH_A4, F) + WH_A44 * F4;
-    f.g = vec4(dot(WH_A0, G), dot(WH_A1, G), dot(WH_A2, G), dot(WH_A3, G)) + WH_A_4 * G4;
-    f.g4 = dot(WH_A4, G) + WH_A44 * G4;
+    vec4 G = sqrt(2.0 * R) * r * inversesqrt((1.0 - u) * (r + b));
+    if (f.reg >= 1) G *= inversesqrt(WH_TAU + f.mx);
+    if (f.reg == 2) G *= inversesqrt(WH_TAU + f.mn);
+    f.e = wh_coef(b * G / (r * r));
+    f.g = wh_coef(G);
     f.zlo = f.reg == 0 ? 0.0 : sqrt(f.mn);
-    f.zhi = wh_filZ(f, 1.0);
-    float t; vec4 m; float m4;
-    wh_filMom(f, f.zhi, t, m, m4);
-    f.psi = dot(f.e, m) + f.e4 * m4;
-    f.arc = dot(f.g, m) + f.g4 * m4;
+    vec4 m;
+    f.zhi = wh_filMomT(f, 1.0, m);
+    f.psi = dot(f.e, m);
+    f.arc = dot(f.g, m);
     return f;
+}
+
+// The path length polynomial again, for the floor's point: computed after the Newton solve
+// instead of kept through it (written differently from wh_fil, so that the compiler does not
+// share the two and keep the first alive): fewer registers during the solve.
+vec4 wh_filG(WhFil f, float b) {
+    float R = wh_fillet;
+    vec4 r = wh_Rout() - f.span * (1.0 - WH_TAU);
+    vec4 G = (2.0 * R) * r * inversesqrt((2.0 * R + wh_rho0 - r) * (r + b));
+    if (f.reg >= 1) G *= 1.41421356 * inversesqrt(2.0 * WH_TAU + 2.0 * f.mx);
+    if (f.reg == 2) G *= 1.41421356 * inversesqrt(2.0 * WH_TAU + 2.0 * f.mn);
+    return wh_coef(G);
 }
 
 // (psi, path length) from the fillet's inner end to z
 vec2 wh_filAt(WhFil f, float z, out float t) {
-    vec4 m; float m4;
-    wh_filMom(f, z, t, m, m4);
-    return vec2(dot(f.e, m) + f.e4 * m4, dot(f.g, m) + f.g4 * m4);
+    vec4 m;
+    wh_filMom(f, z, t, m);
+    return vec2(dot(f.e, m), dot(f.g, m));
 }
 
 // z where psi from the inner end reaches T (Newton; psi(z) is smooth and increasing, and two
@@ -184,10 +192,10 @@ vec2 wh_filAt(WhFil f, float z, out float t) {
 float wh_filSolve(WhFil f, float T) {
     float z = mix(f.zlo, f.zhi, clamp(T / max(f.psi, 1e-30), 0.0, 1.0));
     for (int it = 0; it < 2; it++) {
-        float t; vec4 m; float m4;
-        wh_filMom(f, z, t, m, m4);
-        float dz = wh_poly(f.e, f.e4, t) * (f.reg == 2 ? z : 1.0);    // dpsi/dz
-        z = clamp(z - (dot(f.e, m) + f.e4 * m4 - T) / max(dz, 1e-30), f.zlo, f.zhi);
+        float t; vec4 m;
+        wh_filMom(f, z, t, m);
+        float dz = wh_poly(f.e, t) * (f.reg == 2 ? z : 1.0);    // dpsi/dz
+        z = clamp(z - (dot(f.e, m) - T) / max(dz, 1e-30), f.zlo, f.zhi);
     }
     return z;
 }
@@ -233,10 +241,13 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     float ths = th0 + max(als - Lc, 0.0) / R;
     float ts = turn ? rs * vl * vl / (1.0 + wn)                                 // r_s - b
                     : 2.0 * R * sin(0.5 * (ths + th0)) * sin(0.5 * (ths - th0));   // r_s - rmin
-    ts = fromEdge ? 1.0 : clamp(ts / f.span, 0.0, 1.0);
-    float zs = fromEdge ? f.zhi : wh_filZ(f, ts);
-    float tdummy;
-    vec2 Ss = fromEdge ? vec2(f.psi, f.arc) : wh_filAt(f, zs, tdummy);   // inner end -> start
+    float zs = f.zhi;
+    vec2 Ss = vec2(f.psi, f.arc);           // inner end -> start
+    if (!fromEdge) {
+        vec4 ms;
+        zs = wh_filMomT(f, clamp(ts / f.span, 0.0, 1.0), ms);
+        Ss = vec2(dot(f.e, ms), dot(f.g, ms));
+    }
 
     // pieces
     float d = vl >= 0.0 ? 1.0 : -1.0;       // passing: direction of travel in l
@@ -264,6 +275,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     bool floorHit = ns.z > 0.0 && psiF <= tot.x;
     float arcEnd = tot.y;
     if (floorHit) {
+        hitN = cos(psiF) * e1 + sin(psiF) * e2;
         if (psiF >= PA.x && psiF < PA.x + PB.x) {
             float xF = (psiF - PA.x) / max(kc, 1e-30);
             hitL = d * (x0B + xF);
@@ -276,12 +288,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             float sa = inA ? -1.0 : 1.0;
             float a0 = inA ? PA.y : PA.y + PB.y - C0.y;
             float side = inA ? sideA : sideC;
-            float t;
-            vec2 S = wh_filAt(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t);
+            float t; vec4 m;
+            wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
             hitL = wh_filLW(f, t, side).x;
-            arcEnd = a0 + sa * S.y;
+            arcEnd = a0 + sa * dot(wh_filG(f, b), m);
         }
-        hitN = cos(psiF) * e1 + sin(psiF) * e2;
     } else {
         // leaves the shell at its edge, on side sideC
         vec3 n = cos(tot.x) * e1 + sin(tot.x) * e2;
@@ -471,6 +482,9 @@ void wh_enter(float side, vec3 x, vec3 d, out float l, out vec3 n, out float vl,
 }
 
 // ---------------------------------------------------------------- flat scene
+// Every object only offers its entry distance; the nearest one's normal and colour are worked
+// out once at the end. The pillars and boxes are first tested against their bounding balls:
+// most rays pass far from all of them.
 struct WhHit {
     float t;
     int kind;      // 0 none, 1 floor, 2 object, 3 shell, 4 ball
@@ -479,66 +493,83 @@ struct WhHit {
     vec3 col;
 };
 
-void wh_hitSphere(vec3 x, vec3 d, vec4 s, vec3 col, inout WhHit h) {
+// entry of x + t d (t > 1e-4) into a sphere (xyz centre, w radius), or 1e9
+float wh_sphereT(vec3 x, vec3 d, vec4 s) {
     vec3 oc = x - s.xyz;
     float bq = dot(oc, d);
-    float cq = dot(oc, oc) - s.w * s.w;
-    float disc = bq * bq - cq;
-    if (disc < 0.0) return;
-    float t = -bq - sqrt(disc);
-    if (t > 1e-4 && t < h.t) { h.t = t; h.kind = 2; h.nrm = (x + t * d - s.xyz) / s.w; h.col = col; }
+    float disc = bq * bq - dot(oc, oc) + s.w * s.w;
+    float t = -bq - sqrt(max(disc, 0.0));
+    return disc >= 0.0 && t > 1e-4 ? t : 1e9;
 }
 
-void wh_hitPillar(vec3 x, vec3 d, vec4 p, vec3 col, inout WhHit h) {
+// a ray x + t d that misses the ball (centre c, radius^2 r2) or has it behind
+bool wh_missesBall(vec3 x, vec3 d, vec3 c, float r2) {
+    vec3 oc = x - c;
+    float bq = dot(oc, d);
+    float cq = dot(oc, oc) - r2;
+    return cq > 0.0 && (bq > 0.0 || bq * bq < cq);
+}
+
+// a pillar (xy, radius, height): entry into its side, or into its flat top (top), or 1e9
+float wh_pillarT(vec3 x, vec3 d, vec4 p, out bool top) {
+    top = false;
+    if (wh_missesBall(x, d, vec3(p.xy, 0.5 * p.w), p.z * p.z + 0.25 * p.w * p.w)) return 1e9;
     vec2 oc = x.xy - p.xy;
     float A = dot(d.xy, d.xy);
-    if (A < 1e-9) return;
+    if (A < 1e-9) return 1e9;
     float B = dot(oc, d.xy);
-    float C = dot(oc, oc) - p.z * p.z;
-    float disc = B * B - A * C;
-    if (disc < 0.0) return;
+    float disc = B * B - A * (dot(oc, oc) - p.z * p.z);
+    if (disc < 0.0) return 1e9;
     float t = (-B - sqrt(disc)) / A;
     float zz = x.z + t * d.z;
-    if (t > 1e-4 && t < h.t && zz > 0.0 && zz < p.w) {
-        h.t = t; h.kind = 2; h.nrm = vec3((x.xy + t * d.xy - p.xy) / p.z, 0.0); h.col = col;
+    float ts = t > 1e-4 && zz > 0.0 && zz < p.w ? t : 1e9;
+    float tt = (p.w - x.z) / d.z;          // the top, from above
+    vec2 q = x.xy + tt * d.xy - p.xy;
+    if (d.z < 0.0 && tt > 1e-4 && tt < ts && dot(q, q) < p.z * p.z) {
+        top = true;
+        return tt;
     }
-    if (d.z < 0.0) {   // flat top
-        float tt = (p.w - x.z) / d.z;
-        vec2 q = x.xy + tt * d.xy - p.xy;
-        if (tt > 1e-4 && tt < h.t && dot(q, q) < p.z * p.z) { h.t = tt; h.kind = 2; h.nrm = vec3(0.0, 0.0, 1.0); h.col = col; }
-    }
+    return ts;
 }
 
-void wh_hitBox(vec3 x, vec3 d, vec3 c, vec3 hs, vec3 col, inout WhHit h) {
+// a box (centre c, half size hs): entry distance, or 1e9; tn: the slabs' entry distances
+float wh_boxT(vec3 x, vec3 d, vec3 c, float hs, out vec3 tn) {
     vec3 inv = 1.0 / d;
     vec3 t0 = (c - hs - x) * inv;
     vec3 t1 = (c + hs - x) * inv;
-    vec3 tn = min(t0, t1);
+    tn = min(t0, t1);
     vec3 tf = max(t0, t1);
     float tin = max(max(tn.x, tn.y), tn.z);
     float tout = min(min(tf.x, tf.y), tf.z);
-    if (tin > tout || tin < 1e-4 || tin >= h.t) return;
-    h.t = tin; h.kind = 2; h.col = col;
-    h.nrm = tin == tn.x ? vec3(-sign(d.x), 0.0, 0.0) : (tin == tn.y ? vec3(0.0, -sign(d.y), 0.0) : vec3(0.0, 0.0, -sign(d.z)));
+    return tin > tout || tin < 1e-4 ? 1e9 : tin;
 }
 
 WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
-    WhHit h;
-    h.t = 1e9; h.kind = 0; h.idx = -1; h.nrm = vec3(0.0); h.col = vec3(0.0);
+    float tb = 1e9;
+    int what = 0;      // 0 nothing, 1 floor, 2-4 sphere, 5-8 pillar side, 9-12 pillar top,
+                       // 13-16 box, 20 + i ball i, 40 the shell
     if (d.z < 0.0) {
         float t = -x.z / d.z;
-        if (t > 0.0) { h.t = t; h.kind = 1; h.nrm = vec3(0.0, 0.0, 1.0); }
+        if (t > 0.0) { tb = t; what = 1; }
+    }
+    for (int i = 0; i < 3; i++) {
+        float t = wh_sphereT(x, d, side > 0.0 ? wh_sph[i] : wh_sph[3 + i]);
+        if (t < tb) { tb = t; what = 2 + i; }
     }
     if (side > 0.0) {
-        wh_hitSphere(x, d, wh_sph[0], vec3(0.80, 0.15, 0.10), h);
-        wh_hitSphere(x, d, wh_sph[1], vec3(0.95, 0.75, 0.15), h);
-        wh_hitSphere(x, d, wh_sph[2], vec3(0.75, 0.75, 0.78), h);
-        for (int i = 0; i < 4; i++) wh_hitPillar(x, d, wh_pil[i], vec3(0.85, 0.80, 0.70), h);
+        for (int i = 0; i < 4; i++) {
+            bool top;
+            float t = wh_pillarT(x, d, wh_pil[i], top);
+            if (t < tb) { tb = t; what = (top ? 9 : 5) + i; }
+        }
     } else {
-        wh_hitSphere(x, d, wh_sph[3], vec3(0.75, 0.15, 0.70), h);
-        wh_hitSphere(x, d, wh_sph[4], vec3(0.15, 0.75, 0.30), h);
-        wh_hitSphere(x, d, wh_sph[5], vec3(0.20, 0.35, 0.85), h);
-        for (int i = 0; i < 4; i++) wh_hitBox(x, d, wh_box[i].xyz, vec3(wh_box[i].w), vec3(0.90, 0.90, 0.95), h);
+        for (int i = 0; i < 4; i++) {
+            vec4 bx = wh_box[i];
+            if (wh_missesBall(x, d, bx.xyz, 3.0 * bx.w * bx.w)) continue;
+            vec3 tn;
+            float t = wh_boxT(x, d, bx.xyz, bx.w, tn);
+            if (t < tb) { tb = t; what = 13 + i; }
+        }
     }
 #ifndef WH_NO_BALLS
     // balls: the chord ball cut by this universe's sheet w = side*h is an ordinary sphere;
@@ -554,7 +585,7 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float disc = bq * bq - cq;
         if (cq <= 0.0 || disc < 0.0) continue;
         float t = -bq - sqrt(disc);
-        if (t > 0.0 && t < h.t) { h.t = t; h.kind = 4; h.idx = i; h.nrm = (oc + t * d) * inversesqrt(rad2); h.col = wh_ballCol[i].rgb; }
+        if (t > 0.0 && t < tb) { tb = t; what = 20 + i; }
     }
 #endif
     if (withShell) {
@@ -564,9 +595,42 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float disc = bq * bq - cq;
         if (disc > 0.0) {
             float t = -bq - sqrt(disc);
-            if (t > 0.0 && t < h.t) { h.t = t; h.kind = 3; }
+            if (t > 0.0 && t < tb) { tb = t; what = 40; }
         }
     }
+    // the nearest one: its normal and colour
+    WhHit h;
+    h.t = tb;
+    h.kind = what == 0 ? 0 : (what == 1 ? 1 : (what == 40 ? 3 : (what >= 20 ? 4 : 2)));
+    h.idx = what >= 20 && what < 40 ? what - 20 : -1;
+    h.nrm = vec3(0.0, 0.0, 1.0);
+    h.col = vec3(0.0);
+    vec3 p = x + tb * d;
+    if (what >= 2 && what <= 4) {
+        int i = what - 2;
+        vec4 sp = side > 0.0 ? wh_sph[i] : wh_sph[3 + i];
+        h.nrm = (p - sp.xyz) / sp.w;
+        h.col = side > 0.0 ? (i == 0 ? vec3(0.80, 0.15, 0.10) : (i == 1 ? vec3(0.95, 0.75, 0.15) : vec3(0.75, 0.75, 0.78)))
+                           : (i == 0 ? vec3(0.75, 0.15, 0.70) : (i == 1 ? vec3(0.15, 0.75, 0.30) : vec3(0.20, 0.35, 0.85)));
+    } else if (what >= 5 && what <= 12) {
+        vec4 pp = wh_pil[(what - 5) % 4];
+        if (what <= 8) h.nrm = vec3((p.xy - pp.xy) / pp.z, 0.0);
+        h.col = vec3(0.85, 0.80, 0.70);
+    } else if (what >= 13 && what <= 16) {
+        vec4 bx = wh_box[what - 13];
+        vec3 tn;
+        float tin = wh_boxT(x, d, bx.xyz, bx.w, tn);
+        h.nrm = tin == tn.x ? vec3(-sign(d.x), 0.0, 0.0) : (tin == tn.y ? vec3(0.0, -sign(d.y), 0.0) : vec3(0.0, 0.0, -sign(d.z)));
+        h.col = vec3(0.90, 0.90, 0.95);
+    }
+#ifndef WH_NO_BALLS
+    else if (h.kind == 4) {
+        int i = h.idx;
+        float dw = wh_ball[i].w - sheet;
+        h.nrm = (p - wh_M(side, wh_ball[i].xyz)) * inversesqrt(wh_ballCol[i].w * wh_ballCol[i].w - dw * dw);
+        h.col = wh_ballCol[i].rgb;
+    }
+#endif
     return h;
 }
 
@@ -587,7 +651,9 @@ vec3 wh_sky(float side, vec3 d, vec2 gq, vec2 fw) {
         vec3 hor = vec3(1.00, 0.55, 0.25);
         vec3 zen = vec3(0.10, 0.12, 0.35);
         col = mix(hor, zen, pow(clamp(el, 0.0, 1.0), 0.45));
-        col += vec3(1.0, 0.6, 0.3) * 0.6 * pow(max(dot(d, s), 0.0), 8.0);
+        float sd = max(dot(d, s), 0.0);
+        sd *= sd; sd *= sd;
+        col += vec3(1.0, 0.6, 0.3) * 0.6 * sd * sd;
         col += vec3(1.0, 0.9, 0.7) * smoothstep(0.9990, 0.9995, dot(d, s)) * 4.0;
     } else {            // B: day with a big moon
         vec3 hor = vec3(0.75, 0.88, 1.00);

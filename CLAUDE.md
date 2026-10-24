@@ -35,10 +35,12 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
   cause is not found.
 - `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
-  5 nodes, README «Почему это real time»), one shading per pixel after the trace, and the movable
-  balls' code in a separate shader (`wormhole_balls.gdshader`, chosen by `main.set_balls`).
-  Checked in the headset: the one-eye check passes; at the shell's edge a frame costs about
-  5 ms (16.6 on `main`), 108 Hz holds at 100%, 120 Hz at 90% (README «Что видно в шлеме»).
+  4 nodes, README «Почему это real time»), one shading per pixel after the trace, the ray's
+  direction interpolated from the screen's corners, and the movable balls' code in a separate
+  shader (`wormhole_balls.gdshader`, chosen by `main.set_balls`). Checked in the headset with
+  5 nodes and the direction per pixel: the one-eye check passes; at the shell's edge a frame
+  costs about 5 ms (16.6 on `main`), 108 Hz holds at 100%, 120 Hz at 90% (README «Что видно в
+  шлеме»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -84,7 +86,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~15 min).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
-- **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
+- **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
 - **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock) and `tools/test_openxr.sh` (the panel and its buttons); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails).
