@@ -56,15 +56,6 @@ func _process(_delta: float) -> bool:
 		p.request_age = 0.0
 	if frames == 250:
 		check("display followed: panel says so", p.text.contains("шлем перешёл на 20 Гц"))
-		check("full resolution at first", p.target.scaling_3d_scale == 1.0 and p.text.contains("разрешение 100% (128 на глаз)"))
-		p.step_scale()
-		var cfg := ConfigFile.new()
-		cfg.load("user://settings.cfg")
-		check("left trigger: 90% render scale, kept", is_equal_approx(p.target.scaling_3d_scale, 0.9) and cfg.get_value("render", "scale", 0.0) == 0.9)
-		check("panel shows it and the next", p.text.contains("разрешение 90% (115 на глаз)") and p.text.contains("левый курок: разрешение 80%"))
-		for i in 3:
-			p.step_scale()
-		check("after 70% back to 100%", p.target.scaling_3d_scale == 1.0)
 	if frames == 260:
 		var oxr := main.xr as OpenXRInterface
 		print("in_xr ", main.in_xr, "  session state ", oxr.get_session_state() if oxr else -1,
@@ -78,6 +69,16 @@ func _process(_delta: float) -> bool:
 			check("measured rate = runtime's", absf(p.rate - oxr.display_refresh_rate) < 0.5)
 			check("panel heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		check("frames judged, green", p.keeps_up(p.seconds) == true and p.plate_mat.albedo_color == p.COLOR_OK)
+		# after the green check: each step of the render scale rebuilds the buffers, a missed frame or two
+		check("full resolution at first", p.target.scaling_3d_scale == 1.0 and p.text.contains("разрешение 100% (128 на глаз)"))
+		p.step_scale()
+		var cfg := ConfigFile.new()
+		cfg.load("user://settings.cfg")
+		check("left trigger: 90% render scale, kept", is_equal_approx(p.target.scaling_3d_scale, 0.9) and cfg.get_value("render", "scale", 0.0) == 0.9)
+		check("panel shows it and the next", p.text.contains("разрешение 90% (115 на глаз)") and p.text.contains("левый курок: разрешение 80%"))
+		for i in 3:
+			p.step_scale()
+		check("after 70% back to 100%", p.target.scaling_3d_scale == 1.0)
 	if frames > 260:
 		OS.delay_msec(70)           # longer than a 50 ms refresh: every frame misses one
 	if frames == 320:
