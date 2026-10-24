@@ -56,6 +56,8 @@ var snap_armed := true          # the right stick went back to the middle since 
 var logged_profiles := {}
 var input_log_time := 0.0
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
+var auto_resolution := true     # dynamic resolution with OpenXR (render_scale.gd); tests start it themselves
+var render_scale: RenderScale   # null while off
 
 
 func _ready() -> void:
@@ -80,6 +82,9 @@ func _ready() -> void:
 		add_child(xr_view)
 		host = xr_view
 		_add_window_notice()
+		print("XR eye images ", xr.get_render_target_size())
+		if auto_resolution and oxr:
+			start_auto_resolution()
 
 	origin = XROrigin3D.new()
 	host.add_child(origin)
@@ -155,6 +160,8 @@ func _process(delta: float) -> void:
 		place(1.0, START_POS, START_FORWARD)
 	if in_xr:
 		_log_input(delta)
+	if render_scale:
+		_auto_resolution(delta)
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	var moved := _handle_turn_and_reset(dt)
@@ -189,6 +196,24 @@ func _process(delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
+
+
+## Dynamic resolution (render_scale.gd): the eyes are rendered smaller, and stretched, while the
+## GPU cannot keep up with the headset's refresh rate.
+func start_auto_resolution() -> void:
+	render_scale = RenderScale.new()
+	xr_view.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	RenderingServer.viewport_set_measure_render_time(xr_view.get_viewport_rid(), true)
+
+
+func _auto_resolution(delta: float) -> void:
+	var gpu := RenderingServer.viewport_get_measured_render_time_gpu(xr_view.get_viewport_rid())
+	var oxr := xr as OpenXRInterface
+	var hz := oxr.display_refresh_rate if oxr else 0.0
+	var budget := 1000.0 / (hz if hz > 0.0 else 72.0)
+	if render_scale.update(gpu, budget, delta):
+		xr_view.scaling_3d_scale = render_scale.scale()
+		print("render scale %.1f: GPU %.1f ms per frame, %.1f ms at %.0f Hz" % [render_scale.scale(), gpu, budget, 1000.0 / budget])
 
 
 ## Writes the controllers' interaction profiles and stick values to godot.log.

@@ -10,6 +10,7 @@ extends SceneTree
 ## 30 degrees right (key E), and after a switch to smooth turns (Tab) turns 15 degrees left
 ## while walking forward (Q, W): the overlay must follow the world. Run with --fixed-fps 60,
 ## so every mode walks and turns the same.
+## case 4: as 1, rendered at 0.7 of the resolution and stretched (dynamic resolution, render_scale.gd).
 
 var main: Node3D
 var hmd
@@ -44,6 +45,9 @@ func _process(_delta: float) -> bool:
 	if frames == 3:
 		# then the head turns back to the start yaw: the view should face the throat
 		main.place(1.0, main.START_POS, main.START_FORWARD)
+		if case == 4:
+			main.xr_view.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+			main.xr_view.scaling_3d_scale = 0.7
 	if frames == 4:
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
 		match mode:

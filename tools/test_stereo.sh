@@ -42,7 +42,7 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
 done
 
-for c in 0 1 2 3; do
+for c in 0 1 2 3 4; do
 	for m in ray floor domain balls both; do run --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
 done
