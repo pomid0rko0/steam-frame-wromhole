@@ -26,7 +26,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `refresh-rate` — the frame rate panel; a trigger steps the headset's refresh rate.
 - `walking` — the left stick walks (left trigger runs), the right stick turns smoothly or in 30°
   snaps (a right stick click switches), A goes back to the start (`tests/walking_test.gd`,
-  `tests/walking_xr_test.gd`).
+  `tests/walking_xr_test.gd`). Also renderer work `main` lacks: the Gauss quadrature in
+  `wormhole_core` and dynamic resolution (`render_scale.gd`), for the frame cost at the shell's
+  edge, which the stick makes reachable.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
@@ -70,11 +72,12 @@ draws next to ray-traced ones, check they line up the same way.
 
 ## Running things
 
-- **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
+- **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL/GLES and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~15 min).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min), `ref/test_fast.py`, `ref/test_eye.py`.
-- **Branch tests:** each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `walking_xr`, `throat`, `physics`, `grab`).
+- **Branch tests:** each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `walking_xr`, `render_scale` with `--headless`, `render_scale_xr`, `throat`, `physics`, `grab`). Run them under `timeout`: a test script that fails to compile leaves Godot running forever.
+- **Frame cost along the walk:** `tests/path_cost.gd` (GPU ms per place from the start through the throat).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, started ~8 s before Godot, with stdin from a pipe (`sleep 300 | monado-service &`: with stdin at /dev/null or a file it exits on `epoll_ctl(stdin) failed`). `SIMULATED_LEFT=wmr SIMULATED_RIGHT=wmr` adds controllers, but WMR ones bind to none of our profiles, so the log only shows whether the action map is accepted. Godot aborts on quit there (status 134): read the log, not the exit status. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface; for controller input, `XRControllerTracker`s with inputs set by hand (`tests/walking_xr_test.gd`).
 - **GitHub from this environment:** branch pushes work through the session's git proxy, tag pushes are refused (403). The owner creates tags on GitHub.
@@ -87,7 +90,8 @@ draws next to ray-traced ones, check they line up the same way.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; it offers 72/80/90/120/144 (144 experimental). The stereo-check scene measured 9.4 ms GPU per frame at 72 Hz. `refresh-rate` has the on-headset panel and `tests/perf.gd`.
 - **SceneTree test scripts.** In them `main._ready` has not run during `_initialize`; touch main's nodes from `_process` (frame 2 or later). Settings applied too early silently do nothing.
-- **Software-Vulkan timings** are only good for ratios.
+- **Software-Vulkan timings** are only good for ratios, and only between runs made back to back with nothing else running: a numpy job alongside made one run 40% slower than the next.
+- **The frame cost peaks at the shell's edge** (|x| = Rout around the centre): almost every ray integrates the curved region there, about twice the start's cost in `path_cost.gd`, less again deeper in the throat. In the headset, crossing it with the stick glitched the picture; the picture there is exact (checked against the float64 reference on both sides), so most likely it was the frame time (not yet confirmed in the headset). The answer is the Gauss quadrature (~17% off there) and dynamic resolution (`render_scale.gd`, OpenXR only; its steps go to `godot.log`).
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
 - **Controllers.** Without its own profile in the action map, the Steam Frame shows its controllers to apps as Oculus Touch (Godot 4.7.2 knows the Frame's own, `/interaction_profiles/valve/frame_controller_valve`; it is not in our map). One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
