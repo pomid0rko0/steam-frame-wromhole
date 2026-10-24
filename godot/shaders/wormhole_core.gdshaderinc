@@ -100,6 +100,19 @@ float wh_chordIn(vec4 d0, vec4 d1) {
     return (tin <= tout && tin >= 0.0 && tin <= 1.0) ? tin : -1.0;
 }
 
+// A ball (radius^2 r2, centre at the origin) against the chord a -> a + d between two samples of
+// a ray: the chord fraction where it enters, or -1. Catches rays that only graze the ball and
+// would pass in and out of it between the samples.
+float wh_chordInBall(vec3 a, vec3 d, float r2) {
+    float A = max(dot(d, d), 1e-20);
+    float B = dot(a, d);
+    float C = dot(a, a) - r2;
+    float disc = B * B - A * C;
+    if (C <= 0.0 || disc < 0.0) return -1.0;
+    float t = (-B - sqrt(disc)) / A;
+    return (t >= 0.0 && t <= 1.0) ? t : -1.0;
+}
+
 // Distance from slab coordinates d to the box |d| <= 1 (negative inside), in half sizes.
 float wh_boxDist(vec4 d) {
     vec4 q = abs(d) - 1.0;
@@ -157,6 +170,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     // can be that far ahead without stepping over anything.
     float reach = 1e30;
     vec4 ps = wh_prof(ls);
+    // the previous sample in the ray's subspace: (r cos psi, r sin psi, w)
+    vec3 prevX = vec3(ps.x, 0.0, ps.y);
     for (int i = 0; i < WH_MAXB; i++) {
         if (i >= wh_nBall) break;
         vec4 C = wh_ball[i];
@@ -266,11 +281,19 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                         cprev[c] = d1;
                         reach = min(reach, chalf[c] * wh_boxDist(d1));
                     }
+                    vec3 X1 = vec3(cp, sp, lj);
                     for (int c = 0; c < WH_MAXB; c++) {
                         if (c >= nc) break;
                         float dw = lj - cdat[c].w;
                         float q = rho0 * rho0 - 2.0 * (cdat[c].x * cp + cdat[c].y * sp) + cdat[c].z + dw * dw;
                         bool inside = q < crad[c] * crad[c];
+                        if (!inside && !cin[c]) {
+                            // outside at both samples: did the chord between them graze the ball?
+                            vec3 B3 = vec3(cdat[c].x, cdat[c].y, cdat[c].w);
+                            float perp = cdat[c].z - cdat[c].x * cdat[c].x - cdat[c].y * cdat[c].y;
+                            float tb = wh_chordInBall(prevX - B3, X1 - prevX, crad[c] * crad[c] - perp);
+                            if (tb >= 0.0 && u + tb * hx < xB) { xB = u + tb * hx; ballI = cand[c]; }
+                        }
                         if (inside && !cin[c]) {
                             float lo = u;
                             float hi = un;
@@ -286,6 +309,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                         cin[c] = inside;
                         reach = min(reach, sqrt(max(q, 0.0)) - crad[c]);
                     }
+                    prevX = X1;
                     u = un;
                     if (last) break;
                 }
@@ -362,11 +386,18 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                     cprev[c] = d1;
                     reach = min(reach, chalf[c] * wh_boxDist(d1));
                 }
+                vec3 X1 = vec3(cp, sp, pr.y);
                 for (int c = 0; c < WH_MAXB; c++) {
                     if (c >= nc) break;
                     float dw = pr.y - cdat[c].w;
                     float q = pr.x * pr.x - 2.0 * (cdat[c].x * cp + cdat[c].y * sp) + cdat[c].z + dw * dw;
                     bool inside = q < crad[c] * crad[c];
+                    if (!inside && !cin[c]) {
+                        vec3 B3 = vec3(cdat[c].x, cdat[c].y, cdat[c].w);
+                        float perp = cdat[c].z - cdat[c].x * cdat[c].x - cdat[c].y * cdat[c].y;
+                        float tb = wh_chordInBall(prevX - B3, X1 - prevX, crad[c] * crad[c] - perp);
+                        if (tb >= 0.0 && tb * hs < uB) { uB = tb * hs; ballI = cand[c]; }
+                    }
                     if (inside && !cin[c]) {
                         float lo = 0.0;
                         float hi = hs;
@@ -384,6 +415,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                     cin[c] = inside;
                     reach = min(reach, sqrt(max(q, 0.0)) - crad[c]);
                 }
+                prevX = X1;
             }
             if (uB < 1e29 && uB <= uF) {
                 float ph = psi + 0.5 * uB * (wh_g(o, v0 + dv * uB * 0.21132486540518713).x
