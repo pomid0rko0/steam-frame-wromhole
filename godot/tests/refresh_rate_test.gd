@@ -1,6 +1,6 @@
 extends SceneTree
-## The refresh rate logic without a headset: which rate a trigger press asks for, how display
-## times from OpenXR turn into the measured rate and missed frames, and the panel's verdict.
+## The refresh rate logic without a headset: how display times from OpenXR turn into the
+## measured rate and missed frames, the panel's verdict, and reading the GPU clock.
 ##   godot --headless --xr-mode off --path . -s res://tests/refresh_rate_test.gd
 
 const PerfPanel := preload("res://perf_panel.gd")
@@ -16,11 +16,6 @@ func check(name: String, got: Variant, want: Variant) -> void:
 
 
 func _initialize() -> void:
-	# next rate: above the current one, wrapping after the highest; list order does not matter
-	var r := [90.0, 72.0, 144.0, 80.0, 120.0]
-	for c in [[72.0, 80.0], [80.0, 90.0], [90.0, 120.0], [120.0, 144.0], [144.0, 72.0], [0.0, 72.0], [89.9, 120.0], [71.999, 80.0]]:
-		check("next rate after %.3f" % c[0], PerfPanel.next_rate(r, c[0]), c[1])
-
 	# a steady 90 Hz display, a frame for every refresh
 	var p90 := 11_111_111
 	var m := RateMeter.new()

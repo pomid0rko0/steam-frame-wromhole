@@ -1,27 +1,31 @@
 extends Label3D
-## The frame rate panel: text drawn by Godot itself on a plate. It hangs in the room 1.3 m in
-## front of the head and a little below the eyes, and follows: as the head walks, at once; as it
-## turns, only once it has turned well away, then smoothly. So it is there at the wormhole and
-## inside it, without being glued to the view.
+## The frame rate panel: a small menu drawn by Godot itself on a plate. It hangs in the room
+## 1.3 m in front of the head and a little below the eyes, and follows: as the head walks, at
+## once; as it turns, only once it has turned well away, then smoothly; not while a controller
+## points at it. So it is there at the wormhole and inside it, without being glued to the view.
 ##
-## In the headset the plate is green while the display gets a new frame from us at (nearly)
-## every refresh, red when it does not, grey while it is still measuring. The text gives the
-## refresh rate the headset really runs at, measured from OpenXR's frame timing (rate_meter.gd)
-## rather than taken from what the runtime reports, the frames we delivered of the refreshes in
-## the last second, and the GPU time per frame against the time one frame may take.
+## This label is its head: the refresh rate the headset really runs at, measured from OpenXR's
+## frame timing (rate_meter.gd) rather than taken from what the runtime reports, whether frames
+## keep up, the frames we delivered of the refreshes in the last second, and the GPU time per
+## frame against the time one frame may take. The plate is green while the display gets a new
+## frame from us at (nearly) every refresh, red when it does not, grey while it is measuring.
 ##
-## A trigger press picks the next refresh rate. SteamVR on the Steam Frame accepts an app's own
-## request (XR_FB_display_refresh_rate) and ignores it, offering a single rate
+## Below, two rows of buttons: the refresh rate and the 3D render scale. A controller points
+## with a ray from its aim pose; its trigger presses the button the ray is on. Green: in effect;
+## yellow: chosen, not (yet) in effect.
+##
+## The refresh rate. SteamVR on the Steam Frame accepts an app's own request
+## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
 ## (ValveSoftware/SteamVR-for-Linux#1020). What it follows is the app's own SteamVR setting
 ## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs;
 ## on our Frame (SteamVR 2.18) the running app switches within a second, others report it only
 ## from the next start. So when the app was started from the Steam library and vrcmd is there,
-## the press sets that, and the panel says whether the display followed or asks for a restart.
-## Otherwise the press asks the runtime directly and the panel says whether the display followed.
+## a rate button sets that (one vrcmd call on a worker thread; a choice made meanwhile is written
+## next), the display's own rate tells when it followed, and if it has not a few seconds after
+## the write the panel asks for a restart. Otherwise the button asks the runtime directly.
 ##
-## The left trigger steps the 3D render scale of the XR viewport (100, 90, 80, 70%; Godot
-## upscales bilinearly to the headset's size): fewer pixels to ray trace, a softer picture. The
-## choice is kept in user://settings.cfg.
+## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
+## headset's size): fewer pixels to ray trace, a softer picture. Kept in user://settings.cfg.
 ##
 ## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards,
 ## with the GPU's clock where the kernel shows it (a GPU that lowers its clock makes the same
@@ -42,8 +46,17 @@ const DEVFREQ := "/sys/class/devfreq"                             # the kernel's
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 const SETTINGS := "user://settings.cfg"
+const STATUS_LINES := 4         # the head text, padded: the buttons below stay put
+const BTN_H := 0.06             # m
+const BTN_GAP := 0.01
+const RATE_W := 0.08
+const SCALE_W := 0.12
+const COLOR_BTN := Color(0.17, 0.19, 0.24, 0.96)
+const COLOR_ON := Color(0.12, 0.50, 0.22, 0.96)       # in effect
+const COLOR_PENDING := Color(0.62, 0.50, 0.08, 0.96)  # chosen, not (yet) in effect
+const COLOR_RAY := Color(0.55, 0.85, 1.0, 0.6)
 const DIST := 1.3               # m in front of the head
-const DROP := 0.5               # m below the eyes
+const DROP := 0.45              # m below the eyes
 const TURN := deg_to_rad(30.0)  # the head turned this far from the panel: it comes round
 const COLOR_OK := Color(0.05, 0.33, 0.12, 0.92)
 const COLOR_BAD := Color(0.45, 0.06, 0.05, 0.92)
@@ -71,7 +84,8 @@ var steam_key := ""             # "steam.app.<SteamAppId>": this app's section o
 var stored := 0.0               # this app's rate there, used from its next start; 0: not set (72 Hz)
 var stored_at_start := 0.0
 var writing := false            # vrcmd is setting it
-var requested := 0.0            # a runtime request the display has not answered yet
+var desired := 0.0              # the rate last chosen; written after the one being written, if it differs
+var requested := 0.0            # a rate the display has not followed yet
 var request_from := 0.0
 var request_age := 0.0
 var note := ""                  # what came of the last press
@@ -85,16 +99,25 @@ var clock_max := 0
 var render_scale := 1.0         # 3D render scale of the XR viewport
 var plate: MeshInstance3D
 var plate_mat: StandardMaterial3D
+var buttons: Array = []         # {kind "rate" / "scale", value, rect (panel x, y), mat, label}
+var rate_options: Array = []
+var titles: Array = []          # Label3D: the rows' titles and the hint under them
+var plate_rect := Rect2()
+var hover := [-1, -1]           # per hand (left, right): the button its ray is on, -1 none
+var on_plate := [false, false]  # per hand: its ray is on the panel
+var trigger_down := [false, false]
+var rays: Array = []            # per hand: the ray drawn from the controller
 
 
 func _ready() -> void:
 	no_depth_test = true
-	render_priority = 20
-	pixel_size = 0.0012
+	render_priority = 22
+	pixel_size = 0.001
 	font_size = 40
 	outline_size = 0
 	modulate = Color(1.0, 0.97, 0.88)
 	horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	plate_mat = StandardMaterial3D.new()
 	plate_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	plate_mat.albedo_color = COLOR_WAIT
@@ -105,6 +128,16 @@ func _ready() -> void:
 	plate.mesh = QuadMesh.new()
 	plate.material_override = plate_mat
 	add_child(plate)
+	for i in 2:
+		var ray := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.004, 0.004, 1.0)
+		ray.mesh = box
+		ray.material_override = _flat(COLOR_RAY, 23)
+		ray.top_level = true
+		ray.visible = false
+		add_child(ray)
+		rays.append(ray)
 	RenderingServer.viewport_set_measure_render_time(target.get_viewport_rid(), true)
 	if xr:
 		api = OpenXRAPIExtension.new()
@@ -116,6 +149,146 @@ func _ready() -> void:
 		_set_scale(float(cfg.get_value("render", "scale", 1.0)))
 		find_app_setting()
 	_set_text("...")
+
+
+func _flat(c: Color, priority: int) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = c
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.no_depth_test = true
+	m.render_priority = priority
+	return m
+
+
+func _text(t: String, size: int, pos: Vector3) -> Label3D:
+	var l := Label3D.new()
+	l.text = t
+	l.font_size = size
+	l.pixel_size = pixel_size
+	l.outline_size = 0
+	l.no_depth_test = true
+	l.render_priority = 22
+	l.modulate = modulate
+	l.position = pos
+	add_child(l)
+	return l
+
+
+## The rate choices: SteamVR's per-app ones on the Frame, else what the runtime offers.
+func _rate_options() -> Array:
+	if steam_key != "":
+		return FRAME_RATES
+	if xr == null:
+		return []
+	var offered: Array = xr.get_available_display_refresh_rates()
+	offered.sort()
+	return offered
+
+
+## The menu below the head text: titles, button rows, a hint; and the plate under all of it.
+## Built again when the rate choices change.
+func _layout() -> void:
+	for b in buttons:
+		b.mesh.queue_free()
+		b.label.queue_free()
+	for l in titles:
+		l.queue_free()
+	buttons.clear()
+	titles.clear()
+	rate_options = _rate_options()
+	var f: Font = font if font else ThemeDB.fallback_font
+	var line := f.get_height(font_size) * pixel_size
+	var y := -STATUS_LINES * line - 0.02
+	var rows := [["частота, Гц", "rate", rate_options, RATE_W], ["разрешение", "scale", SCALES, SCALE_W]]
+	var width := 0.0
+	for row in rows:
+		titles.append(_text(row[0], 30, Vector3(0.0, y - 0.015, 0.0)))
+		y -= 0.045
+		var n: int = row[2].size()
+		var w: float = row[3]
+		var row_w := n * w + (n - 1) * BTN_GAP
+		width = maxf(width, row_w)
+		for i in n:
+			var v: float = row[2][i]
+			var x := -0.5 * row_w + 0.5 * w + i * (w + BTN_GAP)
+			var mesh := MeshInstance3D.new()
+			var q := QuadMesh.new()
+			q.size = Vector2(w, BTN_H)
+			mesh.mesh = q
+			var mat := _flat(COLOR_BTN, 21)
+			mesh.material_override = mat
+			mesh.position = Vector3(x, y - 0.5 * BTN_H, -0.002)
+			add_child(mesh)
+			var label := _text("%.0f" % v if row[1] == "rate" else "%d%%" % roundi(v * 100.0), 32,
+					Vector3(x, y - 0.5 * BTN_H, 0.0))
+			buttons.append({"kind": row[1], "value": v, "mat": mat, "mesh": mesh, "label": label,
+					"rect": Rect2(x - 0.5 * w, y - BTN_H, w, BTN_H)})
+		y -= BTN_H + 0.02
+	titles.append(_text("наведи контроллер на кнопку и нажми курок", 26, Vector3(0.0, y - 0.01, 0.0)))
+	y -= 0.04
+	width = maxf(width, 0.66) + 0.06
+	plate_rect = Rect2(-0.5 * width, y - 0.01, width, -y + 0.03)
+	(plate.mesh as QuadMesh).size = plate_rect.size
+	plate.position = Vector3(plate_rect.get_center().x, plate_rect.get_center().y, -0.005)
+
+
+## Colour the buttons: in effect, chosen and pending, under a ray.
+func _paint() -> void:
+	for i in buttons.size():
+		var b: Dictionary = buttons[i]
+		var c := COLOR_BTN
+		if b.kind == "rate":
+			var chosen := requested if requested > 0.0 else (desired if writing else stored)
+			if rate > 0.0 and absf(b.value - rate) < 0.5:
+				c = COLOR_ON
+			elif chosen > 0.0 and absf(b.value - chosen) < 0.5:
+				c = COLOR_PENDING
+		elif is_equal_approx(b.value, render_scale):
+			c = COLOR_ON
+		if hover.has(i):
+			c = c.lerp(Color(1.0, 1.0, 1.0, c.a), 0.3)
+		b.mat.albedo_color = c
+
+
+## A hand's ray this frame: from, a unit direction (both in the play space, the panel's parent's
+## space), and its trigger. Hovers the button the ray is on; a trigger press presses it.
+func point(hand: int, from: Vector3, dir: Vector3, trigger: float, tracked := true) -> void:
+	var was: int = hover[hand]
+	hover[hand] = -1
+	on_plate[hand] = false
+	var hit := Vector3.ZERO
+	if tracked and dir.length() > 0.5:
+		var inv := transform.affine_inverse()
+		var o := inv * from
+		var d := inv.basis * dir
+		if d.z < -1e-4 and o.z > 0.0:
+			hit = o - d * (o.z / d.z)
+			var p := Vector2(hit.x, hit.y)
+			on_plate[hand] = plate_rect.grow(0.15).has_point(p)
+			for i in buttons.size():
+				if buttons[i].rect.has_point(p):
+					hover[hand] = i
+	var ray: MeshInstance3D = rays[hand]
+	ray.visible = on_plate[hand]
+	if on_plate[hand]:
+		var end := transform * hit
+		var len := from.distance_to(end)
+		var up := Vector3.UP if absf(dir.y) < 0.95 else Vector3.BACK
+		ray.global_transform = get_parent().global_transform * Transform3D(
+				Basis.looking_at(dir, up) * Basis.from_scale(Vector3(1.0, 1.0, len)), from + 0.5 * len * dir)
+	if trigger_down[hand]:
+		trigger_down[hand] = trigger > 0.3
+	elif trigger >= 0.7:
+		trigger_down[hand] = true
+		if hover[hand] >= 0:
+			var b: Dictionary = buttons[hover[hand]]
+			if b.kind == "rate":
+				choose_rate(b.value)
+			else:
+				choose_scale(b.value)
+	if hover[hand] != was:
+		_paint()
 
 
 ## Started from the Steam library (SteamAppId set) with SteamVR's vrcmd at hand: this app's rate
@@ -133,7 +306,8 @@ func find_app_setting() -> void:
 
 
 func _process(delta: float) -> void:
-	_follow(delta)
+	if not (on_plate[0] or on_plate[1]):
+		_follow(delta)
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
@@ -144,9 +318,12 @@ func _process(delta: float) -> void:
 	gpu += g
 	gpu_max = maxf(gpu_max, g)
 	if requested > 0.0:
-		request_age += delta
-		if request_age >= REQUEST_WAIT:
+		if absf(meter.rate() - requested) < 0.5:
 			_answer_request()
+		elif not writing:
+			request_age += delta
+			if request_age >= REQUEST_WAIT:
+				_answer_request()
 	if t >= 1.0:
 		_second()
 		t = 0.0
@@ -174,41 +351,39 @@ func _follow(delta: float) -> void:
 	placed = true
 
 
-## A trigger press: pick the next refresh rate.
-func step_rate() -> void:
-	if xr == null or writing or requested > 0.0:
+## A rate button.
+func choose_rate(r: float) -> void:
+	if xr == null:
 		return
 	note = ""
-	if steam_key != "":
-		var next := next_rate(FRAME_RATES, stored if stored > 0.0 else rate)
-		writing = true
-		# Steam preloads its overlay into everything it starts; vrcmd needs none of it, and the
-		# loader would only fill the log with complaints
-		OS.unset_environment("LD_PRELOAD")
-		print("refresh: setting %s.%s to %.0f" % [steam_key, SETTING, next])
-		WorkerThreadPool.add_task(_set_stored.bind(next))
-		_set_text(_compose())
-		return
-	var offered: Array = xr.get_available_display_refresh_rates()
-	if offered.size() < 2:
-		print("refresh: trigger, the runtime offers %s, nothing to ask for" % [offered])
-		_set_note("шлем не даёт сменить частоту", true)
-		return
-	request_from = rate if rate > 0.0 else xr.display_refresh_rate
-	requested = next_rate(offered, request_from)
+	desired = r
+	requested = r
+	request_from = rate
 	request_age = 0.0
-	print("refresh: asking for %.1f Hz (measured %.1f, runtime says %.1f, offers %s)"
-			% [requested, rate, xr.display_refresh_rate, offered])
-	xr.display_refresh_rate = requested
+	if steam_key != "":
+		if not writing:
+			_write_rate()
+	else:
+		print("refresh: asking for %.1f Hz (measured %.1f, runtime says %.1f, offers %s)"
+				% [r, rate, xr.display_refresh_rate, xr.get_available_display_refresh_rates()])
+		xr.display_refresh_rate = r
 	_set_text(_compose())
 
 
-## The left trigger: the next render scale, kept for the next start.
-func step_scale() -> void:
+func _write_rate() -> void:
+	writing = true
+	# Steam preloads its overlay into everything it starts; vrcmd needs none of it, and the
+	# loader would only fill the log with complaints
+	OS.unset_environment("LD_PRELOAD")
+	print("refresh: setting %s.%s to %.0f" % [steam_key, SETTING, desired])
+	WorkerThreadPool.add_task(_set_stored.bind(desired))
+
+
+## A render scale button; kept for the next start.
+func choose_scale(v: float) -> void:
 	if xr == null:
 		return
-	var i := SCALES.find(render_scale)
-	_set_scale(SCALES[(i + 1) % SCALES.size()])
+	_set_scale(v)
 	var cfg := ConfigFile.new()
 	cfg.load(SETTINGS)
 	cfg.set_value("render", "scale", render_scale)
@@ -221,16 +396,6 @@ func _set_scale(s: float) -> void:
 	render_scale = s if SCALES.has(s) else 1.0
 	target.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 	target.scaling_3d_scale = render_scale
-
-
-## The next rate above current, or the lowest after the highest.
-static func next_rate(rates: Array, current: float) -> float:
-	var sorted := rates.duplicate()
-	sorted.sort()
-	for r in sorted:
-		if r > current + 0.5:
-			return r
-	return sorted[0]
 
 
 ## Up to the last JUDGE_SECONDS seconds: true if at most MISSED_OK of the refreshes went without
@@ -248,15 +413,6 @@ static func keeps_up(window: Array) -> Variant:
 	return float(r - f) <= MISSED_OK * r
 
 
-## The last number in a tool's output, or -1.
-static func last_number(text: String) -> float:
-	var words := text.replace("\n", " ").replace("=", " ").replace(":", " ").split(" ", false)
-	for i in range(words.size() - 1, -1, -1):
-		if words[i].is_valid_float():
-			return words[i].to_float()
-	return -1.0
-
-
 ## This app's rate in SteamVR's settings file (read only: SteamVR rewrites it from memory).
 func _stored_rate() -> float:
 	if not FileAccess.file_exists(vrsettings):
@@ -268,43 +424,39 @@ func _stored_rate() -> float:
 	return 0.0
 
 
-## On a worker thread: set this app's rate through vrcmd, then read it back.
+## On a worker thread: set this app's rate through vrcmd.
 func _set_stored(r: float) -> void:
 	var key := "%s.%s" % [steam_key, SETTING]
-	var env := ["LD_PRELOAD=", "LD_LIBRARY_PATH=" + vrcmd.get_base_dir(), vrcmd]
 	var out := []
-	var code := OS.execute("/usr/bin/env", env + ["--set-settings-float", key, "%.0f" % r], out, true)
-	var back := []
-	var back_code := OS.execute("/usr/bin/env", env + ["--settings-float", key], back, true)
-	_stored_set.call_deferred(r, code, "".join(out), back_code, "".join(back))
+	var code := OS.execute("/usr/bin/env", ["LD_PRELOAD=", "LD_LIBRARY_PATH=" + vrcmd.get_base_dir(), vrcmd,
+			"--set-settings-float", key, "%.0f" % r], out, true)
+	_stored_set.call_deferred(r, code, "".join(out))
 
 
-func _stored_set(r: float, code: int, text: String, back_code: int, back: String) -> void:
+func _stored_set(r: float, code: int, text: String) -> void:
 	writing = false
-	var got := last_number(back)
-	print("refresh: vrcmd set exit %d [%s], read back exit %d [%s] -> %.1f"
-			% [code, text.strip_edges().replace("\n", " | "), back_code, back.strip_edges().replace("\n", " | "), got])
-	if absf(got - r) < 0.5 or (got < 0.0 and code == 0):
+	print("refresh: vrcmd set %.0f: exit %d [%s]" % [r, code, text.strip_edges().replace("\n", " | ")])
+	if code == 0:
 		stored = r
-		# SteamVR 2.18 on the Frame switches the running app within a second; others may only
-		# from the next start. Give the display a moment, then say which.
-		request_from = rate
-		requested = r
-		request_age = 0.0
-	else:
+	elif absf(desired - r) < 0.5:
+		requested = 0.0
 		_set_note("не получилось задать частоту", true)
+	if absf(desired - r) > 0.5:
+		_write_rate()       # chosen again meanwhile
+	else:
+		request_age = 0.0   # the display gets REQUEST_WAIT from now to follow
 	_set_text(_compose())
 
 
 func _answer_request() -> void:
-	var now := rate
+	var now := meter.rate()
 	var followed := absf(now - requested) < 0.5
 	if followed:
 		_set_note("шлем перешёл на %.0f Гц" % now, false)
 	elif steam_key == "":
 		_set_note("шлем остался на %.0f Гц" % now, true)
-	print("refresh: asked for %.1f Hz, after %.0f s the display runs at %.1f Hz (was %.1f), runtime says %.1f"
-			% [requested, REQUEST_WAIT, now, request_from, xr.display_refresh_rate])
+	print("refresh: asked for %.1f Hz, the display runs at %.1f Hz (was %.1f), runtime says %.1f"
+			% [requested, now, request_from, xr.display_refresh_rate])
 	requested = 0.0
 	_set_text(_compose())
 
@@ -386,42 +538,36 @@ func _second() -> void:
 func _compose() -> String:
 	var fps := frames / t if t > 0.0 else 0.0
 	var g := gpu / frames if frames > 0 else 0.0
+	var lines := []
 	if xr == null:
-		return "%.0f кадр/с\nGPU %.1f мс" % [fps, g]
-	if rate <= 0.0:
-		return "%.0f кадр/с\nGPU %.1f мс\nшлем не даёт время кадров" % [fps, g]
-	var ok: Variant = keeps_up(seconds)
-	var last: Array = seconds.back() if not seconds.is_empty() else [0, 0]
-	var lines := [
-		"%.0f Гц · %s" % [rate, "меряю..." if ok == null else ("успевает" if ok else "не успевает")],
-		"кадров %d из %d" % [last[0], last[1]],
-		"GPU %.1f из %.1f мс" % [g, 1000.0 / rate],
-		"разрешение %d%% (%d на глаз)" % [roundi(render_scale * 100.0), roundi(xr.get_render_target_size().x * render_scale)],
-	]
-	if requested > 0.0:
-		lines.append("переключаю на %.0f Гц..." % requested)
-	elif writing:
-		lines.append("задаю частоту...")
-	elif note != "":
-		lines.append(note)
-	if steam_key != "":
-		if stored > 0.0 and absf(stored - rate) > 0.5 and requested == 0.0:
-			if stored != stored_at_start:
-				lines.append("задано %.0f Гц: выйди и запусти снова" % stored)
-			else:
-				lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
-		if not writing and requested == 0.0:
-			lines.append("правый курок: %.0f Гц" % next_rate(FRAME_RATES, stored if stored > 0.0 else rate))
-		if note_failed and note != "":
-			lines.append(STEAM_HINT)
+		lines = ["%.0f кадр/с" % fps, "GPU %.1f мс" % g]
+	elif rate <= 0.0:
+		lines = ["%.0f кадр/с" % fps, "GPU %.1f мс" % g, "шлем не даёт время кадров"]
 	else:
-		var offered: Array = xr.get_available_display_refresh_rates()
-		if offered.size() >= 2 and requested == 0.0:
-			lines.append("правый курок: %.0f Гц" % next_rate(offered, rate))
-		if offered.size() < 2 or (note_failed and note != ""):
+		var ok: Variant = keeps_up(seconds)
+		var last: Array = seconds.back() if not seconds.is_empty() else [0, 0]
+		lines = [
+			"%.0f Гц · %s" % [rate, "меряю..." if ok == null else ("успевает" if ok else "не успевает")],
+			"кадров %d из %d · GPU %.1f из %.1f мс" % [last[0], last[1], g, 1000.0 / rate],
+		]
+		if requested > 0.0:
+			lines.append("переключаю на %.0f Гц..." % requested)
+		elif note != "":
+			lines.append(note)
+		if steam_key != "":
+			if stored > 0.0 and absf(stored - rate) > 0.5 and requested == 0.0:
+				if stored != stored_at_start:
+					lines.append("задано %.0f Гц: выйди и запусти снова" % stored)
+				else:
+					lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
+			if note_failed and note != "":
+				lines.append(STEAM_HINT)
+		elif rate_options.size() < 2 or (note_failed and note != ""):
 			lines.append(STEAM_HINT)
-	lines.append("левый курок: разрешение %d%%" % roundi(SCALES[(SCALES.find(render_scale) + 1) % SCALES.size()] * 100.0))
-	return "\n".join(lines)
+	var joined := "\n".join(lines)
+	while joined.count("\n") < STATUS_LINES - 1:
+		joined += "\n"
+	return joined
 
 
 ## The last few seconds at the current rate, in one line of the log.
@@ -453,9 +599,8 @@ func _log() -> void:
 
 func _set_text(s: String) -> void:
 	text = s
-	# the plate covers the (centred) text with a margin; sized from the font, since the label
-	# rebuilds its own geometry only later
-	var f: Font = font if font else ThemeDB.fallback_font
-	var size := f.get_multiline_string_size(s, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size) * pixel_size
-	(plate.mesh as QuadMesh).size = size + Vector2(0.08, 0.06)
-	plate.position = Vector3(0.0, 0.0, -0.005)
+	if _rate_options() != rate_options or buttons.is_empty():
+		_layout()
+	if xr and titles.size() > 1:
+		titles[1].text = "разрешение · %d точек на глаз" % roundi(xr.get_render_target_size().x * render_scale)
+	_paint()

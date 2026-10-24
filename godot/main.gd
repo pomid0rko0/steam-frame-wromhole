@@ -1,7 +1,8 @@
 extends Node3D
 ## Real-time wormhole for VR: head tracking (physical walking), no stick locomotion, no objects
-## to play with; a panel shows the headset's refresh rate and whether frames keep up, the right
-## trigger picks the next rate and the left one the render scale (perf_panel.gd). Every pixel is ray traced along a geodesic of
+## to play with; a panel shows the headset's refresh rate and whether frames keep up, and its
+## buttons, pressed by pointing a controller and pulling the trigger, set the refresh rate and
+## the render scale (perf_panel.gd). Every pixel is ray traced along a geodesic of
 ## the wormhole space in the shader; this script tracks where the viewer is in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
@@ -44,7 +45,6 @@ var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
-var trigger_down := [false, false]   # left: next render scale, right: next refresh rate
 var perf: Label3D               # the frame rate panel
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
@@ -77,6 +77,7 @@ func _ready() -> void:
 		for t in [&"left_hand", &"right_hand"]:
 			var c := XRController3D.new()
 			c.tracker = t
+			c.pose = &"aim"            # the panel's buttons are pointed at
 			origin.add_child(c)
 			hands.append(c)
 
@@ -148,7 +149,7 @@ func _process(_delta: float) -> void:
 		_update_chart_map()
 	_walk(hz - prev_head)
 	prev_head = hz
-	_rate_button()
+	_point_panel()
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
 		overlay.visible = foot_l > space.L
@@ -161,20 +162,13 @@ func _process(_delta: float) -> void:
 	material.set_shader_parameter("head_pos", head.origin)
 
 
-## The right trigger: the panel picks the next refresh rate; the left one: the next render scale.
-func _rate_button() -> void:
-	if perf == null or hands.is_empty():
+## Each controller points at the panel; its trigger presses the button it points at.
+func _point_panel() -> void:
+	if perf == null:
 		return
 	for i in hands.size():
-		var v := hands[i].get_float(&"trigger")
-		if trigger_down[i]:
-			trigger_down[i] = v > 0.3
-		elif v >= 0.7:
-			trigger_down[i] = true
-			if i == 0:
-				perf.step_scale()
-			else:
-				perf.step_rate()
+		var c := hands[i]
+		perf.point(i, c.transform.origin, -c.transform.basis.z, c.get_float(&"trigger"), c.get_has_tracking_data())
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
