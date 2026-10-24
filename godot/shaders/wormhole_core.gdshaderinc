@@ -20,7 +20,7 @@
 // Static spacetime -dt^2 + ds^2, so light rays are geodesics of ds^2. Each ray stays in a plane
 // through the centre; its angle in that plane is  dpsi = b dl / (r sqrt(r^2 - b^2)):
 //   cylinder: closed form;  fillet: with s = sin(th/2), s = q sinh v or q cosh v the integrand is
-//   smooth and bounded, integrated with adaptive Simpson steps.
+//   smooth and bounded, integrated with 4-point Gauss-Legendre panels.
 //
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
@@ -67,8 +67,27 @@ float wh_V(WhRay o, float s, float dsq) { return o.hyp ? asinh(s / o.q) : asinh(
 vec2 wh_g(WhRay o, float v) {
     float s = wh_S(o, v);
     float r = wh_rho0 + 2.0 * wh_fillet * s * s;
-    float k = sqrt(2.0 * wh_fillet) / sqrt(max(1.0 - s * s, 1e-6) * (r + o.b));
+    float k = sqrt(2.0 * wh_fillet) * inversesqrt(max(1.0 - s * s, 1e-6) * (r + o.b));
     return vec2(o.b / r, r) * k;
+}
+
+// 4-point Gauss-Legendre on [0, 1] (exact up to degree 7): nodes and weights
+const vec4 WH_GT = vec4(0.069431844202973714, 0.33000947820757187, 0.66999052179242813, 0.93056815579702623);
+const vec2 WH_GW = vec2(0.17392742256872679, 0.32607257743127321);
+
+// integral of g from v0 over a length u >= 0 in the direction dv
+vec2 wh_int(WhRay o, float v0, float dv, float u) {
+    return u * (WH_GW.x * (wh_g(o, v0 + dv * u * WH_GT.x) + wh_g(o, v0 + dv * u * WH_GT.w))
+              + WH_GW.y * (wh_g(o, v0 + dv * u * WH_GT.y) + wh_g(o, v0 + dv * u * WH_GT.z)));
+}
+
+// coefficients of t, t^2, t^3, t^4 in the integral from 0 to t of the cubic through the four
+// nodes, per unit node value (column i: node i)
+mat4 wh_gauss_poly() {
+    return mat4(vec4(1.5267881254572671, -4.2730118039361003, 4.7752861180572967, -1.8551350170097369),
+                vec4(-0.81363244948692737, 6.9035834628447885, -10.462740787815354, 4.6988623518887653),
+                vec4(0.40076152031165047, -3.7085352107313199, 8.3327086197397069, -4.6988623518887653),
+                vec4(-0.11391719628198997, 1.0779635518226309, -2.6452539499816514, 1.8551350170097372));
 }
 
 float wh_lOnFillet(WhRay o, float side, float v) {
@@ -162,8 +181,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     }
 
     int budget = 160;
+    // a floor crossing found in a fillet panel; its last refinement runs after the loops, so that
+    // neighbouring rays (which run in lockstep on a GPU) do not wait for it panel by panel
+    bool floorHit = false;
+    float fv0 = 0.0;  float fdv = 1.0;  float fhs = 0.0;  float fside = 1.0;  float fu = 0.0;  float ftarget = 0.0;
     for (int p = 0; p < 3; p++) {
-        if (p >= np) break;
+        if (p >= np || floorHit) break;
         float side = pside[p];
         if (pk[p] == 1) {
             // ---- cylinder r = rho0, w = l: psi = psi0 + k (x - x0), path = (x - x0) / vlc
@@ -222,12 +245,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             arc += D / vlc;
             continue;
         }
-        // ---- fillet: Simpson steps in v
+        // ---- fillet: Gauss panels in v
         float va = pa[p];
         float vb = pb[p];
         float U = abs(vb - va);
         float dv = vb >= va ? 1.0 : -1.0;
-        float Nf = ceil(U / 0.25);
+        float Nf = ceil(U / 1.5);
         if (nc > 0) {
             float gmax = max(max(wh_g(o, va).y, wh_g(o, vb).y), wh_g(o, 0.5 * (va + vb)).y);
             Nf = max(Nf, ceil(U * gmax / ds));
@@ -235,23 +258,27 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
         int N = int(clamp(Nf, 1.0, float(max(budget, 1))));
         budget -= N;
         float hs = U / float(N);
-        vec2 ga = wh_g(o, va);
         for (int k = 0; k < 160; k++) {
             if (k >= N) break;
             float v0 = va + dv * hs * float(k);
-            vec2 gm = wh_g(o, v0 + dv * 0.5 * hs);
-            vec2 gb = wh_g(o, v0 + dv * hs);
-            vec2 dI = hs / 6.0 * (ga + 4.0 * gm + gb);
+            vec2 g1 = wh_g(o, v0 + dv * hs * WH_GT.x);
+            vec2 g2 = wh_g(o, v0 + dv * hs * WH_GT.y);
+            vec2 g3 = wh_g(o, v0 + dv * hs * WH_GT.z);
+            vec2 g4 = wh_g(o, v0 + dv * hs * WH_GT.w);
+            vec2 dI = hs * (WH_GW.x * (g1 + g4) + WH_GW.y * (g2 + g3));
             float uF = 1e30;
-            if (above && psi + dI.x >= psiF) {
-                float target = psiF - psi;
-                float u = hs * target / max(dI.x, 1e-30);
-                for (int it = 0; it < 2; it++) {
-                    float I = 0.5 * u * (wh_g(o, v0 + dv * u * 0.21132486540518713).x
-                                       + wh_g(o, v0 + dv * u * 0.78867513459481287).x);
-                    u = clamp(u - (I - target) / max(wh_g(o, v0 + dv * u).x, 1e-30), 0.0, hs);
+            float target = psiF - psi;
+            if (above && dI.x >= target) {
+                // where psi reaches the floor, on the integral of the cubic through the nodes (no
+                // new evaluations); one Newton step on the exact integral follows after the loops
+                vec4 c = hs * (wh_gauss_poly() * vec4(g1.x, g2.x, g3.x, g4.x));
+                float t = target / max(dI.x, 1e-30);
+                for (int it = 0; it < 4; it++) {
+                    float P = t * (c.x + t * (c.y + t * (c.z + t * c.w)));
+                    float dP = c.x + t * (2.0 * c.y + t * (3.0 * c.z + t * 4.0 * c.w));
+                    t = clamp(t - (P - target) / max(dP, 1e-30), 0.0, 1.0);
                 }
-                uF = u;
+                uF = t * hs;
             }
             float uB = 1e30;
             if (nc > 0) {
@@ -288,15 +315,20 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             }
             ballI = -1;
             if (uF < 1e29) {
-                hitL = wh_lOnFillet(o, side, v0 + dv * uF);
-                hitN = cos(psiF) * e1 + sin(psiF) * e2;
+                floorHit = true;
+                fv0 = v0;  fdv = dv;  fhs = hs;  fside = side;  fu = uF;  ftarget = target;
                 arc += dI.y * uF / hs;
-                return 1;
+                break;
             }
             psi += dI.x;
             arc += dI.y;
-            ga = gb;
         }
+    }
+    if (floorHit) {
+        float u = clamp(fu - (wh_int(o, fv0, fdv, fu).x - ftarget) / max(wh_g(o, fv0 + fdv * fu).x, 1e-30), 0.0, fhs);
+        hitL = wh_lOnFillet(o, fside, fv0 + fdv * u);
+        hitN = cos(psiF) * e1 + sin(psiF) * e2;
+        return 1;
     }
     vec3 n = cos(psi) * e1 + sin(psi) * e2;
     vec3 tt = -sin(psi) * e1 + cos(psi) * e2;

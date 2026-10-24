@@ -146,11 +146,13 @@ class Wormhole:
         return out
 
     # ---------- fast method: one ray at a time, mirrors the shader ----------
-    def fast(self, l_s, n_s, vl, w, hmax=0.25, nmax=48):
+    def fast(self, l_s, n_s, vl, w, hmax=1.5, nmax=48):
         """Angle in the orbit plane:  dpsi = b dl / (r sqrt(r^2 - b^2)).
         Cylinder: closed form. Fillet: s = sin(th/2), r = rho0 + 2R s^2, r - b = 2R (s^2 - sig),
         sig = (b - rho0)/(2R); s = q sinh v (sig < 0) or s = q cosh v (sig > 0) gives
-        dpsi/dv = b sqrt(2R) / (r sqrt((1 - s^2)(r + b)))  -- smooth, no endpoint singularity."""
+        dpsi/dv = b sqrt(2R) / (r sqrt((1 - s^2)(r + b)))  -- smooth, no endpoint singularity,
+        integrated with 4-point Gauss-Legendre panels of at most hmax in v. A floor crossing in a
+        panel: on the integral of the cubic through the panel's nodes, then one Newton step."""
         rho0, R, Lc, L, s0, s1 = self.rho0, self.R, self.Lc, self.L, self.s0, self.s1
         wn = np.linalg.norm(w)
         b = float(self.r(l_s)) * wn
@@ -212,28 +214,36 @@ class Wormhole:
             N = int(min(max(np.ceil(U / hmax), 1), nmax))
             hs = U / N
             steps += N
-            ga = g(a)
             for k in range(N):
                 va = a + dv * k * hs
-                gm = g(va + dv * hs / 2)
-                gb = g(va + dv * hs)
-                dpsi = hs / 6 * (ga + 4 * gm + gb)
+                gv = np.array([g(va + dv * hs * t) for t in GAUSS_T])
+                dpsi = hs * (GAUSS_W @ gv)
                 if above and psi + dpsi >= psi_f:
                     target = psi_f - psi
-                    u = hs * target / dpsi
-                    for _ in range(2):
-                        x1 = u * (0.5 - 0.5 / np.sqrt(3))
-                        x2 = u * (0.5 + 0.5 / np.sqrt(3))
-                        I = u / 2 * (g(va + dv * x1) + g(va + dv * x2))
-                        u = min(max(u - (I - target) / g(va + dv * u), 0.0), hs)
+                    cpoly = hs * (GAUSS_POLY @ gv)          # psi - psi0 = sum_k cpoly[k] t^(k+1), t = u / hs
+                    t = target / dpsi
+                    for _ in range(4):
+                        P = sum(cpoly[j] * t ** (j + 1) for j in range(4))
+                        dP = sum((j + 1) * cpoly[j] * t ** j for j in range(4))
+                        t = min(max(t - (P - target) / dP, 0.0), 1.0)
+                    u = t * hs
+                    I = u * (GAUSS_W @ np.array([g(va + dv * u * tt) for tt in GAUSS_T]))
+                    u = min(max(u - (I - target) / g(va + dv * u), 0.0), hs)
                     return dict(kind=2, l=l_of(va + dv * u, side), n=np.cos(psi_f) * e1 + np.sin(psi_f) * e2)
                 psi += dpsi
-                ga = gb
         n = np.cos(psi) * e1 + np.sin(psi) * e2
         t = -np.sin(psi) * e1 + np.cos(psi) * e2
         bR = b / self.Rout
         return dict(kind=int(side_out), l=side_out * L, n=n, vl=side_out * np.sqrt(max(1 - bR * bR, 0.0)),
                     w=bR * t, steps=steps)
+
+
+# 4-point Gauss-Legendre on [0, 1], and the integral from 0 to t of the cubic through its nodes:
+# GAUSS_POLY[k, i] is the coefficient of t^(k+1) per unit value at node i
+GAUSS_T, GAUSS_W = np.polynomial.legendre.leggauss(4)
+GAUSS_T, GAUSS_W = 0.5 * (GAUSS_T + 1), 0.5 * GAUSS_W
+GAUSS_POLY = np.array([np.polyint(np.poly1d(np.poly(np.delete(GAUSS_T, i))) / np.prod(GAUSS_T[i] - np.delete(GAUSS_T, i))).coeffs[::-1][1:]
+                       for i in range(4)]).T
 
 
 def _any_perp(n):
