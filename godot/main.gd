@@ -49,6 +49,7 @@ var await_pose := false        # XR: place the viewer once head tracking deliver
 var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
 var perf: Label3D               # the frame rate panel
+var bench: Node                 # the speed check, started from the panel (bench.gd)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -119,9 +120,37 @@ func place(side: float, pos: Vector3, forward: Vector3) -> void:
 	frame = [WormholeSpace.vector_from_chart(side, foot_n, right),
 			WormholeSpace.vector_from_chart(side, foot_n, up),
 			WormholeSpace.vector_from_chart(side, foot_n, back)]
-	# play-space forward is -Z; undo the current head yaw so the view starts along `forward`
+	_face_head()
+
+
+## Put the feet at l on the axis through the throat (n = +x), facing the throat or away from it.
+func place_on_axis(l: float, inward: bool) -> void:
+	foot_l = l
+	foot_n = Vector3(1.0, 0.0, 0.0)
+	var s := 1.0 if inward else -1.0
+	# right, up, back as (U_l, u): facing the throat, back is +l and right is +y of chart A
+	frame = [Vector4(0.0, 0.0, s, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(s, 0.0, 0.0, 0.0)]
+	_face_head()
+
+
+## Turn the frame so that the head's current yaw looks along its forward (play-space forward
+## is -Z), and take the head's place in the room from here.
+func _face_head() -> void:
 	var hf := _head_forward_xz()
 	_rotate_frame(-atan2(hf.x, -hf.y))
+	prev_head = Vector2(camera.position.x, camera.position.z)
+	_update_chart_map()
+
+
+## Where the feet are and the frame there, to come back to (set_pose).
+func get_pose() -> Array:
+	return [foot_l, foot_n, frame.duplicate()]
+
+
+func set_pose(p: Array) -> void:
+	foot_l = p[0]
+	foot_n = p[1]
+	frame = p[2].duplicate()
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
 
@@ -215,6 +244,10 @@ func _build_overlay() -> void:
 	perf.xr = xr as OpenXRInterface if in_xr else null
 	perf.viewer = self
 	perf.head = camera
+	bench = preload("res://bench.gd").new()
+	bench.main = self
+	bench.panel = perf
+	add_child(bench)
 	origin.add_child(perf)
 	_update_chart_map()
 

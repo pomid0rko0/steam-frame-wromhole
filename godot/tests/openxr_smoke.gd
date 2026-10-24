@@ -5,8 +5,9 @@ extends SceneTree
 ## the Steam library, a ray pointed at a rate button and a trigger pull set this app's rate in
 ## SteamVR's settings, and as the display stays at 20 Hz the panel asks for a restart (a display
 ## that follows is answered too); choices made while vrcmd runs end with the last one written;
-## a scale button sets the render scale and keeps it; and frames made too slow for the display
-## turn the plate red.
+## a scale button sets the render scale and keeps it; frames made too slow for the display
+## turn the plate red; and the speed check's button runs it through (bench.gd) and puts the
+## rate, the shader and the viewer back.
 ##   tools/test_openxr.sh
 
 const APP_ID := "4242"
@@ -15,6 +16,9 @@ var main: Node3D
 var frames := 0
 var fake: String
 var ok := true
+var bench_stored := 0.0
+var bench_auto := false
+var bench_seen := false
 
 
 func _initialize() -> void:
@@ -35,6 +39,9 @@ func _process(_delta: float) -> bool:
 		print("no panel: FAIL")
 		return true
 	if frames == 2:
+		# a build made for measuring starts the speed check by itself: not before its turn here
+		bench_auto = main.bench.auto
+		main.bench.auto = false
 		var home := OS.get_environment("HOME")
 		_fake_steamvr()
 		p.vrcmd = fake + "/vrcmd"
@@ -101,13 +108,44 @@ func _process(_delta: float) -> bool:
 		p.point(0, Vector3.ZERO, Vector3.FORWARD, 0.0)
 		p.choose_scale(1.0)
 		check("back to 100%", p.target.scaling_3d_scale == 1.0)
-	if frames > 260:
+	if frames > 260 and frames <= 320:
 		OS.delay_msec(70)           # longer than a 50 ms refresh: every frame misses one
 	if frames == 320:
 		print("slow frames: ", p.text.replace("\n", " | "), "  seconds ", p.seconds)
 		check("too slow: judged, red", p.keeps_up(p.seconds) == false and p.plate_mat.albedo_color == p.COLOR_BAD)
 		check("too slow: panel says so", p.text.contains("не успевает"))
+	var b: Node = main.bench
+	if frames == 330:
+		b.warm = 0.1
+		b.time = 0.2
+		bench_stored = p.stored
+		if bench_auto:
+			b.auto = true
+			print("speed check: waiting for it to start by itself")
+		else:
+			var at := _button_point(p, "bench", 0.0)
+			var from := at + Vector3(0.1, -0.3, 0.4)
+			p.point(1, from, (at - from).normalized(), 0.0)
+			p.point(1, from, (at - from).normalized(), 1.0)
+			p.point(1, from, (at - from).normalized(), 0.0)
+			p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
+			check("speed check: its button starts it, asks for 72 Hz", b.running and p.desired == 72.0)
+	if frames > 330 and bench_auto and not bench_seen and b.running:
+		bench_seen = true
+		check("speed check: started by itself, %d rounds" % b.rounds, b.rounds == b.AUTO_ROUNDS and p.desired == 72.0)
+	if frames > 330 and not b.running and (bench_seen or not bench_auto):
+		var segs: int = (2 if b.variants.size() > 1 else 1) * b.rounds
+		check("speed check: every place timed", b.results.size() == b.PLACES.size() and b.results.back().back().size() == segs)
+		var pose: Array = main.get_pose()
+		check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
+				and main.material.shader == main.SHADER_PLAIN)
+		check("speed check: the rate set back", p.desired == bench_stored)
+		check("speed check: the panel says it is done", p.bench_text.begins_with("замер готов") or p.bench_text.begins_with("нов"))
 		print("PASS" if ok else "FAIL")
+		return true
+	if Time.get_ticks_msec() > 500_000:
+		check("speed check: finished", false)
+		print("FAIL")
 		return true
 	return false
 

@@ -32,7 +32,7 @@ log=$(timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . --ren
 code=$?
 kill $monado 2>/dev/null
 echo "$log" > /tmp/wormhole-openxr.log
-grep -E "^(in_xr|runtime|measured|panel|refresh|window)| (ok|WRONG)$" <<<"$log"
+grep -E "^(in_xr|runtime|measured|panel|refresh|window|bench)| (ok|WRONG)$" <<<"$log"
 failed=0
 if grep -qE "SCRIPT ERROR|SHADER ERROR" <<<"$log"; then grep -E "SCRIPT ERROR|SHADER ERROR" -A3 <<<"$log"; failed=1; fi
 grep -q "^PASS$" <<<"$log" || failed=1
