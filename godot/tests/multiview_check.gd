@@ -3,15 +3,18 @@ extends SceneTree
 ## mode "ray" hides Godot's green overlay, "floor" shows only its floor lines, "domain" fills
 ## the area where it may draw floor lines, "balls" shows only its ball grids, "both" all of it.
 ## Comparing them shows whether green lands exactly on the ray-traced white lines and red balls.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case [plain]
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
 ## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture.
+## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
+## code); only the floor lines can be compared then.
 
 var main: Node3D
 var hmd
 var frames := 0
 var mode: String
 var case := 0
+var plain := false
 
 
 func _initialize() -> void:
@@ -19,6 +22,7 @@ func _initialize() -> void:
 	mode = args[1]
 	hmd = preload("res://tests/fake_hmd.gd").new()
 	case = int(args[2])
+	plain = args.size() > 3 and args[3] == "plain"
 	if case == 0:
 		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.0, 1.0, -1.1, 1.1))
 	else:
@@ -40,6 +44,8 @@ func _process(_delta: float) -> bool:
 		main.place(1.0, main.START_POS, main.START_FORWARD)
 	if frames == 4:
 		main.perf.visible = false        # it follows the head: in every view
+		if plain:
+			main.set_balls(PackedVector4Array(), PackedVector4Array())
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
 		match mode:
 			"ray":

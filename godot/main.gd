@@ -9,7 +9,7 @@ extends Node3D
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
 ## parallel-transporting the play-space axes; the head sits head-height above the feet
 ## along the floor normal. Each eye is derived in the shader from that view's own
-## matrices (see shaders/wormhole.gdshader).
+## matrices (see shaders/wormhole_view.gdshaderinc).
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
@@ -22,6 +22,9 @@ const MOUSE_SENS := 0.003
 # Stereo check (see _add_check): balls in chart A, in front of the start position
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
+# the ray tracer without movable balls, and with them (set_balls)
+const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
+const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -46,6 +49,10 @@ var await_pose := false        # XR: place the viewer once head tracking deliver
 var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
 var perf: Label3D               # the frame rate panel
+var bench: Node                 # the speed check, started from the panel (bench.gd)
+var hold := false               # the feet stay where they are while the head moves (the speed check)
+var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
+var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -82,7 +89,7 @@ func _ready() -> void:
 			hands.append(c)
 
 	material = ShaderMaterial.new()
-	material.shader = load("res://shaders/wormhole.gdshader")
+	material.shader = SHADER_PLAIN
 	material.set_shader_parameter("wh_rho0", space.rho0)
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
@@ -116,9 +123,53 @@ func place(side: float, pos: Vector3, forward: Vector3) -> void:
 	frame = [WormholeSpace.vector_from_chart(side, foot_n, right),
 			WormholeSpace.vector_from_chart(side, foot_n, up),
 			WormholeSpace.vector_from_chart(side, foot_n, back)]
-	# play-space forward is -Z; undo the current head yaw so the view starts along `forward`
+	_face_head()
+
+
+## Put the feet at l on the axis through the throat (n = +x), looking yaw degrees to the right of
+## the throat (the head's own yaw is taken out), and turn the view pitch degrees up and roll
+## degrees about the line of sight (right side down) on top of the head's own: the speed check.
+func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
+	foot_l = l
+	foot_n = Vector3(1.0, 0.0, 0.0)
+	# right, up, back as (U_l, u): facing the throat, back is +l and right is +y of chart A
+	frame = [Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)]
+	_rotate_frame(deg_to_rad(yaw))
+	_face_head()
+	view_pitch = pitch
+	view_roll = roll
+
+
+## Where the head looks: degrees from the direction to the throat along the floor, and degrees up.
+func look_angles() -> Vector2:
+	var f := -camera.transform.basis.z
+	var T: Vector4 = f.x * frame[0] + f.z * frame[2]     # along the floor, as (U_l, u)
+	var toward := -1.0 if foot_l > 0.0 else 1.0          # the throat is where |l| decreases
+	var h := T.length()
+	var yaw := rad_to_deg(acos(clampf(toward * T.x / h, -1.0, 1.0))) if h > 1e-6 else 0.0
+	return Vector2(yaw, rad_to_deg(asin(clampf(f.y, -1.0, 1.0))))
+
+
+## Turn the frame so that the head's current yaw looks along its forward (play-space forward
+## is -Z), and take the head's place in the room from here.
+func _face_head() -> void:
 	var hf := _head_forward_xz()
 	_rotate_frame(-atan2(hf.x, -hf.y))
+	prev_head = Vector2(camera.position.x, camera.position.z)
+	_update_chart_map()
+
+
+## Where the feet are and the frame there, to come back to (set_pose).
+func get_pose() -> Array:
+	return [foot_l, foot_n, frame.duplicate()]
+
+
+func set_pose(p: Array) -> void:
+	foot_l = p[0]
+	foot_n = p[1]
+	frame = p[2].duplicate()
+	view_pitch = 0.0
+	view_roll = 0.0
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
 
@@ -147,7 +198,8 @@ func _process(_delta: float) -> void:
 		prev_head = hz
 		recentered = false
 		_update_chart_map()
-	_walk(hz - prev_head)
+	if not hold:
+		_walk(hz - prev_head)
 	prev_head = hz
 	_point_panel()
 	if overlay:
@@ -156,9 +208,12 @@ func _process(_delta: float) -> void:
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
+	var hf: Array = hp[2]
+	if view_pitch != 0.0 or view_roll != 0.0:
+		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll))
 	material.set_shader_parameter("head_l", hp[0])
 	material.set_shader_parameter("head_n", hp[1])
-	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
+	material.set_shader_parameter("head_f", PackedVector4Array(hf))
 	material.set_shader_parameter("head_pos", head.origin)
 
 
@@ -184,6 +239,17 @@ func _walk(step: Vector2) -> void:
 	var fx: Vector4 = WormholeSpace.tangent(foot_n, Vector4(res[2][0].x, res[2][0].y, res[2][0].z, 0.0))
 	var fz: Vector4 = WormholeSpace.tangent(foot_n, Vector4(res[2][2].x, res[2][2].y, res[2][2].z, 0.0))
 	frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
+
+
+## The head's frame [right, up, back] turned pitch up, then roll about the line of sight.
+static func _tilt(f: Array, pitch: float, roll: float) -> Array:
+	var c := cos(pitch)
+	var s := sin(pitch)
+	var up: Vector4 = c * f[1] + s * f[2]
+	var back: Vector4 = c * f[2] - s * f[1]
+	var cr := cos(roll)
+	var sr := sin(roll)
+	return [cr * f[0] + sr * up, cr * up - sr * f[0], back]
 
 
 func _rotate_frame(angle: float) -> void:
@@ -212,6 +278,10 @@ func _build_overlay() -> void:
 	perf.xr = xr as OpenXRInterface if in_xr else null
 	perf.viewer = self
 	perf.head = camera
+	bench = preload("res://bench.gd").new()
+	bench.main = self
+	bench.panel = perf
+	add_child(bench)
 	origin.add_child(perf)
 	_update_chart_map()
 
@@ -258,12 +328,7 @@ func _add_check() -> void:
 		m.material_override = ball_mat
 		m.position = c
 		overlay.add_child(m)
-	while pos.size() < 12:
-		pos.append(Vector4.ZERO)
-		col.append(Vector4.ZERO)
-	material.set_shader_parameter("wh_ball", pos)
-	material.set_shader_parameter("wh_ballCol", col)
-	material.set_shader_parameter("wh_nBall", CHECK_BALLS.size())
+	set_balls(pos, col)
 	# no other objects: Godot's floor lines would be drawn over them where the floor is hidden
 	var none_sph := PackedVector4Array()
 	var none_pil := PackedVector4Array()
@@ -276,6 +341,24 @@ func _add_check() -> void:
 	material.set_shader_parameter("wh_sph", none_sph)
 	material.set_shader_parameter("wh_pil", none_pil)
 	material.set_shader_parameter("wh_box", none_box)
+
+
+## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),
+## at most 12. Without balls the ray tracer is a separate shader that leaves their code out: it
+## needs registers even where no ray runs it, and the GPU then runs fewer pixels at once. The
+## shader is chosen here, so set the balls at the start: changing it later costs a hitch while the
+## GPU compiles the other one.
+func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
+	var n := pos.size()
+	var p := pos.duplicate()
+	var c := col.duplicate()
+	while p.size() < 12:
+		p.append(Vector4.ZERO)
+		c.append(Vector4.ZERO)
+	material.shader = SHADER_BALLS if n > 0 else SHADER_PLAIN
+	material.set_shader_parameter("wh_ball", p)
+	material.set_shader_parameter("wh_ballCol", c)
+	material.set_shader_parameter("wh_nBall", n)
 
 
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a

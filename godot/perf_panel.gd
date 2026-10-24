@@ -24,11 +24,14 @@ extends Label3D
 ## next), the display's own rate tells when it followed, and if it has not a few seconds after
 ## the write the panel asks for a restart. Otherwise the button asks the runtime directly.
 ##
+## The last row starts the speed check (bench.gd); its title shows how it goes and what came out.
+##
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. Kept in user://settings.cfg.
 ##
-## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards,
-## with the GPU's clock where the kernel shows it (a GPU that lowers its clock makes the same
+## Every second a line starting with "refresh:" goes to the log, for checking afterwards, with
+## where one stands and looks and the GPU's clock where the kernel shows it, and a line for every
+## frame that came a refresh late, with where and what the GPU and the CPU took for it (a GPU that lowers its clock makes the same
 ## frame take longer; on the Frame it stayed at its top clock while frames were too slow).
 
 const RateMeter := preload("res://rate_meter.gd")
@@ -36,7 +39,8 @@ const JUDGE_SECONDS := 5        # the colour judges up to the last 5 seconds
 const MIN_SECONDS := 2          # at a new rate, measure this long before judging
 const MISSED_OK := 0.01         # refreshes without a new frame that still count as keeping up
 const REQUEST_WAIT := 3.0       # seconds the headset gets to follow a request
-const LOG_EVERY := 5            # seconds between log lines
+const LOG_EVERY := 1            # seconds between log lines
+const LATE_LINES := 30          # late frames logged one by one per second, at most
 const NOTE_SECONDS := 8         # how long the answer to a press stays on the panel
 const FRAME_RATES := [72.0, 80.0, 90.0, 96.0, 108.0, 120.0, 144.0]   # SteamVR's per-app choices on the Frame
 const VRCMD := "/opt/steamvr/bin/linuxarm64/vrcmd"
@@ -51,6 +55,7 @@ const BTN_H := 0.06             # m
 const BTN_GAP := 0.01
 const RATE_W := 0.08
 const SCALE_W := 0.12
+const BENCH_W := 0.36
 const COLOR_BTN := Color(0.17, 0.19, 0.24, 0.96)
 const COLOR_ON := Color(0.12, 0.50, 0.22, 0.96)       # in effect
 const COLOR_PENDING := Color(0.62, 0.50, 0.08, 0.96)  # chosen, not (yet) in effect
@@ -92,6 +97,7 @@ var note := ""                  # what came of the last press
 var note_failed := false
 var note_left := 0
 var logged := 0
+var late_lines := 0             # late frames logged this second
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_min := 0              # MHz, over the log window
@@ -102,6 +108,8 @@ var plate_mat: StandardMaterial3D
 var buttons: Array = []         # {kind "rate" / "scale", value, rect (panel x, y), mat, label}
 var rate_options: Array = []
 var titles: Array = []          # Label3D: the rows' titles and the hint under them
+var bench_text := "замер скорости"
+var bench_title: Label3D
 var plate_rect := Rect2()
 var hover := [-1, -1]           # per hand (left, right): the button its ray is on, -1 none
 var on_plate := [false, false]  # per hand: its ray is on the panel
@@ -201,9 +209,13 @@ func _layout() -> void:
 	var line := f.get_height(font_size) * pixel_size
 	var y := -STATUS_LINES * line - 0.02
 	var rows := [["частота, Гц", "rate", rate_options, RATE_W], ["разрешение", "scale", SCALES, SCALE_W]]
+	if viewer and viewer.get("bench"):
+		rows.append([bench_text, "bench", [0.0], BENCH_W])
 	var width := 0.0
 	for row in rows:
 		titles.append(_text(row[0], 30, Vector3(0.0, y - 0.015, 0.0)))
+		if row[1] == "bench":
+			bench_title = titles.back()
 		y -= 0.045
 		var n: int = row[2].size()
 		var w: float = row[3]
@@ -220,8 +232,10 @@ func _layout() -> void:
 			mesh.material_override = mat
 			mesh.position = Vector3(x, y - 0.5 * BTN_H, -0.002)
 			add_child(mesh)
-			var label := _text("%.0f" % v if row[1] == "rate" else "%d%%" % roundi(v * 100.0), 32,
-					Vector3(x, y - 0.5 * BTN_H, 0.0))
+			var t := "%.0f" % v if row[1] == "rate" else "%d%%" % roundi(v * 100.0)
+			if row[1] == "bench":
+				t = "сравнить с прежним" if viewer.bench.has_ab() else "замерить"
+			var label := _text(t, 32, Vector3(x, y - 0.5 * BTN_H, 0.0))
 			buttons.append({"kind": row[1], "value": v, "mat": mat, "mesh": mesh, "label": label,
 					"rect": Rect2(x - 0.5 * w, y - BTN_H, w, BTN_H)})
 		y -= BTN_H + 0.02
@@ -243,6 +257,9 @@ func _paint() -> void:
 			if rate > 0.0 and absf(b.value - rate) < 0.5:
 				c = COLOR_ON
 			elif chosen > 0.0 and absf(b.value - chosen) < 0.5:
+				c = COLOR_PENDING
+		elif b.kind == "bench":
+			if viewer.bench.running:
 				c = COLOR_PENDING
 		elif is_equal_approx(b.value, render_scale):
 			c = COLOR_ON
@@ -285,8 +302,11 @@ func point(hand: int, from: Vector3, dir: Vector3, trigger: float, tracked := tr
 			var b: Dictionary = buttons[hover[hand]]
 			if b.kind == "rate":
 				choose_rate(b.value)
-			else:
+			elif b.kind == "scale":
 				choose_scale(b.value)
+			else:
+				viewer.bench.start()
+				_paint()
 	if hover[hand] != was:
 		_paint()
 
@@ -311,7 +331,20 @@ func _process(delta: float) -> void:
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
-		meter.add(now, api.get_next_frame_time() - now, reported)
+		var period := api.get_next_frame_time() - now
+		var missed_before := meter.missed()
+		meter.add(now, period, reported)
+		# every late frame gets a line: where, and what the GPU and the CPU took for it
+		if meter.missed() > missed_before and late_lines < LATE_LINES and not (viewer and viewer.get("bench") and viewer.bench.running):
+			late_lines += 1
+			var look: Vector2 = viewer.look_angles() if viewer else Vector2.ZERO
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process"
+					% [meter.missed() - missed_before, viewer.foot_l if viewer else 0.0, look.x, look.y,
+					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
+					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
+		if viewer and viewer.get("bench"):
+			viewer.bench.frame_timing(now, period, reported)
 	t += delta
 	frames += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
@@ -461,6 +494,14 @@ func _answer_request() -> void:
 	_set_text(_compose())
 
 
+## The speed check's line, the title of its row.
+func bench_status(s: String) -> void:
+	bench_text = s
+	if bench_title:
+		bench_title.text = s
+	_paint()
+
+
 func _set_note(s: String, failed: bool) -> void:
 	note = s
 	note_failed = failed
@@ -518,6 +559,7 @@ func _second() -> void:
 		if seconds.size() > JUDGE_SECONDS:
 			seconds.pop_front()
 	meter.reset_window()
+	late_lines = 0
 	note_left -= 1
 	if note_left <= 0:
 		note = ""
@@ -570,27 +612,22 @@ func _compose() -> String:
 	return joined
 
 
-## The last few seconds at the current rate, in one line of the log.
+## The last second, in one line of the log: where the feet are and where the head looks, the
+## frames and refreshes, the GPU time, and the panel's verdict over the last few seconds.
 func _log() -> void:
-	var f := 0
-	var r := 0
-	var n := 0
-	var g := 0.0
-	var gm := 0.0
-	for s in seconds:
-		f += s[0]
-		r += s[1]
-		g += s[2]
-		gm = maxf(gm, s[3])
-		n += s[4]
+	if seconds.is_empty():
+		return
+	var s: Array = seconds.back()
 	var eye := xr.get_render_target_size()
 	var where := ""
 	if viewer:
 		var l: float = viewer.foot_l
 		var edge: float = viewer.space.L
-		where = "feet l %.1f m (%s), " % [l, "world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone")]
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
-			% [rate, meter.paced_rate(), f, r, r - f, seconds.size(), g / n if n > 0 else 0.0, gm,
+		var look: Vector2 = viewer.look_angles()
+		where = "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
+				"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
+			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds)])
 	clock_min = 0
