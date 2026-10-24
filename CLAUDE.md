@@ -35,12 +35,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
   cause is not found.
 - `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
-  4 nodes, README «Почему это real time»), one shading per pixel after the trace, the ray's
-  direction interpolated from the screen's corners, and the movable balls' code in a separate
-  shader (`wormhole_balls.gdshader`, chosen by `main.set_balls`). Checked in the headset with
-  5 nodes and the direction per pixel: the one-eye check passes; at the shell's edge a frame
-  costs about 5 ms (16.6 on `main`), 108 Hz holds at 100%, 120 Hz at 90% (README «Что видно в
-  шлеме»).
+  4 nodes, README «Почему это real time»), the ray's direction interpolated from the screen's
+  corners, one shading per pixel after the trace, the movable balls' code in a separate shader
+  (`wormhole_balls.gdshader`, chosen by `main.set_balls`), and the speed check (`bench.gd`,
+  `tools/ab_shaders.sh`). Measured in the headset by the speed check: 4.7-5 ms at the shell's
+  edge (16.6 before), 120 Hz held on its whole tour; frames drop at the edge when SteamVR shows
+  the cameras (README «Что видно в шлеме»). Next: cheaper shading, a table for the curved region
+  (README wish «Дешевле лучи у червоточины»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -84,7 +85,7 @@ draws next to ray-traced ones, check they line up the same way.
 
 - **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe and EGL with apt if they are missing.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
-- **Stereo:** `tools/test_stereo.sh` (~15 min).
+- **Stereo:** `tools/test_stereo.sh` (~2 min: the renders run in parallel, one Godot per core, each with its own display and shader cache).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
 - **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
@@ -121,3 +122,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **Render scale and the stereo test.** At a 3D render scale below 1 the bilinear upscale blends the balls' edges with the background, and the one-colour red threshold of `tools/compare` then shifts the shaded ray-traced ball by 0.2–0.4 px against Godot's flat red one. With `SCALING_3D_MODE_NEAREST` the whole suite passes at 80% within 0.02 px: the geometry is exact, test a scale that way.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
+- **Measure in the headset, not by counting instructions.** A rewrite of the flat trace (bounding balls, the hit's normal and colour picked at the end with dynamic indices) had fewer instructions for ir3 and was 7-15% slower on the Frame; 13 registers instead of 16 (14 waves instead of 12) made no difference. Compare variants with the speed check, at 72 Hz: at 120 Hz a variant that misses frames makes SteamVR step in, and its GPU time reads half as much again.
+- **Shading is ~40% of a frame at the shell's edge**, ~1.9 of 4.7 ms: the 6 screen derivatives (`dsx`/`dsy`) ~0.55 ms, atan/asin ~0.25, and the rest because near the throat one group of pixels holds both skies, the floor and objects and runs every branch. Godot's own cost (a one-colour shader) is 0.8 ms.
+- **SteamVR's camera view** (when it shows the outside cameras) takes ~3 ms of GPU a frame: our 4.8 ms frame then reads ~8 ms, and at 120 Hz the headset falls to every 2nd refresh for seconds. 120 Hz that survives it needs ~3.5 ms at the edge.
+- **`adreno_stats.sh --disasm`** dumps the biggest program, Godot's generic ubershader (with its decal loop and its own derivatives), not the specialised one that runs.
