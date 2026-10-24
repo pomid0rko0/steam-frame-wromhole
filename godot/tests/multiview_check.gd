@@ -6,9 +6,10 @@ extends SceneTree
 ##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
 ## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture;
-## 3: as 1, then the left stick walks forward and right (keys W, D) and the right stick turns
-## 30 degrees right (key E): the overlay must follow the world. Run with --fixed-fps 60, so
-## every mode walks the same distance.
+## 3: as 1, then the left stick walks forward and right (keys W, D), the right stick snaps
+## 30 degrees right (key E), and after a switch to smooth turns (Tab) turns 15 degrees left
+## while walking forward (Q, W): the overlay must follow the world. Run with --fixed-fps 60,
+## so every mode walks and turns the same.
 
 var main: Node3D
 var hmd
@@ -33,6 +34,8 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "FakeHMD"
 	main.show_check = true
+	if case == 3:
+		main.smooth_turn = false
 	root.add_child(main)
 
 
@@ -70,7 +73,17 @@ func _process(_delta: float) -> bool:
 				_key(KEY_E, true)
 			18:
 				_key(KEY_E, false)
-	if frames == 24:
+			19:
+				_key(KEY_TAB, true)
+			20:
+				_key(KEY_TAB, false)
+			21:
+				_key(KEY_Q, true)
+				_key(KEY_W, true)
+			31:
+				_key(KEY_Q, false)
+				_key(KEY_W, false)
+	if frames == (34 if case == 3 else 24):
 		var rid: RID = main.xr_view.get_texture().get_rid()
 		for i in 2:
 			var img: Image = RenderingServer.texture_2d_layer_get(rid, i)

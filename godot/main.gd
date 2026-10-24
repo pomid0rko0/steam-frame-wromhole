@@ -1,11 +1,12 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
-## snap-turns (button map in the README). Every pixel is ray traced along a geodesic of the
-## wormhole space in the shader; this script tracks where the viewer is in that curved space.
+## turns, smoothly or in 30-degree snaps (button map in the README). Every pixel is ray traced
+## along a geodesic of the wormhole space in the shader; this script tracks where the viewer is
+## in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space and stick locomotion move the feet along
-## floor geodesics, parallel-transporting the play-space axes; snap turns rotate those axes;
+## floor geodesics, parallel-transporting the play-space axes; stick turns rotate those axes;
 ## the head sits head-height above the feet along the floor normal. Each eye is derived in
 ## the shader from that view's own matrices (see shaders/wormhole.gdshader).
 
@@ -17,6 +18,7 @@ const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
 const STICK_DEAD_ZONE := 0.15
 const SNAP_ANGLE := deg_to_rad(30.0)
+const SMOOTH_TURN_SPEED := deg_to_rad(90.0)   # per second at full stick
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const DESKTOP_HEAD_HEIGHT := 1.6
@@ -49,6 +51,7 @@ var show_check := false         # the stereo check (see _add_check)
 var left_hand: XRController3D
 var right_hand: XRController3D
 var button_was := {}
+var smooth_turn := true         # false: 30-degree snaps; a right stick click switches
 var snap_armed := true          # the right stick went back to the middle since the last turn
 var logged_profiles := {}
 var input_log_time := 0.0
@@ -152,7 +155,9 @@ func _process(delta: float) -> void:
 		place(1.0, START_POS, START_FORWARD)
 	if in_xr:
 		_log_input(delta)
-	var moved := _handle_turn_and_reset()
+	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
+	var dt := minf(delta, 0.1)
+	var moved := _handle_turn_and_reset(dt)
 
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
@@ -168,7 +173,7 @@ func _process(delta: float) -> void:
 		var fwd := _head_forward_xz()
 		var rgt := Vector2(-fwd.y, fwd.x)
 		var speed := RUN_SPEED if _run_pressed() else WALK_SPEED
-		step += (stick.y * fwd + stick.x * rgt) * speed * delta
+		step += (stick.y * fwd + stick.x * rgt) * speed * dt
 		moved = true
 	_walk(step)
 	if moved:
@@ -223,15 +228,29 @@ func _run_pressed() -> bool:
 	return Input.is_key_pressed(KEY_SHIFT) or (in_xr and left_hand.get_float(&"trigger") > 0.5)
 
 
-## Right stick left/right (Q / E): snap turn. Right A (R): back to the start. True if either
-## moved the viewer against the room.
-func _handle_turn_and_reset() -> bool:
+## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
+## in 30-degree snaps; a right stick click (Tab) switches between the two. Right A (R): back to
+## the start. True if any of it moved the viewer against the room.
+func _handle_turn_and_reset(delta: float) -> bool:
 	var turn := 0.0
+	var mode_down := Input.is_key_pressed(KEY_TAB)
 	if in_xr:
 		turn = right_hand.get_vector2(&"primary").x
-	turn += float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q))
+		mode_down = mode_down or right_hand.is_button_pressed(&"primary_click")
+	turn = clampf(turn + float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)), -1.0, 1.0)
+	if _pressed_once("turn_mode", mode_down):
+		smooth_turn = not smooth_turn
+		print("right stick turns ", "smoothly" if smooth_turn else "in 30-degree snaps")
 	var moved := false
-	if absf(turn) > 0.7 and snap_armed:
+	if smooth_turn:
+		if absf(turn) > STICK_DEAD_ZONE:
+			# from zero at the dead zone's edge to full speed at full stick
+			var amount := (absf(turn) - STICK_DEAD_ZONE) / (1.0 - STICK_DEAD_ZONE)
+			_rotate_frame(signf(turn) * amount * SMOOTH_TURN_SPEED * delta)
+			moved = true
+		# a switch to snaps while the stick is out waits for it to come back first
+		snap_armed = absf(turn) < 0.3
+	elif absf(turn) > 0.7 and snap_armed:
 		_rotate_frame(signf(turn) * SNAP_ANGLE)
 		snap_armed = false
 		moved = true
@@ -263,7 +282,8 @@ func _rotate_frame(angle: float) -> void:
 	var s := sin(angle)
 	var fx: Vector4 = frame[0]
 	var fz: Vector4 = frame[2]
-	frame = [c * fx + s * fz, frame[1], c * fz - s * fx]
+	# a smooth turn rotates a little every frame: keep round-off from adding up
+	frame = WormholeSpace.orthonormalize([c * fx + s * fz, frame[1], c * fz - s * fx])
 
 
 func _head_forward_xz() -> Vector2:
