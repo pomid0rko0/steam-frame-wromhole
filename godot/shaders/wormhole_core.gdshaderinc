@@ -20,7 +20,7 @@
 // Static spacetime -dt^2 + ds^2, so light rays are geodesics of ds^2. Each ray stays in a plane
 // through the centre; its angle in that plane is  dpsi = b dl / (r sqrt(r^2 - b^2)):
 //   cylinder: closed form;  fillet: with s = sin(th/2), s = q sinh v or q cosh v the integrand is
-//   smooth and bounded, integrated with adaptive Simpson steps.
+//   smooth and bounded, integrated on Gauss-Legendre panels (Simpson where balls are in reach).
 //
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
@@ -145,6 +145,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     // the path inside the shell: up to three pieces (fillet, cylinder, fillet)
     int pk[3];  float pside[3];  float pa[3];  float pb[3];
     int np = 0;
+    // A ray that enters from the shell's edge crosses the same fillet stretch twice, mirrored
+    // (in and out, or down to its turning point and back): the second piece's integral is the
+    // first one's, unless the floor is crossed in it (balls need the fine steps anyway).
+    bool fromEdge = abs(ls) >= wh_Lsh() * (1.0 - 1e-6);
+    int reuseSrc = -1;
+    int reuseDst = -1;
     if (o.b <= rmin) {
         // passes the throat: oriented coordinate x = d l runs to +L
         float d = vl >= 0.0 ? 1.0 : -1.0;
@@ -153,13 +159,23 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
         if (x < -Lc) { pk[np] = 0; pside[np] = -d; pa[np] = wh_V(o, sStart, dStart); pb[np] = wh_V(o, s0, d0); np++; }
         if (Lc > 0.0 && x < Lc) { pk[np] = 1; pside[np] = d; pa[np] = max(x, -Lc); pb[np] = Lc; np++; }
         pk[np] = 0; pside[np] = d; pa[np] = x > Lc ? wh_V(o, sStart, dStart) : wh_V(o, s0, d0); pb[np] = wh_V(o, s1, d1); np++;
+        if (fromEdge && x < -Lc) { reuseSrc = 0; reuseDst = np - 1; }
     } else {
         // turns around inside the fillet on its own side
         float side = ls > 0.0 ? 1.0 : -1.0;
         outSide = side;
         float vs = wh_V(o, sStart, dStart);
-        pk[0] = 0; pside[0] = side; pa[0] = vl * side < 0.0 ? -vs : vs; pb[0] = wh_V(o, s1, d1); np = 1;
+        if (fromEdge && vl * side < 0.0) {
+            // in from the edge to the turning point v = 0, and back out
+            pk[0] = 0; pside[0] = side; pa[0] = -vs; pb[0] = 0.0;
+            pk[1] = 0; pside[1] = side; pa[1] = 0.0; pb[1] = wh_V(o, s1, d1);
+            np = 2; reuseSrc = 0; reuseDst = 1;
+        } else {
+            pk[0] = 0; pside[0] = side; pa[0] = vl * side < 0.0 ? -vs : vs; pb[0] = wh_V(o, s1, d1); np = 1;
+        }
     }
+    if (nc > 0) { reuseSrc = -1; reuseDst = -1; }
+    vec2 reused = vec2(0.0);      // (psi, path length) of piece reuseSrc
 
     int budget = 160;
     for (int p = 0; p < 3; p++) {
@@ -222,12 +238,23 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             arc += D / vlc;
             continue;
         }
-        // ---- fillet: Simpson steps in v
+        // ---- fillet: panels in v. Without balls in reach, 3-point Gauss-Legendre on panels
+        // up to 0.6 wide (3 integrand values per 0.6; more accurate than Simpson on 0.25-wide
+        // panels, 8 values per unit of v, was); with balls, Simpson on the short panels the ball
+        // sampling needs (2 values per panel, the end one shared).
+        if (p == reuseDst && !(above && psi + reused.x >= psiF)) {
+            psi += reused.x;
+            arc += reused.y;
+            continue;
+        }
+        float psiIn = psi;
+        float arcIn = arc;
         float va = pa[p];
         float vb = pb[p];
         float U = abs(vb - va);
         float dv = vb >= va ? 1.0 : -1.0;
-        float Nf = ceil(U / 0.25);
+        bool gl = nc == 0;
+        float Nf = ceil(U / (gl ? 0.6 : 0.25));
         if (nc > 0) {
             float gmax = max(max(wh_g(o, va).y, wh_g(o, vb).y), wh_g(o, 0.5 * (va + vb)).y);
             Nf = max(Nf, ceil(U * gmax / ds));
@@ -235,20 +262,30 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
         int N = int(clamp(Nf, 1.0, float(max(budget, 1))));
         budget -= N;
         float hs = U / float(N);
-        vec2 ga = wh_g(o, va);
+        vec2 ga = gl ? vec2(0.0) : wh_g(o, va);
         for (int k = 0; k < 160; k++) {
             if (k >= N) break;
             float v0 = va + dv * hs * float(k);
-            vec2 gm = wh_g(o, v0 + dv * 0.5 * hs);
-            vec2 gb = wh_g(o, v0 + dv * hs);
-            vec2 dI = hs / 6.0 * (ga + 4.0 * gm + gb);
+            vec2 gb = vec2(0.0);
+            vec2 dI;
+            if (gl) {
+                dI = hs * (0.27777777777777778 * (wh_g(o, v0 + dv * hs * 0.11270166537925831)
+                                                + wh_g(o, v0 + dv * hs * 0.88729833462074169))
+                           + 0.44444444444444444 * wh_g(o, v0 + dv * 0.5 * hs));
+            } else {
+                vec2 gm = wh_g(o, v0 + dv * 0.5 * hs);
+                gb = wh_g(o, v0 + dv * hs);
+                dI = hs / 6.0 * (ga + 4.0 * gm + gb);
+            }
             float uF = 1e30;
             if (above && psi + dI.x >= psiF) {
+                // where in this panel psi reaches psiF: Newton on the 3-point Gauss integral
                 float target = psiF - psi;
                 float u = hs * target / max(dI.x, 1e-30);
-                for (int it = 0; it < 2; it++) {
-                    float I = 0.5 * u * (wh_g(o, v0 + dv * u * 0.21132486540518713).x
-                                       + wh_g(o, v0 + dv * u * 0.78867513459481287).x);
+                for (int it = 0; it < 3; it++) {
+                    float I = u * (0.27777777777777778 * (wh_g(o, v0 + dv * u * 0.11270166537925831).x
+                                                        + wh_g(o, v0 + dv * u * 0.88729833462074169).x)
+                                   + 0.44444444444444444 * wh_g(o, v0 + dv * 0.5 * u).x);
                     u = clamp(u - (I - target) / max(wh_g(o, v0 + dv * u).x, 1e-30), 0.0, hs);
                 }
                 uF = u;
@@ -297,6 +334,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             arc += dI.y;
             ga = gb;
         }
+        if (p == reuseSrc) reused = vec2(psi - psiIn, arc - arcIn);
     }
     vec3 n = cos(psi) * e1 + sin(psi) * e2;
     vec3 tt = -sin(psi) * e1 + cos(psi) * e2;

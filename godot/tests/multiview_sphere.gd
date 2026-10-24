@@ -32,6 +32,8 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	if frames == 2:
+		main.perf.visible = false     # nothing but the balls under test
 
 	if frames == 3:
 		# the viewer stands at chart (10, 0) facing -x: play x -> chart +y, play +y -> chart +z,

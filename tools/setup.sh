@@ -1,7 +1,8 @@
 #!/bin/bash
 # Everything the tests and exports need on a Linux machine (or a fresh cloud session):
 # Godot 4.7.2 into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
-# Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display.
+# Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL for
+# ref/test_gpu.py.
 # The four steps don't depend on each other and run at once; each line of output starts with
 # its step's name.
 set -euo pipefail
@@ -63,6 +64,9 @@ check_apt() {   # sets $missing to the apt packages still needed
 	missing=""
 	command -v xvfb-run >/dev/null || missing="$missing xvfb"
 	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
+	local libs   # EGL, for ref/test_gpu.py
+	libs=$(ldconfig -p 2>/dev/null) || true
+	{ grep -q "libEGL.so.1 " <<<"$libs" && grep -q libEGL_mesa <<<"$libs"; } || missing="$missing libegl1 libegl-mesa0"
 }
 get_apt() {
 	check_apt
