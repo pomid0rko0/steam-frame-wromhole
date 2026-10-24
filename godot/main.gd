@@ -1,8 +1,8 @@
 extends Node3D
 ## Real-time wormhole for VR: head tracking (physical walking), no stick locomotion, no objects
-## to play with; either trigger steps the headset's refresh rate, shown on a panel. Every pixel
-## is ray traced along a geodesic of the wormhole space in the shader; this script tracks
-## where the viewer is in that curved space.
+## to play with; a panel shows the headset's refresh rate and whether frames keep up, and either
+## trigger picks the next rate (perf_panel.gd). Every pixel is ray traced along a geodesic of
+## the wormhole space in the shader; this script tracks where the viewer is in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
@@ -44,7 +44,8 @@ var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
-var trigger_down := false       # a press of either trigger steps the headset's refresh rate
+var trigger_down := false       # a press of either trigger picks the next refresh rate
+var perf: Label3D               # the frame rate panel
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -56,6 +57,10 @@ func _ready() -> void:
 		var oxr := xr as OpenXRInterface
 		if oxr:
 			oxr.pose_recentered.connect(func() -> void: recentered = true)
+			# OpenXR paces the frames. A V-Synced desktop window would also hold each frame
+			# until the window's own screen refreshes, and could cap the headset below its rate.
+			oxr.session_begun.connect(_window_vsync.bind(false))
+			oxr.session_stopping.connect(_window_vsync.bind(true))
 		await_pose = true
 		# Render XR from a SubViewport. With XR on the root viewport Godot also mirrors the left
 		# eye into the desktop window, and SteamVR may show that window on a virtual screen
@@ -160,10 +165,9 @@ func _process(_delta: float) -> void:
 	material.set_shader_parameter("head_pos", head.origin)
 
 
-## Either trigger: switch the headset to its next refresh rate (after the highest, the lowest).
+## Either trigger: the panel picks the next refresh rate.
 func _rate_button() -> void:
-	var oxr := xr as OpenXRInterface
-	if oxr == null:
+	if perf == null or hands.is_empty():
 		return
 	var v := 0.0
 	for c in hands:
@@ -174,19 +178,7 @@ func _rate_button() -> void:
 	if v < 0.7:
 		return
 	trigger_down = true
-	var rates: Array = oxr.get_available_display_refresh_rates()
-	if not rates.is_empty():
-		oxr.display_refresh_rate = next_rate(rates, oxr.display_refresh_rate)
-
-
-## The next rate above current, or the lowest after the highest.
-static func next_rate(rates: Array, current: float) -> float:
-	var sorted := rates.duplicate()
-	sorted.sort()
-	for r in sorted:
-		if r > current + 0.5:
-			return r
-	return sorted[0]
+	perf.step_rate()
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
@@ -224,13 +216,13 @@ func _head_forward_xz() -> Vector2:
 func _build_overlay() -> void:
 	overlay = Node3D.new()
 	origin.add_child(overlay)
-	var panel: Label3D = preload("res://perf_panel.gd").new()
-	panel.name = "Perf"
-	panel.target = xr_view if in_xr else get_viewport()
-	panel.xr = xr as OpenXRInterface if in_xr else null
-	panel.transform = Transform3D(Basis(Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, 1.0), Vector3(1.0, 0.0, 0.0)),
+	perf = preload("res://perf_panel.gd").new()
+	perf.name = "Perf"
+	perf.target = xr_view if in_xr else get_viewport()
+	perf.xr = xr as OpenXRInterface if in_xr else null
+	perf.transform = Transform3D(Basis(Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, 1.0), Vector3(1.0, 0.0, 0.0)),
 			Vector3(8.5, 0.0, 2.3))
-	overlay.add_child(panel)
+	overlay.add_child(perf)
 	_update_chart_map()
 
 
@@ -311,6 +303,11 @@ func _update_chart_map() -> void:
 	var B := Basis(to_chart.call(frame[0]), Vector3(0.0, 0.0, 1.0), to_chart.call(frame[2]))
 	var Bt := B.transposed()
 	overlay.transform = Transform3D(Bt, Vector3(prev_head.x, 0.0, prev_head.y) - Bt * fc)
+
+
+func _window_vsync(on: bool) -> void:
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if on else DisplayServer.VSYNC_DISABLED)
+	print("window V-Sync ", "on" if on else "off", " (XR session ", "stopping" if on else "running", ")")
 
 
 func _add_window_notice() -> void:

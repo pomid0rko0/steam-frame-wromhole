@@ -51,7 +51,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min), `ref/test_fast.py`, `ref/test_eye.py`.
 - **Branch tests:** on `physics` and `controls`, `--fixed-fps 60 -s res://tests/physics_test.gd` and `tests/controls_test.gd`.
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
-- **OpenXR without a headset:** `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, started ~8 s before Godot. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface.
+- **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface.
 - **GitHub from this environment:** branch pushes work through the session's git proxy, tag pushes are refused (403). The owner creates tags on GitHub.
 
 ## Things learned the hard way
@@ -60,7 +60,8 @@ draws next to ray-traced ones, check they line up the same way.
 - **The overlay's chart → play map** is computed at placement and recentre (and in `controls` after stick moves and turns), never every frame from the feet. Then it is fixed to the room, and world drift shows as green parting from white.
 - **Foveated rendering** (VRS, `xr/openxr/foveation_*`) made space "breathe" around the head and caused nausea on the Frame. It is off; don't turn it on without a headset check.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
-- **Refresh rate.** The Frame starts this app at 72 Hz; it offers 72/80/90/120/144 (144 experimental). The stereo-check scene measured 9.4 ms GPU per frame at 72 Hz. `refresh-rate` has the on-headset panel and `tests/perf.gd`.
+- **Refresh rate.** The Frame starts this app at 72 Hz; its display does 72/80/90/96/108/120/144. Other developers report that SteamVR there answers `XR_FB_display_refresh_rate` requests with success and ignores them, offers one rate and may report a wrong one; it follows the app's own setting `steam.app.<SteamAppId>.preferredRefreshRate` from the app's next start, set with `/opt/steamvr/bin/linuxarm64/vrcmd` (README, «Steam Frame»). `refresh-rate`'s panel does that on a trigger press and measures the rate from xrWaitFrame's timing (`rate_meter.gd`); not yet checked on our headset. The stereo-check scene measured 9.4 ms GPU per frame at 72 Hz.
+- **Signals of the OpenXR interface.** A GDScript lambda connected to an `OpenXRInterface` signal by the panel corrupted the heap at exit (under Monado); a method callable did not. `tools/test_openxr.sh` fails on a crash at exit.
 - **SceneTree test scripts.** In them `main._ready` has not run during `_initialize`; touch main's nodes from `_process` (frame 2 or later). Settings applied too early silently do nothing.
 - **Software-Vulkan timings** are only good for ratios.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
