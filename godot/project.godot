@@ -7,6 +7,7 @@ config_version=5
 config/name="Wormhole VR"
 config/description="Real-time ray traced Morris-Thorne wormhole you can walk through."
 run/main_scene="res://main.tscn"
+run/flush_stdout_on_print=true
 config/features=PackedStringArray("4.7", "Mobile")
 
 [display]

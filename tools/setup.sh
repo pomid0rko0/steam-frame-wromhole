@@ -1,7 +1,9 @@
 #!/bin/bash
 # Everything the tests and exports need on a Linux machine (or a fresh cloud session):
 # Godot 4.7.2 into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
-# Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display.
+# Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL and
+# GLES for the shader tests in ref/ and the preview check, Monado to run the app through a real
+# OpenXR runtime without a headset (CLAUDE.md, "Running things").
 # The four steps don't depend on each other and run at once; each line of output starts with
 # its step's name.
 set -euo pipefail
@@ -55,14 +57,20 @@ get_templates() {
 # One pip for all four: PyPI through the cloud session's proxy swings between 0.1 and 35 MB/s
 # per connection, and four pip downloads at once came out slower than one after another.
 get_pip() {
-	pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/null \
-		|| pip install --quiet numpy scipy pillow moderngl
+	pip install --quiet --break-system-packages numpy scipy pillow moderngl PyOpenGL 2>/dev/null \
+		|| pip install --quiet numpy scipy pillow moderngl PyOpenGL
 }
 
 check_apt() {   # sets $missing to the apt packages still needed
 	missing=""
 	command -v xvfb-run >/dev/null || missing="$missing xvfb"
 	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
+	command -v monado-service >/dev/null || missing="$missing monado-service"
+	# EGL and GLES: ref/test_gpu.py and tools/check_preview_gles.py render the shader core headless
+	ldconfig -p | grep 'libEGL\.so\.1 ' >/dev/null || missing="$missing libegl1"
+	ldconfig -p | grep 'libEGL_mesa\.so\.0 ' >/dev/null || missing="$missing libegl-mesa0"
+	ldconfig -p | grep 'libGLESv2\.so\.2 ' >/dev/null || missing="$missing libgles2"
+	[ -f /usr/share/openxr/1/openxr_monado.json ] || missing="$missing libopenxr1-monado"
 }
 get_apt() {
 	check_apt
