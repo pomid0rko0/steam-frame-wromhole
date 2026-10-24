@@ -16,6 +16,10 @@ extends Label3D
 ## the press sets that, and the panel says whether the display followed or asks for a restart.
 ## Otherwise the press asks the runtime directly and the panel says whether the display followed.
 ##
+## The left trigger steps the 3D render scale of the XR viewport (100, 90, 80, 70%; Godot
+## upscales bilinearly to the headset's size): fewer pixels to ray trace, a softer picture. The
+## choice is kept in user://settings.cfg.
+##
 ## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards,
 ## with the GPU's clock where the kernel shows it (a GPU that lowers its clock makes the same
 ## frame take longer; on the Frame it stayed at its top clock while frames were too slow).
@@ -33,6 +37,8 @@ const VRSETTINGS := "/.config/openvr/config/steamvr.vrsettings"     # under $HOM
 const SETTING := "preferredRefreshRate"
 const DEVFREQ := "/sys/class/devfreq"                             # the kernel's clock-scaled devices
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
+const SCALES := [1.0, 0.9, 0.8, 0.7]
+const SETTINGS := "user://settings.cfg"
 const COLOR_OK := Color(0.05, 0.33, 0.12, 0.92)
 const COLOR_BAD := Color(0.45, 0.06, 0.05, 0.92)
 const COLOR_WAIT := Color(0.05, 0.06, 0.09, 0.9)
@@ -65,6 +71,7 @@ var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_min := 0              # MHz, over the log window
 var clock_max := 0
+var render_scale := 1.0         # 3D render scale of the XR viewport
 var plate: MeshInstance3D
 var plate_mat: StandardMaterial3D
 
@@ -93,6 +100,9 @@ func _ready() -> void:
 		# a method, not a lambda: a lambda left connected to the interface corrupted memory at exit
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
+		var cfg := ConfigFile.new()
+		cfg.load(SETTINGS)
+		_set_scale(float(cfg.get_value("render", "scale", 1.0)))
 		find_app_setting()
 	_set_text("...")
 
@@ -160,6 +170,26 @@ func step_rate() -> void:
 			% [requested, rate, xr.display_refresh_rate, offered])
 	xr.display_refresh_rate = requested
 	_set_text(_compose())
+
+
+## The left trigger: the next render scale, kept for the next start.
+func step_scale() -> void:
+	if xr == null:
+		return
+	var i := SCALES.find(render_scale)
+	_set_scale(SCALES[(i + 1) % SCALES.size()])
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS)
+	cfg.set_value("render", "scale", render_scale)
+	cfg.save(SETTINGS)
+	print("refresh: render scale %.2f" % render_scale)
+	_set_text(_compose())
+
+
+func _set_scale(s: float) -> void:
+	render_scale = s if SCALES.has(s) else 1.0
+	target.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	target.scaling_3d_scale = render_scale
 
 
 ## The next rate above current, or the lowest after the highest.
@@ -335,6 +365,7 @@ func _compose() -> String:
 		"%.0f Гц · %s" % [rate, "меряю..." if ok == null else ("успевает" if ok else "не успевает")],
 		"кадров %d из %d" % [last[0], last[1]],
 		"GPU %.1f из %.1f мс" % [g, 1000.0 / rate],
+		"разрешение %d%% (%d на глаз)" % [roundi(render_scale * 100.0), roundi(xr.get_render_target_size().x * render_scale)],
 	]
 	if requested > 0.0:
 		lines.append("переключаю на %.0f Гц..." % requested)
@@ -349,15 +380,16 @@ func _compose() -> String:
 			else:
 				lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
 		if not writing and requested == 0.0:
-			lines.append("курок: %.0f Гц" % next_rate(FRAME_RATES, stored if stored > 0.0 else rate))
+			lines.append("правый курок: %.0f Гц" % next_rate(FRAME_RATES, stored if stored > 0.0 else rate))
 		if note_failed and note != "":
 			lines.append(STEAM_HINT)
 	else:
 		var offered: Array = xr.get_available_display_refresh_rates()
 		if offered.size() >= 2 and requested == 0.0:
-			lines.append("курок: %.0f Гц" % next_rate(offered, rate))
+			lines.append("правый курок: %.0f Гц" % next_rate(offered, rate))
 		if offered.size() < 2 or (note_failed and note != ""):
 			lines.append(STEAM_HINT)
+	lines.append("левый курок: разрешение %d%%" % roundi(SCALES[(SCALES.find(render_scale) + 1) % SCALES.size()] * 100.0))
 	return "\n".join(lines)
 
 
@@ -375,10 +407,10 @@ func _log() -> void:
 		gm = maxf(gm, s[3])
 		n += s[4]
 	var eye := xr.get_render_target_size()
-	print("refresh: display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d, keeps up %s"
+	print("refresh: display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in %d s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s"
 			% [rate, meter.paced_rate(), f, r, r - f, seconds.size(), g / n if n > 0 else 0.0, gm,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
-			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), keeps_up(seconds)])
+			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds)])
 	clock_min = 0
 	clock_max = 0
 

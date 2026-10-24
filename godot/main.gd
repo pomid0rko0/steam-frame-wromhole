@@ -1,7 +1,7 @@
 extends Node3D
 ## Real-time wormhole for VR: head tracking (physical walking), no stick locomotion, no objects
-## to play with; a panel shows the headset's refresh rate and whether frames keep up, and either
-## trigger picks the next rate (perf_panel.gd). Every pixel is ray traced along a geodesic of
+## to play with; a panel shows the headset's refresh rate and whether frames keep up, the right
+## trigger picks the next rate and the left one the render scale (perf_panel.gd). Every pixel is ray traced along a geodesic of
 ## the wormhole space in the shader; this script tracks where the viewer is in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
@@ -44,7 +44,7 @@ var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
-var trigger_down := false       # a press of either trigger picks the next refresh rate
+var trigger_down := [false, false]   # left: next render scale, right: next refresh rate
 var perf: Label3D               # the frame rate panel
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
@@ -161,20 +161,20 @@ func _process(_delta: float) -> void:
 	material.set_shader_parameter("head_pos", head.origin)
 
 
-## Either trigger: the panel picks the next refresh rate.
+## The right trigger: the panel picks the next refresh rate; the left one: the next render scale.
 func _rate_button() -> void:
 	if perf == null or hands.is_empty():
 		return
-	var v := 0.0
-	for c in hands:
-		v = maxf(v, c.get_float(&"trigger"))
-	if trigger_down:
-		trigger_down = v > 0.3
-		return
-	if v < 0.7:
-		return
-	trigger_down = true
-	perf.step_rate()
+	for i in hands.size():
+		var v := hands[i].get_float(&"trigger")
+		if trigger_down[i]:
+			trigger_down[i] = v > 0.3
+		elif v >= 0.7:
+			trigger_down[i] = true
+			if i == 0:
+				perf.step_scale()
+			else:
+				perf.step_rate()
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).

@@ -2,7 +2,8 @@ extends SceneTree
 ## Relative frame cost on this machine (software Vulkan, so only ratios mean anything).
 ##   godot --path . --resolution 640x360 -s res://tests/perf.gd -- variant
 ## plain: the normal scene; check: the stereo check scene; check_noballs: without its ray-traced
-## balls; check_nooverlay: without Godot's green overlay; plain_balls: normal scene + the balls.
+## balls; check_nooverlay: without Godot's green overlay; plain_balls: normal scene + the balls;
+## plain_scale80, plain_scale70: the normal scene at 80% / 70% 3D render scale.
 
 var main: Node3D
 var frames := 0
@@ -24,6 +25,9 @@ func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 2:
 		match variant:
+			"plain_scale80", "plain_scale70":
+				root.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+				root.scaling_3d_scale = 0.8 if variant == "plain_scale80" else 0.7
 			"check_noballs":
 				main.material.set_shader_parameter("wh_nBall", 0)
 			"check_nooverlay":

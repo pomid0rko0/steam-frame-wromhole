@@ -4,7 +4,8 @@ extends SceneTree
 ## with the runtime, judges the frames; with a stand-in for SteamVR's vrcmd, as if started from
 ## the Steam library, a trigger press sets this app's rate in SteamVR's settings, and as the
 ## display stays at 20 Hz the panel asks for a restart (a display that follows is answered too);
-## and frames made too slow for the display turn the plate red.
+## the left trigger steps the render scale and keeps it; and frames made too slow for the display
+## turn the plate red.
 ##   tools/test_openxr.sh
 
 const APP_ID := "4242"
@@ -16,6 +17,7 @@ var ok := true
 
 
 func _initialize() -> void:
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://settings.cfg"))
 	main = load("res://main.tscn").instantiate()
 	root.add_child(main)
 
@@ -28,10 +30,15 @@ func check(what: String, cond: bool) -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	var p: Label3D = main.perf
+	if frames > 2 and p == null:
+		print("no panel: FAIL")
+		return true
 	if frames == 2:
+		var home := OS.get_environment("HOME")
 		_fake_steamvr()
 		p.vrcmd = fake + "/vrcmd"
 		p.find_app_setting()
+		OS.set_environment("HOME", home)     # user:// follows HOME
 		check("app setting found: steam.app.%s, 90 Hz" % APP_ID, p.steam_key == "steam.app." + APP_ID and p.stored == 90.0)
 	if frames == 100:
 		check("panel says the setting and the display differ", p.text.contains("в SteamVR задано 90 Гц, а шлем на 20"))
@@ -49,6 +56,15 @@ func _process(_delta: float) -> bool:
 		p.request_age = 0.0
 	if frames == 250:
 		check("display followed: panel says so", p.text.contains("шлем перешёл на 20 Гц"))
+		check("full resolution at first", p.target.scaling_3d_scale == 1.0 and p.text.contains("разрешение 100% (128 на глаз)"))
+		p.step_scale()
+		var cfg := ConfigFile.new()
+		cfg.load("user://settings.cfg")
+		check("left trigger: 90% render scale, kept", is_equal_approx(p.target.scaling_3d_scale, 0.9) and cfg.get_value("render", "scale", 0.0) == 0.9)
+		check("panel shows it and the next", p.text.contains("разрешение 90% (115 на глаз)") and p.text.contains("левый курок: разрешение 80%"))
+		for i in 3:
+			p.step_scale()
+		check("after 70% back to 100%", p.target.scaling_3d_scale == 1.0)
 	if frames == 260:
 		var oxr := main.xr as OpenXRInterface
 		print("in_xr ", main.in_xr, "  session state ", oxr.get_session_state() if oxr else -1,
