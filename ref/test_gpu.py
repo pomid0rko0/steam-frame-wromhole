@@ -32,6 +32,35 @@ def test_balls():
 
 
 BALLS = test_balls() if os.environ.get('WH_BALLS', '1') == '1' else []
+MAXC = 6
+
+
+def test_cubes():
+    """Cubes (4D boxes cut by the space) in every kind of region, turned against the floor.
+    Centre as a point of R^4, four orthonormal axes of R^4 (three tangent at the centre, then the
+    normal of the space) and the half size. The tangent frame comes from finite differences of
+    the embedding, independent of the shader's formulas."""
+    def cube(l, n, half, yaw, tilt, col):
+        n = np.asarray(n, float); n /= np.linalg.norm(n)
+        el = (W.embed(np.array(l + 1e-6), n) - W.embed(np.array(l - 1e-6), n)); el /= np.linalg.norm(el)
+        tz = np.array([0, 0, 1.0]) - n * n[2]; tz /= np.linalg.norm(tz)
+        ty = np.cross(tz, n)
+        T = np.array([el, np.r_[ty, 0.0], np.r_[tz, 0.0]])          # tangent basis in R^4
+        cy, sy, ct, st = np.cos(yaw), np.sin(yaw), np.cos(tilt), np.sin(tilt)
+        Rm = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]]) @ np.array([[1, 0, 0], [0, ct, -st], [0, st, ct]])
+        ax = (Rm.T @ T)                                               # three body axes (rows)
+        nrm = np.linalg.svd(ax)[2][-1]                                # orthogonal to all three
+        return (W.embed(np.array(l), n), np.vstack([ax, nrm]), half, col)
+    return [
+        cube(W.L + 3.0, [1.0, 0.35, 0.1], 0.35, 0.4, 0.3, (0.9, 0.9, 0.3)),          # flat A
+        cube(W.L - 0.05, [1.0, -0.3, 0.1], 0.40, -0.3, 0.2, (0.3, 0.8, 0.9)),        # straddles the shell edge
+        cube(0.5 * (W.Lc + W.L), [1.0, 0.4, 0.15], 0.30, 0.7, -0.4, (0.95, 0.5, 0.2)),  # in the fillet
+        cube(0.4 * W.Lc if W.Lc > 0 else 0.0, [1.0, -0.3, 0.1], 0.30, 0.2, 0.5, (0.4, 0.95, 0.4)),  # in the throat
+        cube(-(W.L + 3.5), [1.0, -0.35, 0.08], 0.35, -0.5, 0.25, (0.9, 0.4, 0.6)),   # flat B
+    ]
+
+
+CUBES = test_cubes() if os.environ.get('WH_CUBES', '1') == '1' else []
 
 FRAG = """#version 330
 uniform float wh_rho0;
@@ -43,6 +72,10 @@ uniform vec4 wh_box[4];
 uniform vec4 wh_ball[12];
 uniform vec4 wh_ballCol[12];
 uniform int wh_nBall;
+uniform vec4 wh_cube[6];
+uniform vec4 wh_cubeE[24];
+uniform vec4 wh_cubeCol[6];
+uniform int wh_nCube;
 uniform float uL0;
 uniform vec3 uN0;
 uniform vec4 uF;
@@ -91,9 +124,13 @@ def render(ctx, state, size, tan, debug):
     vao = ctx.vertex_array(prog, [(vbo, '2f', 'p')])
     balls = [tuple(c) for c, _, _ in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
     bcol = [tuple(col) + (rad,) for _, rad, col in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
+    cpos = [tuple(c) for c, _, _, _ in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
+    cax = [tuple(a / half) for _, ax, half, _ in CUBES for a in ax] + [(0.0, 0.0, 0.0, 0.0)] * (4 * (MAXC - len(CUBES)))
+    ccol = [tuple(col) + (half,) for _, _, half, col in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
     for k, v in dict(wh_sph=[tuple(x) for x in SCENE['spheres_A'] + SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
+                     wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES),
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         prog[k].value = v
@@ -149,6 +186,18 @@ def flat_hit(side, x, d, shell):
         if cq > 0 and disc >= 0:
             t = -bq - np.sqrt(disc)
             if 0 < t < best: best, kind = t, 10 + j
+    for j, (c, ax, half, _) in enumerate(CUBES):
+        X = np.r_[M * x, side * W.h] - c
+        D = np.r_[M * d, 0.0]
+        lo, hi = -np.inf, np.inf
+        for a in ax:
+            A, B = X @ a, D @ a
+            if abs(B) < 1e-15:
+                if abs(A) >= half: lo = np.inf
+                continue
+            t0, t1 = sorted(((-half - A) / B, (half - A) / B))
+            lo, hi = max(lo, t0), min(hi, t1)
+        if lo <= hi and 0 < lo < best: best, kind = lo, 1000 + j
     if shell:
         bq = x @ d; disc = bq * bq - (x @ x - W.Rout ** 2)
         if disc > 0:
@@ -158,6 +207,9 @@ def flat_hit(side, x, d, shell):
 
 
 def geom_flat(side, x, d, t, kind):
+    if kind >= 1000:
+        M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
+        return (200 + kind - 1000, *(M * (x + t * d)))
     if kind >= 10:
         M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
         return (100 + kind - 10, *(M * (x + t * d)))
@@ -199,11 +251,13 @@ def reference(state, size, tan):
     if pend:
         res = W.brute(np.array([p[2] for p in pend]), np.array([p[3] for p in pend]),
                       np.array([p[4] for p in pend]), np.array([p[5] for p in pend]), h=W.rho0 * float(os.environ.get('WH_REFSTEP', '1e-3')),
-                      balls=[(c, rad) for c, rad, _ in BALLS])
+                      balls=[(c, rad) for c, rad, _ in BALLS], cubes=[(c, ax, half) for c, ax, half, _ in CUBES])
         for k, (iy, ix, *_ ) in enumerate(pend):
             kind = res['kind'][k]
             if kind >= 10:
-                out[iy, ix] = (100 + kind - 10, *(W.r(res['l'][k]) * res['n'][k]))
+                j = kind - 10
+                code = 100 + j if j < len(BALLS) else 200 + j - len(BALLS)
+                out[iy, ix] = (code, *(W.r(res['l'][k]) * res['n'][k]))
                 continue
             if kind == 2:
                 n = res['n'][k]
@@ -232,7 +286,8 @@ def compare(gpu, ref, name):
     code = ref[..., 0]
     sky = k_ok & (code < 2)
     flo = k_ok & ((code == 2) | (code == 3))
-    bal = k_ok & (code >= 100)
+    bal = k_ok & (code >= 100) & (code < 200)
+    cub = k_ok & (code >= 200)
     g3 = gpu[..., 1:].astype(np.float64); g3 /= np.linalg.norm(g3, axis=-1, keepdims=True) + 1e-300
     e_sky = np.degrees(np.arctan2(np.linalg.norm(np.cross(g3, ref[..., 1:]), axis=-1), np.sum(g3 * ref[..., 1:], -1)))[sky]
 
@@ -253,9 +308,12 @@ def compare(gpu, ref, name):
         return (np.percentile(e, 99), e.max(), e.size) if e.size else (0.0, 0.0, 0)
     f99, fmax, _ = ang(flo)
     b99, bmax, bn = ang(bal)
-    nb_ref = int((code >= 100).sum())
+    c99, cmax, cn = ang(cub)
+    nb_ref = int(((code >= 100) & (code < 200)).sum())
+    nc_ref = int((code >= 200).sum())
     print(f"[{name}] class mismatch {(1 - k_ok[valid].mean()) * 100:.2f}% | sky max {e_sky.max() if e_sky.size else 0:.4f} deg"
-          f" | floor p99 {f99:.4f} max {fmax:.4f} deg | balls {nb_ref} px, p99 {b99:.4f} max {bmax:.4f} deg")
+          f" | floor p99 {f99:.4f} max {fmax:.4f} deg | balls {nb_ref} px, p99 {b99:.4f} max {bmax:.4f} deg"
+          f" | cubes {nc_ref} px, p99 {c99:.4f} max {cmax:.4f} deg")
     return k_ok
 
 
@@ -278,6 +336,22 @@ if __name__ == '__main__':
         return (l0, n0, F, from3(np.cross(to3(F), to3(Up))), Up)
     cams['in_throat_middle'] = inside(0.1 * max(W.Lc, W.L), 0.5)
     cams['in_fillet'] = inside(0.5 * (W.Lc + W.L), 0.35)
+
+    def facing(l0, n0, fwd):
+        """Camera at (l0, n0) looking along fwd = (e_l, ty, tz) components, tz up the floor normal."""
+        n0 = np.asarray(n0, float); n0 /= np.linalg.norm(n0)
+        tz = np.array([0, 0, 1.0]) - n0 * n0[2]; tz /= np.linalg.norm(tz)
+        ty = np.cross(tz, n0)
+        to3 = lambda V: np.array([V[0], V[1:] @ ty, V[1:] @ tz])
+        from3 = lambda c: np.r_[c[0], c[1] * ty + c[2] * tz]
+        F = np.asarray(fwd, float) / np.linalg.norm(fwd)
+        up = np.array([0, 0, 1.0]) - F * F[2]; up /= np.linalg.norm(up)
+        return (l0, n0, from3(F), from3(np.cross(F, up)), from3(up))
+    # close to the cubes of the throat and of the fillet, so that they cover many pixels
+    if CUBES and W.Lc > 0:
+        cams['at_throat_cube'] = facing(0.4 * W.Lc + 1.4, [1.0, -0.3, 0.3], [-1.0, 0.0, -0.25])
+    if CUBES:
+        cams['at_fillet_cube'] = facing(W.L - 0.05, [1.0, 0.4, 0.35], [-1.0, 0.0, -0.3])
     tag = '_'.join(f'{v:g}' for v in PROF)
 
     os.makedirs(os.path.join(HERE, 'out'), exist_ok=True)

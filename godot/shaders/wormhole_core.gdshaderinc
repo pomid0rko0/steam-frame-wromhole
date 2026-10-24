@@ -8,6 +8,13 @@
 //                                           movable balls: centre as a point of R^4 (xyz, w) and
 //                                           (rgb, radius). A ball is every point of space whose chord
 //                                           distance in R^4 to the centre is below the radius.
+//   vec4 wh_cube[WH_MAXC], wh_cubeE[4 * WH_MAXC], wh_cubeCol[WH_MAXC], int wh_nCube
+//                                           movable cubes: a 4D box of R^4 cut by the space, as a box
+//                                           of a 4D SDF scene. Centre as a point of R^4; four orthonormal
+//                                           axes of R^4 divided by the half size (three body axes tangent
+//                                           to the space, then its normal); (rgb, half size). A point P
+//                                           is inside when |dot(P - centre, axis)| < 1 for all four axes.
+//                                           In a flat universe this is an ordinary cube.
 //
 // Geometry: optozorax's SDF world, union_round(planes w = +-h, extrude_w(sphere rho0, h), fillet) in R^4.
 // It is SO(3)-symmetric, so its induced metric is exactly
@@ -28,6 +35,8 @@
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;
+const int WH_MAXC = 6;
+const int WH_MAXCC = 4;      // cubes a single ray can meet inside the shell
 
 float wh_Lc() { return max(wh_h - wh_fillet, 0.0); }
 float wh_th0() { return asin(max(1.0 - wh_h / wh_fillet, 0.0)); }
@@ -76,9 +85,31 @@ float wh_lOnFillet(WhRay o, float side, float v) {
     return side * (wh_Lc() + wh_fillet * (th - wh_th0()));
 }
 
+// A cube's four slab coordinates at two successive samples of a ray, d0 and d1 (inside: all
+// within [-1, 1]). Between samples the ray is taken as the chord, so thin corners and edges are
+// not skipped. Returns the chord fraction where it enters the box, or -1.
+float wh_chordIn(vec4 d0, vec4 d1) {
+    vec4 dd = d1 - d0;
+    dd = (step(vec4(0.0), dd) * 2.0 - 1.0) * max(abs(dd), vec4(1e-9));    // no division by 0
+    vec4 ta = (-1.0 - d0) / dd;
+    vec4 tb = (1.0 - d0) / dd;
+    vec4 lo = min(ta, tb);
+    vec4 hi = max(ta, tb);
+    float tin = max(max(lo.x, lo.y), max(lo.z, lo.w));
+    float tout = min(min(hi.x, hi.y), min(hi.z, hi.w));
+    return (tin <= tout && tin >= 0.0 && tin <= 1.0) ? tin : -1.0;
+}
+
+// Distance from slab coordinates d to the box |d| <= 1 (negative inside), in half sizes.
+float wh_boxDist(vec4 d) {
+    vec4 q = abs(d) - 1.0;
+    return length(max(q, vec4(0.0))) + min(max(max(q.x, q.y), max(q.z, q.w)), 0.0);
+}
+
 // Ray starting inside (or on the boundary of) the shell, |ls| <= L. Returns
 //   0: leaves the shell, given in flat chart coordinates (outSide, outX, outD)
 //   1: hits the floor at (hitL, hitN)        2: enters ball ballI at (hitL, hitN)
+//      (ballI >= WH_MAXB: cube ballI - WH_MAXB)
 // arc = path length travelled inside the shell.
 int wh_curved(float ls, vec3 ns, float vl, vec3 w,
               out float hitL, out vec3 hitN, out int ballI,
@@ -117,10 +148,14 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     // so a ball whose centre is farther than its radius from that subspace is never hit.
     int cand[WH_MAXB];
     vec4 cdat[WH_MAXB];      // (c1, c2, |c_xyz|^2, w_c)
-    float crad2[WH_MAXB];
+    float crad[WH_MAXB];
     bool cin[WH_MAXB];
     int nc = 0;
     float minRad = 1e9;
+    // Distance in R^4 from the ray's current point to the nearest ball or cube in reach (<= 0
+    // inside one). The path to any of them is at least as long as this chord, so the next sample
+    // can be that far ahead without stepping over anything.
+    float reach = 1e30;
     vec4 ps = wh_prof(ls);
     for (int i = 0; i < WH_MAXB; i++) {
         if (i >= wh_nBall) break;
@@ -134,13 +169,48 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
         if (cc > (Rout + rad) * (Rout + rad)) continue;
         cand[nc] = i;
         cdat[nc] = vec4(c1, c2, cc, C.w);
-        crad2[nc] = rad * rad;
+        crad[nc] = rad;
         float dw0 = ps.y - C.w;
-        cin[nc] = ps.x * ps.x - 2.0 * ps.x * c1 + cc + dw0 * dw0 < rad * rad;   // start: psi = 0, n = e1
+        float q0 = ps.x * ps.x - 2.0 * ps.x * c1 + cc + dw0 * dw0;    // start: psi = 0, n = e1
+        cin[nc] = q0 < rad * rad;
+        reach = min(reach, sqrt(max(q0, 0.0)) - rad);
         minRad = min(minRad, rad);
         nc++;
     }
-    float ds = 0.35 * minRad;        // path-length sampling step while balls are in reach
+    // Cubes in reach: their box lies within 2 half sizes of the centre. Per cube the slab
+    // coordinates along the orbit plane are  d = r cos(psi) A[0] + r sin(psi) A[1] + w A[2] - A[3].
+    int ccand[WH_MAXCC];
+    mat4 cq[WH_MAXCC];
+    vec4 cprev[WH_MAXCC];    // slab coordinates at the previous sample
+    float chalf[WH_MAXCC];
+    int ncc = 0;
+    for (int i = 0; i < WH_MAXC; i++) {
+        if (i >= wh_nCube || ncc >= WH_MAXCC) break;
+        vec4 C = wh_cube[i];
+        float rad = 2.0 * wh_cubeCol[i].w;
+        float c1 = dot(C.xyz, e1);
+        float c2 = dot(C.xyz, e2);
+        float cc = dot(C.xyz, C.xyz);
+        if (cc - c1 * c1 - c2 * c2 >= rad * rad) continue;
+        if (cc > (Rout + rad) * (Rout + rad)) continue;
+        mat4 A;
+        for (int k = 0; k < 4; k++) {
+            vec4 ax = wh_cubeE[4 * i + k];
+            A[0][k] = dot(ax.xyz, e1);
+            A[1][k] = dot(ax.xyz, e2);
+            A[2][k] = ax.w;
+            A[3][k] = dot(C, ax);
+        }
+        ccand[ncc] = i;
+        cq[ncc] = A;
+        cprev[ncc] = ps.x * A[0] + ps.y * A[2] - A[3];     // start: psi = 0, n = e1
+        chalf[ncc] = wh_cubeCol[i].w;
+        reach = min(reach, chalf[ncc] * wh_boxDist(cprev[ncc]));
+        minRad = min(minRad, chalf[ncc]);
+        ncc++;
+    }
+    bool near = nc + ncc > 0;
+    float ds = 0.35 * minRad;        // the finest sampling step (path length), close to balls and cubes
 
     // the path inside the shell: up to three pieces (fillet, cylinder, fillet)
     int pk[3];  float pside[3];  float pa[3];  float pb[3];
@@ -174,34 +244,50 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             float k = wc / (rho0 * vlc);
             float xF = above ? (psiF - psi) / max(k, 1e-30) : 1e30;   // floor, measured from x0
             float xB = 1e30;
-            if (nc > 0) {
-                int N = int(clamp(ceil(D / vlc / ds), 1.0, float(max(budget, 1))));
-                budget -= N;
-                float hx = D / float(N);
-                for (int j = 1; j <= 160; j++) {
-                    if (j > N || xB < 1e29) break;
-                    float u = hx * float(j);
-                    if (u > xF + hx) break;
-                    float pj = psi + k * u;
-                    float lj = side * (x0 + u);
+            if (near) {
+                float u = 0.0;
+                for (int j = 0; j < 160; j++) {
+                    if (u > xF || xB < 1e29) break;
+                    float hx = max(min(max(reach, ds) * vlc, D - u), (D - u) / float(max(budget, 1)));
+                    bool last = hx >= D - u;
+                    float un = last ? D : u + hx;
+                    hx = un - u;
+                    budget--;
+                    float pj = psi + k * un;
+                    float lj = side * (x0 + un);
+                    float cp = rho0 * cos(pj);
+                    float sp = rho0 * sin(pj);
+                    reach = 1e30;
+                    for (int c = 0; c < WH_MAXCC; c++) {
+                        if (c >= ncc) break;
+                        vec4 d1 = cp * cq[c][0] + sp * cq[c][1] + lj * cq[c][2] - cq[c][3];
+                        float tc = wh_chordIn(cprev[c], d1);
+                        if (tc >= 0.0 && u + tc * hx < xB) { xB = u + tc * hx; ballI = WH_MAXB + ccand[c]; }
+                        cprev[c] = d1;
+                        reach = min(reach, chalf[c] * wh_boxDist(d1));
+                    }
                     for (int c = 0; c < WH_MAXB; c++) {
                         if (c >= nc) break;
                         float dw = lj - cdat[c].w;
-                        bool inside = rho0 * rho0 - 2.0 * rho0 * (cdat[c].x * cos(pj) + cdat[c].y * sin(pj)) + cdat[c].z + dw * dw < crad2[c];
+                        float q = rho0 * rho0 - 2.0 * (cdat[c].x * cp + cdat[c].y * sp) + cdat[c].z + dw * dw;
+                        bool inside = q < crad[c] * crad[c];
                         if (inside && !cin[c]) {
-                            float lo = u - hx;
-                            float hi = u;
+                            float lo = u;
+                            float hi = un;
                             for (int it = 0; it < 8; it++) {
                                 float m = 0.5 * (lo + hi);
                                 float pm = psi + k * m;
                                 float dm = side * (x0 + m) - cdat[c].w;
-                                bool im = rho0 * rho0 - 2.0 * rho0 * (cdat[c].x * cos(pm) + cdat[c].y * sin(pm)) + cdat[c].z + dm * dm < crad2[c];
+                                bool im = rho0 * rho0 - 2.0 * rho0 * (cdat[c].x * cos(pm) + cdat[c].y * sin(pm)) + cdat[c].z + dm * dm < crad[c] * crad[c];
                                 if (im) { hi = m; } else { lo = m; }
                             }
                             if (hi < xB) { xB = hi; ballI = cand[c]; }
                         }
                         cin[c] = inside;
+                        reach = min(reach, sqrt(max(q, 0.0)) - crad[c]);
                     }
+                    u = un;
+                    if (last) break;
                 }
             }
             if (xB < 1e29 && xB <= xF) {
@@ -222,23 +308,22 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             arc += D / vlc;
             continue;
         }
-        // ---- fillet: Simpson steps in v
+        // ---- fillet: Simpson steps in v, at most 0.25 (the accuracy of psi); close to balls and
+        // cubes at most `reach` of path (at least ds)
         float va = pa[p];
         float vb = pb[p];
         float U = abs(vb - va);
         float dv = vb >= va ? 1.0 : -1.0;
-        float Nf = ceil(U / 0.25);
-        if (nc > 0) {
-            float gmax = max(max(wh_g(o, va).y, wh_g(o, vb).y), wh_g(o, 0.5 * (va + vb)).y);
-            Nf = max(Nf, ceil(U * gmax / ds));
-        }
-        int N = int(clamp(Nf, 1.0, float(max(budget, 1))));
-        budget -= N;
-        float hs = U / float(N);
+        float hBase = U / max(ceil(U / 0.25), 1.0);
+        float vt = 0.0;          // |v - va| done
         vec2 ga = wh_g(o, va);
         for (int k = 0; k < 160; k++) {
-            if (k >= N) break;
-            float v0 = va + dv * hs * float(k);
+            float hs = hBase;
+            if (near) hs = min(hs, max(max(reach, ds) / max(ga.y, 1e-6), (U - vt) / float(max(budget, 1))));
+            bool last = hs >= U - vt - 1e-4 * hBase;
+            if (last) hs = U - vt;
+            budget--;
+            float v0 = va + dv * vt;
             vec2 gm = wh_g(o, v0 + dv * 0.5 * hs);
             vec2 gb = wh_g(o, v0 + dv * hs);
             vec2 dI = hs / 6.0 * (ga + 4.0 * gm + gb);
@@ -254,13 +339,25 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                 uF = u;
             }
             float uB = 1e30;
-            if (nc > 0) {
+            if (near) {
                 float pE = psi + dI.x;
                 vec4 pr = wh_prof(wh_lOnFillet(o, side, v0 + dv * hs));
+                float cp = pr.x * cos(pE);
+                float sp = pr.x * sin(pE);
+                reach = 1e30;
+                for (int c = 0; c < WH_MAXCC; c++) {
+                    if (c >= ncc) break;
+                    vec4 d1 = cp * cq[c][0] + sp * cq[c][1] + pr.y * cq[c][2] - cq[c][3];
+                    float tc = wh_chordIn(cprev[c], d1);
+                    if (tc >= 0.0 && tc * hs < uB) { uB = tc * hs; ballI = WH_MAXB + ccand[c]; }
+                    cprev[c] = d1;
+                    reach = min(reach, chalf[c] * wh_boxDist(d1));
+                }
                 for (int c = 0; c < WH_MAXB; c++) {
                     if (c >= nc) break;
                     float dw = pr.y - cdat[c].w;
-                    bool inside = pr.x * pr.x - 2.0 * pr.x * (cdat[c].x * cos(pE) + cdat[c].y * sin(pE)) + cdat[c].z + dw * dw < crad2[c];
+                    float q = pr.x * pr.x - 2.0 * (cdat[c].x * cp + cdat[c].y * sp) + cdat[c].z + dw * dw;
+                    bool inside = q < crad[c] * crad[c];
                     if (inside && !cin[c]) {
                         float lo = 0.0;
                         float hi = hs;
@@ -270,12 +367,13 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                                                       + wh_g(o, v0 + dv * m * 0.78867513459481287).x);
                             vec4 prm = wh_prof(wh_lOnFillet(o, side, v0 + dv * m));
                             float dm = prm.y - cdat[c].w;
-                            bool im = prm.x * prm.x - 2.0 * prm.x * (cdat[c].x * cos(pm) + cdat[c].y * sin(pm)) + cdat[c].z + dm * dm < crad2[c];
+                            bool im = prm.x * prm.x - 2.0 * prm.x * (cdat[c].x * cos(pm) + cdat[c].y * sin(pm)) + cdat[c].z + dm * dm < crad[c] * crad[c];
                             if (im) { hi = m; } else { lo = m; }
                         }
                         if (hi < uB) { uB = hi; ballI = cand[c]; }
                     }
                     cin[c] = inside;
+                    reach = min(reach, sqrt(max(q, 0.0)) - crad[c]);
                 }
             }
             if (uB < 1e29 && uB <= uF) {
@@ -296,6 +394,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             psi += dI.x;
             arc += dI.y;
             ga = gb;
+            vt += hs;
+            if (last) break;
         }
     }
     vec3 n = cos(psi) * e1 + sin(psi) * e2;
@@ -371,8 +471,8 @@ void wh_enter(float side, vec3 x, vec3 d, out float l, out vec3 n, out float vl,
 // ---------------------------------------------------------------- flat scene
 struct WhHit {
     float t;
-    int kind;      // 0 none, 1 floor, 2 object, 3 shell, 4 ball
-    int idx;       // ball index
+    int kind;      // 0 none, 1 floor, 2 object, 3 shell, 4 ball, 5 cube
+    int idx;       // ball or cube index
     vec3 nrm;
     vec3 col;
 };
@@ -454,6 +554,38 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float t = -bq - sqrt(disc);
         if (t > 0.0 && t < h.t) { h.t = t; h.kind = 4; h.idx = i; h.nrm = (oc + t * d) * inversesqrt(rad2); h.col = wh_ballCol[i].rgb; }
     }
+    // cubes: the 4D box cut by this sheet is a convex solid bounded by four pairs of planes
+    // (an ordinary cube when the box's centre is in this flat universe); entries only
+    // (a loop bound the compiler cannot unroll: no cost without cubes)
+    vec3 md = wh_M(side, d);
+    int nCube = min(wh_nCube, WH_MAXC);
+    for (int i = 0; i < nCube; i++) {
+        vec4 X = vec4(wh_M(side, x), sheet) - wh_cube[i];
+        // first the box's bounding sphere in R^4 (radius: half diagonal, 2 half sizes)
+        float rb = 2.0 * wh_cubeCol[i].w;
+        float bs = dot(X.xyz, md);
+        float cs = dot(X, X) - rb * rb;
+        if (cs > 0.0 && (bs > 0.0 || bs * bs < cs)) continue;
+        float tin = -1e30;
+        float tout = 1e30;
+        vec4 face = vec4(0.0);
+        for (int k = 0; k < 4; k++) {
+            vec4 ax = wh_cubeE[4 * i + k];
+            float A = dot(X, ax);
+            float B = dot(md, ax.xyz);
+            if (abs(B) < 1e-9) {
+                if (abs(A) >= 1.0) tin = 1e30;    // parallel to this slab and outside it
+                continue;
+            }
+            float t0 = (-1.0 - A) / B;
+            float t1 = (1.0 - A) / B;
+            if (min(t0, t1) > tin) { tin = min(t0, t1); face = (B > 0.0 ? -1.0 : 1.0) * ax; }
+            tout = min(tout, max(t0, t1));
+        }
+        if (tin <= tout && tin > 0.0 && tin < h.t) {
+            h.t = tin; h.kind = 5; h.idx = i; h.nrm = normalize(wh_M(side, face.xyz)); h.col = wh_cubeCol[i].rgb;
+        }
+    }
     if (withShell) {
         float R = wh_Rout();
         float bq = dot(x, d);
@@ -518,10 +650,27 @@ vec3 wh_floor(float l, vec3 n) {
     vec3 baseB = mix(vec3(0.28, 0.34, 0.44), vec3(0.38, 0.45, 0.55), mix(0.5, chk, chkVis));
     vec3 col = mix(baseB, baseA, sA);
     col = mix(col, vec3(0.95), 0.55 * line);
-    // throat circle
-    float th = abs(l) / max(fwidth(l), 1e-4);
+    // throat circle. Next to an object's silhouette fwidth(l) may come from the object's pixel
+    // and be far too large; the cap keeps a cyan fringe off objects inside the throat.
+    float th = abs(l) / clamp(fwidth(l), 1e-4, 0.25);
     col = mix(col, vec3(0.2, 1.0, 0.9), 1.0 - clamp(th - 1.0, 0.0, 1.0));
     return col;
+}
+
+// A cube's colour at a point with slab coordinates d (body axes): darker along the edges.
+vec3 wh_cubeLook(int i, vec3 d) {
+    vec3 ad = abs(d);
+    float m1 = max(max(ad.x, ad.y), ad.z);
+    float m3 = min(min(ad.x, ad.y), ad.z);
+    float e = 1.0 - (ad.x + ad.y + ad.z - m1 - m3);    // to the nearest edge, in half sizes
+    float fw = min(fwidth(e), 0.05);
+    float line = 1.0 - smoothstep(0.07 - fw, 0.07 + fw, e);
+    return wh_cubeCol[i].rgb * (1.0 - 0.55 * line);
+}
+
+vec3 wh_cubeSlabs(int i, vec4 P) {
+    vec4 X = P - wh_cube[i];
+    return vec3(dot(X, wh_cubeE[4 * i]), dot(X, wh_cubeE[4 * i + 1]), dot(X, wh_cubeE[4 * i + 2]));
 }
 
 vec3 wh_shade(float side, vec3 col, vec3 nrm) {
@@ -540,7 +689,7 @@ vec3 wh_fog(float side, vec3 col, float dist) {
 // Ray from an eye at manifold point (l0, n0) with manifold direction (vl, w), unit length.
 // dbg receives geometry for testing: x = 2*kind + (side > 0 ? 1 : 0), then
 //   kind 0 sky: final chart direction    kind 1 floor: (l, n.x, n.y)    kind 2 object: chart hit point
-//   balls: x = 100 + index, then the hit point's R^4 xyz (= r n)
+//   balls: x = 100 + index, cubes: x = 200 + index, then the hit point's R^4 xyz (= r n)
 vec3 wh_shadeFlat(float side, vec3 x, vec3 d, WhHit h, float dist, out vec4 dbg) {
     if (h.kind == 0) {
         dbg = vec4(side > 0.0 ? 1.0 : 0.0, normalize(d));
@@ -552,6 +701,11 @@ vec3 wh_shadeFlat(float side, vec3 x, vec3 d, WhHit h, float dist, out vec4 dbg)
         float lp = side * (length(p) - wh_Rout() + wh_Lsh());
         dbg = vec4(side > 0.0 ? 3.0 : 2.0, lp, np.xy);
         return wh_fog(side, wh_floor(lp, np), dist + h.t);
+    }
+    if (h.kind == 5) {
+        dbg = vec4(200.0 + float(h.idx), wh_M(side, p));
+        vec3 col = wh_cubeLook(h.idx, wh_cubeSlabs(h.idx, vec4(wh_M(side, p), side * wh_h)));
+        return wh_fog(side, wh_shade(side, col, h.nrm), dist + h.t);
     }
     dbg = h.kind == 4 ? vec4(100.0 + float(h.idx), wh_M(side, p)) : vec4(side > 0.0 ? 5.0 : 4.0, p);
     return wh_fog(side, wh_shade(side, h.col, h.nrm), dist + h.t);
@@ -568,6 +722,23 @@ vec3 wh_shadeBallCurved(int i, float l, vec3 n, float dist, out vec4 dbg) {
     vec3 nrm = normalize(wh_M(side, side * ul * n + u));
     dbg = vec4(100.0 + float(i), pr.x * n);
     return wh_fog(side, wh_shade(side, wh_ballCol[i].rgb, nrm), dist);
+}
+
+// a cube hit inside the shell: the normal of the face hit (largest slab coordinate) projected
+// onto the tangent space
+vec3 wh_shadeCubeCurved(int i, float l, vec3 n, float dist, out vec4 dbg) {
+    vec4 pr = wh_prof(l);
+    vec3 d = wh_cubeSlabs(i, vec4(pr.x * n, pr.y));
+    vec3 ad = abs(d);
+    int k = ad.x >= ad.y && ad.x >= ad.z ? 0 : (ad.y >= ad.z ? 1 : 2);
+    vec4 N4 = (d[k] >= 0.0 ? 1.0 : -1.0) * wh_cubeE[4 * i + k];
+    float rad = dot(N4.xyz, n);
+    float ul = pr.z * rad + pr.w * N4.w;
+    vec3 u = N4.xyz - rad * n;
+    float side = l >= 0.0 ? 1.0 : -1.0;
+    vec3 nrm = normalize(wh_M(side, side * ul * n + u));
+    dbg = vec4(200.0 + float(i), pr.x * n);
+    return wh_fog(side, wh_shade(side, wh_cubeLook(i, d), nrm), dist);
 }
 
 vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
@@ -590,6 +761,7 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
                 dbg = vec4(fs > 0.0 ? 3.0 : 2.0, hl, hn.xy);
                 return wh_fog(fs, wh_floor(hl, hn), dist + arc);
             }
+            if (ev == 2 && bi >= WH_MAXB) return wh_shadeCubeCurved(bi - WH_MAXB, hl, hn, dist + arc, dbg);
             if (ev == 2) return wh_shadeBallCurved(bi, hl, hn, dist + arc, dbg);
             dist += arc;
             inShell = false;

@@ -42,6 +42,11 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
 done
 
+for c in 0 1; do
+	for m in ray mesh; do run --resolution 640x360 -s res://tests/multiview_cubes.gd -- "$OUT/cub$c" $m $c; done
+	verdict "simulated headset, case $c: five turned cubes, each eye" python3 "$CMP/five_balls.py" "$OUT/cub$c"
+done
+
 for c in 0 1 2; do
 	for m in ray floor domain balls both; do run --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"

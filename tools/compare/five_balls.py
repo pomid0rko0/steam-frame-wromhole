@@ -1,6 +1,6 @@
-"""Per-eye comparison of red silhouettes, several balls: union IoU and per-ball centroid offsets.
-Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...). PASS: every
-ball's ray-traced and rasterized centroids differ by less than 0.5 px in both eyes."""
+"""Per-eye comparison of red silhouettes, several balls (or cubes): union IoU and per-object
+centroid offsets. Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...).
+PASS: every object's ray-traced and rasterized centroids differ by less than 0.5 px in both eyes."""
 import sys, numpy as np
 from PIL import Image
 from scipy import ndimage

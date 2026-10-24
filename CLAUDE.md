@@ -28,7 +28,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   back to the start (`tests/walking_test.gd`).
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
-- `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
+- `physics` — balls and cubes with physics in the curved space (`ball_world.gd`,
+  `tests/physics_test.gd`, `tests/multiview_cubes.gd`): a cube and a ball are thrown after the
+  start, right A throws again.
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
   the avatar as balls (`tests/grab_test.gd`).
 - `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
@@ -56,7 +58,8 @@ When branches are put together, these overlap:
 - the left trigger: `refresh-rate` steps the rate with either trigger, `walking` runs with the
   left one. Together the rate goes to left X (the panel's hint says which button).
 - the right stick: x turns in `walking`, y changes the throat in `throat`; that fits.
-- A resets in `walking`, `throat` and `grab`: one reset does all of it.
+- A resets in `walking`, `throat`, `grab` and `physics` (toys back in place, thrown again): one
+  reset does all of it.
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
 
@@ -86,5 +89,8 @@ draws next to ray-traced ones, check they line up the same way.
 - **Refresh rate.** The Frame starts this app at 72 Hz; it offers 72/80/90/120/144 (144 experimental). The stereo-check scene measured 9.4 ms GPU per frame at 72 Hz. `refresh-rate` has the on-headset panel and `tests/perf.gd`.
 - **SceneTree test scripts.** In them `main._ready` has not run during `_initialize`; touch main's nodes from `_process` (frame 2 or later). Settings applied too early silently do nothing.
 - **Software-Vulkan timings** are only good for ratios.
-- **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
+- **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`). The integrator steps by `reach`, the R^4 distance to the nearest candidate (the path is never shorter than the chord), so a candidate costs fine steps only near it; before that, one ball in the throat made every ray through it sample the whole way finely. The same holds for cubes. Loops over uniform arrays in the flat trace need a non-constant bound (`wh_nCube`): an unrolled empty loop cost 6-15% of the frame.
+- **Godot's shading language** has built-in constants (`PI`, `TAU`, `E`): a variable named `E` fails to compile.
+- **`fwidth` next to a silhouette** in the curved region takes the neighbouring pixel's value, which belongs to another object; the throat circle on the floor showed a cyan fringe around objects until its width was capped.
+- **Physics in GDScript** costs about 0.2 ms per frame for a sliding cube (contact solver); resting cubes sleep. Watch it before adding many bodies.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.

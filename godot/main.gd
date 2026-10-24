@@ -1,8 +1,9 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room is the only way to move; balls roll and
-## bounce through the wormhole (ball_world.gd). Every pixel is ray traced along a geodesic of
-## the wormhole space in the shader; this script tracks where the viewer and the balls are in
-## that curved space.
+## bounce through the wormhole, cubes slide and stop (ball_world.gd). A moment after the start a
+## cube and a ball are thrown; A on the right controller (R on the keyboard) puts everything back
+## and throws again. Every pixel is ray traced along a geodesic of the wormhole space in the
+## shader; this script tracks where the viewer, the balls and the cubes are in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
@@ -25,7 +26,11 @@ const CHECK_BALL_RADIUS := 0.3
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
 var world := BallWorld.new(space, scene)
-var physics := true             # simulate and draw the balls; the stereo check and tests draw their own
+var physics := true             # simulate and draw balls and cubes; the stereo check and tests draw their own
+var throw_toys := true          # throw a cube and a ball LAUNCH_DELAY s after the start and each reset
+var launch_in := -1.0           # seconds until the throw; < 0: none pending
+var right_hand: XRController3D
+var reset_was := false
 var xr: XRInterface
 var xr_name := "OpenXR"        # tests use "Native mobile": Godot's own stereo renderer, same multiview path
 var in_xr := false
@@ -72,6 +77,9 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = 0.05
 	origin.add_child(camera)
+	right_hand = XRController3D.new()
+	right_hand.tracker = &"right_hand"
+	origin.add_child(right_hand)
 
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/wormhole.gdshader")
@@ -95,7 +103,7 @@ func _ready() -> void:
 	if show_check:
 		_add_check()
 	if physics:
-		_spawn_initial_balls()
+		_spawn_toys()
 
 
 ## Put the feet at chart position pos (z = 0) on the given side, looking along forward.
@@ -153,13 +161,73 @@ func _process(delta: float) -> void:
 	material.set_shader_parameter("head_n", hp[1])
 	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
 	material.set_shader_parameter("head_pos", head.origin)
-	if physics:
+	var reset := Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))
+	if reset and not reset_was and physics:
+		_spawn_toys()
+		print("toys: back in place, throwing again")
+	reset_was = reset
+	if physics and not await_pose:
+		if launch_in >= 0.0:
+			launch_in -= delta
+			if launch_in < 0.0:
+				_throw()
 		world.step(delta, [])
+	if physics:
 		_upload_balls()
+		_upload_cubes()
 
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
+
+
+const CUBE_COLORS := [Color(0.93, 0.93, 0.88), Color(0.95, 0.45, 0.55), Color(0.35, 0.8, 0.75),
+		Color(0.95, 0.7, 0.3), Color(0.55, 0.6, 0.95), Color(0.6, 0.85, 0.35)]
+const LAUNCH_DELAY := 1.5
+
+
+## Everything back in place: the balls and cubes at rest, the throw LAUNCH_DELAY s later.
+func _spawn_toys() -> void:
+	world.balls.clear()
+	world.cubes.clear()
+	_spawn_initial_balls()
+	_cube_on_floor(Vector2(5.4, -2.5), 0.3, 0.35, CUBE_COLORS[0])
+	_cube_on_floor(Vector2(6.2, 3.6), 0.25, -0.5, CUBE_COLORS[2])
+	_cube_in_throat(0.8, -0.45, 0.3, CUBE_COLORS[5])
+	launch_in = LAUNCH_DELAY if throw_toys else -1.0
+
+
+## From chest height in front of the start: a tumbling cube that lands to the left of the balls
+## and slides to a stop, and a ball that bounces, rolls on and goes through to universe B.
+func _throw() -> void:
+	var p := space.point_from_chart(1.0, Vector3(9.0, -1.9, 1.4))
+	var b := Basis.from_euler(Vector3(0.4, 0.3, 0.2))
+	var F := []
+	for ax in [b.x, b.y, b.z]:
+		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
+	world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
+			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
+	var q := space.point_from_chart(1.0, Vector3(9.0, 2.4, 1.4))
+	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-3.0, -0.2, 1.0)), 0.25, BALL_COLORS[5])
+	print("toys: thrown")
+
+
+## A cube resting on the floor of universe A at chart position pos, turned by yaw.
+func _cube_on_floor(pos: Vector2, half: float, yaw: float, color: Color) -> Dictionary:
+	var p := space.point_from_chart(1.0, Vector3(pos.x, pos.y, half))
+	var F := []
+	for ax in [Vector3(cos(yaw), sin(yaw), 0.0), Vector3(-sin(yaw), cos(yaw), 0.0), Vector3(0.0, 0.0, 1.0)]:
+		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
+	return world.add_cube(p[0], p[1], Vector4.ZERO, F, Vector3.ZERO, half, color)
+
+
+## A cube resting on the floor inside the throat, at l and azimuth phi.
+func _cube_in_throat(l: float, phi: float, half: float, color: Color) -> Dictionary:
+	var z := half / space.r(l)
+	var n := Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)
+	var up := space.height_grad(l, n).normalized()
+	var across := WormholeSpace.tangent(n, Vector4(0.0, -sin(phi), cos(phi), 0.0))
+	return world.add_cube(l, n, Vector4.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), up, across], Vector3.ZERO, half, color)
 
 
 ## Five balls resting on the floor between the start and the wormhole.
@@ -186,6 +254,31 @@ func _upload_balls() -> void:
 	material.set_shader_parameter("wh_ball", pos)
 	material.set_shader_parameter("wh_ballCol", col)
 	material.set_shader_parameter("wh_nBall", count)
+
+
+## Every cube the shader draws: its 4D box (centre, four axes over the half size) and colour.
+func _upload_cubes() -> void:
+	var pos := PackedVector4Array()
+	var axes := PackedVector4Array()
+	var col := PackedVector4Array()
+	for c in world.cubes:
+		var box := world.box4(c)
+		var half: float = c["half"]
+		pos.append(box[0])
+		for k in 4:
+			axes.append(box[1 + k] / half)
+		var cc: Color = c["color"]
+		col.append(Vector4(cc.r, cc.g, cc.b, half))
+	var count := pos.size()
+	while pos.size() < 6:
+		pos.append(Vector4.ZERO)
+		col.append(Vector4.ZERO)
+	while axes.size() < 24:
+		axes.append(Vector4.ZERO)
+	material.set_shader_parameter("wh_cube", pos)
+	material.set_shader_parameter("wh_cubeE", axes)
+	material.set_shader_parameter("wh_cubeCol", col)
+	material.set_shader_parameter("wh_nCube", count)
 
 
 ## Move the feet along the floor by a play-space displacement (x, z).
@@ -232,6 +325,7 @@ func _build_overlay() -> void:
 func _add_check() -> void:
 	physics = false                 # the check's red balls take the shader's ball slots
 	world.balls.clear()
+	world.cubes.clear()
 	var floor_mat := ShaderMaterial.new()
 	floor_mat.shader = load("res://shaders/check_grid.gdshader")
 	floor_mat.set_shader_parameter("rout", space.Rout)

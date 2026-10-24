@@ -103,6 +103,21 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 	return [l, n, vecs.slice(1)]
 
 
+## A short move by the tangent displacement D: one Euler step of the geodesic equation,
+## transporting vecs (error of order |D|^2 / r^2). Returns [l, n, vecs].
+func nudge(l: float, n: Vector3, D: Vector4, vecs: Array) -> Array:
+	var rr := r(l)
+	var k := dr(l) / rr
+	var v := Vector3(D.y, D.z, D.w)
+	var nn := (n + v / rr).normalized()
+	var out := []
+	for A: Vector4 in vecs:
+		var au := Vector3(A.y, A.z, A.w)
+		var da := -k * A.x * v - (au.dot(v) / rr) * n
+		out.append(tangent(nn, A + Vector4(k * v.dot(au), da.x, da.y, da.z)))
+	return [l + D.x, nn, out]
+
+
 ## Drop the component along n (keeps a vector tangent after a numerical step).
 static func tangent(n: Vector3, U: Vector4) -> Vector4:
 	var u := Vector3(U.y, U.z, U.w)
@@ -193,19 +208,55 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 
 
 ## One RK4 step of free motion under the field g = -grav * grad H (geodesic + force).
-func dynamics_step(l: float, n: Vector3, U: Vector4, dt: float, grav: float) -> Array:
-	var f := func(ll: float, nn: Vector3, UU: Vector4) -> Array:
+## The vectors in frame (a body's axes) are parallel-transported along the step.
+## Returns [l, n, U, frame].
+func dynamics_step(l: float, n: Vector3, U: Vector4, dt: float, grav: float, frame: Array = []) -> Array:
+	var f := func(ll: float, nn: Vector3, UU: Vector4, FF: Array) -> Array:
 		var rr := r(ll)
 		var k := dr(ll) / rr
 		var v := Vector3(UU.y, UU.z, UU.w)
 		var du := -k * UU.x * v - (v.dot(v) / rr) * nn
 		var a := Vector4(k * v.dot(v), du.x, du.y, du.z) - grav * height_grad(ll, nn)
-		return [UU.x, v / rr, a]
-	var k1: Array = f.call(l, n, U)
-	var k2: Array = f.call(l + 0.5 * dt * k1[0], n + 0.5 * dt * k1[1], U + 0.5 * dt * k1[2])
-	var k3: Array = f.call(l + 0.5 * dt * k2[0], n + 0.5 * dt * k2[1], U + 0.5 * dt * k2[2])
-	var k4: Array = f.call(l + dt * k3[0], n + dt * k3[1], U + dt * k3[2])
+		var dF := []
+		for A: Vector4 in FF:
+			var au := Vector3(A.y, A.z, A.w)
+			var da := -k * A.x * v - (au.dot(v) / rr) * nn
+			dF.append(Vector4(k * v.dot(au), da.x, da.y, da.z))
+		return [UU.x, v / rr, a, dF]
+	var shift := func(FF: Array, dF: Array, h: float) -> Array:
+		var out := []
+		for i in FF.size():
+			out.append(FF[i] + h * dF[i])
+		return out
+	var k1: Array = f.call(l, n, U, frame)
+	var k2: Array = f.call(l + 0.5 * dt * k1[0], n + 0.5 * dt * k1[1], U + 0.5 * dt * k1[2], shift.call(frame, k1[3], 0.5 * dt))
+	var k3: Array = f.call(l + 0.5 * dt * k2[0], n + 0.5 * dt * k2[1], U + 0.5 * dt * k2[2], shift.call(frame, k2[3], 0.5 * dt))
+	var k4: Array = f.call(l + dt * k3[0], n + dt * k3[1], U + dt * k3[2], shift.call(frame, k3[3], dt))
 	var nl: float = l + dt / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
 	var nn: Vector3 = (n + dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])).normalized()
 	var nU: Vector4 = U + dt / 6.0 * (k1[2] + 2.0 * k2[2] + 2.0 * k3[2] + k4[2])
-	return [nl, nn, tangent(nn, nU)]
+	var nF := []
+	for i in frame.size():
+		nF.append(tangent(nn, frame[i] + dt / 6.0 * (k1[3][i] + 2.0 * k2[3][i] + 2.0 * k3[3][i] + k4[3][i])))
+	return [nl, nn, tangent(nn, nU), nF]
+
+
+## A tangent vector (U_l, u) at (l, n) as a vector of R^4 (the inverse of project).
+func embed_vector(l: float, n: Vector3, U: Vector4) -> Vector4:
+	var u := Vector3(U.y, U.z, U.w)
+	var p := dr(l) * U.x * n + u
+	return Vector4(p.x, p.y, p.z, dw(l) * U.x)
+
+
+## Unit normal of the hypersurface in R^4 at (l, n): orthogonal to every embedded tangent vector.
+func normal4(l: float, n: Vector3) -> Vector4:
+	var p := -dw(l) * n
+	return Vector4(p.x, p.y, p.z, dr(l))
+
+
+## Chart direction of a tangent vector at (l, n) in a flat region (the inverse of vector_from_chart).
+static func vector_to_chart(side: float, n: Vector3, U: Vector4) -> Vector3:
+	var d := side * U.x * n + Vector3(U.y, U.z, U.w)
+	if side < 0.0:
+		d.x = -d.x
+	return d
