@@ -158,13 +158,14 @@ class Wormhole:
     TAU = _X * _X
     A = np.linalg.inv(np.vander(TAU, 4, increasing=True))
 
-    def fil(self, b, turn):
+    def fil(self, b, turn, reg=None):
+        """reg: force the regime (the table's rows); by default it follows from b"""
         f = dict(ra=b if turn else self.rmin)
         f['span'] = max(self.Rout - f['ra'], 1e-6 * self.R)
         f['al'] = (f['ra'] - self.rho0) / f['span']
         f['ga'] = 0.0 if turn else (self.rmin - b) / f['span']
         mn, mx = min(f['al'], f['ga']), max(f['al'], f['ga'])
-        f.update(mn=mn, mx=mx, reg=0 if mx < 1 else (1 if mn < 1 else 2),
+        f.update(mn=mn, mx=mx, reg=(0 if mx < 1 else (1 if mn < 1 else 2)) if reg is None else reg,
                  E0=max(np.sqrt(f['al']) + np.sqrt(f['ga']), 1e-12))
         r = f['ra'] + f['span'] * self.TAU
         u = (r - self.rho0) / (2 * self.R)
@@ -221,6 +222,29 @@ class Wormhole:
         s = np.sqrt(min(max((f['ra'] + f['span'] * t - self.rho0) / (2 * self.R), 0.0), 0.5))
         return side * (self.Lc + self.R * (2 * np.arcsin(s) - self.th0))
 
+    def fillet_table(self, N=256):
+        """The shader's fillet table (WormholeSpace.fillet_table): the polynomial e by impact
+        parameter, 4 rows of N knots, one per span of b with one regime; e times sqrt(mx) (and
+        sqrt(mn) in regime 2). Returns (table (4, N, 4) float32, lo, inv, reg)."""
+        sp = max(self.Rout - self.rmin, 1e-6 * self.R)
+        alp = (self.rmin - self.rho0) / sp
+        b1 = min(max(self.rmin - sp, 0.0), self.rmin)
+        b3 = min(max(0.5 * (self.Rout + self.rho0), self.rmin), self.Rout)
+        lo = [0.0, b1, self.rmin, b3]
+        hi = [b1, self.rmin, b3, self.Rout]
+        reg = [2 if alp >= 1 else 1, 1 if alp >= 1 else 0, 0, 1]
+        tab = np.zeros((4, N, 4), np.float32)
+        inv = np.zeros(4)
+        for row in range(4):
+            sb = hi[row] - lo[row]
+            inv[row] = (N - 1) / sb if sb > 0 else 0.0
+            for i in range(N):
+                b = lo[row] + sb * i / (N - 1)
+                f = self.fil(b, row >= 2, reg[row])
+                sc = (np.sqrt(f['mx']) if reg[row] >= 1 else 1.0) * (np.sqrt(f['mn']) if reg[row] == 2 else 1.0)
+                tab[row, i] = f['e'] * sc
+        return tab, np.array(lo), inv, np.array(reg, float)
+
     def fast(self, l_s, n_s, vl, w):
         """The shader's wh_curved without balls: kind 2 floor (l, n), or +-1 exit side (n, vl, w)."""
         rho0, R, Lc, L = self.rho0, self.R, self.Lc, self.L
@@ -255,8 +279,9 @@ class Wormhole:
         PB = np.array([kc, 1 / vlc]) * DB
         C0 = Ss if cFromStart else np.zeros(2)
         tot = PA + PB + np.array([f['psi'], f['arc']]) - C0
-        psi_f = np.mod(np.arctan2(e2[2], e1[2]) + np.pi / 2, np.pi)
-        if n_s[2] > 0 and psi_f <= tot[0]:
+        # the floor in the shell: n.z starts positive and its zeros are pi apart (the shader's test)
+        if n_s[2] > 0 and (tot[0] >= np.pi or n_s[2] * np.cos(tot[0]) + e2[2] * np.sin(tot[0]) < 0):
+            psi_f = np.arctan2(e1[2], -e2[2])
             nF = np.cos(psi_f) * e1 + np.sin(psi_f) * e2
             if PA[0] <= psi_f < PA[0] + PB[0]:
                 return dict(kind=2, l=d * (x0B + (psi_f - PA[0]) / kc), n=nF)

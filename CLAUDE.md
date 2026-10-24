@@ -46,6 +46,14 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   edge (16.6 before), 120 Hz held on its whole tour; frames drop at the edge when SteamVR shows
   the cameras (README «Что видно в шлеме»). Next: cheaper shading, a table for the curved region
   (README wish «Дешевле лучи у червоточины»).
+- `edge-120hz` (from `main`) — cheaper frames at the shell's edge, for 120 Hz while SteamVR shows
+  the cameras (~3.5 ms needed): per-eye values once per eye, the curved-region floor test without
+  `atan` for rays that miss the floor, the fillet coefficients from a table by impact parameter
+  (`WormholeSpace.fillet_table`, plain shader only), 4 screen derivatives instead of 6, one sky
+  for both worlds, own `atan`/`asin`, the fog's path length estimated (12 registers: waves of
+  128). Same picture as `main` (within 1/255), same accuracy and stereo. Not measured in the
+  headset yet: its measuring build compares `main`, the changes at 13 registers, at 12 without
+  the table, and the branch. Also the cost model (`tools/adreno_cost.sh`, below).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -58,8 +66,8 @@ Where the README wishes start (wishes without a branch start from `main`):
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
 - refresh rate and render scale → `main` (the panel is there); cheaper rays near the wormhole →
-  `fast-rays` (`wh_curved` in `wormhole_core`, measured in the headset by the panel's `refresh:` lines;
-  without a headset `tools/adreno_stats.sh`);
+  `edge-120hz` until it is merged (`wh_curved` in `wormhole_core`, measured in the headset by the
+  speed check; without a headset `tools/adreno_cost.sh`, then `tools/adreno_stats.sh`);
 - foveated rendering → `foveation`;
 - placing wormholes by hand, several wormholes, flat portals, two-handed shooting, gun models,
   other shapes (torus, arbitrary SDF) → `main`; several wormholes, portals and other shapes are
@@ -77,6 +85,8 @@ When branches are put together, these overlap:
 - A resets on `main`, in `throat` and `grab`: one reset does all of it.
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
+- a throat change (`throat`) with `edge-120hz`: the fillet table depends on the shape: after
+  `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop).
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).
@@ -94,6 +104,17 @@ draws next to ray-traced ones, check they line up the same way.
 - **Stereo:** `tools/test_stereo.sh` (~2 min: the renders run in parallel, one Godot per core, each with its own display and shader cache).
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
+- **Cost without a headset:** `tools/adreno_cost.sh [--check] [source]...` (sources as
+  `ab_shaders.sh`, `this` = the tree; ~1 min each). Mesa's compiler for the Frame compiles the ray
+  tracer, `tools/ir3_emu.py` runs the program it made (the specialised one) on waves at the speed
+  check's poses (one eye, 1728², 104°) and counts issue cycles, divergent branches included
+  (lowest PC first, as `ir3_reconvergence.c` describes). `--check` compares the emulated colours
+  with Godot's lavapipe picture: run it after every change, it caught an emulator bug that had
+  made a variant look 15% cheaper. Calibrated on main's speed check: ms ≈ 0.8 + 3.1e-3 × (cycles
+  per 64 pixels + 20 per screen derivative); per pose within ~10% of the headset. It does not
+  know cat4/memory waits, and in waves of 128 (≤ 12 registers) not whether a nop costs 1 or 2
+  cycles: it prints both. `--profile` (adreno_cost.py) gives cycles per stretch of code.
+  The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
 - **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
   build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
   cost depends only on the pose (l, yaw from the throat, pitch, roll), so it goes through poses:
@@ -105,6 +126,9 @@ draws next to ray-traced ones, check they line up the same way.
   per second. The panel ends with whether 120 Hz held and the comparison. Frame times from
   walking around do not compare between builds: where one looks changes them several times.
   The panel also logs a `refresh:` line every second (with where one looks) and one per late frame.
+- **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
+  (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; on this
+  branch every pose matched main within 1/255.
 - **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails). Monado's simulated controllers (`SIMULATED_LEFT=wmr`) bind to none of our profiles; for controller input use `XRControllerTracker`s with inputs set by hand (`tests/walking_xr_test.gd`).
@@ -134,4 +158,19 @@ draws next to ray-traced ones, check they line up the same way.
 - **Measure in the headset, not by counting instructions.** A rewrite of the flat trace (bounding balls, the hit's normal and colour picked at the end with dynamic indices) had fewer instructions for ir3 and was 7-15% slower on the Frame; 13 registers instead of 16 (14 waves instead of 12) made no difference. Compare variants with the speed check, at 72 Hz: at 120 Hz a variant that misses frames makes SteamVR step in, and its GPU time reads half as much again.
 - **Shading is ~40% of a frame at the shell's edge**, ~1.9 of 4.7 ms: the 6 screen derivatives (`dsx`/`dsy`) ~0.55 ms, atan/asin ~0.25, and the rest because near the throat one group of pixels holds both skies, the floor and objects and runs every branch. Godot's own cost (a one-colour shader) is 0.8 ms.
 - **SteamVR's camera view** (when it shows the outside cameras) takes ~3 ms of GPU a frame: our 4.8 ms frame then reads ~8 ms, and at 120 Hz the headset falls to every 2nd refresh for seconds. 120 Hz that survives it needs ~3.5 ms at the edge.
-- **`adreno_stats.sh --disasm`** dumps the biggest program, Godot's generic ubershader (with its decal loop and its own derivatives), not the specialised one that runs.
+- **`adreno_stats.sh --disasm`** dumps the biggest program, Godot's generic ubershader (with its decal loop and its own derivatives), not the specialised one that runs. `KEEP_LOG=file` keeps the whole log; `--shader res://...` compiles another ray tracer (set before the first draw, so only it is compiled).
+- **Where the edge frame goes (model, main):** curved-region setup ~44%, the flat trace after the
+  shell ~25%, shading ~22% (+ derivatives); a third of the issued cycles are nops of dependent
+  chains (polynomials at the shader's tail have nothing to overlap with). No block above ~12%.
+- **Branches that skip work lose:** a bounding-ball test before each box and shared sphere tests
+  for both worlds were slower in the model (the branch and its divergence cost more than the tests
+  skipped), as bounding balls were in the headset.
+- **16-bit math:** Turnip compiles `mediump` as 16-bit (`mediump_16bit_alu`); in waves of 128 it
+  runs at double rate (Mesa `ir3.c`). For the sky's colours the conversions cost more than they
+  saved. Line coordinates need float32 anyway.
+- **The fillet table:** e(b) has a 1/sqrt(mx) factor that goes to zero like a square root at
+  b → Rout; interpolating e itself erred 0.3°, e·sqrt(mx) (put back per pixel) 1e-5 rad. One row
+  per regime: the regime comes from the row, so the moments match the table. Turnip filters
+  RGBA32F linearly (not on A702); sample with `textureLod` (no implicit derivatives).
+- **The fog's path length** only needs ~5%: r²/b × psi with r at the weight's mean tau is within
+  1.5% here; dropping the exact polynomial took the plain shader from 13 to 12 registers.

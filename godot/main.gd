@@ -114,6 +114,7 @@ func _ready() -> void:
 	material.set_shader_parameter("wh_rho0", space.rho0)
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
+	_upload_fillet_table()
 	_upload_scene()
 	var quad := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -517,6 +518,16 @@ func _add_window_notice() -> void:
 	label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	label.add_theme_font_size_override("font_size", 28)
 	layer.add_child(label)
+
+
+## The ray tracer's fillet polynomials by impact parameter (WormholeSpace.fillet_table). A change
+## of the throat's shape needs them again.
+func _upload_fillet_table() -> void:
+	var tab := space.fillet_table()
+	material.set_shader_parameter("wh_tab", ImageTexture.create_from_image(tab.image))
+	material.set_shader_parameter("wh_tabLo", tab.lo)
+	material.set_shader_parameter("wh_tabInv", tab.inv)
+	material.set_shader_parameter("wh_tabReg", tab.reg)
 
 
 ## Static objects come from scene.json, the same file the tests read.
