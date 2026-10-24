@@ -29,7 +29,11 @@ render() {   # a Godot test script, in the background
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
 	local i=$n
 	mkdir -p "$LOGS/data$i"
-	XDG_DATA_HOME=$LOGS/data$i xvfb-run -n $((90 + i)) -s "-screen 0 1280x720x24" \
+	# its own X display; one some other X server holds (a stray Xvfb left from an earlier run
+	# did) would fail this render: then 1000 further on, where no other render of this run is
+	local d=$((90 + i))
+	while [ -e /tmp/.X$d-lock ] || [ -e /tmp/.X11-unix/X$d ]; do d=$((d + 1000)); done
+	XDG_DATA_HOME=$LOGS/data$i xvfb-run -n $d -s "-screen 0 1280x720x24" \
 		"$GODOT" --path . --rendering-method mobile "$@" > "$LOGS/$i.log" 2>&1 &
 }
 verdict() {   # name, comparison command...
