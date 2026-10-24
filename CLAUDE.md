@@ -24,13 +24,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 
 - `main` — the wormhole, static objects, walking in the room, the stereo check scene (off), the
   frame rate panel: it follows the head, measures the rate and missed frames, and its buttons
-  (point a controller, pull the trigger) set the refresh rate and the render scale.
-- `walking` (on `main`) — the left stick walks (left trigger runs, not while the left ray is on
-  the panel), the right stick turns smoothly or in 30° snaps (a right stick click switches), A
+  (point a controller, pull the trigger) set the refresh rate and the render scale. Stick
+  locomotion (from `walking`): the left stick walks (left trigger runs, not while the left ray is
+  on the panel), the right stick turns smoothly or in 30° snaps (a right stick click switches), A
   goes back to the start (`tests/walking_test.gd`, `tests/walking_xr_test.gd`). Checked in the
-  headset before `main` had `fast-rays`: the sticks, running, both turns and A work, a little
-  nausea, bearable; the picture glitched when crossing the shell's outer edge, where a frame then
-  cost 16.6 ms (likely frames dropped; the image there matches the float64 reference).
+  headset: all of it works, a little nausea, bearable; crossing the shell's outer edge by stick is
+  clean (before `fast-rays` the picture glitched there: frames dropped at 16.6 ms).
+- `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
@@ -50,8 +50,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   `physics` on `refresh-rate`); don't start from it.
 
 Where the README wishes start (wishes without a branch start from `main`):
-- stick locomotion on the floor → `walking` (smooth stick walking, smooth and snap turn are there);
-- free flight in 3D with gravity on/off → `walking` (the gravity field is in `physics`);
+- stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
+- free flight in 3D with gravity on/off → `main` (the gravity field is in `physics`);
 - pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
   are there);
 - cubes next to balls → `physics`;
@@ -68,14 +68,13 @@ Where the README wishes start (wishes without a branch start from `main`):
   and the frame drops; it is off by default in `grab`.
 
 When branches are put together, these overlap:
-- the left trigger: on `main` a trigger presses the panel's button its controller points at,
-  `walking` runs with the left one. Together (as `walking` does it): no running while the left
-  ray is on the panel (`perf.on_plate[0]`).
-- the right stick: x turns in `walking` (its click switches smooth/snap), y changes the throat in
+- the left trigger, on `main`: a trigger presses the panel's button its controller points at, and
+  the left one runs, but not while the left ray is on the panel (`perf.on_plate[0]`).
+- the right stick: x turns on `main` (its click switches smooth/snap), y changes the throat in
   `throat`; that fits.
 - the speed check (`bench.gd`) sets the viewer's pose itself: while it runs (`main.hold`) the
-  sticks and A do nothing.
-- A resets in `walking`, `throat` and `grab`: one reset does all of it.
+  sticks and A do nothing. `grab` and `throat` add their own buttons: keep them out of it too.
+- A resets on `main`, in `throat` and `grab`: one reset does all of it.
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
@@ -106,7 +105,7 @@ draws next to ray-traced ones, check they line up the same way.
   per second. The panel ends with whether 120 Hz held and the comparison. Frame times from
   walking around do not compare between builds: where one looks changes them several times.
   The panel also logs a `refresh:` line every second (with where one looks) and one per late frame.
-- **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock) and `tools/test_openxr.sh` (the panel and its buttons); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `walking_xr`, `throat`, `physics`, `grab`).
+- **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails). Monado's simulated controllers (`SIMULATED_LEFT=wmr`) bind to none of our profiles; for controller input use `XRControllerTracker`s with inputs set by hand (`tests/walking_xr_test.gd`).
 - **GitHub from this environment:** branch pushes work through the session's git proxy, tag pushes are refused (403). The owner creates tags on GitHub.
@@ -114,7 +113,7 @@ draws next to ray-traced ones, check they line up the same way.
 ## Things learned the hard way
 
 - **Godot multiview.** `INV_VIEW_MATRIX` is a shared camera between the eyes; each eye's offset and rotation live in its `PROJECTION_MATRIX`; `EYE_OFFSET` is the eye in that view space. Rays must start at the eye (README, «Стерео»). Starting them at the head centre made the eyes look in different directions.
-- **The overlay's chart → play map** is computed at placement and recentre (and in `walking` after stick moves and turns), never every frame from the feet. Then it is fixed to the room, and world drift shows as green parting from white.
+- **The overlay's chart → play map** is computed at placement and recentre (and after stick moves and turns), never every frame from the feet. Then it is fixed to the room, and world drift shows as green parting from white.
 - **Foveated rendering** (VRS, `xr/openxr/foveation_*`) made space "breathe" around the head and caused nausea on the Frame. It is off; don't turn it on without a headset check.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; its display does 72/80/90/96/108/120/144. Other developers report that SteamVR there answers `XR_FB_display_refresh_rate` requests with success and ignores them. It follows the app's own setting `steam.app.<SteamAppId>.preferredRefreshRate`, set with `/opt/steamvr/bin/linuxarm64/vrcmd`; on our Frame (SteamVR 2.18.2) the running app switches within a second, and `xrGetDisplayRefreshRateFB` then reports the true rate. `refresh-rate`'s panel does that from its rate buttons and measures the rate and missed frames from xrWaitFrame's timing (`rate_meter.gd`); its `refresh:` log lines are the data. Measured at 1728×1728 per eye (README, «Что видно в шлеме»): 72 and 80 Hz keep up, 90 Hz falls to every 2nd refresh at times, 96–120 Hz mostly at every 2nd; the GPU stays at its top clock (903 MHz), and a frame costs 6.5–7.7 ms with the wormhole small in view, 11–12 ms with it large: the rays through the curved region are the cost. SteamVR there does not offer `XR_EXT_performance_settings`.
@@ -129,7 +128,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **Render scale and the stereo test.** At a 3D render scale below 1 the bilinear upscale blends the balls' edges with the background, and the one-colour red threshold of `tools/compare` then shifts the shaded ray-traced ball by 0.2–0.4 px against Godot's flat red one. With `SCALING_3D_MODE_NEAREST` the whole suite passes at 80% within 0.02 px: the geometry is exact, test a scale that way.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
-- **Controllers.** Without its own profile in the action map, the Steam Frame shows its controllers to apps as Oculus Touch (Godot 4.7.2 knows the Frame's own, `/interaction_profiles/valve/frame_controller_valve`; it is not in our map). One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
+- **Controllers.** Our action map has no profile of the Steam Frame's own (Godot 4.7.2 knows it, `/interaction_profiles/valve/frame_controller_valve`). On our Frame (SteamVR 2.18.2) the log's `interaction profile` lines show both controllers as `/interaction_profiles/khr/generic_controller`; its bindings (thumbstick, trigger, `primary/click` for A) are what the headset uses, and `walking_xr_test.gd` checks them. One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
 - **Logs from a release build.** Without `application/run/flush_stdout_on_print` (on in `project.godot`) an export buffers `print()`, and an abort on quit loses every printed line from `godot.log`, the headset's too.
 - **Tests with `fake_hmd.gd` abort at exit** (status 134) unless the interface and trackers are taken down first; `walking_xr_test.gd` does it, so its exit status means something.
 - **Measure in the headset, not by counting instructions.** A rewrite of the flat trace (bounding balls, the hit's normal and colour picked at the end with dynamic indices) had fewer instructions for ir3 and was 7-15% slower on the Frame; 13 registers instead of 16 (14 waves instead of 12) made no difference. Compare variants with the speed check, at 72 Hz: at 120 Hz a variant that misses frames makes SteamVR step in, and its GPU time reads half as much again.

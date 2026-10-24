@@ -4,8 +4,8 @@ extends SceneTree
 ## by the action names of openxr_action_map.tres. Run with --fixed-fps 60; exit status 1 on any
 ## failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/walking_xr_test.gd
-## 0. the action map binds those names to the Oculus Touch controller (the Steam Frame's
-##    controllers show up as Touch to apps without their own profile) and to the Index one
+## 0. the action map binds those names to the KHR generic controller (the profile the Steam
+##    Frame's controllers come as, by its log), and to the Oculus Touch and Index ones
 ## 1. left stick forward for a second walks 1.5 m; with the left trigger, half a second runs 2 m
 ## 2. the right stick at half way (past the dead zone) turns 45 degrees per second, smoothly
 ## 3. a right stick click switches to snaps, even with the stick out (it snaps only once back
@@ -17,6 +17,12 @@ extends SceneTree
 
 # action name -> binding paths the action map must have for it, per profile
 const BINDINGS := {
+	"/interaction_profiles/khr/generic_controller": {
+		"primary": ["/user/hand/left/input/thumbstick", "/user/hand/right/input/thumbstick"],
+		"primary_click": ["/user/hand/right/input/thumbstick/click"],
+		"trigger": ["/user/hand/left/input/trigger/value"],
+		"ax_button": ["/user/hand/right/input/primary/click"],
+	},
 	"/interaction_profiles/oculus/touch_controller": {
 		"primary": ["/user/hand/left/input/thumbstick", "/user/hand/right/input/thumbstick"],
 		"primary_click": ["/user/hand/right/input/thumbstick/click"],
@@ -56,7 +62,7 @@ func _initialize() -> void:
 func _controller(tracker_name: StringName) -> XRControllerTracker:
 	var t := XRControllerTracker.new()
 	t.name = tracker_name
-	t.profile = "/interaction_profiles/oculus/touch_controller"
+	t.profile = "/interaction_profiles/khr/generic_controller"   # as the Frame's come
 	t.set_input(&"primary", Vector2.ZERO)
 	t.set_input(&"primary_click", false)
 	t.set_input(&"trigger", 0.0)
