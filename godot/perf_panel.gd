@@ -24,6 +24,8 @@ extends Label3D
 ## next), the display's own rate tells when it followed, and if it has not a few seconds after
 ## the write the panel asks for a restart. Otherwise the button asks the runtime directly.
 ##
+## The last row starts the speed check (bench.gd); its title shows how it goes and what came out.
+##
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. Kept in user://settings.cfg.
 ##
@@ -51,6 +53,7 @@ const BTN_H := 0.06             # m
 const BTN_GAP := 0.01
 const RATE_W := 0.08
 const SCALE_W := 0.12
+const BENCH_W := 0.36
 const COLOR_BTN := Color(0.17, 0.19, 0.24, 0.96)
 const COLOR_ON := Color(0.12, 0.50, 0.22, 0.96)       # in effect
 const COLOR_PENDING := Color(0.62, 0.50, 0.08, 0.96)  # chosen, not (yet) in effect
@@ -102,6 +105,8 @@ var plate_mat: StandardMaterial3D
 var buttons: Array = []         # {kind "rate" / "scale", value, rect (panel x, y), mat, label}
 var rate_options: Array = []
 var titles: Array = []          # Label3D: the rows' titles and the hint under them
+var bench_text := "замер скорости"
+var bench_title: Label3D
 var plate_rect := Rect2()
 var hover := [-1, -1]           # per hand (left, right): the button its ray is on, -1 none
 var on_plate := [false, false]  # per hand: its ray is on the panel
@@ -201,9 +206,13 @@ func _layout() -> void:
 	var line := f.get_height(font_size) * pixel_size
 	var y := -STATUS_LINES * line - 0.02
 	var rows := [["частота, Гц", "rate", rate_options, RATE_W], ["разрешение", "scale", SCALES, SCALE_W]]
+	if viewer and viewer.get("bench"):
+		rows.append([bench_text, "bench", [0.0], BENCH_W])
 	var width := 0.0
 	for row in rows:
 		titles.append(_text(row[0], 30, Vector3(0.0, y - 0.015, 0.0)))
+		if row[1] == "bench":
+			bench_title = titles.back()
 		y -= 0.045
 		var n: int = row[2].size()
 		var w: float = row[3]
@@ -220,8 +229,10 @@ func _layout() -> void:
 			mesh.material_override = mat
 			mesh.position = Vector3(x, y - 0.5 * BTN_H, -0.002)
 			add_child(mesh)
-			var label := _text("%.0f" % v if row[1] == "rate" else "%d%%" % roundi(v * 100.0), 32,
-					Vector3(x, y - 0.5 * BTN_H, 0.0))
+			var t := "%.0f" % v if row[1] == "rate" else "%d%%" % roundi(v * 100.0)
+			if row[1] == "bench":
+				t = "сравнить с прежним" if viewer.bench.has_ab() else "замерить"
+			var label := _text(t, 32, Vector3(x, y - 0.5 * BTN_H, 0.0))
 			buttons.append({"kind": row[1], "value": v, "mat": mat, "mesh": mesh, "label": label,
 					"rect": Rect2(x - 0.5 * w, y - BTN_H, w, BTN_H)})
 		y -= BTN_H + 0.02
@@ -243,6 +254,9 @@ func _paint() -> void:
 			if rate > 0.0 and absf(b.value - rate) < 0.5:
 				c = COLOR_ON
 			elif chosen > 0.0 and absf(b.value - chosen) < 0.5:
+				c = COLOR_PENDING
+		elif b.kind == "bench":
+			if viewer.bench.running:
 				c = COLOR_PENDING
 		elif is_equal_approx(b.value, render_scale):
 			c = COLOR_ON
@@ -285,8 +299,11 @@ func point(hand: int, from: Vector3, dir: Vector3, trigger: float, tracked := tr
 			var b: Dictionary = buttons[hover[hand]]
 			if b.kind == "rate":
 				choose_rate(b.value)
-			else:
+			elif b.kind == "scale":
 				choose_scale(b.value)
+			else:
+				viewer.bench.start()
+				_paint()
 	if hover[hand] != was:
 		_paint()
 
@@ -459,6 +476,14 @@ func _answer_request() -> void:
 			% [requested, now, request_from, xr.display_refresh_rate])
 	requested = 0.0
 	_set_text(_compose())
+
+
+## The speed check's line, the title of its row.
+func bench_status(s: String) -> void:
+	bench_text = s
+	if bench_title:
+		bench_title.text = s
+	_paint()
 
 
 func _set_note(s: String, failed: bool) -> void:

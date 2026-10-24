@@ -75,12 +75,7 @@ func _process(_delta: float) -> bool:
 				m.position = p
 				main.origin.add_child(m)
 		if mode == "ray":
-			while pos.size() < 12:
-				pos.append(Vector4.ZERO)
-				col.append(Vector4.ZERO)
-			main.material.set_shader_parameter("wh_ball", pos)
-			main.material.set_shader_parameter("wh_ballCol", col)
-			main.material.set_shader_parameter("wh_nBall", BALLS.size())
+			main.set_balls(pos, col)
 	if frames == 14:
 		var rid: RID = main.xr_view.get_texture().get_rid()
 		for i in 2:

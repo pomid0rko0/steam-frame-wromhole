@@ -3,11 +3,13 @@ Floor: share of ray-traced white line pixels (inside the area where green may be
 away from its edges) that green does NOT cover. With green 3-4 px wide over 1-2 px white,
 this is ~0 when aligned; shifting green by 2 px shows how fast it grows.
 Balls: share of green ball-grid pixels outside the ray-traced red silhouette, and the
-difference of their outlines (bounding boxes)."""
+difference of their outlines (bounding boxes). With --floor-only (the scene without ray-traced
+balls) only the floor is compared."""
 import sys, numpy as np
 from PIL import Image
 from scipy import ndimage
 pre = sys.argv[1]
+floor_only = '--floor-only' in sys.argv[2:]
 def img(m, eye): return np.asarray(Image.open(f'{pre}_{m}_{eye}.png').convert('RGB'), int)
 def green(a): return (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 80
 ok = True
@@ -22,6 +24,11 @@ for eye in ('left', 'right'):
     unc = lambda g: (wl & ~g).sum() / max(wl.sum(), 1)
     u0 = unc(G)
     u2 = max(unc(np.roll(G, 2, axis=1)), unc(np.roll(G, 2, axis=0)))
+    if floor_only:
+        print(f'{eye}: floor white px checked {wl.sum()}, uncovered {100*u0:.2f}% '
+              f'(if green were 2 px off: {100*u2:.1f}%)')
+        ok &= wl.sum() > 1000 and u0 < 0.01
+        continue
     # balls
     B = green(img('balls', eye))
     out = (B & ~ndimage.binary_dilation(red, iterations=1)).sum() / max(B.sum(), 1)

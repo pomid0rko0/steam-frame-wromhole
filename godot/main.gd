@@ -9,7 +9,7 @@ extends Node3D
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
 ## parallel-transporting the play-space axes; the head sits head-height above the feet
 ## along the floor normal. Each eye is derived in the shader from that view's own
-## matrices (see shaders/wormhole.gdshader).
+## matrices (see shaders/wormhole_view.gdshaderinc).
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
@@ -22,6 +22,9 @@ const MOUSE_SENS := 0.003
 # Stereo check (see _add_check): balls in chart A, in front of the start position
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
+# the ray tracer without movable balls, and with them (set_balls)
+const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
+const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -46,6 +49,7 @@ var await_pose := false        # XR: place the viewer once head tracking deliver
 var show_check := false         # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []
 var perf: Label3D               # the frame rate panel
+var bench: Node                 # the speed check, started from the panel (bench.gd)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -82,7 +86,7 @@ func _ready() -> void:
 			hands.append(c)
 
 	material = ShaderMaterial.new()
-	material.shader = load("res://shaders/wormhole.gdshader")
+	material.shader = SHADER_PLAIN
 	material.set_shader_parameter("wh_rho0", space.rho0)
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
@@ -116,9 +120,37 @@ func place(side: float, pos: Vector3, forward: Vector3) -> void:
 	frame = [WormholeSpace.vector_from_chart(side, foot_n, right),
 			WormholeSpace.vector_from_chart(side, foot_n, up),
 			WormholeSpace.vector_from_chart(side, foot_n, back)]
-	# play-space forward is -Z; undo the current head yaw so the view starts along `forward`
+	_face_head()
+
+
+## Put the feet at l on the axis through the throat (n = +x), facing the throat or away from it.
+func place_on_axis(l: float, inward: bool) -> void:
+	foot_l = l
+	foot_n = Vector3(1.0, 0.0, 0.0)
+	var s := 1.0 if inward else -1.0
+	# right, up, back as (U_l, u): facing the throat, back is +l and right is +y of chart A
+	frame = [Vector4(0.0, 0.0, s, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(s, 0.0, 0.0, 0.0)]
+	_face_head()
+
+
+## Turn the frame so that the head's current yaw looks along its forward (play-space forward
+## is -Z), and take the head's place in the room from here.
+func _face_head() -> void:
 	var hf := _head_forward_xz()
 	_rotate_frame(-atan2(hf.x, -hf.y))
+	prev_head = Vector2(camera.position.x, camera.position.z)
+	_update_chart_map()
+
+
+## Where the feet are and the frame there, to come back to (set_pose).
+func get_pose() -> Array:
+	return [foot_l, foot_n, frame.duplicate()]
+
+
+func set_pose(p: Array) -> void:
+	foot_l = p[0]
+	foot_n = p[1]
+	frame = p[2].duplicate()
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
 
@@ -212,6 +244,10 @@ func _build_overlay() -> void:
 	perf.xr = xr as OpenXRInterface if in_xr else null
 	perf.viewer = self
 	perf.head = camera
+	bench = preload("res://bench.gd").new()
+	bench.main = self
+	bench.panel = perf
+	add_child(bench)
 	origin.add_child(perf)
 	_update_chart_map()
 
@@ -258,12 +294,7 @@ func _add_check() -> void:
 		m.material_override = ball_mat
 		m.position = c
 		overlay.add_child(m)
-	while pos.size() < 12:
-		pos.append(Vector4.ZERO)
-		col.append(Vector4.ZERO)
-	material.set_shader_parameter("wh_ball", pos)
-	material.set_shader_parameter("wh_ballCol", col)
-	material.set_shader_parameter("wh_nBall", CHECK_BALLS.size())
+	set_balls(pos, col)
 	# no other objects: Godot's floor lines would be drawn over them where the floor is hidden
 	var none_sph := PackedVector4Array()
 	var none_pil := PackedVector4Array()
@@ -276,6 +307,24 @@ func _add_check() -> void:
 	material.set_shader_parameter("wh_sph", none_sph)
 	material.set_shader_parameter("wh_pil", none_pil)
 	material.set_shader_parameter("wh_box", none_box)
+
+
+## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),
+## at most 12. Without balls the ray tracer is a separate shader that leaves their code out: it
+## needs registers even where no ray runs it, and the GPU then runs fewer pixels at once. The
+## shader is chosen here, so set the balls at the start: changing it later costs a hitch while the
+## GPU compiles the other one.
+func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
+	var n := pos.size()
+	var p := pos.duplicate()
+	var c := col.duplicate()
+	while p.size() < 12:
+		p.append(Vector4.ZERO)
+		c.append(Vector4.ZERO)
+	material.shader = SHADER_BALLS if n > 0 else SHADER_PLAIN
+	material.set_shader_parameter("wh_ball", p)
+	material.set_shader_parameter("wh_ballCol", c)
+	material.set_shader_parameter("wh_nBall", n)
 
 
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a

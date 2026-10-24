@@ -34,6 +34,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   the avatar as balls (`tests/grab_test.gd`).
 - `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
   cause is not found.
+- `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
+  4 nodes, README «Почему это real time»), one shading per pixel after the trace, the ray's
+  direction interpolated from the screen's corners, and the movable balls' code in a separate
+  shader (`wormhole_balls.gdshader`, chosen by `main.set_balls`). Checked in the headset with
+  5 nodes and the direction per pixel: the one-eye check passes; at the shell's edge a frame
+  costs about 5 ms (16.6 on `main`), 108 Hz holds at 100%, 120 Hz at 90% (README «Что видно в
+  шлеме»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -46,7 +53,8 @@ Where the README wishes start (wishes without a branch start from `main`):
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
 - refresh rate and render scale → `main` (the panel is there); cheaper rays near the wormhole →
-  `main` (`wh_curved` in `wormhole_core`, measured in the headset by the panel's `refresh:` lines);
+  `fast-rays` (`wh_curved` in `wormhole_core`, measured in the headset by the panel's `refresh:` lines;
+  without a headset `tools/adreno_stats.sh`);
 - foveated rendering → `foveation`;
 - placing wormholes by hand, several wormholes, flat portals, two-handed shooting, gun models,
   other shapes (torus, arbitrary SDF) → `main`; several wormholes, portals and other shapes are
@@ -62,6 +70,9 @@ When branches are put together, these overlap:
 - A resets in `walking`, `throat` and `grab`: one reset does all of it.
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
+- `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
+  `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
+  (the one without them has no ball code at all and ignores them).
 
 ## Hard rule: stereo before headset
 
@@ -74,7 +85,15 @@ draws next to ray-traced ones, check they line up the same way.
 - **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe and EGL with apt if they are missing.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~15 min).
-- **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: balls switch some paths off).
+- **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
+- **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
+- **Comparing ray tracers in the headset:** the panel's lowest button runs `godot/bench.gd`: the
+  viewer is put at five fixed places on the axis, each timed on the GPU at 72 Hz and 100%, and
+  the log gets `bench:` lines. `tools/ab_shaders.sh <commit or dir>...` before the export puts other
+  ray tracers in the build (`godot/shaders/ab/`, not in git); each place then times all of them in
+  a palindrome order, and the panel compares the build's own with the first. Frame times from
+  walking around do not compare between builds: where one looks changes them several times over.
+  Diagnostic variants (one colour: Godot's own cost; straight rays: the flat part) split a frame.
 - **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock) and `tools/test_openxr.sh` (the panel and its buttons); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`walking`, `throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails).
@@ -91,7 +110,10 @@ draws next to ray-traced ones, check they line up the same way.
 - **Logs on the Frame:** `~/.local/share/godot/app_userdata/Wormhole VR/logs/`; `tools/frame_logs.bat` fetches them. `application/run/flush_stdout_on_print` is on, or the running app's log lost its last lines. The desktop window's V-Sync mode Disabled is not available there (Godot falls back to Enabled), and the app still reached 144 Hz.
 - **Signals of the OpenXR interface.** A GDScript lambda connected to an `OpenXRInterface` signal by the panel corrupted the heap at exit (under Monado); a method callable did not. `tools/test_openxr.sh` fails on a crash at exit.
 - **SceneTree test scripts.** In them `main._ready` has not run during `_initialize`; touch main's nodes from `_process` (frame 2 or later). Settings applied too early silently do nothing.
-- **Software-Vulkan timings** are only good for ratios, and not for the shader's inner costs: halving the curved-region Simpson steps changed lavapipe's frame by 1%, while on the Frame the curved-region rays double the frame. `tests/perf.gd` `near` / `away` (6.5 m from the centre, facing it / away) separate them.
+- **Software-Vulkan timings** are only good for ratios, and not for the shader's inner costs: halving the curved-region Simpson steps changed lavapipe's frame by 1%, while on the Frame the curved-region rays double the frame. `tests/perf.gd` `near` / `away` (6.5 m from the centre, facing it / away) separate them. For the Frame's own compiler use `tools/adreno_stats.sh`.
+- **Registers are taken by code no pixel runs.** The GPU reserves a shader's registers for its heaviest point, so the movable balls' code (12 unrolled candidate loops with bisections) held the plain scene at 48 registers and 4 waves with no balls in it. Loops over balls run to `wh_nBall` (a constant bound with `break` is unrolled 12 times), candidates are bit masks, not arrays, and the scene without balls uses the shader built with `WH_NO_BALLS`. On Turnip a 4-wave shader is a slow one, whatever it computes.
+- **Derivatives in the shader** (`fwidth` for the grid lines) are only defined in uniform control flow: `wh_render` computes the lines' coordinates for every pixel and their `fwidth` once, after the trace.
+- **Godot shading language** reserves `E`, `PI`, `TAU` as built-in constants: a local variable `E` is a compile error in Godot that GLSL (`ref/`) accepts. `tools/test_stereo.sh` and `adreno_stats.sh` fail on shader errors.
 - **Render scale and the stereo test.** At a 3D render scale below 1 the bilinear upscale blends the balls' edges with the background, and the one-colour red threshold of `tools/compare` then shifts the shaded ray-traced ball by 0.2–0.4 px against Godot's flat red one. With `SCALING_3D_MODE_NEAREST` the whole suite passes at 80% within 0.02 px: the geometry is exact, test a scale that way.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
