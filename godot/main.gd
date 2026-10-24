@@ -1,14 +1,16 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
-## turns, smoothly or in 30-degree snaps (button map in the README). Every pixel is ray traced
-## along a geodesic of the wormhole space in the shader; this script tracks where the viewer is
-## in that curved space.
+## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
+## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
+## pulling the trigger, set the refresh rate and the render scale (perf_panel.gd). Every pixel is
+## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
+## viewer is in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space and stick locomotion move the feet along
 ## floor geodesics, parallel-transporting the play-space axes; stick turns rotate those axes;
 ## the head sits head-height above the feet along the floor normal. Each eye is derived in
-## the shader from that view's own matrices (see shaders/wormhole.gdshader).
+## the shader from that view's own matrices (see shaders/wormhole_view.gdshaderinc).
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
@@ -26,6 +28,9 @@ const MOUSE_SENS := 0.003
 # Stereo check (see _add_check): balls in chart A, in front of the start position
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
+# the ray tracer without movable balls, and with them (set_balls)
+const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
+const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -48,6 +53,7 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := false         # the stereo check (see _add_check)
+var hands: Array[XRController3D] = []   # left, right (XR only)
 var left_hand: XRController3D
 var right_hand: XRController3D
 var button_was := {}
@@ -55,6 +61,11 @@ var smooth_turn := true         # false: 30-degree snaps; a right stick click sw
 var snap_armed := true          # the right stick went back to the middle since the last turn
 var logged_profiles := {}
 var input_log_time := 0.0
+var perf: Label3D               # the frame rate panel
+var bench: Node                 # the speed check, started from the panel (bench.gd)
+var hold := false               # the speed check: the feet stay while the head moves, sticks do nothing
+var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
+var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 
 
@@ -65,11 +76,13 @@ func _ready() -> void:
 		in_xr = true
 		var oxr := xr as OpenXRInterface
 		if oxr:
-			oxr.pose_recentered.connect(func() -> void: recentered = true)
+			# methods, not lambdas: a lambda left connected to the interface corrupted memory at
+			# exit (perf_panel.gd)
+			oxr.pose_recentered.connect(_on_recentered)
 			# for godot.log: input reaches the app only while the session is focused (an open
 			# SteamVR dashboard takes the focus away)
-			oxr.session_visible.connect(func() -> void: print("XR session visible (no input focus: dashboard open?)"))
-			oxr.session_focussed.connect(func() -> void: print("XR session focused: controller input active"))
+			oxr.session_visible.connect(_on_session_visible)
+			oxr.session_focussed.connect(_on_session_focussed)
 		await_pose = true
 		# Render XR from a SubViewport. With XR on the root viewport Godot also mirrors the left
 		# eye into the desktop window, and SteamVR may show that window on a virtual screen
@@ -86,15 +99,18 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = 0.05
 	origin.add_child(camera)
-	left_hand = XRController3D.new()
-	left_hand.tracker = &"left_hand"
-	origin.add_child(left_hand)
-	right_hand = XRController3D.new()
-	right_hand.tracker = &"right_hand"
-	origin.add_child(right_hand)
+	if in_xr:
+		for t in [&"left_hand", &"right_hand"]:
+			var c := XRController3D.new()
+			c.tracker = t
+			c.pose = &"aim"            # the panel's buttons are pointed at
+			origin.add_child(c)
+			hands.append(c)
+		left_hand = hands[0]
+		right_hand = hands[1]
 
 	material = ShaderMaterial.new()
-	material.shader = load("res://shaders/wormhole.gdshader")
+	material.shader = SHADER_PLAIN
 	material.set_shader_parameter("wh_rho0", space.rho0)
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
@@ -128,9 +144,53 @@ func place(side: float, pos: Vector3, forward: Vector3) -> void:
 	frame = [WormholeSpace.vector_from_chart(side, foot_n, right),
 			WormholeSpace.vector_from_chart(side, foot_n, up),
 			WormholeSpace.vector_from_chart(side, foot_n, back)]
-	# play-space forward is -Z; undo the current head yaw so the view starts along `forward`
+	_face_head()
+
+
+## Put the feet at l on the axis through the throat (n = +x), looking yaw degrees to the right of
+## the throat (the head's own yaw is taken out), and turn the view pitch degrees up and roll
+## degrees about the line of sight (right side down) on top of the head's own: the speed check.
+func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
+	foot_l = l
+	foot_n = Vector3(1.0, 0.0, 0.0)
+	# right, up, back as (U_l, u): facing the throat, back is +l and right is +y of chart A
+	frame = [Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)]
+	_rotate_frame(deg_to_rad(yaw))
+	_face_head()
+	view_pitch = pitch
+	view_roll = roll
+
+
+## Where the head looks: degrees from the direction to the throat along the floor, and degrees up.
+func look_angles() -> Vector2:
+	var f := -camera.transform.basis.z
+	var T: Vector4 = f.x * frame[0] + f.z * frame[2]     # along the floor, as (U_l, u)
+	var toward := -1.0 if foot_l > 0.0 else 1.0          # the throat is where |l| decreases
+	var h := T.length()
+	var yaw := rad_to_deg(acos(clampf(toward * T.x / h, -1.0, 1.0))) if h > 1e-6 else 0.0
+	return Vector2(yaw, rad_to_deg(asin(clampf(f.y, -1.0, 1.0))))
+
+
+## Turn the frame so that the head's current yaw looks along its forward (play-space forward
+## is -Z), and take the head's place in the room from here.
+func _face_head() -> void:
 	var hf := _head_forward_xz()
 	_rotate_frame(-atan2(hf.x, -hf.y))
+	prev_head = Vector2(camera.position.x, camera.position.z)
+	_update_chart_map()
+
+
+## Where the feet are and the frame there, to come back to (set_pose).
+func get_pose() -> Array:
+	return [foot_l, foot_n, frame.duplicate()]
+
+
+func set_pose(p: Array) -> void:
+	foot_l = p[0]
+	foot_n = p[1]
+	frame = p[2].duplicate()
+	view_pitch = 0.0
+	view_roll = 0.0
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
 
@@ -157,7 +217,7 @@ func _process(delta: float) -> void:
 		_log_input(delta)
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
-	var moved := _handle_turn_and_reset(dt)
+	var moved := false if hold else _handle_turn_and_reset(dt)
 
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
@@ -167,7 +227,7 @@ func _process(delta: float) -> void:
 		moved = true
 	var step := hz - prev_head
 	prev_head = hz
-	var stick := _move_input()
+	var stick := Vector2.ZERO if hold else _move_input()
 	if stick.length() > STICK_DEAD_ZONE:
 		# along the stick, relative to where the head looks
 		var fwd := _head_forward_xz()
@@ -175,20 +235,37 @@ func _process(delta: float) -> void:
 		var speed := RUN_SPEED if _run_pressed() else WALK_SPEED
 		step += (stick.y * fwd + stick.x * rgt) * speed * dt
 		moved = true
-	_walk(step)
+	if not hold:
+		_walk(step)
 	if moved:
 		# the controls moved the world against the room; physical walking does not
 		_update_chart_map()
+	_point_panel()
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
 		overlay.visible = foot_l > space.L
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
+	var hf: Array = hp[2]
+	if view_pitch != 0.0 or view_roll != 0.0:
+		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll))
 	material.set_shader_parameter("head_l", hp[0])
 	material.set_shader_parameter("head_n", hp[1])
-	material.set_shader_parameter("head_f", PackedVector4Array(hp[2]))
+	material.set_shader_parameter("head_f", PackedVector4Array(hf))
 	material.set_shader_parameter("head_pos", head.origin)
+
+
+func _on_recentered() -> void:
+	recentered = true
+
+
+func _on_session_visible() -> void:
+	print("XR session visible (no input focus: dashboard open?)")
+
+
+func _on_session_focussed() -> void:
+	print("XR session focused: controller input active")
 
 
 ## Writes the controllers' interaction profiles and stick values to godot.log.
@@ -223,9 +300,12 @@ func _move_input() -> Vector2:
 	return v.limit_length(1.0)
 
 
-## Left trigger / Shift.
+## Left trigger / Shift. Not while the left controller points at the panel: there the trigger
+## presses the panel's buttons.
 func _run_pressed() -> bool:
-	return Input.is_key_pressed(KEY_SHIFT) or (in_xr and left_hand.get_float(&"trigger") > 0.5)
+	if Input.is_key_pressed(KEY_SHIFT):
+		return true
+	return in_xr and left_hand.get_float(&"trigger") > 0.5 and not (perf and perf.on_plate[0])
 
 
 ## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
@@ -261,6 +341,15 @@ func _handle_turn_and_reset(delta: float) -> bool:
 	return moved
 
 
+## Each controller points at the panel; its trigger presses the button it points at.
+func _point_panel() -> void:
+	if perf == null:
+		return
+	for i in hands.size():
+		var c := hands[i]
+		perf.point(i, c.transform.origin, -c.transform.basis.z, c.get_float(&"trigger"), c.get_has_tracking_data())
+
+
 ## Move the feet along the floor by a play-space displacement (x, z).
 func _walk(step: Vector2) -> void:
 	var T: Vector4 = step.x * frame[0] + step.y * frame[2]
@@ -274,6 +363,17 @@ func _walk(step: Vector2) -> void:
 	var fx: Vector4 = WormholeSpace.tangent(foot_n, Vector4(res[2][0].x, res[2][0].y, res[2][0].z, 0.0))
 	var fz: Vector4 = WormholeSpace.tangent(foot_n, Vector4(res[2][2].x, res[2][2].y, res[2][2].z, 0.0))
 	frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
+
+
+## The head's frame [right, up, back] turned pitch up, then roll about the line of sight.
+static func _tilt(f: Array, pitch: float, roll: float) -> Array:
+	var c := cos(pitch)
+	var s := sin(pitch)
+	var up: Vector4 = c * f[1] + s * f[2]
+	var back: Vector4 = c * f[2] - s * f[1]
+	var cr := cos(roll)
+	var sr := sin(roll)
+	return [cr * f[0] + sr * up, cr * up - sr * f[0], back]
 
 
 func _rotate_frame(angle: float) -> void:
@@ -293,10 +393,21 @@ func _head_forward_xz() -> Vector2:
 
 
 ## The node for things Godot draws itself among the ray-traced ones, placed in chart A
-## coordinates (the stereo check).
+## coordinates (the stereo check), and the frame rate panel, which follows the head in the room.
 func _build_overlay() -> void:
 	overlay = Node3D.new()
 	origin.add_child(overlay)
+	perf = preload("res://perf_panel.gd").new()
+	perf.name = "Perf"
+	perf.target = xr_view if in_xr else get_viewport()
+	perf.xr = xr as OpenXRInterface if in_xr else null
+	perf.viewer = self
+	perf.head = camera
+	bench = preload("res://bench.gd").new()
+	bench.main = self
+	bench.panel = perf
+	add_child(bench)
+	origin.add_child(perf)
 	_update_chart_map()
 
 
@@ -342,12 +453,7 @@ func _add_check() -> void:
 		m.material_override = ball_mat
 		m.position = c
 		overlay.add_child(m)
-	while pos.size() < 12:
-		pos.append(Vector4.ZERO)
-		col.append(Vector4.ZERO)
-	material.set_shader_parameter("wh_ball", pos)
-	material.set_shader_parameter("wh_ballCol", col)
-	material.set_shader_parameter("wh_nBall", CHECK_BALLS.size())
+	set_balls(pos, col)
 	# no other objects: Godot's floor lines would be drawn over them where the floor is hidden
 	var none_sph := PackedVector4Array()
 	var none_pil := PackedVector4Array()
@@ -360,6 +466,24 @@ func _add_check() -> void:
 	material.set_shader_parameter("wh_sph", none_sph)
 	material.set_shader_parameter("wh_pil", none_pil)
 	material.set_shader_parameter("wh_box", none_box)
+
+
+## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),
+## at most 12. Without balls the ray tracer is a separate shader that leaves their code out: it
+## needs registers even where no ray runs it, and the GPU then runs fewer pixels at once. The
+## shader is chosen here, so set the balls at the start: changing it later costs a hitch while the
+## GPU compiles the other one.
+func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
+	var n := pos.size()
+	var p := pos.duplicate()
+	var c := col.duplicate()
+	while p.size() < 12:
+		p.append(Vector4.ZERO)
+		c.append(Vector4.ZERO)
+	material.shader = SHADER_BALLS if n > 0 else SHADER_PLAIN
+	material.set_shader_parameter("wh_ball", p)
+	material.set_shader_parameter("wh_ballCol", c)
+	material.set_shader_parameter("wh_nBall", n)
 
 
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a

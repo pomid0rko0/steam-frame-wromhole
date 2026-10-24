@@ -11,6 +11,9 @@ extends SceneTree
 ## 3. a right stick click switches to snaps, even with the stick out (it snaps only once back
 ##    in the middle): then the right stick held right turns 30 degrees once
 ## 4. A goes back to the start
+## 5. with the left controller pointed at the frame rate panel, the left trigger presses the
+##    panel's buttons and does not run: the left stick walks at walking speed
+## 6. while the speed check holds the viewer (main.hold), the sticks and A do nothing
 
 # action name -> binding paths the action map must have for it, per profile
 const BINDINGS := {
@@ -160,9 +163,47 @@ func _process(_delta: float) -> bool:
 			var p := _feet()
 			var ok: bool = p.distance_to(Vector3(10, 0, 0)) < 1e-3 and _forward().distance_to(Vector3(-1, 0, 0)) < 1e-3
 			_check("A goes back to the start, facing the wormhole", ok, "feet (%.3f, %.3f), forward %s" % [p.x, p.y, _forward()])
+			_point_left_at_panel()
+		247:
+			left.set_input(&"primary", Vector2(0.0, 1.0))
+			left.set_input(&"trigger", 1.0)
+		277:
+			_check("the left ray is on the panel", main.perf.on_plate[0], "on_plate %s" % [main.perf.on_plate])
+			left.set_input(&"primary", Vector2.ZERO)
+			left.set_input(&"trigger", 0.0)
+		279:
+			var p := _feet()
+			_check("the left trigger on the panel does not run: half a second walks 0.75 m", absf(p.x - 9.25) < 0.03 and absf(p.y) < 0.01, "feet at (%.3f, %.3f), expected (9.25, 0)" % [p.x, p.y])
+			left.set_pose(&"aim", Transform3D.IDENTITY, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_NONE)
+			main.hold = true
+			left.set_input(&"primary", Vector2(0.0, 1.0))
+			left.set_input(&"trigger", 1.0)
+			right.set_input(&"primary", Vector2(1.0, 0.0))
+			right.set_input(&"ax_button", true)
+		309:
+			left.set_input(&"primary", Vector2.ZERO)
+			left.set_input(&"trigger", 0.0)
+			right.set_input(&"primary", Vector2.ZERO)
+			right.set_input(&"ax_button", false)
+		311:
+			var p := _feet()
+			_check("while the speed check holds the viewer, the sticks do nothing", absf(p.x - 9.25) < 1e-4 and absf(p.y) < 1e-4, "feet at (%.4f, %.4f), expected (9.25, 0)" % [p.x, p.y])
+			_check_turn("... nor does the right stick turn", 0.0)
+			main.hold = false
 			print("FAILURES: ", fails)
 			_finish()
 	return false
+
+
+## The left controller's aim pose 0.5 m in front of the panel, pointing at the panel above its
+## buttons: the ray is on the panel, not on a button.
+func _point_left_at_panel() -> void:
+	var p: Label3D = main.perf
+	var r: Rect2 = p.plate_rect
+	var at: Vector3 = p.transform * Vector3(r.get_center().x, r.end.y + 0.1, 0.0)
+	var from: Vector3 = at + p.transform.basis.z * 0.5
+	var aim := Transform3D(Basis.looking_at(at - from, Vector3.UP), from)
+	left.set_pose(&"aim", aim, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
 
 
 ## Takes the simulated headset down before quitting: left up at exit, it aborts Godot, and the

@@ -1,10 +1,13 @@
 #!/bin/bash
 # Everything the tests and exports need on a Linux machine (or a fresh cloud session):
 # Godot 4.7.2 into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
-# Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, Monado
-# to run the app through a real OpenXR runtime without a headset (CLAUDE.md, "Running things").
+# Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL for
+# ref/test_gpu.py, Monado to run the app through a real OpenXR runtime without a headset
+# (CLAUDE.md, "Running things").
 # The four steps don't depend on each other and run at once; each line of output starts with
-# its step's name.
+# its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
+# is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's
+# shader compiler makes of the ray tracer. No package has it for x86 (~10 min, once).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 V=4.7.2
@@ -60,12 +63,29 @@ get_pip() {
 		|| pip install --quiet numpy scipy pillow moderngl
 }
 
+# what Mesa's build needs (Turnip, X11 for Godot's window, the drm-shim)
+MESA_V=25.2.8
+MESA_DEBS="ninja-build python3-mako python3-yaml python3-pycparser flex bison pkg-config glslang-tools
+	libdrm-dev libexpat1-dev zlib1g-dev libzstd-dev libelf-dev libx11-dev libxext-dev libxfixes-dev
+	libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev libxcb-randr0-dev
+	libxcb-sync-dev libxcb-shm0-dev libxcb-xfixes0-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev"
+MESA_OUT=$BIN/mesa-fd
+
 check_apt() {   # sets $missing to the apt packages still needed
 	missing=""
+	local p
+	if [ ! -f "$MESA_OUT/lib/x86_64-linux-gnu/libfreedreno_noop_drm_shim.so" ]; then
+		for p in $MESA_DEBS; do
+			dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing="$missing $p"
+		done
+	fi
 	command -v xvfb-run >/dev/null || missing="$missing xvfb"
 	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
 	command -v monado-service >/dev/null || missing="$missing monado-service"
 	[ -f /usr/share/openxr/1/openxr_monado.json ] || missing="$missing libopenxr1-monado"
+	local libs   # EGL, for ref/test_gpu.py
+	libs=$(ldconfig -p 2>/dev/null) || true
+	{ grep -q "libEGL.so.1 " <<<"$libs" && grep -q libEGL_mesa <<<"$libs"; } || missing="$missing libegl1 libegl-mesa0"
 }
 get_apt() {
 	check_apt
@@ -76,6 +96,35 @@ get_apt() {
 		check_apt
 	fi
 	[ -z "$missing" ] || { echo "still missing:$missing (lavapipe = mesa-vulkan-drivers)"; return 1; }
+}
+
+# Turnip (Mesa's Vulkan driver for Adreno) and the noop drm-shim, built into tools/.bin/mesa-fd.
+# The source comes from mesa3d.org, or from Ubuntu's archive where mesa3d.org is unreachable.
+get_adreno() {
+	[ ! -f "$MESA_OUT/lib/x86_64-linux-gnu/libfreedreno_noop_drm_shim.so" ] || return 0
+	# Mesa wants meson 1.4 or newer; Ubuntu 24.04 has 1.3
+	python3 -c "import mesonbuild.coredata as c, sys; sys.exit(tuple(map(int, c.version.split('.')[:2])) < (1, 4))" 2>/dev/null \
+		|| pip install --quiet --break-system-packages "meson>=1.4,<1.9" 2>/dev/null || pip install --quiet "meson>=1.4,<1.9"
+	local src=$BIN/mesa-src tar=$BIN/mesa.tar.xz u
+	rm -rf "$src" "$BIN/mesa-build"
+	for u in https://archive.mesa3d.org/mesa-$MESA_V.tar.xz \
+			http://archive.ubuntu.com/ubuntu/pool/main/m/mesa/mesa_$MESA_V.orig.tar.xz; do
+		echo "downloading $u"
+		curl -fsSL --retry 2 --connect-timeout 20 -o "$tar" "$u" && break
+		rm -f "$tar"
+	done
+	[ -f "$tar" ] || { echo "no Mesa $MESA_V source"; return 1; }
+	mkdir -p "$src"
+	tar -xJf "$tar" -C "$src" --strip-components=1
+	rm "$tar"
+	echo "building Turnip (Mesa $MESA_V)"
+	(cd "$src" && meson setup "$BIN/mesa-build" --prefix="$MESA_OUT" -Dbuildtype=release \
+		-Dgallium-drivers= -Dvulkan-drivers=freedreno -Dfreedreno-kmds=msm -Dtools=drm-shim \
+		-Dplatforms=x11 -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false -Dgles1=disabled \
+		-Dgles2=disabled -Dllvm=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dvideo-codecs= \
+		>"$BIN/mesa-setup.log" 2>&1) || { tail -20 "$BIN/mesa-setup.log"; return 1; }
+	ninja -C "$BIN/mesa-build" install >"$BIN/mesa-build.log" 2>&1 || { tail -20 "$BIN/mesa-build.log"; return 1; }
+	rm -rf "$src" "$BIN/mesa-build" "$BIN/mesa-setup.log" "$BIN/mesa-build.log"
 }
 
 prefix() {   # name: puts it in front of every line
@@ -96,8 +145,10 @@ done
 failed=""
 for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}"; done
 [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
+# after apt: it needs the packages that step installs
+get_adreno 2>&1 | prefix adreno
 
 # also on PATH: the tests fall back to it when this script ran outside the repo,
 # e.g. piped from curl in an environment setup script (then ROOT is not the repo)
 ln -sf "$BIN/Godot_v$V-stable_linux.x86_64" /usr/local/bin/godot 2>/dev/null || true
-echo "ok: $BIN/Godot_v$V-stable_linux.x86_64"
+echo "ok: $BIN/Godot_v$V-stable_linux.x86_64, $MESA_OUT"

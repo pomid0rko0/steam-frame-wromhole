@@ -8,3 +8,4 @@ preview/wormhole.html
 ref/out/
 __pycache__/
 *.zip
+godot/shaders/ab/

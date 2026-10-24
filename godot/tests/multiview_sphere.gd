@@ -32,6 +32,8 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	if frames == 2:
+		main.perf.visible = false     # nothing but the balls under test
 
 	if frames == 3:
 		# the viewer stands at chart (10, 0) facing -x: play x -> chart +y, play +y -> chart +z,
@@ -40,12 +42,7 @@ func _process(_delta: float) -> bool:
 			var p := Vector4(CHART.x, CHART.y, CHART.z, main.space.h)     # point of R^4 in sheet A
 			var pos := PackedVector4Array([p])
 			var col := PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)])
-			for i in 11:
-				pos.append(Vector4.ZERO)
-				col.append(Vector4.ZERO)
-			main.material.set_shader_parameter("wh_ball", pos)
-			main.material.set_shader_parameter("wh_ballCol", col)
-			main.material.set_shader_parameter("wh_nBall", 1)
+			main.set_balls(pos, col)
 		else:
 			var m := MeshInstance3D.new()
 			var s := SphereMesh.new()
