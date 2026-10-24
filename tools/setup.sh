@@ -29,8 +29,9 @@ pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/n
 missing=""
 command -v xvfb-run >/dev/null || missing="$missing xvfb"
 ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers(lavapipe)"
+ldconfig -p | grep -q "libEGL.so.1 " && ldconfig -p | grep -q libEGL_mesa || missing="$missing libegl1 libegl-mesa0(ref/test_gpu.py)"
 if [ -n "$missing" ]; then
 	echo "also needed (apt):$missing"
-	command -v apt-get >/dev/null && { apt-get install -y xvfb mesa-vulkan-drivers || true; }
+	command -v apt-get >/dev/null && { apt-get install -y xvfb mesa-vulkan-drivers libegl1 libegl-mesa0 || true; }
 fi
 echo "ok: $BIN/Godot_v$V-stable_linux.x86_64"

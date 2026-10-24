@@ -3,7 +3,9 @@ extends SceneTree
 ##   godot --path . --resolution 640x360 -s res://tests/perf.gd -- variant
 ## plain: the normal scene; check: the stereo check scene; check_noballs: without its ray-traced
 ## balls; check_nooverlay: without Godot's green overlay; plain_balls: normal scene + the balls;
-## plain_scale80, plain_scale70: the normal scene at 80% / 70% 3D render scale.
+## near: 6.5 m from the centre, the wormhole filling most of the view (the costly rays);
+## away: the same spot looking away from it. A suffix _scale80 or _scale70 renders at 80% / 70%
+## 3D render scale (plain_scale80, near_scale70, ...).
 
 var main: Node3D
 var frames := 0
@@ -24,10 +26,15 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 2:
-		match variant:
-			"plain_scale80", "plain_scale70":
+		for sc in [80, 70]:
+			if variant.ends_with("_scale%d" % sc):
 				root.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-				root.scaling_3d_scale = 0.8 if variant == "plain_scale80" else 0.7
+				root.scaling_3d_scale = sc / 100.0
+		if variant.begins_with("near"):
+			main.place(1.0, Vector3(6.5, 0.0, 0.0), main.START_FORWARD)
+		elif variant.begins_with("away"):
+			main.place(1.0, Vector3(6.5, 0.0, 0.0), -main.START_FORWARD)
+		match variant:
 			"check_noballs":
 				main.material.set_shader_parameter("wh_nBall", 0)
 			"check_nooverlay":
