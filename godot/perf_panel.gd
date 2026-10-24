@@ -17,11 +17,8 @@ extends Label3D
 ## Otherwise the press asks the runtime directly and the panel says whether the display followed.
 ##
 ## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards,
-## with the GPU's clock where the kernel shows it: a GPU that lowers its clock under a light load
-## makes the same frame take longer.
-##
-## Once the session runs, the panel asks the runtime to keep the GPU and CPU at a sustained high
-## performance level (XR_EXT_performance_settings), if the runtime offers that.
+## with the GPU's clock where the kernel shows it (a GPU that lowers its clock makes the same
+## frame take longer; on the Frame it stayed at its top clock while frames were too slow).
 
 const RateMeter := preload("res://rate_meter.gd")
 const JUDGE_SECONDS := 5        # the colour judges up to the last 5 seconds
@@ -68,7 +65,6 @@ var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_min := 0              # MHz, over the log window
 var clock_max := 0
-var perf_asked := false
 var plate: MeshInstance3D
 var plate_mat: StandardMaterial3D
 
@@ -96,7 +92,6 @@ func _ready() -> void:
 		api = OpenXRAPIExtension.new()
 		# a method, not a lambda: a lambda left connected to the interface corrupted memory at exit
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
-		xr.gpu_level_changed.connect(_on_gpu_level)
 		_find_gpu_clock()
 		find_app_setting()
 	_set_text("...")
@@ -118,8 +113,6 @@ func find_app_setting() -> void:
 
 func _process(delta: float) -> void:
 	if api and api.is_running():
-		if not perf_asked:
-			_ask_performance()
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
 		meter.add(now, api.get_next_frame_time() - now, reported)
@@ -266,21 +259,6 @@ func _on_runtime_rate(r: float) -> void:
 	print("refresh: runtime event, rate %.1f Hz" % r)
 
 
-func _on_gpu_level(sub_domain: int, from_level: int, to_level: int) -> void:
-	print("refresh: runtime event, GPU %s level %d -> %d" % [sub_domain, from_level, to_level])
-
-
-## Keep the GPU and CPU clocks up, if the runtime takes such a request.
-func _ask_performance() -> void:
-	perf_asked = true
-	if api.get_instance_proc_addr("xrPerfSettingsSetPerformanceLevelEXT") == 0:
-		print("refresh: the runtime does not offer XR_EXT_performance_settings")
-		return
-	print("refresh: XR_EXT_performance_settings: asking for sustained high GPU and CPU")
-	xr.set_gpu_level(OpenXRInterface.PERF_SETTINGS_LEVEL_SUSTAINED_HIGH)
-	xr.set_cpu_level(OpenXRInterface.PERF_SETTINGS_LEVEL_SUSTAINED_HIGH)
-
-
 ## The GPU's clock-scaling device: its name has "gpu" in it (on msm: <address>.gpu).
 func _find_gpu_clock() -> void:
 	if not DirAccess.dir_exists_absolute(devfreq):
@@ -291,11 +269,9 @@ func _find_gpu_clock() -> void:
 		var dir := devfreq + "/" + n
 		if n.to_lower().contains("gpu") and FileAccess.file_exists(dir + "/cur_freq"):
 			gpu_clock = dir
-			var read := func(f: String) -> String:
-				return FileAccess.get_file_as_string(dir + "/" + f).strip_edges()
 			print("refresh: GPU clock %s: governor %s, %s..%s Hz, steps %s"
-					% [dir, read.call("governor"), read.call("min_freq"), read.call("max_freq"),
-					read.call("available_frequencies")])
+					% [dir, read_line(dir + "/governor"), read_line(dir + "/min_freq"),
+					read_line(dir + "/max_freq"), read_line(dir + "/available_frequencies")])
 			return
 	print("refresh: no GPU among %s: %s" % [devfreq, names])
 
@@ -303,7 +279,15 @@ func _find_gpu_clock() -> void:
 func _gpu_mhz() -> int:
 	if gpu_clock == "":
 		return 0
-	return FileAccess.get_file_as_string(gpu_clock + "/cur_freq").strip_edges().to_int() / 1_000_000
+	return read_line(gpu_clock + "/cur_freq").to_int() / 1_000_000
+
+
+## The first line of a kernel file. A sysfs file says it holds 4096 bytes whatever it holds, and
+## FileAccess.get_file_as_string reads that many: garbage after the value, and the log filled
+## with Unicode errors.
+static func read_line(path: String) -> String:
+	var f := FileAccess.open(path, FileAccess.READ)
+	return f.get_line().strip_edges() if f else ""
 
 
 ## Once a second: close the second's counts, recolour, retext, and now and then log.

@@ -120,5 +120,11 @@ func _initialize() -> void:
 	check("GPU clock read in MHz", panel._gpu_mhz(), 680)
 	panel.free()
 
+	# a real sysfs file: says 4096 bytes, holds a few
+	if FileAccess.file_exists("/sys/devices/system/cpu/online"):
+		var v := PerfPanel.read_line("/sys/devices/system/cpu/online")
+		check("sysfs file read up to its value (%s)" % v, v.is_valid_int() or v.contains("-") or v.contains(","), true)
+		check("sysfs value is clean ASCII", v.to_ascii_buffer().size(), v.length())
+
 	print("PASS" if ok else "FAIL")
 	quit(0 if ok else 1)

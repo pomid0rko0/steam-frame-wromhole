@@ -58,7 +58,6 @@ func _process(_delta: float) -> bool:
 		print("measured %.3f Hz, seconds %s" % [p.rate, p.seconds])
 		print("panel: ", p.text.replace("\n", " | "))
 		check("in XR", main.in_xr and oxr != null)
-		check("performance level asked for, if offered", p.perf_asked)
 		if oxr:
 			check("measured rate = runtime's", absf(p.rate - oxr.display_refresh_rate) < 0.5)
 			check("panel heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
