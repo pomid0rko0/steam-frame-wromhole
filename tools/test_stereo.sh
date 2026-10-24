@@ -47,6 +47,12 @@ for c in 0 1 2; do
 	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
 done
 
+# the same floor lines with the shader the normal scene runs: the one without movable balls
+for c in 0 1 2; do
+	for m in ray floor domain; do run --resolution 640x360 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
+	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
+done
+
 echo
 if [ $failed -eq 0 ]; then echo "ALL PASS"; else echo "FAILED"; fi
 exit $failed

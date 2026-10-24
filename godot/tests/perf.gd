@@ -37,7 +37,7 @@ func _process(_delta: float) -> bool:
 			main.place(1.0, Vector3(6.5, 0.0, 0.0), -main.START_FORWARD)
 		match variant:
 			"check_noballs":
-				main.material.set_shader_parameter("wh_nBall", 0)
+				main.set_balls(PackedVector4Array(), PackedVector4Array())
 			"check_nooverlay":
 				main.overlay.visible = false
 			"check_nogrid":
@@ -51,12 +51,7 @@ func _process(_delta: float) -> bool:
 				for c in main.CHECK_BALLS:
 					pos.append(Vector4(c.x, c.y, c.z, main.space.h))
 					col.append(Vector4(0.85, 0.08, 0.06, main.CHECK_BALL_RADIUS))
-				while pos.size() < 12:
-					pos.append(Vector4.ZERO)
-					col.append(Vector4.ZERO)
-				main.material.set_shader_parameter("wh_ball", pos)
-				main.material.set_shader_parameter("wh_ballCol", col)
-				main.material.set_shader_parameter("wh_nBall", 3)
+				main.set_balls(pos, col)
 		RenderingServer.viewport_set_measure_render_time(root.get_viewport_rid(), true)
 	if frames == 110:
 		t0 = Time.get_ticks_usec()

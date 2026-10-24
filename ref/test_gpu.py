@@ -34,6 +34,7 @@ def test_balls():
 BALLS = test_balls() if os.environ.get('WH_BALLS', '1') == '1' else []
 
 FRAG = """#version 330
+""" + ("" if BALLS else "#define WH_NO_BALLS\n") + """
 uniform float wh_rho0;
 uniform float wh_h;
 uniform float wh_fillet;
@@ -96,7 +97,8 @@ def render(ctx, state, size, tan, debug):
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
-        prog[k].value = v
+        if k in prog:      # the balls' uniforms are gone from the shader without balls
+            prog[k].value = v
     tex = ctx.texture((size, size), 4, dtype='f4' if debug else 'f1')
     fbo = ctx.framebuffer([tex])
     fbo.use(); fbo.clear()

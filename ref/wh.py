@@ -146,94 +146,129 @@ class Wormhole:
         return out
 
     # ---------- fast method: one ray at a time, mirrors the shader ----------
-    def fast(self, l_s, n_s, vl, w, hmax=0.25, nmax=48):
-        """Angle in the orbit plane:  dpsi = b dl / (r sqrt(r^2 - b^2)).
-        Cylinder: closed form. Fillet: s = sin(th/2), r = rho0 + 2R s^2, r - b = 2R (s^2 - sig),
-        sig = (b - rho0)/(2R); s = q sinh v (sig < 0) or s = q cosh v (sig > 0) gives
-        dpsi/dv = b sqrt(2R) / (r sqrt((1 - s^2)(r + b)))  -- smooth, no endpoint singularity."""
-        rho0, R, Lc, L, s0, s1 = self.rho0, self.R, self.Lc, self.L, self.s0, self.s1
+    # Fillet in u = s^2 = (r - rho0) / 2R, s = sin(th/2), sig = (b - rho0) / 2R:
+    #   dpsi = F(u) dv, dlength = G(u) dv, dv = du / (2 sqrt(u (u - sig))),
+    #   F = b sqrt(2R) / (r sqrt((1 - u)(r + b))), G = r^2 / b F.
+    # Product integration: F, G interpolated in tau = (u - ua) / (0.5 - ua) at 5 nodes (squares of
+    # the Gauss-Legendre nodes on [0, 1]); moments of tau^k against the exact weight
+    # w = 1 / (2 sqrt((tau + al)(tau + ga))) are elementary. A factor 1/sqrt(tau + c) with c >= 1 is
+    # smooth and goes into the interpolated part instead (regimes 1, 2), where the moment
+    # recursion would be unstable. z: int w (regime 0), sqrt(tau + mn) (regimes 1, 2).
+    _X = (np.polynomial.legendre.leggauss(5)[0] + 1) / 2
+    TAU = _X * _X
+    A = np.linalg.inv(np.vander(TAU, 5, increasing=True))
+
+    def fil(self, b, turn):
+        f = dict(ra=b if turn else self.rmin)
+        f['span'] = max(self.Rout - f['ra'], 1e-6 * self.R)
+        f['al'] = (f['ra'] - self.rho0) / f['span']
+        f['ga'] = 0.0 if turn else (self.rmin - b) / f['span']
+        mn, mx = min(f['al'], f['ga']), max(f['al'], f['ga'])
+        f.update(mn=mn, mx=mx, reg=0 if mx < 1 else (1 if mn < 1 else 2),
+                 E0=max(np.sqrt(f['al']) + np.sqrt(f['ga']), 1e-12))
+        r = f['ra'] + f['span'] * self.TAU
+        u = (r - self.rho0) / (2 * self.R)
+        G = np.sqrt(2 * self.R) * r / np.sqrt((1 - u) * (r + b))
+        if f['reg'] >= 1: G = G / np.sqrt(self.TAU + mx)
+        if f['reg'] == 2: G = G / np.sqrt(self.TAU + mn)
+        f['e'] = self.A @ (b * G / (r * r))
+        f['g'] = self.A @ G
+        f['zlo'] = 0.0 if f['reg'] == 0 else np.sqrt(mn)
+        f['zhi'] = self.fil_z(f, 1.0)
+        f['psi'], f['arc'] = self.fil_at(f, f['zhi'])[:2]
+        return f
+
+    def fil_z(self, f, t):
+        if f['reg'] == 0:
+            return np.log((np.sqrt(t + f['al']) + np.sqrt(t + f['ga'])) / f['E0'])
+        return np.sqrt(t + f['mn'])
+
+    def fil_mom(self, f, z):
+        """tau at z and the moments int_0^tau t^k w dt, k = 0..4"""
+        al, ga, mn, mx = f['al'], f['ga'], f['mn'], f['mx']
+        if f['reg'] == 0:
+            E = f['E0'] * np.exp(z)
+            sm = 0.5 * (E - (mx - mn) / E)
+            t = max(sm * sm - mn, 0.0)
+            S = sm * (E - sm)
+            B, C = al + ga, al * ga
+            D = [2 * z, S - np.sqrt(C) - 0.5 * B * 2 * z]
+            for k in range(2, 5):
+                D.append((t ** (k - 1) * S - (k - 0.5) * B * D[k - 1] - (k - 1) * C * D[k - 2]) / k)
+            return t, 0.5 * np.array(D)
+        t = max(z * z - mn, 0.0)
+        if f['reg'] == 1:
+            n = [t / (z + np.sqrt(mn))]
+            for k in range(1, 5):
+                n.append((t ** k * z - 2 * k * mn * n[-1]) / (2 * k + 1))
+            return t, np.array(n)
+        return t, np.array([t ** (k + 1) / (2 * (k + 1)) for k in range(5)])
+
+    def fil_at(self, f, z):
+        """(psi, path length, tau) from the fillet's inner end to z"""
+        t, m = self.fil_mom(f, z)
+        return f['e'] @ m, f['g'] @ m, t
+
+    def fil_solve(self, f, T):
+        z = f['zlo'] + (f['zhi'] - f['zlo']) * min(max(T / max(f['psi'], 1e-300), 0.0), 1.0)
+        for _ in range(2):
+            t, m = self.fil_mom(f, z)
+            dz = np.polyval(f['e'][::-1], t) * (z if f['reg'] == 2 else 1.0)
+            z = min(max(z - (f['e'] @ m - T) / max(dz, 1e-300), f['zlo']), f['zhi'])
+        return z
+
+    def fil_l(self, f, t, side):
+        s = np.sqrt(min(max((f['ra'] + f['span'] * t - self.rho0) / (2 * self.R), 0.0), 0.5))
+        return side * (self.Lc + self.R * (2 * np.arcsin(s) - self.th0))
+
+    def fast(self, l_s, n_s, vl, w):
+        """The shader's wh_curved without balls: kind 2 floor (l, n), or +-1 exit side (n, vl, w)."""
+        rho0, R, Lc, L = self.rho0, self.R, self.Lc, self.L
         wn = np.linalg.norm(w)
-        b = float(self.r(l_s)) * wn
+        als = abs(l_s)
+        rs = float(self.r(l_s))
+        b = rs * wn
         e1 = n_s
         e2 = w / wn if wn > 1e-12 else _any_perp(n_s)
-        sig = (b - rho0) / (2 * R)
-        hyp = sig <= 0                      # sinh branch
-        q = np.sqrt(max(-sig, 1e-12)) if hyp else np.sqrt(sig)
-
-        def S(v):
-            return q * np.sinh(v) if hyp else q * np.cosh(v)
-
-        def V(s):
-            return np.arcsinh(s / q) if hyp else np.arccosh(max(s / q, 1.0))
-
-        def g(v):
-            s = S(v)
-            r = rho0 + 2 * R * s * s
-            return b * np.sqrt(2 * R) / (r * np.sqrt((1 - s * s) * (r + b)))
-
-        def s_of(al):
-            return np.sin(self.theta(al) / 2)
-
-        def l_of(v, side):
-            return side * (Lc + R * (2 * np.arcsin(min(S(v), 1.0)) - self.th0))
-
-        pieces = []                         # ('f', side, va, vb) | ('c', dir, la, lb) oriented coords
-        if b <= self.rmin:                  # passes the throat: l monotonic towards sign(vl) * L
-            d = 1.0 if vl >= 0 else -1.0
-            x = l_s * d
-            if x < -Lc:
-                pieces.append(('f', -d, V(s_of(abs(l_s))), V(s0)))
-            if Lc > 0 and x < Lc:
-                pieces.append(('c', d, max(x, -Lc), Lc))
-            pieces.append(('f', d, V(s_of(abs(l_s)) if x > Lc else s0), V(s1)))
-            side_out = d
-        else:                               # turns around inside the fillet on its own side
-            side = 1.0 if l_s > 0 else -1.0
-            vs = V(s_of(abs(l_s)))
-            pieces.append(('f', side, -vs if vl * side < 0 else vs, V(s1)))
-            side_out = side
-
-        above = n_s[2] > 0
+        turn = b > self.rmin
+        f = self.fil(b, turn)
+        from_edge = als >= L * (1 - 1e-12)
+        ths = self.th0 + max(als - Lc, 0.0) / R
+        ts = rs * vl * vl / (1 + wn) if turn else 2 * R * np.sin((ths + self.th0) / 2) * np.sin((ths - self.th0) / 2)
+        ts = 1.0 if from_edge else min(max(ts / f['span'], 0.0), 1.0)
+        zs = self.fil_z(f, ts)
+        Ss = np.array(self.fil_at(f, zs)[:2])
+        d = 1.0 if vl >= 0 else -1.0
+        x = l_s * d
+        sideS = 1.0 if l_s > 0 else -1.0
+        hasA = vl * sideS < 0 if turn else x < -Lc
+        hasB = (not turn) and Lc > 0 and x < Lc
+        cFromStart = (not hasA) if turn else x > Lc
+        sideA = sideS if turn else -d
+        sideC = sideS if turn else d
+        x0B = max(x, -Lc)
+        DB = Lc - x0B if hasB else 0.0
+        wc = b / rho0
+        vlc = max(np.sqrt(max(1 - wc * wc, 0.0)), 1e-300)
+        kc = wc / (rho0 * vlc)
+        PA = Ss if hasA else np.zeros(2)
+        PB = np.array([kc, 1 / vlc]) * DB
+        C0 = Ss if cFromStart else np.zeros(2)
+        tot = PA + PB + np.array([f['psi'], f['arc']]) - C0
         psi_f = np.mod(np.arctan2(e2[2], e1[2]) + np.pi / 2, np.pi)
-        psi = 0.0
-        steps = 0
-        for kind, side, a, c in pieces:
-            if kind == 'c':                 # r = rho0: dpsi/dl = wc / (rho0 vlc)
-                wc = b / rho0
-                vlc = np.sqrt(max(1 - wc * wc, 0.0))
-                D = c - a
-                if above and D * wc >= (psi_f - psi) * rho0 * vlc:
-                    lh = side * (a + (psi_f - psi) * rho0 * vlc / wc)
-                    return dict(kind=2, l=lh, n=np.cos(psi_f) * e1 + np.sin(psi_f) * e2)
-                psi += D * wc / (rho0 * max(vlc, 1e-300))
-                continue
-            U = abs(c - a)
-            dv = 1.0 if c >= a else -1.0
-            N = int(min(max(np.ceil(U / hmax), 1), nmax))
-            hs = U / N
-            steps += N
-            ga = g(a)
-            for k in range(N):
-                va = a + dv * k * hs
-                gm = g(va + dv * hs / 2)
-                gb = g(va + dv * hs)
-                dpsi = hs / 6 * (ga + 4 * gm + gb)
-                if above and psi + dpsi >= psi_f:
-                    target = psi_f - psi
-                    u = hs * target / dpsi
-                    for _ in range(2):
-                        x1 = u * (0.5 - 0.5 / np.sqrt(3))
-                        x2 = u * (0.5 + 0.5 / np.sqrt(3))
-                        I = u / 2 * (g(va + dv * x1) + g(va + dv * x2))
-                        u = min(max(u - (I - target) / g(va + dv * u), 0.0), hs)
-                    return dict(kind=2, l=l_of(va + dv * u, side), n=np.cos(psi_f) * e1 + np.sin(psi_f) * e2)
-                psi += dpsi
-                ga = gb
-        n = np.cos(psi) * e1 + np.sin(psi) * e2
-        t = -np.sin(psi) * e1 + np.cos(psi) * e2
+        if n_s[2] > 0 and psi_f <= tot[0]:
+            nF = np.cos(psi_f) * e1 + np.sin(psi_f) * e2
+            if PA[0] <= psi_f < PA[0] + PB[0]:
+                return dict(kind=2, l=d * (x0B + (psi_f - PA[0]) / kc), n=nF)
+            inA = psi_f < PA[0]
+            T = PA[0] - psi_f if inA else C0[0] + psi_f - PA[0] - PB[0]
+            t = self.fil_at(f, self.fil_solve(f, min(max(T, 0.0), f['psi'])))[2]
+            return dict(kind=2, l=self.fil_l(f, t, sideA if inA else sideC), n=nF)
+        n = np.cos(tot[0]) * e1 + np.sin(tot[0]) * e2
+        t = -np.sin(tot[0]) * e1 + np.cos(tot[0]) * e2
         bR = b / self.Rout
-        return dict(kind=int(side_out), l=side_out * L, n=n, vl=side_out * np.sqrt(max(1 - bR * bR, 0.0)),
-                    w=bR * t, steps=steps)
+        return dict(kind=int(sideC), l=sideC * L, n=n, vl=sideC * np.sqrt(max(1 - bR * bR, 0.0)),
+                    w=bR * t, steps=5)
 
 
 def _any_perp(n):

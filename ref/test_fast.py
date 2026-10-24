@@ -84,7 +84,7 @@ def run(name, prof, m, rng):
     print(f"[{name}] L={W.L:.3f} Lc={W.Lc:.3f} r_min={W.rmin:.4f}  ODE check {christoffel_check(W, rng):.1e}")
     print(f"   rays {m}, class mismatches {mism}, brute unfinished {unfinished}")
     print(f"   exit pos err / rho0: max {max(pos) / u:.1e}  median {np.median(pos) / u:.1e}   exit dir err max {max(dirr):.1e}")
-    print(f"   floor err / rho0:    max {max(flo) / u:.1e}  (n={len(flo)})   Simpson steps mean {np.mean(steps):.1f} max {max(steps)}")
+    print(f"   floor err / rho0:    max {max(flo) / u:.1e}  (n={len(flo)})")
 
 
 if __name__ == '__main__':
