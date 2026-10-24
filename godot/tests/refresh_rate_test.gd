@@ -82,6 +82,11 @@ func _initialize() -> void:
 	check("display 72 -> 144", RateMeter.refresh_period(13_888_889, 6_944_444, 0.0), 6_944_444)
 	check("display 144 -> 72, 72 expected", RateMeter.refresh_period(6_944_444, 13_888_889, 72.0), 13_888_889)
 
+	# seen on the Frame while switching: the display passes through other rates; once the
+	# runtime says the new one, a period that is a whole multiple of it is pacing
+	check("Frame, 96 -> 108 via 72: 108 at half", RateMeter.refresh_period(13_888_889, 18_518_519, 108.0), 9_259_259)
+	check("Frame, 144 -> 80: 80 at half, not 120 at a third", RateMeter.refresh_period(6_944_444, 25_000_000, 80.0), 12_500_000)
+
 	# a pause (session not running) is not missed frames; no timing at all is ignored
 	m.reset_window()
 	m.add(t + 3_000_000_000, p90)

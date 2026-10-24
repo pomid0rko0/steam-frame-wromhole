@@ -12,8 +12,9 @@ extends RefCounted
 ## refresh if the multiple is 2, 3...). An expected rate that does not fit is ignored.
 ##
 ## Fed once per frame with (predicted display time, predicted period) in nanoseconds and the
-## rate the display is expected to run at (0 if unknown); the window counters are read and
-## reset by the caller.
+## rate the display is expected to run at (0 if unknown): the runtime's word, which on the Frame
+## matched the display once a switch had settled. The window counters are read and reset by
+## the caller.
 
 const PAUSE_NS := 500_000_000  # a longer gap is a pause (session not running), not missed frames
 const WHOLE := 0.03            # how close to a whole number a ratio of periods must be

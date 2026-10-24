@@ -57,10 +57,6 @@ func _ready() -> void:
 		var oxr := xr as OpenXRInterface
 		if oxr:
 			oxr.pose_recentered.connect(func() -> void: recentered = true)
-			# OpenXR paces the frames. A V-Synced desktop window would also hold each frame
-			# until the window's own screen refreshes, and could cap the headset below its rate.
-			oxr.session_begun.connect(_window_vsync.bind(false))
-			oxr.session_stopping.connect(_window_vsync.bind(true))
 		await_pose = true
 		# Render XR from a SubViewport. With XR on the root viewport Godot also mirrors the left
 		# eye into the desktop window, and SteamVR may show that window on a virtual screen
@@ -303,11 +299,6 @@ func _update_chart_map() -> void:
 	var B := Basis(to_chart.call(frame[0]), Vector3(0.0, 0.0, 1.0), to_chart.call(frame[2]))
 	var Bt := B.transposed()
 	overlay.transform = Transform3D(Bt, Vector3(prev_head.x, 0.0, prev_head.y) - Bt * fc)
-
-
-func _window_vsync(on: bool) -> void:
-	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if on else DisplayServer.VSYNC_DISABLED)
-	print("window V-Sync ", "on" if on else "off", " (XR session ", "stopping" if on else "running", ")")
 
 
 func _add_window_notice() -> void:

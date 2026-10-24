@@ -10,10 +10,11 @@ extends Label3D
 ## A trigger press picks the next refresh rate. SteamVR on the Steam Frame accepts an app's own
 ## request (XR_FB_display_refresh_rate) and ignores it, offering a single rate
 ## (ValveSoftware/SteamVR-for-Linux#1020). What it follows is the app's own SteamVR setting
-## steam.app.<SteamAppId>.preferredRefreshRate, from the app's next start; SteamVR's vrcmd sets
-## it while SteamVR runs. So when the app was started from the Steam library and vrcmd is there,
-## the press sets that and the panel asks for a restart. Otherwise the press asks the runtime
-## directly and the panel says whether the display followed.
+## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs;
+## on our Frame (SteamVR 2.18) the running app switches within a second, others report it only
+## from the next start. So when the app was started from the Steam library and vrcmd is there,
+## the press sets that, and the panel says whether the display followed or asks for a restart.
+## Otherwise the press asks the runtime directly and the panel says whether the display followed.
 ##
 ## Every few seconds a line starting with "refresh:" goes to the log, for checking afterwards.
 
@@ -21,7 +22,7 @@ const RateMeter := preload("res://rate_meter.gd")
 const JUDGE_SECONDS := 5        # the colour judges up to the last 5 seconds
 const MIN_SECONDS := 2          # at a new rate, measure this long before judging
 const MISSED_OK := 0.01         # refreshes without a new frame that still count as keeping up
-const REQUEST_WAIT := 2.0       # seconds the headset gets to follow a request
+const REQUEST_WAIT := 3.0       # seconds the headset gets to follow a request
 const LOG_EVERY := 5            # seconds between log lines
 const NOTE_SECONDS := 8         # how long the answer to a press stays on the panel
 const FRAME_RATES := [72.0, 80.0, 90.0, 96.0, 108.0, 120.0, 144.0]   # SteamVR's per-app choices on the Frame
@@ -44,7 +45,6 @@ var gpu := 0.0
 var gpu_max := 0.0
 var rate := 0.0                 # measured, Hz
 var reported := 0.0             # what the runtime says, Hz (read once a second)
-var expected := 0.0             # the rate the display should run at: the app's SteamVR setting, else the runtime's word
 var vrcmd := VRCMD
 var vrsettings := ""
 var steam_key := ""             # "steam.app.<SteamAppId>": this app's section of SteamVR's settings
@@ -107,7 +107,7 @@ func _process(delta: float) -> void:
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
-		meter.add(now, api.get_next_frame_time() - now, expected)
+		meter.add(now, api.get_next_frame_time() - now, reported)
 	t += delta
 	frames += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
@@ -133,6 +133,9 @@ func step_rate() -> void:
 	if steam_key != "":
 		var next := next_rate(FRAME_RATES, stored if stored > 0.0 else rate)
 		writing = true
+		# Steam preloads its overlay into everything it starts; vrcmd needs none of it, and the
+		# loader would only fill the log with complaints
+		OS.unset_environment("LD_PRELOAD")
 		print("refresh: setting %s.%s to %.0f" % [steam_key, SETTING, next])
 		WorkerThreadPool.add_task(_set_stored.bind(next))
 		_set_text(_compose())
@@ -199,11 +202,11 @@ func _stored_rate() -> float:
 ## On a worker thread: set this app's rate through vrcmd, then read it back.
 func _set_stored(r: float) -> void:
 	var key := "%s.%s" % [steam_key, SETTING]
-	var lib := "LD_LIBRARY_PATH=" + vrcmd.get_base_dir()
+	var env := ["LD_PRELOAD=", "LD_LIBRARY_PATH=" + vrcmd.get_base_dir(), vrcmd]
 	var out := []
-	var code := OS.execute("/usr/bin/env", [lib, vrcmd, "--set-settings-float", key, "%.0f" % r], out, true)
+	var code := OS.execute("/usr/bin/env", env + ["--set-settings-float", key, "%.0f" % r], out, true)
 	var back := []
-	var back_code := OS.execute("/usr/bin/env", [lib, vrcmd, "--settings-float", key], back, true)
+	var back_code := OS.execute("/usr/bin/env", env + ["--settings-float", key], back, true)
 	_stored_set.call_deferred(r, code, "".join(out), back_code, "".join(back))
 
 
@@ -214,6 +217,11 @@ func _stored_set(r: float, code: int, text: String, back_code: int, back: String
 			% [code, text.strip_edges().replace("\n", " | "), back_code, back.strip_edges().replace("\n", " | "), got])
 	if absf(got - r) < 0.5 or (got < 0.0 and code == 0):
 		stored = r
+		# SteamVR 2.18 on the Frame switches the running app within a second; others may only
+		# from the next start. Give the display a moment, then say which.
+		request_from = rate
+		requested = r
+		request_age = 0.0
 	else:
 		_set_note("не получилось задать частоту", true)
 	_set_text(_compose())
@@ -222,7 +230,10 @@ func _stored_set(r: float, code: int, text: String, back_code: int, back: String
 func _answer_request() -> void:
 	var now := rate
 	var followed := absf(now - requested) < 0.5
-	_set_note("шлем перешёл на %.0f Гц" % now if followed else "шлем остался на %.0f Гц" % now, not followed)
+	if followed:
+		_set_note("шлем перешёл на %.0f Гц" % now, false)
+	elif steam_key == "":
+		_set_note("шлем остался на %.0f Гц" % now, true)
 	print("refresh: asked for %.1f Hz, after %.0f s the display runs at %.1f Hz (was %.1f), runtime says %.1f"
 			% [requested, REQUEST_WAIT, now, request_from, xr.display_refresh_rate])
 	requested = 0.0
@@ -244,9 +255,6 @@ func _on_runtime_rate(r: float) -> void:
 func _second() -> void:
 	if xr:
 		reported = xr.display_refresh_rate
-		# SteamVR on the Frame may report its global rate, which apps do not get; an app runs at
-		# its own setting, 72 Hz if none
-		expected = (stored_at_start if stored_at_start > 0.0 else 72.0) if steam_key != "" else reported
 	var r := meter.rate()
 	if absf(r - rate) > 0.5:
 		if rate > 0.0:
@@ -286,19 +294,19 @@ func _compose() -> String:
 		"GPU %.1f из %.1f мс" % [g, 1000.0 / rate],
 	]
 	if requested > 0.0:
-		lines.append("прошу %.0f Гц..." % requested)
+		lines.append("переключаю на %.0f Гц..." % requested)
 	elif writing:
 		lines.append("задаю частоту...")
 	elif note != "":
 		lines.append(note)
 	if steam_key != "":
-		if stored > 0.0 and absf(stored - rate) > 0.5:
+		if stored > 0.0 and absf(stored - rate) > 0.5 and requested == 0.0:
 			if stored != stored_at_start:
 				lines.append("задано %.0f Гц: выйди и запусти снова" % stored)
 			else:
 				lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
-		if not writing:
-			lines.append("курок: задать %.0f Гц" % next_rate(FRAME_RATES, stored if stored > 0.0 else rate))
+		if not writing and requested == 0.0:
+			lines.append("курок: %.0f Гц" % next_rate(FRAME_RATES, stored if stored > 0.0 else rate))
 		if note_failed and note != "":
 			lines.append(STEAM_HINT)
 	else:
