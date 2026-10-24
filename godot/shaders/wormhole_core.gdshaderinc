@@ -327,6 +327,15 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             vec2 gm = wh_g(o, v0 + dv * 0.5 * hs);
             vec2 gb = wh_g(o, v0 + dv * hs);
             vec2 dI = hs / 6.0 * (ga + 4.0 * gm + gb);
+            float allowed = max(reach, ds);
+            if (near && dI.y > 1.02 * allowed && hs > (U - vt) / float(max(budget, 1))) {
+                // the path grew faster along the step than ga.y said: shorten it to `allowed`
+                hs *= 0.98 * allowed / dI.y;
+                last = false;
+                gm = wh_g(o, v0 + dv * 0.5 * hs);
+                gb = wh_g(o, v0 + dv * hs);
+                dI = hs / 6.0 * (ga + 4.0 * gm + gb);
+            }
             float uF = 1e30;
             if (above && psi + dI.x >= psiF) {
                 float target = psiF - psi;
