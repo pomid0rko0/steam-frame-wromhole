@@ -37,8 +37,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
   5 nodes, README «Почему это real time»), one shading per pixel after the trace, and the movable
   balls' code in a separate shader (`wormhole_balls.gdshader`, chosen by `main.set_balls`).
-  Checked in the headset with the stereo check scene: the one-eye check passes; at the shell's
-  edge 72 Hz holds at 100%, 90 Hz at 90% (README «Что видно в шлеме»).
+  Checked in the headset: the one-eye check passes; at the shell's edge a frame costs about
+  5 ms (16.6 on `main`), 108 Hz holds at 100%, 120 Hz at 90% (README «Что видно в шлеме»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
