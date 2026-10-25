@@ -33,6 +33,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   clean (before `fast-rays` the picture glitched there: frames dropped at 16.6 ms). The cheaper
   edge frames of `edge-120hz` (merged, below) and the cost model are in it too. Foveated
   rendering (from `foveation`, merged, below) is on by default: our narrow map, the width first.
+  Gravity through the wormhole, its views and the balls-and-cubes demo (from `gravity`, merged,
+  below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
@@ -68,7 +70,7 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   accuracy and stereo; one-eye check passed. Measured by the speed check: the edge 4.73 → 3.6 ms,
   -23% over world A's poses, 120 Hz tour 0 missed of 20630. Not solved: 144 Hz in world B at
   5.5-6 m facing the throat (4.8 ms, frames up to 6; README «Мир B у внешнего края дороже всего»).
-- `gravity` — gravity through the wormhole from Laplace's equation, as in optozorax's video about
+- `gravity` — merged into `main`: gravity through the wormhole from Laplace's equation, as in optozorax's video about
   gravity and portals (README «Гравитация через червоточину», «Мячи и кубы»): the math from
   `physics` (e493a20: `ref/gravity.py`, `ref/test_gravity.py`, `WormholeSpace.gravity_f`,
   `potential`, `potential_grad`, `floor_gravity`, all in doubles), `physics`'s balls and cubes
@@ -83,17 +85,24 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   the stereo check scene has a magenta cube with Godot's green edges (`check_cube.gdshader`). The
   demo is always on, so the normal scene runs `wormhole_balls` (32 registers, 6 waves): by the model
   5.8 ms over the speed check's poses (plain 3.5; `main`'s ball shader with the same balls 16.4),
-  with the gravity views 5.9 / 6.6 (`tools/adreno_cost.sh --toys [--gravity 1|2]`).
+  with the gravity views 5.9 / 6.6 (`tools/adreno_cost.sh --toys [--gravity 1|2]`). Checked in the
+  headset: the throw, the roll into B, the slow fall in the throat, A. Found there (README wishes
+  «Кубы и шары», «Дешевле демонстрация с мячами и кубами», «Свет в горле смешивается»): 144 Hz no
+  longer holds (start 4.0 ms against 2.4 for the check build, 120 Hz, our narrow map); inside the
+  throat looking sideways 7.6-11 ms (the throat's ball and cube are every inner ray's candidates;
+  next: a window in psi on the cylinder); a "stripe" through the throat's ball and cube, standing
+  on the line l = 0 a little on A's side (not found against the reference yet; a screenshot will
+  come); the ball in the middle of the throat lit half by A's light, half by B's.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
 Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
-- free flight in 3D with gravity on/off → `gravity` (the honest field, `WormholeSpace.potential_grad`,
+- free flight in 3D with gravity on/off → `main` (the honest field, `WormholeSpace.potential_grad`,
   and bodies that move in it, `ball_world.gd`);
 - pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
-  are there; `gravity` has the same balls, cubes and honest gravity on the fast core);
-- cubes next to balls → `gravity` (cubes on the fast core);
+  are there; `main` has the same balls, cubes and honest gravity on the fast core);
+- cubes next to balls, a cheaper demo, the light in the throat → `main` (cubes on the fast core);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
 - refresh rate and render scale → `main` (the panel is there; the owner wants no automatic way
