@@ -5,8 +5,11 @@ Mesa's compiler made for the Frame (tools/adreno_stats.sh's log, KEEP_LOG=...).
 The compiler reserves a shader's registers for its heaviest point, whatever the other pixels run
 (CLAUDE.md, «Registers are taken by code no pixel runs»), so the point with the most values alive
 at once decides the waves. This finds it: backward liveness over the program's branches and loops,
-on the components the register allocator assigned (full registers; half ones apart). It prints the
-peak, the instructions around it, and the uniform loads nearby (which tell where in the source it is).
+on the components the register allocator assigned. The register file is shared: a half register
+hrN.c is half of the full component (4N + c) / 2, so the half registers (flags, small ints) count
+too, two per full component; the shared registers r48-r55 (values the same in every lane) and r63
+do not. It prints the peak, the instructions around it, and the uniform loads nearby (which tell
+where in the source it is).
 
   python3 tools/ir3_live.py LOG [--around N] [--top K]
 """
@@ -21,11 +24,30 @@ import adreno_cost as A
 BRANCH = ('br', 'brao', 'braa', 'bany', 'ball', 'getone')
 
 
+HALF = 256      # half components are bits HALF + 4N + c
+
+
 def components(o, reps, advance):
-    """Full-register components an operand covers over the instruction's repeats."""
-    if o is None or o.kind != 'r' or o.half:
+    """The register components an operand covers over the instruction's repeats: full ones as
+    4N + c, half ones as HALF + 4N + c; none for shared registers (r48-r55) and r63."""
+    if o is None or o.kind != 'r':
         return []
-    return [o.num + (k if advance else 0) for k in range(reps)]
+    out = []
+    for k in range(reps):
+        c = o.num + (k if advance else 0)
+        if o.half:
+            out.append(HALF + c)
+        elif c < 192:
+            out.append(c)
+    return out
+
+
+def pressure(mask):
+    """Full components taken: the full ones, and the half ones two to a full one."""
+    full = mask & ((1 << HALF) - 1)
+    half = mask >> HALF
+    merged = set(c for c in range(HALF) if full >> c & 1) | set(h // 2 for h in range(512) if half >> h & 1)
+    return len(merged)
 
 
 def analyse(instrs):
@@ -64,7 +86,7 @@ def analyse(instrs):
             if new != live_in[i]:
                 live_in[i] = new
                 changed = True
-    return [bin(live_in[i] | defs[i]).count('1') for i in range(n)], live_in
+    return [pressure(live_in[i] | defs[i]) for i in range(n)], live_in
 
 
 def main():
