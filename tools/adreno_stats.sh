@@ -19,6 +19,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 GODOT=${GODOT:-$ROOT/tools/.bin/Godot_v4.7.2-stable_linux.x86_64}
 [ -x "$GODOT" ] || GODOT=$(command -v godot || true)
 MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
+# setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not
+# this tree's tools/.bin
+[ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
 LIB=$MESA/lib/x86_64-linux-gnu
 [ -f "$LIB/libfreedreno_noop_drm_shim.so" ] || { echo "no Turnip build in $MESA: run tools/setup.sh"; exit 2; }
 VARIANT=near
