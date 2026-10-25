@@ -538,67 +538,9 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     // first crossing of the floor in the orbit plane, n = cos psi e1 + sin psi e2: n.z starts
     // positive and its zeros are pi apart, so the ray meets the floor in the shell if it turns by pi
     // or more, or if n.z is negative where it leaves. Only those rays need the crossing's angle.
-#ifdef WH_NO_BALLS
     float ct = cos(tot.x);
     float st = sin(tot.x);
     bool floorHit = ns.z > 0.0 && (tot.x >= WH_PI || ns.z * ct + e2.z * st < 0.0);
-    float arcEnd = tot.y;
-    if (floorHit) {
-        // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
-        float psiF = wh_atan2(e1.z, -e2.z);
-        hitN = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
-        if (psiF >= PA.x && psiF < PA.x + PB.x) {
-            float xF = (psiF - PA.x) / max(kc, 1e-30);
-            hitL = d * (x0B + xF);
-            arcEnd = PA.y + xF * ivlc;
-        } else {
-            bool inA = psiF < PA.x;
-            // psi from the fillet's inner end: piece A runs toward it, piece C away from it;
-            // the path length is a0 + sa * (length from the inner end)
-            float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
-            float sa = inA ? -1.0 : 1.0;
-            float a0 = inA ? PA.y : PA.y + PB.y - C0.y;
-            float side = inA ? sideA : sideC;
-            float t; vec4 m;
-            wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
-            hitL = wh_filLW(f, t, side).x;
-            arcEnd = a0 + sa * wh_filLen(f, m);
-        }
-    } else {
-        // leaves the shell at its edge, on side sideC
-        vec3 n = ct * e1 + st * e2;
-        vec3 tt = ct * e2 - st * e1;
-        float bR = b / Rout;
-        outX = wh_M(outSide, Rout * n);
-        outD = wh_M(outSide, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
-    }
-    arc = arcEnd;
-#else
-    // n.z where it leaves, from the half angle: cos and sin of the whole would be held through the
-    // search for the exit point (the compiler merges the same expressions)
-    float ch = cos(0.5 * tot.x);
-    float sh = sin(0.5 * tot.x);
-    bool floorHit = ns.z > 0.0 && (tot.x >= WH_PI || ns.z * (ch * ch - sh * sh) + 2.0 * e2.z * sh * ch < 0.0);
-    // Where on the path the ray ends: 2 piece + the fraction of it (piece 0 A, 1 B, 2 C; 6: the
-    // edge), as movable objects' hits are ordered (below). The floor point itself is worked out
-    // after the search, from there, as an object's hit is: the search then holds fewer numbers.
-    float keyEnd = 6.0;
-    if (floorHit) {
-        // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
-        float psiF = wh_atan2(e1.z, -e2.z);
-        if (psiF >= PA.x && psiF < PA.x + PB.x) {
-            keyEnd = 2.0 + (psiF - PA.x) / max(kc * DB, 1e-30);
-        } else {
-            bool inA = psiF < PA.x;
-            // psi from the fillet's inner end: piece A runs toward it, piece C away from it
-            float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
-            float zF = wh_filSolve(f, clamp(T, 0.0, f.psi));
-            float z0 = inA || cFromStart ? zs : f.zlo;
-            float dz = (inA ? f.zlo : f.zhi) - z0;
-            keyEnd = (inA ? 0.0 : 4.0) + clamp((zF - z0) / (abs(dz) > 1e-12 ? dz : 1e-12), 0.0, 1.0);
-        }
-    }
-#endif
 
 #ifdef WH_ARROWS
     if (slc.z < 0.0) {
@@ -666,179 +608,237 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         float c2 = dot(Cc.xyz, e2);
         if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) cand |= 1 << (16 + i);
     }
-    float hitK = keyEnd;   // where the nearest hit so far is, or the ray's end
-    int hitI = -1;         // its object: ball i, or WH_MAXB + cube i
-    vec4 prs = wh_prof(ls);
-    for (int mm = cand; mm != 0; mm &= mm - 1) {
-        int bit = findLSB(mm);
-        bool isCube = bit >= 16;
-        int i = isCube ? bit - 16 : bit;
-        vec4 C = isCube ? wh_cube[i] : wh_ball[i];
-        float size = isCube ? wh_cubeCol[i].w : wh_ballCol[i].w;
-        float reach = isCube ? 2.0 * size : size;
-        vec3 cb = vec3(dot(C.xyz, e1), dot(C.xyz, e2), C.w);   // the centre seen in the subspace
-        float cc = dot(C.xyz, C.xyz);
-        float perp2 = max(cc - cb.x * cb.x - cb.y * cb.y, 0.0);  // its distance from it, squared
-        float rc = sqrt(cc);
-        float rho2 = dot(cb.xy, cb.xy);
-        float re2 = reach * reach - perp2;
-        float psc = wh_atan2(cb.y, cb.x);
-        psc = psc < -0.5 * WH_PI ? psc + 2.0 * WH_PI : psc;     // the copy that can meet [0, pi)
-        float dps = re2 < rho2 ? wh_asin(sqrt(re2 / rho2)) : 10.0;
-        vec3 prevQ = vec3(prs.x, 0.0, prs.y);    // the previous sample, (u, v, w) in the subspace
-        bool carry = true;                       // prevQ is where the next piece starts
-        for (int p = 0; p < 3; p++) {
-            // piece p: a fillet from z0 to z1 (sign sg: psi from the inner end grows with z along
-            // the travel, or shrinks), or the cylinder (x0B .. x0B + DB)
-            bool cyl = p == 1;
-            if ((p == 0 && !hasA) || (cyl && !hasB)) continue;
-            float qEnd = hitK - 2.0 * float(p);      // the nearest hit so far, or the ray's end
-            if (qEnd <= 0.0) break;
-            float psi0 = p == 0 ? 0.0 : (cyl ? PA.x : PA.x + PB.x);    // the piece's psi range
-            float psi1 = p == 0 ? PA.x : (cyl ? PA.x + PB.x : tot.x);
-            // the windows: r from, to; w from, to (worked out here, not held through the search)
-            vec4 win = vec4(rc - reach, rc + reach, cb.z - reach, cb.z + reach);
-            // the piece's part in the windows, as fractions q of it: on the cylinder r = rho0,
-            // w = l = d pz and psi = psi0 + PB.x q; on a fillet r = rho0 + R (1 - cos th) and
-            // side w = h - R + R sin th, both growing with th
-            vec2 qw = vec2(2.0);
-            if (psc + dps >= psi0 && psc - dps <= psi1) {
-                if (cyl) {
-                    vec2 pw = ((d > 0.0 ? win.zw : -win.wz) - x0B) / DB;
-                    vec2 qa = PB.x > 1e-6 ? (vec2(psc - dps, psc + dps) - psi0) / PB.x : vec2(-1.0, 2.0);
-                    if (rho0 >= win.x && rho0 <= win.y)
-                        qw = vec2(max(min(pw.x, pw.y), qa.x), min(max(pw.x, pw.y), qa.y));
-                } else {
-                    float side = p == 0 ? sideA : sideC;
-                    float z0 = p == 0 || cFromStart ? zs : f.zlo;
-                    float z1 = p == 0 ? f.zlo : f.zhi;
-                    vec2 y = (side > 0.0 ? win.zw : -win.wz) - (wh_h - R);     // R sin th at the w bounds
-                    if (y.y >= 0.0 && y.x <= R) {
-                        vec2 yc = clamp(y, 0.0, R);
-                        vec2 rw = rho0 + R - sqrt(R * R - yc * yc);
-                        vec2 tw = clamp((vec2(max(win.x, rw.x), y.y >= R ? win.y : min(win.y, rw.y)) - f.ra) / f.span, 0.0, 1.0);
-                        // z at those tau (wh_filMomT without the moments)
-                        vec2 zw = f.reg == 0 ? log((sqrt(tw + f.al) + sqrt(tw + f.ga)) / f.E0) : sqrt(tw + wh_mn(f));
-                        float dz = z1 - z0;
-                        vec2 qz = (zw - z0) / (abs(dz) > 1e-12 ? dz : 1e-12);
-                        if (tw.y > tw.x) qw = vec2(min(qz.x, qz.y), max(qz.x, qz.y));
-                    }
-                }
+    if (cand != 0) {
+        // where on the path the ray ends: 2 piece + the fraction of it (piece 0 A, 1 B, 2 C; 6:
+        // the edge), as the hits are ordered. The floor's point itself is worked out after the
+        // search, from there, as an object's hit is: the search then holds fewer numbers.
+        float keyEnd = 6.0;
+        if (floorHit) {
+            // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
+            float psiF = wh_atan2(e1.z, -e2.z);
+            if (psiF >= PA.x && psiF < PA.x + PB.x) {
+                keyEnd = 2.0 + (psiF - PA.x) / max(kc * DB, 1e-30);
+            } else {
+                bool inA = psiF < PA.x;
+                // psi from the fillet's inner end: piece A runs toward it, piece C away from it
+                float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
+                float zF = wh_filSolve(f, clamp(T, 0.0, f.psi));
+                float z0 = inA || cFromStart ? zs : f.zlo;
+                float dz = (inA ? f.zlo : f.zhi) - z0;
+                keyEnd = (inA ? 0.0 : 4.0) + clamp((zF - z0) / (abs(dz) > 1e-12 ? dz : 1e-12), 0.0, 1.0);
             }
-            qw = vec2(max(qw.x, 0.0), min(min(qw.y, 1.0), qEnd));
-            if (qw.y <= qw.x) { carry = false; continue; }
-            int N = int(clamp(ceil((p == 0 ? PA.y : (cyl ? PB.y : PC.y)) * (qw.y - qw.x) / (0.35 * size)), 1.0, 160.0));
-            // the first sample: where the window starts, unless that is where the last one was
-            int j0 = carry && qw.x <= 0.0 ? 1 : 0;
-            float q0 = qw.x;
-            for (int j = 0; j <= 160; j++) {
-                if (j > N) break;
-                if (j < j0) continue;
-                float qb = mix(qw.x, qw.y, float(j) / float(N));
-                float tHit = 2.0;        // the chord's fraction where it enters the object
-                float sag = 0.0;         // how far the chord can be from the path
-                // it 0: the sample at qb and the chord from the previous one; it 1: the path's
-                // point where the chord enters (one sample routine for both: its code exists once)
-                for (int it = 0; it < 2; it++) {
-                    float q = it == 0 ? qb : mix(q0, qb, tHit);
-                    // the point at q, from the ray's values (the piece's own would be held through the search)
-                    float psi; float r; float w4;
+        }
+        float hitK = keyEnd;   // where the nearest hit so far is, or the ray's end
+        int hitI = -1;         // its object: ball i, or WH_MAXB + cube i
+        vec4 prs = wh_prof(ls);
+        for (int mm = cand; mm != 0; mm &= mm - 1) {
+            int bit = findLSB(mm);
+            bool isCube = bit >= 16;
+            int i = isCube ? bit - 16 : bit;
+            vec4 C = isCube ? wh_cube[i] : wh_ball[i];
+            float size = isCube ? wh_cubeCol[i].w : wh_ballCol[i].w;
+            float reach = isCube ? 2.0 * size : size;
+            vec3 cb = vec3(dot(C.xyz, e1), dot(C.xyz, e2), C.w);   // the centre seen in the subspace
+            float cc = dot(C.xyz, C.xyz);
+            float perp2 = max(cc - cb.x * cb.x - cb.y * cb.y, 0.0);  // its distance from it, squared
+            float rc = sqrt(cc);
+            float rho2 = dot(cb.xy, cb.xy);
+            float re2 = reach * reach - perp2;
+            float psc = wh_atan2(cb.y, cb.x);
+            psc = psc < -0.5 * WH_PI ? psc + 2.0 * WH_PI : psc;     // the copy that can meet [0, pi)
+            float dps = re2 < rho2 ? wh_asin(sqrt(re2 / rho2)) : 10.0;
+            vec3 prevQ = vec3(prs.x, 0.0, prs.y);    // the previous sample, (u, v, w) in the subspace
+            bool carry = true;                       // prevQ is where the next piece starts
+            for (int p = 0; p < 3; p++) {
+                // piece p: a fillet from z0 to z1 (sign sg: psi from the inner end grows with z along
+                // the travel, or shrinks), or the cylinder (x0B .. x0B + DB)
+                bool cyl = p == 1;
+                if ((p == 0 && !hasA) || (cyl && !hasB)) continue;
+                float qEnd = hitK - 2.0 * float(p);      // the nearest hit so far, or the ray's end
+                if (qEnd <= 0.0) break;
+                float psi0 = p == 0 ? 0.0 : (cyl ? PA.x : PA.x + PB.x);    // the piece's psi range
+                float psi1 = p == 0 ? PA.x : (cyl ? PA.x + PB.x : tot.x);
+                // the windows: r from, to; w from, to (worked out here, not held through the search)
+                vec4 win = vec4(rc - reach, rc + reach, cb.z - reach, cb.z + reach);
+                // the piece's part in the windows, as fractions q of it: on the cylinder r = rho0,
+                // w = l = d pz and psi = psi0 + PB.x q; on a fillet r = rho0 + R (1 - cos th) and
+                // side w = h - R + R sin th, both growing with th
+                vec2 qw = vec2(2.0);
+                if (psc + dps >= psi0 && psc - dps <= psi1) {
                     if (cyl) {
-                        psi = PA.x + PB.x * q;
-                        r = rho0;
-                        w4 = d * (x0B + DB * q);
+                        vec2 pw = ((d > 0.0 ? win.zw : -win.wz) - x0B) / DB;
+                        vec2 qa = PB.x > 1e-6 ? (vec2(psc - dps, psc + dps) - psi0) / PB.x : vec2(-1.0, 2.0);
+                        if (rho0 >= win.x && rho0 <= win.y)
+                            qw = vec2(max(min(pw.x, pw.y), qa.x), min(max(pw.x, pw.y), qa.y));
                     } else {
-                        bool pA = p == 0;
-                        float t; vec4 m;
-                        wh_filMom(f, mix(pA || cFromStart ? zs : f.zlo, pA ? f.zlo : f.zhi, q), t, m);
-                        psi = pA ? PA.x - dot(f.e, m) : PA.x + PB.x - C0.x + dot(f.e, m);
-                        r = f.ra + f.span * t;
-                        float cth = rho0 + R - r;           // R cos th
-                        w4 = (pA ? sideA : sideC) * (wh_h - R + sqrt(max(R * R - cth * cth, 0.0)));
-                    }
-                    vec3 Q1 = vec3(r * cos(psi), r * sin(psi), w4);
-                    if (it == 1) {
-                        // the path's point there: in the object, or within the chord's sag of it
-                        float miss;
-                        if (!isCube) {
-                            vec3 a = Q1 - cb;
-                            miss = sqrt(dot(a, a) + perp2) - size;
-                        } else {
-                            float mx = 0.0;
-                            for (int k = 0; k < 4 + min(wh_nCube, 0); k++) {
-                                vec4 Ek = wh_cubeE[5 * i + k];
-                                mx = max(mx, abs(dot(Q1, vec3(dot(Ek.xyz, e1), dot(Ek.xyz, e2), Ek.w)) - wh_cubeE[5 * i + 4][k]));
-                            }
-                            miss = (mx - 1.0) * size;
-                        }
-                        float key = 2.0 * float(p) + q;
-                        if (miss <= sag && key < hitK) {
-                            hitK = key;
-                            hitI = isCube ? WH_MAXB + i : i;
-                        }
-                        break;
-                    }
-                    vec3 D = Q1 - prevQ;     // the chord (Q1 itself is not held: prevQ + D)
-                    float tc = -1.0;
-                    if (j > 0) {
-                        if (!isCube) {
-                            vec3 a = prevQ - cb;
-                            float A = max(dot(D, D), 1e-20);
-                            float B = dot(a, D);
-                            float Cq = dot(a, a) + perp2 - size * size;
-                            float disc = B * B - A * Cq;
-                            tc = Cq > 0.0 && disc >= 0.0 ? (-B - sqrt(max(disc, 0.0))) / A : -1.0;
-                        } else {
-                            tc = wh_chordInCube(i, prevQ, D, e1, e2, cb, perp2);
+                        float side = p == 0 ? sideA : sideC;
+                        float z0 = p == 0 || cFromStart ? zs : f.zlo;
+                        float z1 = p == 0 ? f.zlo : f.zhi;
+                        vec2 y = (side > 0.0 ? win.zw : -win.wz) - (wh_h - R);     // R sin th at the w bounds
+                        if (y.y >= 0.0 && y.x <= R) {
+                            vec2 yc = clamp(y, 0.0, R);
+                            vec2 rw = rho0 + R - sqrt(R * R - yc * yc);
+                            vec2 tw = clamp((vec2(max(win.x, rw.x), y.y >= R ? win.y : min(win.y, rw.y)) - f.ra) / f.span, 0.0, 1.0);
+                            // z at those tau (wh_filMomT without the moments)
+                            vec2 zw = f.reg == 0 ? log((sqrt(tw + f.al) + sqrt(tw + f.ga)) / f.E0) : sqrt(tw + wh_mn(f));
+                            float dz = z1 - z0;
+                            vec2 qz = (zw - z0) / (abs(dz) > 1e-12 ? dz : 1e-12);
+                            if (tw.y > tw.x) qw = vec2(min(qz.x, qz.y), max(qz.x, qz.y));
                         }
                     }
-                    prevQ += D;
-                    if (tc < 0.0 || tc > 1.0) break;
-                    tHit = tc;
-                    sag = dot(D, D) / (8.0 * min(R, rho0)) + 1e-4;
                 }
-                q0 = qb;
-                if (2.0 * float(p) + qb > hitK) break;     // a hit before here (the later pieces end there too)
+                qw = vec2(max(qw.x, 0.0), min(min(qw.y, 1.0), qEnd));
+                if (qw.y <= qw.x) { carry = false; continue; }
+                int N = int(clamp(ceil((p == 0 ? PA.y : (cyl ? PB.y : PC.y)) * (qw.y - qw.x) / (0.35 * size)), 1.0, 160.0));
+                // the first sample: where the window starts, unless that is where the last one was
+                int j0 = carry && qw.x <= 0.0 ? 1 : 0;
+                float q0 = qw.x;
+                for (int j = 0; j <= 160; j++) {
+                    if (j > N) break;
+                    if (j < j0) continue;
+                    float qb = mix(qw.x, qw.y, float(j) / float(N));
+                    float tHit = 2.0;        // the chord's fraction where it enters the object
+                    float sag = 0.0;         // how far the chord can be from the path
+                    // it 0: the sample at qb and the chord from the previous one; it 1: the path's
+                    // point where the chord enters (one sample routine for both: its code exists once)
+                    for (int it = 0; it < 2; it++) {
+                        float q = it == 0 ? qb : mix(q0, qb, tHit);
+                        // the point at q, from the ray's values (the piece's own would be held through the search)
+                        float psi; float r; float w4;
+                        if (cyl) {
+                            psi = PA.x + PB.x * q;
+                            r = rho0;
+                            w4 = d * (x0B + DB * q);
+                        } else {
+                            bool pA = p == 0;
+                            float t; vec4 m;
+                            wh_filMom(f, mix(pA || cFromStart ? zs : f.zlo, pA ? f.zlo : f.zhi, q), t, m);
+                            psi = pA ? PA.x - dot(f.e, m) : PA.x + PB.x - C0.x + dot(f.e, m);
+                            r = f.ra + f.span * t;
+                            float cth = rho0 + R - r;           // R cos th
+                            w4 = (pA ? sideA : sideC) * (wh_h - R + sqrt(max(R * R - cth * cth, 0.0)));
+                        }
+                        vec3 Q1 = vec3(r * cos(psi), r * sin(psi), w4);
+                        if (it == 1) {
+                            // the path's point there: in the object, or within the chord's sag of it
+                            float miss;
+                            if (!isCube) {
+                                vec3 a = Q1 - cb;
+                                miss = sqrt(dot(a, a) + perp2) - size;
+                            } else {
+                                float mx = 0.0;
+                                for (int k = 0; k < 4 + min(wh_nCube, 0); k++) {
+                                    vec4 Ek = wh_cubeE[5 * i + k];
+                                    mx = max(mx, abs(dot(Q1, vec3(dot(Ek.xyz, e1), dot(Ek.xyz, e2), Ek.w)) - wh_cubeE[5 * i + 4][k]));
+                                }
+                                miss = (mx - 1.0) * size;
+                            }
+                            float key = 2.0 * float(p) + q;
+                            if (miss <= sag && key < hitK) {
+                                hitK = key;
+                                hitI = isCube ? WH_MAXB + i : i;
+                            }
+                            break;
+                        }
+                        vec3 D = Q1 - prevQ;     // the chord (Q1 itself is not held: prevQ + D)
+                        float tc = -1.0;
+                        if (j > 0) {
+                            if (!isCube) {
+                                vec3 a = prevQ - cb;
+                                float A = max(dot(D, D), 1e-20);
+                                float B = dot(a, D);
+                                float Cq = dot(a, a) + perp2 - size * size;
+                                float disc = B * B - A * Cq;
+                                tc = Cq > 0.0 && disc >= 0.0 ? (-B - sqrt(max(disc, 0.0))) / A : -1.0;
+                            } else {
+                                tc = wh_chordInCube(i, prevQ, D, e1, e2, cb, perp2);
+                            }
+                        }
+                        prevQ += D;
+                        if (tc < 0.0 || tc > 1.0) break;
+                        tHit = tc;
+                        sag = dot(D, D) / (8.0 * min(R, rho0)) + 1e-4;
+                    }
+                    q0 = qb;
+                    if (2.0 * float(p) + qb > hitK) break;     // a hit before here (the later pieces end there too)
+                }
+                carry = qw.y >= 1.0;
             }
-            carry = qw.y >= 1.0;
         }
+        if (hitI >= 0 || floorHit) {
+            // the hit's point (an object's, or the floor's), from where on the path it is
+            int p = min(int(0.5 * hitK), 2);
+            float q = hitK - 2.0 * float(p);
+            vec2 cum;
+            if (p == 1) {
+                float xh = DB * q;
+                cum = PA + vec2(kc, ivlc) * xh;
+                hitL = d * (x0B + xh);
+            } else {
+                float z0 = p == 0 ? zs : (cFromStart ? zs : f.zlo);
+                float z1 = p == 0 ? f.zlo : f.zhi;
+                float t;
+                cum = (p == 0 ? PA : PA + PB - C0) + (p == 0 ? -1.0 : 1.0) * wh_filAt(f, mix(z0, z1, q), t);
+                hitL = wh_filLW(f, t, p == 0 ? sideA : sideC).x;
+            }
+            hitN = cos(cum.x) * e1 + sin(cum.x) * e2;
+            ballI = hitI;
+            arc = cum.y;
+            if (hitI < 0) return 1;
+    #ifdef WH_ARROWS
+            if (slc.z > dist0 + arc) slc = vec3(-1.0);     // the arrows' surface behind it
+    #endif
+            return 2;
+        }
+        // leaves the shell at its edge, on side sideC, worked out after the search from the half
+        // angle: cos and sin of the whole turn are taken before it (floorHit), and the compiler
+        // would merge the same expressions and hold them through the search
+        float ch = cos(0.5 * tot.x);
+        float sh = sin(0.5 * tot.x);
+        float ce = ch * ch - sh * sh;
+        float se = 2.0 * sh * ch;
+        vec3 n = ce * e1 + se * e2;
+        vec3 tt = ce * e2 - se * e1;
+        float bR = b / Rout;
+        outX = wh_M(outSide, Rout * n);
+        outD = wh_M(outSide, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
+        arc = tot.y;
+        return 0;
     }
-    if (hitI >= 0 || floorHit) {
-        // the hit's point (an object's, or the floor's), from where on the path it is
-        int p = min(int(0.5 * hitK), 2);
-        float q = hitK - 2.0 * float(p);
-        vec2 cum;
-        if (p == 1) {
-            float xh = DB * q;
-            cum = PA + vec2(kc, ivlc) * xh;
-            hitL = d * (x0B + xh);
+#endif
+    // No movable object within reach (most rays), or no such objects at all: the floor's point,
+    // or where it leaves the shell, straight away
+    float arcEnd = tot.y;
+    if (floorHit) {
+        // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
+        float psiF = wh_atan2(e1.z, -e2.z);
+        hitN = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
+        if (psiF >= PA.x && psiF < PA.x + PB.x) {
+            float xF = (psiF - PA.x) / max(kc, 1e-30);
+            hitL = d * (x0B + xF);
+            arcEnd = PA.y + xF * ivlc;
         } else {
-            float z0 = p == 0 ? zs : (cFromStart ? zs : f.zlo);
-            float z1 = p == 0 ? f.zlo : f.zhi;
-            float t;
-            cum = (p == 0 ? PA : PA + PB - C0) + (p == 0 ? -1.0 : 1.0) * wh_filAt(f, mix(z0, z1, q), t);
-            hitL = wh_filLW(f, t, p == 0 ? sideA : sideC).x;
+            bool inA = psiF < PA.x;
+            // psi from the fillet's inner end: piece A runs toward it, piece C away from it;
+            // the path length is a0 + sa * (length from the inner end)
+            float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
+            float sa = inA ? -1.0 : 1.0;
+            float a0 = inA ? PA.y : PA.y + PB.y - C0.y;
+            float side = inA ? sideA : sideC;
+            float t; vec4 m;
+            wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
+            hitL = wh_filLW(f, t, side).x;
+            arcEnd = a0 + sa * wh_filLen(f, m);
         }
-        hitN = cos(cum.x) * e1 + sin(cum.x) * e2;
-        ballI = hitI;
-        arc = cum.y;
-        if (hitI < 0) return 1;
-#ifdef WH_ARROWS
-        if (slc.z > dist0 + arc) slc = vec3(-1.0);     // the arrows' surface behind it
-#endif
-        return 2;
+    } else {
+        // leaves the shell at its edge, on side sideC
+        vec3 n = ct * e1 + st * e2;
+        vec3 tt = ct * e2 - st * e1;
+        float bR = b / Rout;
+        outX = wh_M(outSide, Rout * n);
+        outD = wh_M(outSide, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
     }
-    // leaves the shell at its edge, on side sideC: worked out after the search, which then holds
-    // fewer numbers
-    float ct = cos(tot.x);
-    float st = sin(tot.x);
-    vec3 n = ct * e1 + st * e2;
-    vec3 tt = ct * e2 - st * e1;
-    float bR = b / Rout;
-    outX = wh_M(outSide, Rout * n);
-    outD = wh_M(outSide, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
-    arc = tot.y;
-#endif
+    arc = arcEnd;
     return floorHit ? 1 : 0;
 }
 
