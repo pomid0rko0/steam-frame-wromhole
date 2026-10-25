@@ -798,21 +798,36 @@ func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
 ## half size (axes: three body axes tangent to the space, then its normal; four per cube),
 ## (rgb, half size) (ccol). The shader with balls draws both; it gets each cube's axes and then
 ## dot(centre, axis) for the four, five vectors per cube (wormhole_core.gdshaderinc).
+## The shader gets them sorted by where they are (region_order): the flat universes' rays and the
+## shell's look only at their own.
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedVector4Array,
 		axes: PackedVector4Array, ccol: PackedVector4Array) -> void:
 	var n := pos.size()
 	var nc := cpos.size()
-	var p := pos.duplicate()
-	var c := col.duplicate()
-	var cp := cpos.duplicate()
-	var ax := PackedVector4Array()
+	var rb := PackedFloat64Array()
+	for i in n:
+		rb.append(col[i].w)
+	var rc := PackedFloat64Array()
 	for i in nc:
+		rc.append(2.0 * ccol[i].w)       # a cube's reach: its half diagonal
+	var ob := region_order(pos, rb, space.h, space.Rout)
+	var oc := region_order(cpos, rc, space.h, space.Rout)
+	var p := PackedVector4Array()
+	var c := PackedVector4Array()
+	for i in ob[0]:
+		p.append(pos[i])
+		c.append(col[i])
+	var cp := PackedVector4Array()
+	var cc := PackedVector4Array()
+	var ax := PackedVector4Array()
+	for i in oc[0]:
+		cp.append(cpos[i])
+		cc.append(ccol[i])
 		var o := Vector4.ZERO
 		for k in 4:
 			ax.append(axes[4 * i + k])
 			o[k] = cpos[i].dot(axes[4 * i + k])
 		ax.append(o)
-	var cc := ccol.duplicate()
 	while p.size() < 12:
 		p.append(Vector4.ZERO)
 		c.append(Vector4.ZERO)
@@ -828,10 +843,12 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	material.set_shader_parameter("wh_ball", p)
 	material.set_shader_parameter("wh_ballCol", c)
 	material.set_shader_parameter("wh_nBall", n)
+	material.set_shader_parameter("wh_bIdx", ob[1])
 	material.set_shader_parameter("wh_cube", cp)
 	material.set_shader_parameter("wh_cubeE", ax)
 	material.set_shader_parameter("wh_cubeCol", cc)
 	material.set_shader_parameter("wh_nCube", nc)
+	material.set_shader_parameter("wh_cIdx", oc[1])
 	# the bounding spheres per flat universe: balls a sheet w = side h cuts, cubes the same (half
 	# diagonal 2 half)
 	var bounds := PackedVector4Array()
@@ -859,6 +876,34 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 			bounds.append(Vector4(mid.x, mid.y, mid.z, rad))
 	# order: balls A, balls B, cubes A, cubes B
 	material.set_shader_parameter("wh_bound", bounds)
+
+
+## Where each object can be met: in universe A's flat sheet (its reach crosses w = h), in the
+## shell (it comes within reach of |xyz| < Rout) or in B's sheet (w = -h); none is in both sheets.
+## Returns [the order, Vector4i(x, y, z, w)]: sorted A only, A and the shell, the shell only, the
+## shell and B, B only, A's are 0 .. y, the shell's x .. w, B's z .. the end (wh_bIdx, wh_cIdx).
+## pos: centres as points of R^4, reach: each one's radius of reach (a ball's radius, a cube's
+## half diagonal).
+static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: float, rout: float) -> Array:
+	var groups := [[], [], [], [], []]
+	for i in pos.size():
+		var C := pos[i]
+		var r := reach[i]
+		var in_a := absf(C.w - h) < r
+		var in_b := absf(C.w + h) < r
+		var in_s := Vector3(C.x, C.y, C.z).length() - r < rout
+		var g := 2
+		if in_a:
+			g = 1 if in_s else 0
+		elif in_b:
+			g = 3 if in_s else 4
+		groups[g].append(i)
+	var order := []
+	var ends := []
+	for g in groups:
+		order.append_array(g)
+		ends.append(order.size())
+	return [order, Vector4i(ends[0], ends[1], ends[2], ends[3])]
 
 
 ## How gravity is shown (README, «Гравитация через червоточину»): 0 not at all, 1 the floor

@@ -20,7 +20,7 @@ var shader_path := ""
 var gravity := 0
 var toys := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
+		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
 
 
 func _initialize() -> void:
@@ -113,6 +113,8 @@ static func _uniforms(m: ShaderMaterial) -> Dictionary:
 			out[name] = rows
 		elif v is Vector4:
 			out[name] = _v4(v)
+		elif v is Vector4i:
+			out[name] = [v.x, v.y, v.z, v.w]
 		else:
 			out[name] = v
 	return out

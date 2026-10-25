@@ -52,6 +52,9 @@ uniform int wh_nCube = 0;
 // balls' and cubes' bounding spheres (R^4 xyz of the centre, radius; < 0: none) in universe A, B
 // (main.set_objects): a ray of a flat universe that misses one tests none of them
 uniform vec4 wh_bound[4];
+// where in the sorted lists the balls and cubes of universe A, of the shell and of universe B are
+uniform ivec4 wh_bIdx;
+uniform ivec4 wh_cIdx;
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"

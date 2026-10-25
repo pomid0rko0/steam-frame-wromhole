@@ -76,7 +76,8 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('grav_cyl', 'v4', 0, 'WH_GRAVITY'), ('grav_g', 'v4', 2, 'WH_GRAVITY'), ('grav_d', 'v4', 2, 'WH_GRAVITY'),
             ('wh_pix', 'f', 0, 'WH_PIX'),
             ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
-            ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS')]
+            ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS'), ('wh_bIdx', 'iv4', 0, 'BALLS'),
+            ('wh_cIdx', 'iv4', 0, 'BALLS')]
 
 
 def shader_defines(path):
@@ -96,7 +97,7 @@ def ubo_layout(defines):
     for name, typ, n, need in UNIFORMS:
         if need and need not in defines:
             continue
-        size, align = {'f': (4, 4), 'i': (4, 4), 'v3': (12, 16), 'v4': (16, 16)}[typ]
+        size, align = {'f': (4, 4), 'i': (4, 4), 'v3': (12, 16), 'v4': (16, 16), 'iv4': (16, 16)}[typ]
         if n:
             size, align = 16 * n, 16
         off = (off + align - 1) // align * align
@@ -121,6 +122,8 @@ def material_ubo(defines, values):
         k = off // 4
         if typ == 'i':
             ui[k] = int(v[0])
+        elif typ == 'iv4':
+            ui[k:k + 4] = v.astype(np.int64)[:4]
         else:
             u[k:k + len(v)] = v
     return ui
