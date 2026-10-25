@@ -286,7 +286,9 @@ class Wave:
         elif o.kind in ('c', 'cr'):
             n = o.num + (k if o.rpt else 0)
             if o.kind == 'cr':
-                idx = self.A0 * 4 + n
+                # a0.x counts components: Mesa multiplies the array index by the stride in code
+                # (shl.b ..., 2 for vec4s) before mova
+                idx = self.A0 + n
                 bits = self.C[idx]
             else:
                 bits = np.full(L, self.C[n], U32)
@@ -525,9 +527,10 @@ def execute(ins, w, ex):
             elif base == 'mul':
                 v = a * w.read(ins.srcs[1], k, 'f')
             elif base == 'min':
-                v = np.minimum(a, w.read(ins.srcs[1], k, 'f'))
+                # IEEE minNum / maxNum, as the GPU: a NaN operand gives the other one
+                v = np.fmin(a, w.read(ins.srcs[1], k, 'f'))
             elif base == 'max':
-                v = np.maximum(a, w.read(ins.srcs[1], k, 'f'))
+                v = np.fmax(a, w.read(ins.srcs[1], k, 'f'))
             elif base == 'mad':
                 v = a * w.read(ins.srcs[1], k, 'f') + w.read(ins.srcs[2], k, 'f')
             elif base == 'absneg':
@@ -588,6 +591,47 @@ def execute(ins, w, ex):
             kind = 's' if op.endswith('.s') else 'u'
             a = w.read(ins.srcs[0], k, kind); b = w.read(ins.srcs[1], k, kind)
             w.write(d, k, np.minimum(a, b) if base == 'min' else np.maximum(a, b), kind, ex)
+        elif op in ('shlm', 'shrm', 'shlg', 'shrg', 'andg'):
+            # a7xx's shift-and-mask family (Mesa isa/ir3-cat3.xml), the shift amount first:
+            # shlm s, a, c = (a << s) & c, shrm (a >> s) & c, shlg (a << s) | c, shrg (a >> s) | c;
+            # andg b, a, c = (a & b) | c
+            s_ = w.read(ins.srcs[0], k, 'u'); a = w.read(ins.srcs[1], k, 'u'); c = w.read(ins.srcs[2], k, 'u')
+            if op == 'andg':
+                v = (a & s_) | c
+            else:
+                sh = (a << (s_ & 31)) & 0xffffffff if op.startswith('shl') else a >> (s_ & 31)
+                v = sh & c if op.endswith('m') else sh | c
+            w.write(d, k, v, 'u', ex)
+        elif op in ('bfrev.b', 'clz.b', 'clz.s', 'cbits.b'):
+            # bit reverse, count leading zeros (findLSB is clz(bfrev(x)); 0 gives -1 here), set bits
+            a = w.read(ins.srcs[0], k, 'u') & 0xffffffff
+            if op == 'bfrev.b':
+                v = np.zeros_like(a)
+                for b in range(32):
+                    v |= ((a >> b) & 1) << (31 - b)
+            elif op == 'cbits.b':
+                v = np.zeros_like(a)
+                for b in range(32):
+                    v += (a >> b) & 1
+            else:
+                v = np.full_like(a, -1)
+                for b in range(32):
+                    v = np.where((v < 0) & (((a >> (31 - b)) & 1) == 1), b, v)
+            w.write(d, k, v, 'u' if op != 'clz.s' else 's', ex)
+        elif op == 'absneg.s':
+            # integer abs / negate: the source's (abs) and (neg) flags do it
+            w.write(d, k, w.read(ins.srcs[0], k, 's'), 's', ex)
+        elif op == 'mull.u':
+            # a 32-bit integer product, as Mesa lowers it: mull.u multiplies the low 16 bits,
+            # then madsh.m16 twice adds the cross terms (indexing: 5 * i)
+            a = w.read(ins.srcs[0], k, 'u')
+            b = w.read(ins.srcs[1], k, 'u')
+            w.write(d, k, ((a & 0xffff) * (b & 0xffff)) & 0xffffffff, 'u', ex)
+        elif op == 'madsh.m16':
+            a = w.read(ins.srcs[0], k, 'u')
+            b = w.read(ins.srcs[1], k, 'u')
+            c = w.read(ins.srcs[2], k, 'u')
+            w.write(d, k, ((((a & 0xffff) * (b >> 16)) << 16) + c) & 0xffffffff, 'u', ex)
         elif base in ('shl', 'shr', 'ashr') and op.endswith('.b'):
             a = w.read(ins.srcs[0], k, 'u'); b = w.read(ins.srcs[1], k, 'u')
             v = (a << b) if base == 'shl' else (a >> b)
@@ -648,6 +692,23 @@ def execute(ins, w, ex):
                 v = quad_dx(a) if op.startswith('dsx') else quad_dy(a)
                 w.write(d, c, v.astype(F32), 'f', ex)
             return
+        elif op.startswith('ldc.'):
+            # a load from a uniform buffer (Mesa isa/ir3-cat6.xml): ldc.u.offsetC.N.imm.baseB dst,
+            # offset, ubo: N dwords from component C of vec4 `offset` (a register or an immediate)
+            # of UBO `ubo` (immediate) in descriptor set B, per lane. Ours: the material's, set 3, UBO 0
+            m = re.search(r'offset(\d+)\.(\d+)\..*base(\d+)', op)
+            comp, cnt, base_ = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            assert ins.srcs[1].kind == 'i' and int(ins.srcs[1].imm) == 0, ins.text
+            idx = w.read(ins.srcs[0], 0, 'u')
+            buf = w.ubos[base_]
+            for c in range(cnt):
+                at = np.clip(idx * 4 + comp + c, 0, len(buf) - 1)
+                w.write(d, c, buf[at], 'b', ex)
+            return
+        elif op == 'mova':
+            # a0.x for relative constant reads (c<a0.x + n>): Mesa's mov.s16s16 to a0.x, per lane
+            v = w.read(ins.srcs[0], k, 's')
+            w.write(d, k, ((v + 0x8000) & 0xffff) - 0x8000, 's', ex)
         elif op == 'mova1':
             # the texture's descriptor index: there is one texture
             w.A1 = int(ins.srcs[0].imm) if ins.srcs[0].kind == 'i' else w.A1

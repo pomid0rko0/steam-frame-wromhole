@@ -69,23 +69,31 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   -23% over world A's poses, 120 Hz tour 0 missed of 20630. Not solved: 144 Hz in world B at
   5.5-6 m facing the throat (4.8 ms, frames up to 6; README «Мир B у внешнего края дороже всего»).
 - `gravity` — gravity through the wormhole from Laplace's equation, as in optozorax's video about
-  gravity and portals (README «Гравитация через червоточину»): the math from `physics` (e493a20:
-  `ref/gravity.py`, `ref/test_gravity.py`, `WormholeSpace.gravity_f`, `potential`, `potential_grad`,
-  `floor_gravity`, all in doubles) and a view of it on `main`'s fast core: the floor coloured by its
-  strength, arrows of the field on the surface x = 0 through the wormhole (`wormhole_gravity.gdshader`,
-  `wormhole_arrows.gdshader`, `main.set_gravity_view`; the panel's row, left Y, G;
-  `tests/gravity_test.gd`, `ref/test_slice.py`). The plain shader compiles exactly as on `main`; the
-  model: the floor view +5%, the arrows +28% (`tools/adreno_cost.sh --gravity 1|2`).
+  gravity and portals (README «Гравитация через червоточину», «Мячи и кубы»): the math from
+  `physics` (e493a20: `ref/gravity.py`, `ref/test_gravity.py`, `WormholeSpace.gravity_f`,
+  `potential`, `potential_grad`, `floor_gravity`, all in doubles), `physics`'s balls and cubes
+  (`ball_world.gd`, `tests/physics_test.gd`) and its demo (the toys at rest, a cube and a ball
+  thrown, two balls dropped together beside the wormhole and in the throat; A resets it all), drawn
+  by `main`'s fast core: cubes are new there, found in the curved region by chords between samples
+  (README «Мячи и кубы»); a view of gravity: the floor coloured by its strength, arrows of the field
+  on the surface x = 0 through the wormhole (`main.set_gravity_view`; the panel's row, left Y, G).
+  Shaders: `wormhole.gdshader` (nothing movable: as on `main`), `wormhole_balls` (the toys),
+  `wormhole_gravity`/`wormhole_arrows` and `wormhole_balls_gravity`/`wormhole_balls_arrows`;
+  `tests/gravity_test.gd`, `tests/multiview_cubes.gd`, `ref/test_slice.py`, cubes in `ref/test_gpu.py`;
+  the stereo check scene has a magenta cube with Godot's green edges (`check_cube.gdshader`). The
+  demo is always on, so the normal scene runs `wormhole_balls` (32 registers, 6 waves): by the model
+  5.8 ms over the speed check's poses (plain 3.5; `main`'s ball shader with the same balls 16.4),
+  with the gravity views 5.9 / 6.6 (`tools/adreno_cost.sh --toys [--gravity 1|2]`).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
 Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
-- free flight in 3D with gravity on/off → `main` (the honest gravity field is in `gravity`:
-  `WormholeSpace.potential_grad`; `physics` has it too, with balls on the old core);
+- free flight in 3D with gravity on/off → `gravity` (the honest field, `WormholeSpace.potential_grad`,
+  and bodies that move in it, `ball_world.gd`);
 - pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
-  are there);
-- cubes next to balls → `physics`;
+  are there; `gravity` has the same balls, cubes and honest gravity on the fast core);
+- cubes next to balls → `gravity` (cubes on the fast core);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
 - refresh rate and render scale → `main` (the panel is there; the owner wants no automatic way
@@ -111,8 +119,10 @@ When branches are put together, these overlap:
   row are).
 - A resets on `main`, in `throat` and `grab`: one reset does all of it.
 - left Y shows gravity in `gravity` and in `physics` (the same views; `physics` draws them on the
-  old core): keep `gravity`'s. Its views are ray tracers without movable balls: with `physics` or
-  `grab` the balls vanish while a view is on (a variant with both is new work).
+  old core): keep `gravity`'s, which has them with the balls and cubes too. `gravity` holds
+  `physics`'s balls and cubes (`ball_world.gd`) with the cubes drawn on the fast core: `grab` on top
+  of `gravity` instead of `physics`; set_balls is now set_objects (balls and cubes, five vectors
+  per cube in `wh_cubeE`).
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
 - a throat change (`throat`) with `main`'s fillet table: the table depends on the shape: after
@@ -142,8 +152,12 @@ draws next to ray-traced ones, check they line up the same way.
 - **Foveation in the Frame's driver:** `tools/fdm_check.sh` (~10 s): Godot on Turnip over the noop drm-shim, the XR view through `fake_hmd.gd` at 1728² per eye, and the driver's trace (`MESA_GPU_TRACES=print`, `TU_DEBUG=perf`) per render pass: in tiles or not, attachments, tiles. Off: no tiles; split: tiles; on: tiles and one attachment more (the density map).
 - **A build for the one-eye check:** an empty file `godot/check` before the export turns the stereo check scene on (`main.CHECK_FLAG`, in the export's include filter, not in git); delete it afterwards.
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
+- **Where the registers go:** `python3 tools/ir3_live.py LOG` (LOG from `KEEP_LOG=... tools/adreno_stats.sh`):
+  live register components at every instruction of the program (backward liveness over its
+  branches), the peak and the code around it; the uniform loads there (`c<a0.x + N>`) tell which
+  uniforms. 47 components is the plain shader's 12 registers; above 96 the compiler goes to 32.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
-- **Cost without a headset:** `tools/adreno_cost.sh [--check] [source]...` (sources as
+- **Cost without a headset:** `tools/adreno_cost.sh [--check] [--toys] [--gravity 1|2] [source]...` (sources as
   `ab_shaders.sh`, `this` = the tree; ~1 min each). Mesa's compiler for the Frame compiles the ray
   tracer, `tools/ir3_emu.py` runs the program it made (the specialised one) on waves at the speed
   check's poses (one eye, 1728², 104°) and counts issue cycles, divergent branches included
@@ -269,6 +283,40 @@ draws next to ray-traced ones, check they line up the same way.
 - **GDScript's `Vector2/3/4` are single precision** (`float` is double). An ODE integrated in
   `Vector2` and a `PackedVector2Array` table made the gravity's second derivative noisy at 10⁻³
   (`physics`); keep such states in plain floats or `PackedFloat64Array` (`gravity_f` returns one).
+- **Moving objects in the curved region: chords, not bisection.** The ray is sampled; between two
+  samples the chord in R^4 (in the ray's 3D subspace span(e1, e2, e_w)) is tested against each
+  ball and box, and the path's point at the chord's entry is the hit if it lies within the chord's
+  sag of the object. Sampling alone lost a cube's bottom edge on the floor (the ray met the floor
+  before the next sample) and gave ragged silhouettes; an unchecked chord of a ray that winds
+  round the throat (samples spread out) cut across a cube the path passes by. The registers:
+  testing a box loads its four axes; unrolled, the compiler loaded all of them and the centre at
+  once (117 live, 32 registers): a loop it cannot unroll (`k < 4 + min(wh_nCube, 0)`), the chord in
+  three coordinates, and dot(centre, axis) uploaded with the axes (one index base) took it to 24.
+- **Moving objects cost per ray, not per object in view.** A ball lying in the middle of the throat,
+  seen from the start, is near the plane of every ray (all of them hold the eye-centre line), so
+  every ray through the shell had it as a candidate and sampled its whole path at a third of the
+  ball's size: the demo cost 51 ms a frame by the model (`main`'s ball shader with its balls: 16).
+  Now only the parts of the path within reach in r and in w are sampled (the chord distance in R^4
+  is at least both; on a fillet both grow with the angle, so the w bounds are r bounds), the
+  chord tests loop over the candidates' bits (`findLSB`: a test a predicate skips still takes its
+  cycles), a box's chord test first checks its bounding ball, the flat loops keep only the
+  nearest one's distance and index (the whole hit record updated per candidate was half their
+  time), and each universe's balls and cubes have a bounding sphere (`wh_bound`, `set_objects`):
+  5.2 ms over four poses where `main`'s plain shader takes 3.3. Tried and dropped: ordering the
+  hits by the fog's length estimate (monotonic along the path, so the order stays right) to take
+  the fillet table: the estimate's division at every sample cost more than the table saved.
+- **Godot prints shader float constants with 14 decimals:** `1e-30` and `1e-20` become 0.0
+  (`max(x, 1e-30)` compiles to `max(x, 0.0)`); `1e-12` survives. GPUs' `max`/`min` return the
+  other operand for a NaN, which hides most of it (the emulator now does the same: `np.fmax`).
+- **ir3's prog N/2 is unused.** A fragment shader with more than 100 vec4 of constants (the ball
+  shaders: 152-180) is compiled twice, the second time ("safe constlen") reading the uniforms from
+  memory with `ldc`, at 32 registers. Turnip runs that one only if the pipeline's stages need more
+  than 512 vec4 in all (`ir3_trim_constlen`); ours need ~200 (Godot's vertex shader 44), so the /1
+  runs. `adreno_cost.py` takes the /1, `adreno_stats.sh` marks the /2 "unused".
+- **Uniform arrays at a computed index** compile to `mova a0.x` + `c<a0.x + N>`, with the index
+  already multiplied by 4 in the code (`shl.b ..., 2`): a0.x counts components. a7xx's `shlm`,
+  `shrm`, `shlg`, `shrg` take the shift amount first (`(src2 << src1) & src3`, Mesa
+  `isa/ir3-cat3.xml`). The emulator had both wrong until the ball shader used them.
 - **A view's code costs its shader even when off.** The gravity arrows (a crossing carried through
   the trace) took the shader from 12 to 16 registers (waves of 64); with one shader for the floor
   view and the arrows, switched by a uniform, the floor view cost 3.94 ms by the model, as its own

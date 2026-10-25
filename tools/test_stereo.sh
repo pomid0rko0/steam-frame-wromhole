@@ -49,23 +49,28 @@ for c in 0 1; do
 	for m in ray mesh; do render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c; done
 done
 # case 3 walks and turns with the sticks' keys: --fixed-fps 60, so every mode moves the same
+# turned cubes (the toys' kind) drawn by the ray tracer against Godot's own boxes
+for c in 0 1; do
+	for m in ray mesh; do render --resolution 640x360 -s res://tests/multiview_cubes.gd -- "$OUT/cub$c" $m $c; done
+done
 for c in 0 1 2 3; do
-	for m in ray floor domain balls both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
+	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
 # the same floor lines with the shader the normal scene runs: the one without movable balls
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
 # the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
-# ray tracers of their own, without the balls
+# ray tracers of their own, with the balls and the cube, and without them (plain)
 for v in gravity arrows; do
 	for c in 0 1 2 3; do
-		for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
+		for m in ray floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
+		for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
 	done
 done
 # foveated rendering on (main.set_foveation): the 3D scene in a render pass of its own
 for c in 0 1 2 3; do
-	for m in ray floor domain balls both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
+	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
 done
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
@@ -83,17 +88,26 @@ verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_bal
 for c in 0 1; do
 	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
 done
+for c in 0 1; do
+	verdict "simulated headset, case $c: five turned cubes, each eye" python3 "$CMP/five_balls.py" "$OUT/cub$c"
+done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: stereo check scene (green on white and red)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
+	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, gravity view: the floor" python3 "$CMP/check_scene.py" "$OUT/gra$c" --floor-only
+	verdict "simulated headset, case $c: gravity view: the floor, with the balls and the cube" python3 "$CMP/check_scene.py" "$OUT/gra$c"
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, gravity view: the arrows" python3 "$CMP/check_scene.py" "$OUT/arr$c" --floor-only
+	verdict "simulated headset, case $c: gravity view: the arrows, with the balls and the cube" python3 "$CMP/check_scene.py" "$OUT/arr$c"
+done
+for c in 0 1 2 3; do
+	verdict "simulated headset, case $c: floor lines, gravity view: the floor, shader without balls" python3 "$CMP/check_scene.py" "$OUT/grp$c" --floor-only
+done
+for c in 0 1 2 3; do
+	verdict "simulated headset, case $c: floor lines, gravity view: the arrows, shader without balls" python3 "$CMP/check_scene.py" "$OUT/arp$c" --floor-only
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"

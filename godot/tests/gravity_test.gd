@@ -8,7 +8,7 @@ extends SceneTree
 ## 4. the ray tracer's polynomials (gravity_shader) are the field, and join the cylinder and the
 ##    flat part
 ## 5. G cycles the views (off, floor, arrows) and their ray tracers; not during the speed check;
-##    with movable balls the gravity view takes over and gives the balls back when off
+##    with movable balls and cubes each view has a ray tracer that draws them too
 ## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
 ##    throat, the sky untouched; arrows drawn over the view with view 2
 ## With a prefix, saves the pictures it checks.
@@ -27,6 +27,7 @@ func _initialize() -> void:
 	var a := OS.get_cmdline_user_args()
 	shots = a[0] if a.size() > 0 else ""
 	main = load("res://main.tscn").instantiate()
+	main.physics = false            # its pictures and checks without the toys
 	main.xr_name = "none"
 	root.add_child(main)
 
@@ -164,18 +165,17 @@ func _control_checks() -> void:
 	main._process(0.0)
 	main.hold = false
 	_check("G does nothing during the speed check", main.gravity_view == 0, "view %d" % main.gravity_view)
-	# movable balls (the stereo check's): the gravity view takes over and gives them back
+	# movable balls (the stereo check's): each view has its ray tracer with them
 	var pos := PackedVector4Array([Vector4(8.0, 0.0, 1.0, main.space.h)])
 	var col := PackedVector4Array([Vector4(1.0, 0.0, 0.0, 0.3)])
 	main.set_balls(pos, col)
-	var with_balls: String = main.material.shader.resource_path.get_file()
-	main.set_gravity_view(1)
-	var on: String = main.material.shader.resource_path.get_file()
-	main.set_gravity_view(0)
-	var back: String = main.material.shader.resource_path.get_file()
+	var seen_b := [main.material.shader.resource_path.get_file()]
+	for v in [1, 2, 0]:
+		main.set_gravity_view(v)
+		seen_b.append(main.material.shader.resource_path.get_file())
 	main.set_balls(PackedVector4Array(), PackedVector4Array())
-	_check("gravity view and movable balls", with_balls == "wormhole_balls.gdshader" and on == "wormhole_gravity.gdshader"
-			and back == "wormhole_balls.gdshader" and main.material.shader == main.SHADER_PLAIN, "%s, %s, %s" % [with_balls, on, back])
+	_check("gravity view and movable balls", seen_b == ["wormhole_balls.gdshader", "wormhole_balls_gravity.gdshader",
+			"wormhole_balls_arrows.gdshader", "wormhole_balls.gdshader"] and main.material.shader == main.SHADER_PLAIN, str(seen_b))
 
 
 func _key(code: Key, down: bool) -> void:

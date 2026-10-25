@@ -50,7 +50,10 @@ if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADE
 grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -20 "$LOG"; rm -rf "$LOG" "$DATA"; exit 1; }
 # The ray tracer: the fragment programs of more than half the biggest one's size. Godot compiles
 # it twice (a generic "ubershader" first, then the one specialised for the scene, which runs from
-# then on); one line each, then ir3's own statistics lines with --full.
+# then on); one line each, then ir3's own statistics lines with --full. A shader with more than
+# 100 vec4 of constants is compiled once more as prog N/2, reading them from memory; Turnip runs
+# that one only if the pipeline's stages need more than 512 vec4 in all (ours: ~200), so it is
+# marked "unused".
 python3 - "$LOG" "$DISASM" "$FULL" <<'EOF'
 import re, sys
 text = open(sys.argv[1], errors='replace').read().replace('MESA: info: ', '')
@@ -62,7 +65,8 @@ big = max(v[0] for v in progs.values())
 for p, (n, nops, half, full, cat4, loops, waves, dbl) in progs.items():
     if n < 0.5 * big:
         continue
-    print(f"prog {p}: {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, {cat4} cat4, {loops} loops")
+    safe = '' if p.endswith('/1') else ' (the safe-constlen variant: unused)'
+    print(f"prog {p}: {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, {cat4} cat4, {loops} loops{safe}")
     if sys.argv[3]:
         for line in re.findall(r'; FRAG prog %s: .*' % p, text):
             print("    " + line)

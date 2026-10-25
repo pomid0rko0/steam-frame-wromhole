@@ -154,7 +154,7 @@ func _process(_delta: float) -> bool:
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
 		check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
-				and main.material.shader == main.SHADER_PLAIN)
+				and main.material.shader == b.own_shader and b.own_shader == main.SHADER_BALLS)
 		check("speed check: the rate set back", p.desired == bench_stored)
 		check("speed check: the foveation set back (off)", main.foveation == 0 and not main.split_pass.enabled
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
@@ -252,9 +252,11 @@ func _gravity(p: Label3D) -> void:
 		p.point(1, from, (at - from).normalized(), 0.0)
 		p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
 		seen.append([main.gravity_view, main.material.shader.resource_path.get_file(), _color(p, "grav", v) == p.COLOR_ON])
-	check("гравитация: пол, стрелки, выкл", seen == [[1, "wormhole_gravity.gdshader", true],
-			[2, "wormhole_arrows.gdshader", true], [0, "wormhole.gdshader", true]])
-	if seen != [[1, "wormhole_gravity.gdshader", true], [2, "wormhole_arrows.gdshader", true], [0, "wormhole.gdshader", true]]:
+	# the demo's balls and cubes are there: the ray tracers with them
+	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
+			[0, "wormhole_balls.gdshader", true]]
+	check("гравитация: пол, стрелки, выкл", seen == want)
+	if seen != want:
 		print("  ", seen)
 
 

@@ -1,9 +1,10 @@
 extends SceneTree
 ## The in-headset stereo check scene through the simulated headset (tests/fake_hmd.gd):
 ## mode "ray" hides Godot's green overlay, "floor" shows only its floor lines, "domain" fills
-## the area where it may draw floor lines, "balls" shows only its ball grids, "both" all of it.
-## Comparing them shows whether green lands exactly on the ray-traced white lines and red balls.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case [plain|gravity|arrows] [fov]
+## the area where it may draw floor lines, "balls" shows only its ball grids, "cube" only the
+## cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
+## ray-traced white lines, red balls and magenta cube.
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
 ## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture;
 ## 3: as 1, then the left stick walks forward and right (keys W, D), the right stick snaps
@@ -13,7 +14,7 @@ extends SceneTree
 ## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
 ## code); only the floor lines can be compared then. gravity, arrows: the gravity view
 ## (main.set_gravity_view 1, 2: the floor coloured by gravity, also the field's arrows), its own ray
-## tracers, also without the balls.
+## tracers with the balls and the cube (with plain, without them).
 ## fov: foveated rendering on (main.set_foveation: the runtime's strongest in even cases, our own
 ## map in odd ones): the 3D scene in a render pass of its own, the viewport asking for a density map. Software Vulkan has none, so what this tests
 ## is that the split pass draws everything where it was.
@@ -67,6 +68,7 @@ func _process(_delta: float) -> bool:
 			# SteamVR's level in even cases, our own map in odd ones
 			main.set_foveation(main.FOVEATION_LEVELS if case % 2 == 0 else 4)
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
+		var cube: MeshInstance3D = main.overlay.get_node("Cube")
 		match mode:
 			"ray":
 				for c in main.overlay.get_children():
@@ -80,6 +82,10 @@ func _process(_delta: float) -> bool:
 				grid.material_override.set_shader_parameter("solid", true)
 			"balls":
 				grid.visible = false
+				cube.visible = false
+			"cube":
+				for c in main.overlay.get_children():
+					c.visible = c == cube
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05)) * hmd.head
 	if case == 3:

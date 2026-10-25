@@ -4,10 +4,11 @@
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
 # included. Calibrated on the headset's speed check (README, «Что видно в шлеме»); a model, not a
 # timing: compare variants with it, then measure the best in the headset (tools/ab_shaders.sh).
-#   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--gravity 1|2] [source]...
+#   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys] [--gravity 1|2] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks that the emulated colours are Godot's
 # (lavapipe) picture, pixel for pixel. --balls: the shader with movable balls (the stereo check's).
+# --toys: the demo's balls and cubes, after the throw and the drop, at rest (the shader with balls).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are.
 set -u
@@ -17,6 +18,7 @@ GODOT=${GODOT:-$ROOT/tools/.bin/Godot_v4.7.2-stable_linux.x86_64}
 TILES=150
 CHECK=""
 BALLS=""
+TOYS=""
 GRAV=""
 srcs=()
 while [ $# -gt 0 ]; do
@@ -24,6 +26,7 @@ while [ $# -gt 0 ]; do
 		--tiles) TILES=$2; shift 2 ;;
 		--check) CHECK=1; shift ;;
 		--balls) BALLS=1; shift ;;
+		--toys) TOYS=1; shift ;;
 		--gravity) GRAV=$2; shift 2 ;;
 		*) srcs+=("$1"); shift ;;
 	esac
@@ -39,15 +42,16 @@ others=()
 for s in "${srcs[@]}"; do [ "$s" = this ] || others+=("$s"); done
 if [ ${#others[@]} -gt 0 ]; then "$ROOT/tools/ab_shaders.sh" "${others[@]}" >/dev/null || exit 1; fi
 POSES="11.6,0,0;6.2,0,0;6.2,60,0;5.0,0,0;5.0,90,0;5.0,180,0;5.0,0,-35;5.0,0,35;0,0,0;-5.0,180,0;-5.7,160,-5;-6.2,180,0"   # bench.gd PLACES
-scene=$([ -n "$BALLS" ] && echo balls || echo plain)
+scene=$([ -n "$BALLS" ] && echo balls || ([ -n "$TOYS" ] && echo toys || echo plain))
 n=0
 for s in "${srcs[@]}"; do
 	if [ "$s" = this ]; then sh=""; else n=$((n + 1)); sh=res://shaders/ab/$n/wormhole.gdshader; fi
 	sc=$scene
 	stsh=$sh
+	if [ "$s" = this ] && [ -n "$TOYS" ]; then stsh=res://shaders/wormhole_balls.gdshader; fi
 	if [ "$s" = this ] && [ -n "$GRAV" ]; then
-		sc=gravity$GRAV
-		stsh=res://shaders/$([ "$GRAV" = 2 ] && echo wormhole_arrows || echo wormhole_gravity).gdshader
+		sc=$scene+gravity$GRAV
+		stsh=res://shaders/$([ -n "$TOYS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
 	fi
 	[ -n "$BALLS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
 	log=$WORK/$n.log
@@ -57,7 +61,7 @@ for s in "${srcs[@]}"; do
 		# of its two programs, the one that runs: the smaller (as adreno_cost.py picks it)
 		stats=$(KEEP_LOG=$log "$ROOT/tools/adreno_stats.sh" $( [ -n "$BALLS" ] && echo check || echo plain ) ${stsh:+--shader $stsh} \
 			| grep '^prog ' | sort -n -k3 | head -1)
-		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log')" 2>/dev/null && break
+		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', set())" 2>/dev/null && break
 		echo "$s: the compiler's log did not parse (interleaved listings?), compiling again"
 	done
 	echo "$s: $stats"

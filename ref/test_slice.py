@@ -15,17 +15,16 @@ FRAG = HEADER.replace('#define WH_NO_BALLS\n', '#define WH_NO_BALLS\n#define WH_
 uniform vec4 grav_cyl;
 uniform vec4 grav_g[2];
 uniform vec4 grav_d[2];
-uniform float grav_pix;
-vec4 wh_sl;
+vec3 wh_sl;
 """ + CORE + """
 void main() {
     vec2 uv = gl_FragCoord.xy / uSize;
     vec3 dl = normalize(vec3(mix(-uTan.x, uTan.y, uv.x), mix(-uTan.z, uTan.w, uv.y), 1.0));
     vec4 V = dl.x * uRt + dl.y * uUp + dl.z * uF;
     vec4 dbg;
-    wh_sl = vec4(-1.0);
+    wh_sl = vec3(-1.0);
     vec3 col = wh_render(uL0, uN0, V.x, V.yzw, dbg);
-    frag = wh_sl.w >= 0.0 ? vec4(wh_sl.xyz, 1.0 + 1e-9 * col.x) : vec4(0.0, 0.0, 0.0, -1.0);
+    frag = wh_sl.z >= 0.0 ? vec4(wh_sl.xy, cos(wh_sl.y), 1.0 + 1e-9 * col.x) : vec4(0.0, 0.0, 0.0, -1.0);
 }
 """
 
@@ -43,7 +42,7 @@ def render(ctx, state, size, tan):
     for k, v in dict(wh_sph=[tuple(x) for x in T.SCENE['spheres_A'] + T.SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in T.SCENE['pillars_A']], wh_box=[tuple(x) for x in T.SCENE['boxes_B']],
                      wh_tab=0, wh_tabLo=tuple(lo), wh_tabInv=tuple(inv), wh_tabReg=tuple(reg),
-                     grav_pix=0.001, grav_cyl=(0.2, 0.47, 0.29, -3.2),
+                     wh_pix=0.001, grav_cyl=(0.2, 0.47, 0.29, -3.2),
                      wh_rho0=T.PROF[0], wh_h=T.PROF[1], wh_fillet=T.PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F),
                      uRt=tuple(Rt), uUp=tuple(Up), uTan=tuple(tan), uSize=(size, size)).items():
         if k in prog:
@@ -53,8 +52,9 @@ def render(ctx, state, size, tan):
     fbo.use(); fbo.clear()
     vao.render(moderngl.TRIANGLE_STRIP)
     out = np.frombuffer(fbo.read(components=4, dtype='f4'), dtype='f4').reshape(size, size, 4)
-    # as the reference: (found, l, n.y, n.z)
-    return np.stack([np.where(out[..., 3] >= 0, 1.0, -1.0), out[..., 0], out[..., 1], out[..., 2]], -1)
+    # as the reference: (found, l, n.y, n.z); the shader gives the angle of n from +y toward +z
+    a = out[..., 1].astype(np.float64)
+    return np.stack([np.where(out[..., 3] >= 0, 1.0, -1.0), out[..., 0], np.cos(a), np.sin(a)], -1)
 
 
 def flat_cross(side, x, d, t_end):

@@ -9,6 +9,7 @@ uniform float rout;            // chart radius where the flat floor starts
 uniform float lsh;             // l at that radius
 uniform float clear = 0.3;     // keep away from the curved part
 uniform vec4 balls[3];         // the check balls (chart centre, radius) hide the floor behind them
+uniform vec4 cube;             // and the check cube (chart centre, radius of a ball around it)
 uniform bool solid = false;    // tests: fill everywhere a line could be drawn
 
 varying vec3 v_chart;
@@ -33,6 +34,8 @@ void fragment() {
 		float tb = clamp(dot(balls[i].xyz - eye, d) / dot(d, d), 0.0, 1.0);
 		if (length(eye + tb * d - balls[i].xyz) < balls[i].w) discard;
 	}
+	float tc = clamp(dot(cube.xyz - eye, d) / dot(d, d), 0.0, 1.0);
+	if (length(eye + tc * d - cube.xyz) < cube.w) discard;
 	vec2 q = vec2(r - rout + lsh, atan(c.y, c.x) * 24.0 / (2.0 * PI));
 	vec2 fw = max(fwidth(q), vec2(1e-4));
 	if (max(fw.x, fw.y) > 0.2) discard;     // lines closer than 5 px: far away, would merge

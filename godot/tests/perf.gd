@@ -22,6 +22,7 @@ func _initialize() -> void:
 	if OS.get_cmdline_user_args().size() > 1:
 		shader_path = OS.get_cmdline_user_args()[1]
 	main = load("res://main.tscn").instantiate()
+	main.physics = false            # the scenes set their own balls
 	main.xr_name = "none"
 	main.show_check = variant.begins_with("check")
 	root.add_child(main)
