@@ -29,7 +29,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   on the panel), the right stick turns smoothly or in 30° snaps (a right stick click switches), A
   goes back to the start (`tests/walking_test.gd`, `tests/walking_xr_test.gd`). Checked in the
   headset: all of it works, a little nausea, bearable; crossing the shell's outer edge by stick is
-  clean (before `fast-rays` the picture glitched there: frames dropped at 16.6 ms).
+  clean (before `fast-rays` the picture glitched there: frames dropped at 16.6 ms). The cheaper
+  edge frames of `edge-120hz` (merged, below) and the cost model are in it too.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
@@ -46,18 +47,15 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   edge (16.6 before), 120 Hz held on its whole tour; frames drop at the edge when SteamVR shows
   the cameras (README «Что видно в шлеме»). Next: cheaper shading, a table for the curved region
   (README wish «Дешевле лучи у червоточины»).
-- `edge-120hz` (from `main`) — cheaper frames at the shell's edge, for 120 Hz while SteamVR shows
-  the cameras (~3.5 ms needed): per-eye values once per eye, the curved-region floor test without
-  `atan` for rays that miss the floor, the fillet coefficients from a table by impact parameter
-  (`WormholeSpace.fillet_table`, plain shader only), 4 screen derivatives instead of 6, one sky
-  for both worlds, own `atan`/`asin`, the fog's path length estimated (12 registers: waves of
-  128). Same picture as `main` (within 1/255), same accuracy and stereo. Measured in the
-  headset by the speed check: the edge 4.73 → 3.61 ms, -23% over the poses, 120 Hz tour 0 missed
-  of 20633; the variants: 13 registers -20%, 12 without the table -19%, the branch -23%. Then,
-  not measured yet (model -7%, world B's edge -10%): world B's boxes skipped by rays going up
-  above them, fewer roots and divisions; the speed check got three poses in world B. Its
-  measuring build compares the measured commit with the tree. Also the cost model
-  (`tools/adreno_cost.sh`, below).
+- `edge-120hz` — merged into `main`: cheaper frames at the shell's edge, for 120 Hz while SteamVR
+  shows the cameras (~3.5 ms needed): per-eye values once per eye, the curved-region floor test
+  without `atan` for rays that miss the floor, the fillet coefficients from a table by impact
+  parameter (`WormholeSpace.fillet_table`, plain shader only), 4 screen derivatives instead of 6,
+  one sky for both worlds, own `atan`/`asin`, the fog's path length estimated (12 registers),
+  world B's boxes skipped by rays going up above them, fewer roots. Same picture (within 1/255),
+  accuracy and stereo; one-eye check passed. Measured by the speed check: the edge 4.73 → 3.6 ms,
+  -23% over world A's poses, 120 Hz tour 0 missed of 20630. Not solved: 144 Hz in world B at
+  5.5-6 m facing the throat (4.8 ms, frames up to 6; README «Мир B у внешнего края дороже всего»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -69,9 +67,11 @@ Where the README wishes start (wishes without a branch start from `main`):
 - cubes next to balls → `physics`;
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
-- refresh rate and render scale → `main` (the panel is there); cheaper rays near the wormhole →
-  `edge-120hz` until it is merged (`wh_curved` in `wormhole_core`, measured in the headset by the
-  speed check; without a headset `tools/adreno_cost.sh`, then `tools/adreno_stats.sh`);
+- refresh rate and render scale → `main` (the panel is there; the owner wants no automatic way
+  out of SteamVR's half rate for now); cheaper rays near the wormhole → `main` (`wh_curved` in
+  `wormhole_core`, measured in the headset by the speed check; without a headset
+  `tools/adreno_cost.sh`, then `tools/adreno_stats.sh`); next there: world B's outer edge facing
+  the throat, where the model misses ~1 ms;
 - foveated rendering → `foveation`;
 - placing wormholes by hand, several wormholes, flat portals, two-handed shooting, gun models,
   other shapes (torus, arbitrary SDF) → `main`; several wormholes, portals and other shapes are
@@ -89,7 +89,7 @@ When branches are put together, these overlap:
 - A resets on `main`, in `throat` and `grab`: one reset does all of it.
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
-- a throat change (`throat`) with `edge-120hz`: the fillet table depends on the shape: after
+- a throat change (`throat`) with `main`'s fillet table: the table depends on the shape: after
   `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop).
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
@@ -115,10 +115,12 @@ draws next to ray-traced ones, check they line up the same way.
   (lowest PC first, as `ir3_reconvergence.c` describes). `--check` compares the emulated colours
   with Godot's lavapipe picture: run it after every change, it caught an emulator bug that had
   made a variant look 15% cheaper. Fitted on the headset's speed check (main and three variants
-  of this branch, nine poses each): per 64 pixels, ms ≈ 0.8 + 1.61e-3 × ALU issue cycles +
+  of `edge-120hz`, nine poses of world A each): per 64 pixels, ms ≈ 0.8 + 1.61e-3 × ALU issue cycles +
   1.05e-3 × nop slots + 0.0258 × transcendentals (cat4) + 0.146 × texture-unit instructions
   (cat5: derivatives, samples); rms 0.19 ms, the variants' means within 5%. A transcendental
-  costs ~16 ALU cycles, a screen derivative ~90. It does not know memory waits.
+  costs ~16 ALU cycles, a screen derivative ~90. It does not know memory waits. Out of its fit it
+  missed: 20% fewer transcendentals per pixel promised -7% and gave -0.7% in the headset, and in
+  world B outside the edge (-5.7 m, 20° from the throat) it says 3.8 ms where the headset takes 4.8.
   `--profile` (adreno_cost.py) gives cycles per stretch of code.
   The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
 - **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
@@ -133,8 +135,8 @@ draws next to ray-traced ones, check they line up the same way.
   walking around do not compare between builds: where one looks changes them several times.
   The panel also logs a `refresh:` line every second (with where one looks) and one per late frame.
 - **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
-  (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; on this
-  branch every pose matched main within 1/255.
+  (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; `edge-120hz`
+  matched the main before it within 1/255 at every pose.
 - **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails). Monado's simulated controllers (`SIMULATED_LEFT=wmr`) bind to none of our profiles; for controller input use `XRControllerTracker`s with inputs set by hand (`tests/walking_xr_test.gd`).
@@ -170,7 +172,8 @@ draws next to ray-traced ones, check they line up the same way.
   from the throat: 4.7 ms trapped) or on a rate switch (120 and back to 144). More often in
   world B: its boxes have no early out (tour: -5 m 4.04 ms, +5 m 3.72). The Steam overlay drops
   the rate too (it draws on the GPU while open). The app can't stop SteamVR doing it; cheaper
-  frames make it rarer.
+  frames make it rarer. It happens every time in world B at 5.5-6 m facing the throat (4.5-5 ms,
+  single frames up to 6); 120 Hz holds there.
 - **Waves of 128 gained nothing in the headset:** 12 registers (waves of 128) against 13 (waves of
   64) were 1.6% slower with the same changes; the fillet table gained 0.21 ms at the edge.
 - **`inversesqrt` rounding:** |w| from `inversesqrt(dot(w, w))` came out above 1 for rays along
