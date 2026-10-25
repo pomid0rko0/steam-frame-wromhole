@@ -160,8 +160,8 @@ When branches are put together, these overlap:
   shader index of a ball is not its index in `world.balls` (`set_objects` sorts them). Godot
   geometry drawn before the ray tracers must not set the stencil. A changed throat (`throat`):
   `set_objects` again (the sorting and the proxies use `space.h`, `space.Rout`). Balls held in the
-  hand (`grab`): the proxies' 15 cm margin covers the near plane (5 cm); closer than that, a
-  ball's near side can be clipped.
+  hand (`grab`) are fine: a ray that meets a toy leaves its proxy at least the margin (8 cm, more
+  than the near plane's 5 cm) beyond the hit, so the near plane never takes the mark away.
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).

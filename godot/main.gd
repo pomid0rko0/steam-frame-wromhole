@@ -51,8 +51,11 @@ const SHADER_BALLS_ARROWS := preload("res://shaders/wormhole_balls_arrows.gdshad
 # the pixels whose rays may meet a toy (_update_proxies), and all of them
 const SHADER_MARK := preload("res://shaders/stencil_mark.gdshader")
 const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
-const PROXY_MARGIN := 0.15      # m around each sphere: more than the near plane (camera.near)
-const PROXY_SLACK := 1.06       # the proxy mesh's faces lie inside its sphere: grown by this
+# m around each sphere: more than the near plane (camera.near). A ray that meets a toy inside its
+# sphere leaves the sphere at least this far beyond the hit, so it is marked even where the near
+# plane clips the sphere's near side.
+const PROXY_MARGIN := 0.08
+const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (by 0.4%): grown by this
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
@@ -1005,8 +1008,8 @@ func _add_proxies() -> void:
 	var sphere := SphereMesh.new()
 	sphere.radius = 1.0
 	sphere.height = 2.0
-	sphere.radial_segments = 24
-	sphere.rings = 12
+	sphere.radial_segments = 48
+	sphere.rings = 24
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = sphere
@@ -1059,22 +1062,22 @@ func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void
 	var mm := proxies.multimesh
 	var count := 0
 	for s in proxy_spheres(l):
-		var r := s.w * PROXY_SLACK
-		mm.set_instance_transform(count, to_play * Transform3D(Basis.from_scale(Vector3(r, r, r)), Vector3(s.x, s.y, s.z)))
+		mm.set_instance_transform(count, to_play * Transform3D(Basis.from_scale(Vector3(s.w, s.w, s.w)), Vector3(s.x, s.y, s.z)))
 		count += 1
 	mm.visible_instance_count = count
 
 
-## The proxies as spheres in the chart of the universe at l (centre, radius with the margin): the
+## The proxies as spheres in the chart of the universe at l (centre, the mesh's radius: with the
+## margin and the slack): the
 ## shell and that universe's toys; none where the whole view is marked (tools/adreno_cost.py
 ## --split models the split with them).
 func proxy_spheres(l: float) -> PackedVector4Array:
 	var out := PackedVector4Array()
 	if balls == 0 or toy_mode != TOYS_SPLIT or absf(l) <= space.L:
 		return out
-	out.append(Vector4(0.0, 0.0, 0.0, space.Rout + PROXY_MARGIN))
+	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + PROXY_MARGIN) * PROXY_SLACK))
 	for s in toy_spheres[0 if l > 0.0 else 1]:
-		out.append(Vector4(s.x, s.y, s.z, s.w + PROXY_MARGIN))
+		out.append(Vector4(s.x, s.y, s.z, (s.w + PROXY_MARGIN) * PROXY_SLACK))
 	return out
 
 
