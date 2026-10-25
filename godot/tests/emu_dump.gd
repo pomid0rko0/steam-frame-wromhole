@@ -49,7 +49,8 @@ func _process(_d: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
 		main.material.shader = load(shader_path)
-		main.set_toy_mode(main.TOYS_BARE)    # another source's: no stencil test, the whole view
+		if not main.material.shader.code.contains("stencil_mode"):
+			main.set_toy_mode(main.TOYS_BARE)    # another source's: no stencil test, the whole view
 	if frames == 2:
 		if toys:
 			# the demo after the throw and the drop, all of it at rest, then held still
