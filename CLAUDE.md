@@ -30,7 +30,11 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls and cubes with physics in the curved space (`ball_world.gd`,
   `tests/physics_test.gd`, `tests/multiview_cubes.gd`): a cube and a ball are thrown after the
-  start, right A throws again.
+  start, then two balls are dropped (in front and in the middle of the throat), right A does it
+  again. Gravity comes from Laplace's equation on the space itself, as in optozorax's video about
+  gravity and portals (README, «Гравитация через червоточину»; `ref/gravity.py`,
+  `ref/test_gravity.py`): weaker in the throat. Left Y cycles the floor coloured by gravity and
+  arrows of the field on the vertical surface x = 0 (ray traced; `ref/test_slice.py`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
   the avatar as balls (`tests/grab_test.gd`).
 - `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
@@ -58,10 +62,12 @@ When branches are put together, these overlap:
 - the left trigger: `refresh-rate` steps the rate with either trigger, `walking` runs with the
   left one. Together the rate goes to left X (the panel's hint says which button).
 - the right stick: x turns in `walking`, y changes the throat in `throat`; that fits.
+- left Y shows gravity in `physics`; no other branch uses it.
 - A resets in `walking`, `throat`, `grab` and `physics` (toys back in place, thrown again): one
   reset does all of it.
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
-  edge of the curved shell, as the feet do in `set_geometry`.
+  edge of the curved shell, as the feet do in `set_geometry`. `set_profile` rebuilds the gravity
+  table; the shader's copy (`_upload_gravity` in `main.gd`) must be uploaded again.
 
 ## Hard rule: stereo before headset
 
@@ -93,4 +99,6 @@ draws next to ray-traced ones, check they line up the same way.
 - **Godot's shading language** has built-in constants (`PI`, `TAU`, `E`): a variable named `E` fails to compile.
 - **`fwidth` next to a silhouette** in the curved region takes the neighbouring pixel's value, which belongs to another object; the throat circle on the floor showed a cyan fringe around objects until its width was capped.
 - **Physics in GDScript** costs about 0.2 ms per frame for a sliding cube (contact solver); resting cubes sleep. Watch it before adding many bodies.
+- **GDScript's `Vector2/3/4` are single precision** (`float` is double). An ODE integrated in `Vector2` and a `PackedVector2Array` table made the gravity's second derivative noisy at 10⁻³; keep such states in plain floats or `PackedFloat64Array`.
+- **Derivatives in the shader** (`fwidth`) belong in uniform control flow: compute them before branching on what a pixel hit, as the gravity map does.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.

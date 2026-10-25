@@ -1,9 +1,13 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room is the only way to move; balls roll and
-## bounce through the wormhole, cubes slide and stop (ball_world.gd). A moment after the start a
-## cube and a ball are thrown; A on the right controller (R on the keyboard) puts everything back
-## and throws again. Every pixel is ray traced along a geodesic of the wormhole space in the
-## shader; this script tracks where the viewer, the balls and the cubes are in that curved space.
+## bounce through the wormhole, cubes slide and stop (ball_world.gd). Gravity is bent through the
+## wormhole and weaker in the throat (WormholeSpace.potential). A moment after the start a cube
+## and a ball are thrown, then two balls are dropped: one in front of the wormhole, one in the
+## middle of the throat. A on the right controller (R on the keyboard) puts everything back and
+## does it again; Y on the left (G) shows gravity: the floor coloured by its strength, then also
+## arrows of the field on a vertical surface through the wormhole. Every pixel is
+## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
+## viewer, the balls and the cubes are in that curved space.
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface
 ## n.z = 0). Physical movement in the play space moves the feet along floor geodesics,
@@ -30,7 +34,11 @@ var physics := true             # simulate and draw balls and cubes; the stereo 
 var throw_toys := true          # throw a cube and a ball LAUNCH_DELAY s after the start and each reset
 var launch_in := -1.0           # seconds until the throw; < 0: none pending
 var right_hand: XRController3D
+var left_hand: XRController3D
 var reset_was := false
+var map_was := false
+var gravity_view := 0           # 0 off, 1 floor coloured by gravity, 2 also the field's arrows
+var drop_in := -1.0             # seconds until the two balls are dropped; < 0: none pending
 var xr: XRInterface
 var xr_name := "OpenXR"        # tests use "Native mobile": Godot's own stereo renderer, same multiview path
 var in_xr := false
@@ -80,12 +88,16 @@ func _ready() -> void:
 	right_hand = XRController3D.new()
 	right_hand.tracker = &"right_hand"
 	origin.add_child(right_hand)
+	left_hand = XRController3D.new()
+	left_hand.tracker = &"left_hand"
+	origin.add_child(left_hand)
 
 	material = ShaderMaterial.new()
 	material.shader = load("res://shaders/wormhole.gdshader")
 	material.set_shader_parameter("wh_rho0", space.rho0)
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
+	_upload_gravity()
 	_upload_scene()
 	var quad := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -166,11 +178,19 @@ func _process(delta: float) -> void:
 		_spawn_toys()
 		print("toys: back in place, throwing again")
 	reset_was = reset
+	var gmap := Input.is_key_pressed(KEY_G) or (in_xr and left_hand.is_button_pressed(&"by_button"))
+	if gmap and not map_was:
+		set_gravity_map((gravity_view + 1) % 3)
+	map_was = gmap
 	if physics and not await_pose:
 		if launch_in >= 0.0:
 			launch_in -= delta
 			if launch_in < 0.0:
 				_throw()
+		if drop_in >= 0.0:
+			drop_in -= delta
+			if drop_in < 0.0:
+				_drop()
 		world.step(delta, [])
 	if physics:
 		_upload_balls()
@@ -184,6 +204,9 @@ const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98,
 const CUBE_COLORS := [Color(0.93, 0.93, 0.88), Color(0.95, 0.45, 0.55), Color(0.35, 0.8, 0.75),
 		Color(0.95, 0.7, 0.3), Color(0.55, 0.6, 0.95), Color(0.6, 0.85, 0.35)]
 const LAUNCH_DELAY := 1.5
+const DROP_DELAY := 6.5         # after the thrown ball has rolled through the throat
+const DROP_HEIGHT := 2.0
+const DROP_COLOR := Color(0.95, 0.95, 0.97)
 
 
 ## Everything back in place: the balls and cubes at rest, the throw LAUNCH_DELAY s later.
@@ -195,6 +218,7 @@ func _spawn_toys() -> void:
 	_cube_on_floor(Vector2(6.2, 3.6), 0.25, -0.5, CUBE_COLORS[2])
 	_cube_in_throat(0.8, -0.45, 0.3, CUBE_COLORS[5])
 	launch_in = LAUNCH_DELAY if throw_toys else -1.0
+	drop_in = DROP_DELAY if throw_toys else -1.0
 
 
 ## From chest height in front of the start: a tumbling cube that lands to the left of the balls
@@ -210,6 +234,49 @@ func _throw() -> void:
 	var q := space.point_from_chart(1.0, Vector3(9.0, 2.4, 1.4))
 	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-3.0, -0.2, 1.0)), 0.25, BALL_COLORS[5])
 	print("toys: thrown")
+
+
+## Two white balls let go at the same moment from the same height: one beside the wormhole,
+## where gravity is ordinary, and one in the middle of the throat, where it is about a fifth of
+## that. The second is straight ahead in the throat (azimuth 0): from the start it is seen in the
+## middle of the wormhole against universe B's sky, and falls and bounces in slow motion.
+func _drop() -> void:
+	var p := space.point_from_chart(1.0, DROP_SPOT_A)
+	world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
+	world.add(0.0, throat_point(0.0, DROP_HEIGHT), Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
+	print("toys: two balls dropped")
+
+
+const DROP_SPOT_A := Vector3(4.5, 4.2, DROP_HEIGHT)   # to the right of the wormhole
+const DROP_RADIUS := 0.35
+
+
+## The direction n at height H = r(0) n.z above the floor in the middle of the throat, at azimuth phi.
+func throat_point(phi: float, height: float) -> Vector3:
+	var z := height / space.r(0.0)
+	return Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)
+
+
+## How gravity is shown: 0 not at all, 1 the floor coloured by its strength (optozorax's palette:
+## dark is none, yellow 1 g), 2 also arrows of the field on a vertical surface through the
+## wormhole, facing the start (x = 0 in both universes, through the throat).
+func set_gravity_map(view: int) -> void:
+	gravity_view = view
+	material.set_shader_parameter("grav_map", view >= 1)
+	material.set_shader_parameter("wh_sliceOn", view >= 2)
+	print("gravity view: ", ["off", "floor", "floor and arrows"][view])
+
+
+## Gravity for the shader: f / r (in g on the floor) and f' at |l| = i L / 32, beta outside.
+func _upload_gravity() -> void:
+	var tab := PackedFloat32Array()
+	var dtab := PackedFloat32Array()
+	for i in 33:
+		tab.append(space.floor_gravity(space.L * i / 32.0))
+		dtab.append(space.gravity_f(space.L * i / 32.0).y)
+	material.set_shader_parameter("grav_tab", tab)
+	material.set_shader_parameter("grav_dtab", dtab)
+	material.set_shader_parameter("grav_beta", space.grav_beta)
 
 
 ## A cube resting on the floor of universe A at chart position pos, turned by yaw.

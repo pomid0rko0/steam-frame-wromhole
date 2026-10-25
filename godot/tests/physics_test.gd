@@ -2,7 +2,7 @@ extends SceneTree
 ## Ball and cube physics checks (desktop, run with --fixed-fps 60), exit status 1 on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/physics_test.gd [-- shot.png]
 ## 1. balls and cubes placed on the floor (one cube inside the throat) stay at rest
-## 2. energy 1/2|U|^2 + g H is conserved in free flight through the curved throat
+## 2. energy 1/2|U|^2 + g phi is conserved in free flight through the curved throat
 ## 3. a ball rolled toward the wormhole crosses into universe B and stays on the floor
 ## 4. two balls collide and conserve momentum along the line of centres (flat region)
 ## 5. cubes: the body axes are parallel-transported, a tumbling cube keeps its energy in free
@@ -10,6 +10,10 @@ extends SceneTree
 ##    rolling, a thrown cube comes to rest flat on a face, a cube slides on the curved floor of
 ##    the fillet and comes to rest on it, a ball pushes a cube, a cube pushes a cube, a pillar
 ##    stops a cube
+## 6. gravity through the wormhole: the field matches ref/gravity.py and solves its equation; a
+##    ball dropped in the middle of the throat falls as slowly as that field says, more than twice
+##    as long as one dropped in front of the wormhole; above the throat's floor gravity pulls toward
+##    the middle, where a ball rests
 ## Then, with a screenshot path given, saves one with a ball and a cube inside the throat.
 
 var main: Node3D
@@ -37,7 +41,7 @@ func _check(name: String, ok: bool, detail: String) -> void:
 
 func _energy(b: Dictionary) -> float:
 	var U: Vector4 = b["U"]
-	return 0.5 * U.dot(U) + BallWorld.GRAVITY * main.space.height(b["l"], b["n"])
+	return 0.5 * U.dot(U) + BallWorld.GRAVITY * main.space.potential(b["l"], b["n"])
 
 
 func _process(_delta: float) -> bool:
@@ -85,10 +89,11 @@ func _process(_delta: float) -> bool:
 		_check("energy conserved in free flight", emax < 1e-4 * absf(e0), "max |dE| %.7f of E %.3f, flier reached l = %.2f" % [emax, e0, flier["l"]])
 		_check("rolling ball went through to universe B", roller["l"] < -sp.L, "l = %.2f (shell |l| < %.2f)" % [roller["l"], sp.L])
 		_check("rolling ball stays on the floor", absf(sp.height(roller["l"], roller["n"]) - roller["radius"]) < 0.02, "H - radius = %.4f" % (sp.height(roller["l"], roller["n"]) - roller["radius"]))
-		# 4: head-on collision in mid-air (flat A): horizontal momentum conserved, e = 0.85
+		# 4: head-on collision in mid-air (flat A): horizontal momentum conserved, e = 0.85; far from
+		# the wormhole, where gravity is uniform (nearer, it pulls a little toward the throat)
 		w.balls.clear()
-		var a := sp.point_from_chart(1.0, Vector3(12.0, 4.0, 2.0))
-		var c := sp.point_from_chart(1.0, Vector3(13.0, 4.0, 2.0))
+		var a := sp.point_from_chart(1.0, Vector3(28.0, 4.0, 2.0))
+		var c := sp.point_from_chart(1.0, Vector3(29.0, 4.0, 2.0))
 		var ba := w.add(a[0], a[1], 3.0 * WormholeSpace.vector_from_chart(1.0, a[1], Vector3(1, 0, 0)), 0.25, Color.WHITE)
 		var bc := w.add(c[0], c[1], Vector4.ZERO, 0.25, Color.WHITE)
 		for i in 18:
@@ -99,6 +104,7 @@ func _process(_delta: float) -> bool:
 		_check("collision: momentum and restitution", absf(va.x + vc.x - 3.0) < 1e-3 and absf(vc.x - va.x - 3.0 * e) < 1e-2,
 				"p %.4f (3.0), separation speed %.4f (%.4f)" % [va.x + vc.x, vc.x - va.x, 3.0 * e])
 		_cube_checks(sp, w)
+		_gravity_checks(sp, w)
 		# a ball inside the throat for the screenshot
 		w.balls.clear()
 		main._spawn_toys()
@@ -156,7 +162,7 @@ func _lowest(c: Dictionary) -> float:
 func _cube_energy(c: Dictionary) -> float:
 	var U: Vector4 = c["U"]
 	var wb: Vector3 = c["w"]
-	return BallWorld.cube_mass(c) * (0.5 * U.dot(U) + BallWorld.GRAVITY * main.space.height(c["l"], c["n"])) \
+	return BallWorld.cube_mass(c) * (0.5 * U.dot(U) + BallWorld.GRAVITY * main.space.potential(c["l"], c["n"])) \
 			+ 0.5 * BallWorld.cube_inertia(c) * wb.dot(wb)
 
 
@@ -303,3 +309,120 @@ func _depth_in(P: Dictionary, Q: Dictionary) -> float:
 		if o.x > 0.0 and o.y > 0.0 and o.z > 0.0:
 			deepest = maxf(deepest, minf(o.x, minf(o.y, o.z)))
 	return deepest
+
+
+# ---------------------------------------------------------------- gravity
+
+## First moment a ball touches the floor (s), or -1.
+func _first_touch(w: BallWorld, b: Dictionary, seconds: float) -> float:
+	var sp: WormholeSpace = main.space
+	var t := 0.0
+	while t < seconds:
+		for k in 3:                           # one physics substep at a time
+			w.step(BallWorld.DT, [])
+			t += BallWorld.DT
+			if sp.height(b["l"], b["n"]) < b["radius"] + 1e-3 or b["U"].dot(sp.height_grad(b["l"], b["n"])) > 0.0:
+				return t
+	return -1.0
+
+
+func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
+	w.balls.clear()
+	w.cubes.clear()
+
+	# 6a: the field against ref/gravity.py (python3 ref/test_gravity.py prints these numbers)
+	var ref_l := [0.0, 2.0, 4.0, 5.0, sp.L]
+	var ref_g := [0.20557, 0.30391, 0.69300, 0.91320, 0.94991]
+	var worst := absf(sp.grav_beta - (-3.20586)) / 3.20586
+	var got := []
+	for i in ref_l.size():
+		got.append(snappedf(sp.floor_gravity(ref_l[i]), 0.00001))
+		worst = maxf(worst, absf(sp.floor_gravity(ref_l[i]) - ref_g[i]))
+	_check("gravity matches ref/gravity.py", worst < 2e-4, "floor g at l = 0, 2, 4, 5, L: %s (%s), beta %.5f (-3.20586)" % [str(got), str(ref_g), sp.grav_beta])
+
+	# 6b: the potential solves Laplace's equation: (r^2 f')' = 2 f, also on the fillet's table
+	var res := 0.0
+	var e := 0.01                         # gravity_f returns float32 (Vector2): keep round-off small
+	for i in 120:
+		var l := -sp.L - 3.0 + (2.0 * sp.L + 6.0) * (i + 0.5) / 120.0
+		var flux := func(x: float) -> float: return sp.r(x) * sp.r(x) * sp.gravity_f(x).y
+		var lap: float = (flux.call(l + e) - flux.call(l - e)) / (2.0 * e) - 2.0 * sp.gravity_f(l).x
+		res = maxf(res, absf(lap))
+	_check("gravity solves Laplace's equation", res < 2e-3, "max |(r^2 f')' - 2 f| %.5f m^-1 over the shell and around it" % res)
+
+	# 6c: the demo's two balls let go at the same height: in front of the wormhole and in the
+	# middle of the throat
+	var rad: float = main.DROP_RADIUS
+	var hgt: float = main.DROP_HEIGHT
+	var pa := sp.point_from_chart(1.0, Vector3(13.0, 3.0, hgt))
+	var ba := w.add(pa[0], pa[1], Vector4.ZERO, rad, Color.WHITE)
+	var ta := _first_touch(w, ba, 3.0)
+	w.balls.clear()
+	var bt := w.add(0.0, main.throat_point(0.0, hgt), Vector4.ZERO, rad, Color.WHITE)
+	var tt := _first_touch(w, bt, 6.0)
+	var lmax := absf(bt["l"])
+	w.balls.clear()
+	# expected: in the middle of the throat the ball falls along a meridian of the sphere r = rho0
+	# with s'' = -g f(0) / rho0 cos(s / rho0), until its height rho0 sin(s / rho0) is its radius
+	var r0 := sp.r(0.0)
+	var f0 := sp.gravity_f(0.0).x
+	var s := r0 * asin(hgt / r0)
+	var v := 0.0
+	var te := 0.0
+	var dt := 1e-4
+	while r0 * sin(s / r0) > rad:
+		v -= BallWorld.GRAVITY * f0 / r0 * cos(s / r0) * dt
+		s += v * dt
+		te += dt
+	var ta_e := sqrt(2.0 * (hgt - rad) / BallWorld.GRAVITY)
+	_check("dropped balls: slow fall in the throat", absf(ta - ta_e) < 0.02 and absf(tt - te) < 0.02 and tt > 2.0 * ta and lmax < 1e-6,
+			"in front of the wormhole %.3f s (%.3f), in the middle of the throat %.3f s (%.3f), %.2f times longer; stays at l = 0 (|l| %.7f)" % [ta, ta_e, tt, te, tt / ta, lmax])
+
+	# 6d: on the floor of the throat a ball is pulled toward the middle and rests there
+	var z := 0.25 / sp.r(2.5)
+	var side_ball := w.add(2.5, Vector3(0.0, sqrt(1.0 - z * z), z), Vector4.ZERO, 0.25, Color.WHITE)
+	var z0 := 0.25 / sp.r(0.0)
+	var mid_ball := w.add(0.0, Vector3(0.0, -sqrt(1.0 - z0 * z0), z0), Vector4.ZERO, 0.25, Color.WHITE)
+	_run(w, 0.5)
+	var l_half: float = side_ball["l"]
+	var ul_half: float = side_ball["U"].x
+	_run(w, 1.5)
+	_check("throat floor: pulled toward the middle, at rest in it", l_half < 2.48 and ul_half < -0.05 and mid_ball["U"].length() < 0.01 and absf(mid_ball["l"]) < 0.01,
+			"ball from l = 2.5 at l = %.3f after 0.5 s (U_l %.3f m/s); ball in the middle at %.4f m/s, l = %.4f" % [l_half, ul_half, mid_ball["U"].length(), mid_ball["l"]])
+	w.balls.clear()
+
+	# 7: the scene as the headset shows it: the throw, then the drop; the thrown ball still rolls
+	# through to universe B, nothing knocks the dropped balls off their spots, all come to rest
+	main._spawn_toys()
+	main.launch_in = -1.0
+	main.drop_in = -1.0
+	_run(w, main.LAUNCH_DELAY)
+	main._throw()
+	_run(w, main.DROP_DELAY - main.LAUNCH_DELAY)
+	main._drop()
+	var drops := []
+	var orange: Dictionary
+	for b in w.balls:
+		if b["color"] == main.DROP_COLOR:
+			drops.append([b, sp.embed(b["l"], b["n"])])
+		elif b["color"] == main.BALL_COLORS[5]:
+			orange = b
+	_run(w, 6.0)
+	var rest := []
+	for d in drops:
+		rest.append(sp.embed(d[0]["l"], d[0]["n"]))
+	_run(w, 2.0)
+	var creep := 0.0
+	for i in drops.size():
+		creep = maxf(creep, (sp.embed(drops[i][0]["l"], drops[i][0]["n"]) - rest[i]).length())
+	var drift := 0.0
+	var speed := 0.0
+	for d in drops:
+		var now: Vector4 = sp.embed(d[0]["l"], d[0]["n"])
+		var moved: Vector4 = now - d[1]
+		drift = maxf(drift, Vector3(moved.x, moved.y, 0.0).length() if d[0]["l"] > sp.L else absf(d[0]["l"]))
+		speed = maxf(speed, d[0]["U"].length())
+	_check("the demo: thrown ball in universe B, dropped balls land where they fell and rest", drops.size() == 2 and not orange.is_empty() and orange["l"] < -sp.L and drift < 0.3 and speed < 0.05 and creep < 1e-5,
+			"thrown ball at l = %.2f, dropped balls moved %.3f m sideways (pulled toward the throat), now at %.3f m/s, %.7f m in the last 2 s, %d balls" % [orange.get("l", 0.0), drift, speed, creep, w.balls.size()])
+	w.balls.clear()
+	w.cubes.clear()

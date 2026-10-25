@@ -13,6 +13,8 @@ extends RefCounted
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 
 const STEP := 0.02  # metres per RK4 step
+const GRAV_NODES := 64   # nodes of the gravity table on the fillet
+const GRAV_SUB := 8      # RK4 steps between nodes
 
 var rho0: float
 var h: float
@@ -21,6 +23,12 @@ var Lc: float
 var th0: float
 var L: float
 var Rout: float
+# gravity (see gravity_f): f = grav_a cosh(grav_k l) on the cylinder, a table on the fillet,
+# r + grav_beta / r^2 in the flat universes
+var grav_a := 1.0
+var grav_k := 1.0
+var grav_beta := 0.0
+var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_NODES, interleaved
 
 
 func _init(throat_radius: float, half_length: float, fillet_radius: float) -> void:
@@ -35,6 +43,7 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	th0 = asin(maxf(1.0 - h / fillet, 0.0))
 	L = Lc + fillet * (PI / 2.0 - th0)
 	Rout = rho0 + fillet
+	_build_gravity()
 
 
 func _theta(al: float) -> float:
@@ -199,6 +208,105 @@ func height_grad(l: float, n: Vector3) -> Vector4:
 	return Vector4(dr(l) * n.z, u.x, u.y, u.z)
 
 
+# ---------------------------------------------------------------- gravity
+# Gravity through the wormhole as in optozorax's video about gravity and portals: the potential
+# obeys Poisson's equation on the curved space itself. There is no mass near the wormhole (the
+# field comes from far below, like the Earth's), so the potential is harmonic, and far away it
+# is ordinary uniform gravity, g z, in both universes. The space is SO(3)-symmetric, so with
+# phi = g f(l) n_z the equation separates exactly into (r^2 f')' = 2 f, f even, f = r + beta / r^2
+# in the flat universes (ref/gravity.py, checked there against a 2D solve of the full equation).
+# On the throat's cylinder f = a cosh(sqrt(2) l / rho0): the field is screened, and in the
+# middle of the long throat gravity on the floor is about 0.2 g.
+
+## Solve the ODE for the current profile: closed form on the cylinder, RK4 over the fillet into
+## a table, then scale so that f = r + beta / r^2 outside.
+func _build_gravity() -> void:
+	grav_k = sqrt(2.0) / rho0
+	# f and the flux p = r^2 f' at l = Lc; plain floats, as Vector2 is single precision
+	var f := 1.0
+	var p := 0.0
+	if Lc > 0.0:
+		f = cosh(grav_k * Lc)
+		p = rho0 * rho0 * grav_k * sinh(grav_k * Lc)
+	var d := (L - Lc) / GRAV_NODES
+	var hs := d / GRAV_SUB
+	var raw := PackedFloat64Array()
+	for i in GRAV_NODES + 1:
+		var l := Lc + i * d
+		raw.append(f)
+		raw.append(p / (r(l) * r(l)))
+		if i == GRAV_NODES:
+			break
+		for _s in GRAV_SUB:               # RK4 for f' = p / r^2, p' = 2 f
+			var rm := r(l + 0.5 * hs)
+			var r1 := r(l + hs)
+			var f1 := p / (r(l) * r(l))
+			var p1 := 2.0 * f
+			var f2 := (p + 0.5 * hs * p1) / (rm * rm)
+			var p2 := 2.0 * (f + 0.5 * hs * f1)
+			var f3 := (p + 0.5 * hs * p2) / (rm * rm)
+			var p3 := 2.0 * (f + 0.5 * hs * f2)
+			var f4 := (p + hs * p3) / (r1 * r1)
+			var p4 := 2.0 * (f + hs * f3)
+			f += hs / 6.0 * (f1 + 2.0 * f2 + 2.0 * f3 + f4)
+			p += hs / 6.0 * (p1 + 2.0 * p2 + 2.0 * p3 + p4)
+			l += hs
+	var fe: float = raw[2 * GRAV_NODES]                 # at l = L, where r = Rout
+	var fpe: float = raw[2 * GRAV_NODES + 1]
+	var a := (2.0 * fe + Rout * fpe) / (3.0 * Rout)
+	grav_beta = Rout * Rout * (fe - Rout * fpe) / (3.0 * a)
+	grav_a = 1.0 / a
+	_grav_tab = PackedFloat64Array()
+	for v in raw:
+		_grav_tab.append(v / a)
+
+
+## (f, df/dl) at l: the potential is g f(l) n_z. f is even, f' odd. On the fillet a cubic Hermite
+## interpolant of the table, and f' is its derivative, so the force is exactly minus the
+## gradient of the potential (energy is conserved).
+func gravity_f(l: float) -> Vector2:
+	var al := absf(l)
+	var sg := -1.0 if l < 0.0 else 1.0
+	if al >= L:
+		var rr := al - L + Rout
+		return Vector2(rr + grav_beta / (rr * rr), sg * (1.0 - 2.0 * grav_beta / (rr * rr * rr)))
+	if al <= Lc:
+		return Vector2(grav_a * cosh(grav_k * al), sg * grav_a * grav_k * sinh(grav_k * al))
+	var d := (L - Lc) / GRAV_NODES
+	var x := (al - Lc) / d
+	var i := mini(int(x), GRAV_NODES - 1)
+	var t := x - i
+	var f0 := _grav_tab[2 * i]
+	var m0 := _grav_tab[2 * i + 1]
+	var f1 := _grav_tab[2 * i + 2]
+	var m1 := _grav_tab[2 * i + 3]
+	var t2 := t * t
+	var t3 := t2 * t
+	var f := (2.0 * t3 - 3.0 * t2 + 1.0) * f0 + (t3 - 2.0 * t2 + t) * d * m0 \
+			+ (3.0 * t2 - 2.0 * t3) * f1 + (t3 - t2) * d * m1
+	var fp := ((6.0 * t2 - 6.0 * t) * (f0 - f1)) / d + (3.0 * t2 - 4.0 * t + 1.0) * m0 \
+			+ (3.0 * t2 - 2.0 * t) * m1
+	return Vector2(f, sg * fp)
+
+
+## The potential divided by g, in metres: the chart height z far from the wormhole.
+func potential(l: float, n: Vector3) -> float:
+	return gravity_f(l).x * n.z
+
+
+## Its gradient; gravity is -g times this. On the floor it is the floor normal times
+## floor_gravity(l).
+func potential_grad(l: float, n: Vector3) -> Vector4:
+	var F := gravity_f(l)
+	var u := (Vector3(0.0, 0.0, 1.0) - n.z * n) * (F.x / r(l))
+	return Vector4(F.y * n.z, u.x, u.y, u.z)
+
+
+## Strength of gravity on the floor at l, in g.
+func floor_gravity(l: float) -> float:
+	return gravity_f(l).x / r(l)
+
+
 ## Chart side and chart position of a point in a flat region.
 func chart_position(l: float, n: Vector3) -> Vector3:
 	var x := r(l) * n
@@ -207,7 +315,7 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	return x
 
 
-## One RK4 step of free motion under the field g = -grav * grad H (geodesic + force).
+## One RK4 step of free motion under gravity, -grav * potential_grad (geodesic + force).
 ## The vectors in frame (a body's axes) are parallel-transported along the step.
 ## Returns [l, n, U, frame].
 func dynamics_step(l: float, n: Vector3, U: Vector4, dt: float, grav: float, frame: Array = []) -> Array:
@@ -216,7 +324,7 @@ func dynamics_step(l: float, n: Vector3, U: Vector4, dt: float, grav: float, fra
 		var k := dr(ll) / rr
 		var v := Vector3(UU.y, UU.z, UU.w)
 		var du := -k * UU.x * v - (v.dot(v) / rr) * nn
-		var a := Vector4(k * v.dot(v), du.x, du.y, du.z) - grav * height_grad(ll, nn)
+		var a := Vector4(k * v.dot(v), du.x, du.y, du.z) - grav * potential_grad(ll, nn)
 		var dF := []
 		for A: Vector4 in FF:
 			var au := Vector3(A.y, A.z, A.w)

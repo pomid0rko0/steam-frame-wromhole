@@ -3,10 +3,11 @@ extends RefCounted
 ## Balls and cubes moving through the wormhole space.
 ##
 ## A ball is a point (l, n) with velocity U = (U_l, u) and a radius. Free motion follows
-## geodesics (zero redshift: no gravity from the metric itself) plus an explicit field
-## pulling toward the floor, -g grad H with H = r(l) n_z, which is ordinary uniform gravity
-## in both flat universes. H is the z coordinate of R^4, so this is uniform gravity of R^4
-## held on the hypersurface. Collisions use chord distances in R^4, the same definition of a
+## geodesics (zero redshift: no gravity from the metric itself) plus gravity, -g grad phi.
+## phi is the potential Poisson's equation gives on the curved space itself, as in optozorax's
+## video about gravity and portals: ordinary uniform gravity far away in both universes, bent
+## through the wormhole and weaker in the throat (WormholeSpace.potential, ref/gravity.py).
+## Collisions use chord distances in R^4, the same definition of a
 ## ball the shader renders: the points within `radius` of the centre, measured in R^4.
 ##
 ## A cube is a 4D box of R^4 cut by the hypersurface, as a box would be in a 4D SDF scene:
@@ -21,7 +22,7 @@ const GRAVITY := 9.81
 const DT := 1.0 / 180.0
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
-const ROLLING_RESISTANCE := 0.02     # rolling friction coefficient: deceleration 0.02 g on the floor
+const ROLLING_RESISTANCE := 0.02     # rolling friction coefficient: deceleration 0.02 g on a flat floor
 const MAX_BALLS := 8
 const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls nearby
 const MAX_CUBES := 6
@@ -73,11 +74,12 @@ func step(delta: float, hands: Array) -> void:
 		for b in balls:
 			if b["held"] != &"":
 				continue
+			var before: Array = [b["l"], b["n"], b["U"]]
 			var s := space.dynamics_step(b["l"], b["n"], b["U"], DT, GRAVITY)
 			b["l"] = s[0]
 			b["n"] = s[1]
 			b["U"] = s[2]
-			_floor(b)
+			_floor(b, before)
 			_statics(b)
 		for c in cubes:
 			if c["held"] == &"" and c["still"] <= SLEEP_TIME:
@@ -98,7 +100,8 @@ func gap(a: Dictionary, b: Dictionary) -> float:
 	return (space.embed(a["l"], a["n"]) - space.embed(b["l"], b["n"])).length() - a["radius"] - b["radius"]
 
 
-func _floor(b: Dictionary) -> void:
+## Bounce, rolling friction and the floor's push. before: [l, n, U] before this step's motion.
+func _floor(b: Dictionary, before: Array) -> void:
 	var H := space.height(b["l"], b["n"])
 	var rad: float = b["radius"]
 	if H >= rad:
@@ -115,7 +118,17 @@ func _floor(b: Dictionary) -> void:
 	var Ut := U - U.dot(N) * N
 	var speed := Ut.length()
 	if speed > 0.0:
-		U -= Ut * (minf(ROLLING_RESISTANCE * GRAVITY * DT, speed) / speed)
+		# rolling friction follows the weight on the floor, which is weaker in the throat
+		var weight := GRAVITY * maxf(space.potential_grad(b["l"], b["n"]).dot(N), 0.0)
+		var stop := ROLLING_RESISTANCE * weight * DT
+		if speed <= stop and before[2].length() < 1e-6:
+			# at rest and held by friction: gravity pulls slightly along the floor near the
+			# wormhole, so undo this step's motion instead of letting the ball creep
+			b["l"] = before[0]
+			b["n"] = before[1]
+			b["U"] = Vector4.ZERO
+			return
+		U -= Ut * (minf(stop, speed) / speed)
 	b["U"] = U
 	_move(b, N, (rad - H) / gl)
 

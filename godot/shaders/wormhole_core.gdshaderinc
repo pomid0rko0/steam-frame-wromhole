@@ -32,6 +32,11 @@
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
 // The floor is the totally geodesic equatorial surface n.z = 0 (z = 0 in both charts).
+//
+// With WH_SLICE defined (and a uniform bool wh_sliceOn declared), wh_trace also reports where a
+// ray first crosses the vertical surface n.x = 0 through the wormhole (x = 0 in both charts, also
+// totally geodesic): the crossing does not stop the ray, so the including file can draw something
+// see-through there (the gravity arrows of wormhole.gdshader).
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;
@@ -119,14 +124,37 @@ float wh_boxDist(vec4 d) {
     return length(max(q, vec4(0.0))) + min(max(max(q.x, q.y), max(q.z, q.w)), 0.0);
 }
 
+// The first crossing of the slice n.x = 0 along a ray: point (l, n) and path length from the eye.
+struct WhSlice {
+    bool found;
+    float l;
+    vec3 n;
+    float dist;
+};
+
+// Within a fillet step from v0 of length hs (direction dv) whose angle grows by dIx: the part u
+// of the step at which the angle has grown by target (Newton on the Gauss-Legendre integral).
+float wh_psiAt(WhRay o, float v0, float dv, float hs, float target, float dIx) {
+    float u = hs * target / max(dIx, 1e-30);
+    for (int it = 0; it < 2; it++) {
+        float I = 0.5 * u * (wh_g(o, v0 + dv * u * 0.21132486540518713).x
+                           + wh_g(o, v0 + dv * u * 0.78867513459481287).x);
+        u = clamp(u - (I - target) / max(wh_g(o, v0 + dv * u).x, 1e-30), 0.0, hs);
+    }
+    return u;
+}
+
 // Ray starting inside (or on the boundary of) the shell, |ls| <= L. Returns
 //   0: leaves the shell, given in flat chart coordinates (outSide, outX, outD)
 //   1: hits the floor at (hitL, hitN)        2: enters ball ballI at (hitL, hitN)
 //      (ballI >= WH_MAXB: cube ballI - WH_MAXB)
-// arc = path length travelled inside the shell.
+// arc = path length travelled inside the shell. With WH_SLICE: the first crossing of n.x = 0
+// goes into sl (if not found before; dist0 = path length before the shell), even when it lies
+// beyond the event that ends the ray (the caller compares the distances).
 int wh_curved(float ls, vec3 ns, float vl, vec3 w,
               out float hitL, out vec3 hitN, out int ballI,
-              out float outSide, out vec3 outX, out vec3 outD, out float arc) {
+              out float outSide, out vec3 outX, out vec3 outD, out float arc,
+              inout WhSlice sl, float dist0) {
     float rho0 = wh_rho0;
     float R = wh_fillet;
     float Lc = wh_Lc();
@@ -156,6 +184,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     float psiF = mod(atan(e2.z, e1.z) + 0.5 * WH_PI, WH_PI);
     bool above = ns.z > 0.0;
     float psi = 0.0;
+#ifdef WH_SLICE
+    // first crossing of the slice (n.x = 0) in the orbit plane; none if the plane is the slice
+    bool slc = wh_sliceOn && !sl.found && abs(e1.x) + abs(e2.x) > 1e-7;
+    float psiS = slc ? mod(atan(e2.x, e1.x) + 0.5 * WH_PI, WH_PI) : 1e30;
+#endif
 
     // Balls that this ray can reach: the whole ray lies in span(e1, e2, w-axis) of R^4,
     // so a ball whose centre is farther than its radius from that subspace is never hit.
@@ -258,6 +291,15 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             float vlc = max(sqrt(max(1.0 - wc * wc, 0.0)), 1e-7);
             float k = wc / (rho0 * vlc);
             float xF = above ? (psiF - psi) / max(k, 1e-30) : 1e30;   // floor, measured from x0
+#ifdef WH_SLICE
+            if (slc && !sl.found && k > 1e-30 && psiS - psi <= k * D) {
+                float xS = (psiS - psi) / k;
+                sl.found = true;
+                sl.l = side * (x0 + xS);
+                sl.n = cos(psiS) * e1 + sin(psiS) * e2;
+                sl.dist = dist0 + arc + xS / vlc;
+            }
+#endif
             float xB = 1e30;
             if (near) {
                 float u = 0.0;
@@ -361,16 +403,16 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                 dI = hs / 6.0 * (ga + 4.0 * gm + gb);
             }
             float uF = 1e30;
-            if (above && psi + dI.x >= psiF) {
-                float target = psiF - psi;
-                float u = hs * target / max(dI.x, 1e-30);
-                for (int it = 0; it < 2; it++) {
-                    float I = 0.5 * u * (wh_g(o, v0 + dv * u * 0.21132486540518713).x
-                                       + wh_g(o, v0 + dv * u * 0.78867513459481287).x);
-                    u = clamp(u - (I - target) / max(wh_g(o, v0 + dv * u).x, 1e-30), 0.0, hs);
-                }
-                uF = u;
+            if (above && psi + dI.x >= psiF) uF = wh_psiAt(o, v0, dv, hs, psiF - psi, dI.x);
+#ifdef WH_SLICE
+            if (slc && !sl.found && psi + dI.x >= psiS) {
+                float uS = wh_psiAt(o, v0, dv, hs, psiS - psi, dI.x);
+                sl.found = true;
+                sl.l = wh_lOnFillet(o, side, v0 + dv * uS);
+                sl.n = cos(psiS) * e1 + sin(psiS) * e2;
+                sl.dist = dist0 + arc + dI.y * uS / hs;
             }
+#endif
             float uB = 1e30;
             if (near) {
                 float pE = psi + dI.x;
@@ -782,7 +824,25 @@ vec3 wh_shadeCubeCurved(int i, float l, vec3 n, float dist, out vec4 dbg) {
     return wh_fog(side, wh_shade(side, wh_cubeLook(i, d), nrm), dist);
 }
 
-vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
+// The flat segment from x along d up to its hit h: does it cross the slice x = 0 first?
+void wh_sliceFlat(float side, vec3 x, vec3 d, WhHit h, float dist, inout WhSlice sl) {
+#ifdef WH_SLICE
+    if (!wh_sliceOn || sl.found || abs(d.x) < 1e-9) return;
+    float t = -x.x / d.x;
+    if (t <= 0.0 || t >= h.t) return;
+    vec3 p = x + t * d;
+    float rp = length(p);
+    sl.found = true;
+    sl.l = side * (rp - wh_Rout() + wh_Lsh());
+    sl.n = wh_M(side, p) / rp;
+    sl.dist = dist + t;
+#endif
+}
+
+// wh_render, and the first crossing of the slice before the ray's hit (sl.found false: none,
+// or WH_SLICE not defined).
+vec3 wh_trace(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg, out WhSlice sl) {
+    sl.found = false; sl.l = 0.0; sl.n = vec3(0.0); sl.dist = 0.0;
     float side = l0 > 0.0 ? 1.0 : -1.0;
     vec3 x = vec3(0.0);
     vec3 d = vec3(0.0);
@@ -796,7 +856,8 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
     for (int seg = 0; seg < 2; seg++) {
         if (inShell) {
             float hl; vec3 hn; int bi; float arc;
-            int ev = wh_curved(l0, n0, vl, w, hl, hn, bi, side, x, d, arc);
+            int ev = wh_curved(l0, n0, vl, w, hl, hn, bi, side, x, d, arc, sl, dist);
+            if (ev != 0 && sl.found && sl.dist > dist + arc) sl.found = false;    // behind the hit
             if (ev == 1) {
                 float fs = hl > 0.0 ? 1.0 : -1.0;
                 dbg = vec4(fs > 0.0 ? 3.0 : 2.0, hl, hn.xy);
@@ -809,6 +870,7 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
             shellAhead = false;
         }
         WhHit h = wh_traceFlat(side, x, d, shellAhead);
+        wh_sliceFlat(side, x, d, h, dist, sl);
         if (h.kind != 3) return wh_shadeFlat(side, x, d, h, dist, dbg);
         dist += h.t;
         wh_enter(side, x + h.t * d, d, l0, n0, vl, w);
@@ -816,4 +878,9 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
     }
     dbg = vec4(-1.0);
     return vec3(1.0, 0.0, 1.0);
+}
+
+vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
+    WhSlice sl;
+    return wh_trace(l0, n0, vl, w, dbg, sl);
 }
