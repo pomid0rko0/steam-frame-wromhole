@@ -101,8 +101,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   in the balls shaders too; 24 registers (8 waves) instead of 32; the frame split by the stencil
   (`main._update_proxies`, `shaders/stencil_mark*.gdshader`): spheres around the shell and this
   universe's toys mark where the toys' ray tracer runs, the plain one runs elsewhere (a second
-  quad, `plain_material`). Model: 5.8 -> 4.6 ms over the speed check's 13 poses, start 4.3 -> 2.9,
-  throat sideways 6.2 -> 4.2. Not checked in the headset yet.
+  quad, `plain_material`). Model: 5.8 -> 4.5 ms over the speed check's 13 poses, start 4.3 -> 2.9,
+  throat sideways 6.2 -> 4.0. Not checked in the headset yet.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
