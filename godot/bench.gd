@@ -36,6 +36,7 @@ extends Node
 
 const RateMeter := preload("res://rate_meter.gd")
 const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
+const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
 const PLACES := [   # the comparison's poses: [l, degrees to the right of the throat, degrees up]
@@ -49,6 +50,7 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[5.0, 0.0, -35.0],  # down at the floor
 	[5.0, 0.0, 35.0],   # up
 	[0.0, 0.0, 0.0],    # in the throat
+	[0.0, 90.0, 0.0],   # in the throat, looking sideways round it: the demo's dearest
 	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat: its boxes cost more than A's pillars
 	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat: where 144 Hz fell to 72
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
@@ -77,9 +79,10 @@ var with_tour := true
 var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
-var others: Array = []          # [label, Shader] from res://shaders/ab/
-var variants: Array = []        # this run's [label, Shader, foveation, split]: others (if the scene
-                                # has no movable balls), then this build's (FOVEATIONS)
+var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
+var variants: Array = []        # this run's [label, Shader, foveation, split]: others (of the kind
+                                # this build runs: with movable balls or without), then this
+                                # build's (FOVEATIONS)
 var own := 0                    # the variant that is this build as it always ran
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
@@ -112,7 +115,8 @@ func _ready() -> void:
 		if not ResourceLoader.exists(path):
 			break
 		var sh: Shader = load(path)
-		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh])
+		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
+		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls])
 	auto = FileAccess.file_exists(AUTO)
 
 
@@ -151,10 +155,12 @@ func start() -> void:
 	running = true
 	own_shader = main.material.shader
 	variants = []
-	# others are ray tracers without movable balls: compared only with the same kind
-	if own_shader == main.SHADER_PLAIN:
-		for o in others:
+	# others compared with the same kind: without movable balls, or with them (the demo's toys)
+	for o in others:
+		if own_shader == main.SHADER_PLAIN:
 			variants.append([o[0], o[1], 0, false])
+		elif own_shader == main.SHADER_BALLS and o[2] != null:
+			variants.append([o[0], o[2], 0, false])
 	own = variants.size()
 	for f in FOVEATIONS:
 		variants.append([f[0], own_shader, f[1], f[2]])

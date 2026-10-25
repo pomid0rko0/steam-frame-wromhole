@@ -8,7 +8,8 @@
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks that the emulated colours are Godot's
 # (lavapipe) picture, pixel for pixel. --balls: the shader with movable balls (the stereo check's).
-# --toys: the demo's balls and cubes, after the throw and the drop, at rest (the shader with balls).
+# --toys: the demo's balls and cubes, after the throw and the drop, at rest (the shader with balls;
+# other sources' shader with balls too, as tools/ab_shaders.sh copies it).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
@@ -46,7 +47,7 @@ trap restore EXIT
 others=()
 for s in "${srcs[@]}"; do [ "$s" = this ] || others+=("$s"); done
 if [ ${#others[@]} -gt 0 ]; then "$ROOT/tools/ab_shaders.sh" "${others[@]}" >/dev/null || exit 1; fi
-[ -n "$POSES" ] || POSES="11.6,0,0;6.2,0,0;6.2,60,0;5.0,0,0;5.0,90,0;5.0,180,0;5.0,0,-35;5.0,0,35;0,0,0;-5.0,180,0;-5.7,160,-5;-6.2,180,0"   # bench.gd PLACES
+[ -n "$POSES" ] || POSES="11.6,0,0;6.2,0,0;6.2,60,0;5.0,0,0;5.0,90,0;5.0,180,0;5.0,0,-35;5.0,0,35;0,0,0;0,90,0;-5.0,180,0;-5.7,160,-5;-6.2,180,0"   # bench.gd PLACES
 scene=$([ -n "$BALLS" ] && echo balls || ([ -n "$TOYS" ] && echo toys || echo plain))
 n=0
 for s in "${srcs[@]}"; do
@@ -58,7 +59,8 @@ for s in "${srcs[@]}"; do
 		sc=$scene+gravity$GRAV
 		stsh=res://shaders/$([ -n "$TOYS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
 	fi
-	[ -n "$BALLS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
+	[ -n "$BALLS$TOYS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
+	[ -n "$sh" ] && stsh=$sh
 	log=$WORK/$n.log
 	# Godot compiles the ubershader and the specialised program on two threads, and their listings
 	# can come out interleaved in the log: compile again until the program parses
