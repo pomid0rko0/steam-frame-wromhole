@@ -304,6 +304,24 @@ struct WhFil {
     float ra; float span;  // r = ra + span tau
 };
 
+// min(al, ga) and |al - ga|: with movable objects worked out where used, not held through their
+// search
+float wh_mn(WhFil f) {
+#ifdef WH_NO_BALLS
+    return f.mn;
+#else
+    return min(f.al, f.ga);
+#endif
+}
+
+float wh_dm(WhFil f) {
+#ifdef WH_NO_BALLS
+    return f.mx - f.mn;
+#else
+    return abs(f.al - f.ga);
+#endif
+}
+
 // regime 0: the moments from z, tau and S = sqrt((t + al)(t + ga))
 vec4 wh_filRec(WhFil f, float z, float t, float S) {
     float B = f.al + f.ga;
@@ -320,18 +338,19 @@ vec4 wh_filRec(WhFil f, float z, float t, float S) {
 void wh_filMom(WhFil f, float z, out float t, out vec4 m) {
     if (f.reg == 0) {
         float Es = f.E0 * exp(z);                      // sqrt(t + al) + sqrt(t + ga)
-        float sm = 0.5 * (Es - (f.mx - f.mn) / Es);    // sqrt(t + mn)
-        t = max(sm * sm - f.mn, 0.0);
+        float sm = 0.5 * (Es - wh_dm(f) / Es);         // sqrt(t + mn)
+        t = max(sm * sm - wh_mn(f), 0.0);
         m = wh_filRec(f, z, t, sm * (Es - sm));
     } else {
-        t = max(z * z - f.mn, 0.0);
+        float mn = wh_mn(f);
+        t = max(z * z - mn, 0.0);
         if (f.reg == 1) {                              // w = 1 / (2 sqrt(t + mn))
             float n0 = t / (z + f.zlo);                // zlo = sqrt(mn)
             float ty = t * z;
-            float n1 = (ty - 2.0 * f.mn * n0) / 3.0;
+            float n1 = (ty - 2.0 * mn * n0) / 3.0;
             ty *= t;
-            float n2 = (ty - 4.0 * f.mn * n1) / 5.0;
-            m = vec4(n0, n1, n2, (ty * t - 6.0 * f.mn * n2) / 7.0);
+            float n2 = (ty - 4.0 * mn * n1) / 5.0;
+            m = vec4(n0, n1, n2, (ty * t - 6.0 * mn * n2) / 7.0);
         } else {                                       // w = 1/2
             float t2 = t * t;
             m = vec4(0.5 * t, 0.25 * t2, t2 * t / 6.0, 0.125 * t2 * t2);
@@ -348,7 +367,7 @@ float wh_filMomT(WhFil f, float t, out vec4 m) {
         m = wh_filRec(f, z, t, sa * sg);
         return z;
     }
-    float z = sqrt(t + f.mn);
+    float z = sqrt(t + wh_mn(f));
     float tz;
     wh_filMom(f, z, tz, m);
     return z;
@@ -519,10 +538,10 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     // first crossing of the floor in the orbit plane, n = cos psi e1 + sin psi e2: n.z starts
     // positive and its zeros are pi apart, so the ray meets the floor in the shell if it turns by pi
     // or more, or if n.z is negative where it leaves. Only those rays need the crossing's angle.
+#ifdef WH_NO_BALLS
     float ct = cos(tot.x);
     float st = sin(tot.x);
     bool floorHit = ns.z > 0.0 && (tot.x >= WH_PI || ns.z * ct + e2.z * st < 0.0);
-#ifdef WH_NO_BALLS
     float arcEnd = tot.y;
     if (floorHit) {
         // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
@@ -555,6 +574,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     }
     arc = arcEnd;
 #else
+    // n.z where it leaves, from the half angle: cos and sin of the whole would be held through the
+    // search for the exit point (the compiler merges the same expressions)
+    float ch = cos(0.5 * tot.x);
+    float sh = sin(0.5 * tot.x);
+    bool floorHit = ns.z > 0.0 && (tot.x >= WH_PI || ns.z * (ch * ch - sh * sh) + 2.0 * e2.z * sh * ch < 0.0);
     // Where on the path the ray ends: 2 piece + the fraction of it (piece 0 A, 1 B, 2 C; 6: the
     // edge), as movable objects' hits are ordered (below). The floor point itself is worked out
     // after the search, from there, as an object's hit is: the search then holds fewer numbers.
@@ -645,7 +669,6 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     float hitK = keyEnd;   // where the nearest hit so far is, or the ray's end
     int hitI = -1;         // its object: ball i, or WH_MAXB + cube i
     vec4 prs = wh_prof(ls);
-    int budget = 160;
     for (int mm = cand; mm != 0; mm &= mm - 1) {
         int bit = findLSB(mm);
         bool isCube = bit >= 16;
@@ -657,31 +680,24 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         float cc = dot(C.xyz, C.xyz);
         float perp2 = max(cc - cb.x * cb.x - cb.y * cb.y, 0.0);  // its distance from it, squared
         float rc = sqrt(cc);
-        vec4 win = vec4(rc - reach, rc + reach, C.w - reach, C.w + reach);   // r from, to; w from, to
         float rho2 = dot(cb.xy, cb.xy);
         float re2 = reach * reach - perp2;
         float psc = wh_atan2(cb.y, cb.x);
         psc = psc < -0.5 * WH_PI ? psc + 2.0 * WH_PI : psc;     // the copy that can meet [0, pi)
         float dps = re2 < rho2 ? wh_asin(sqrt(re2 / rho2)) : 10.0;
-        float ds = 0.35 * size;
         vec3 prevQ = vec3(prs.x, 0.0, prs.y);    // the previous sample, (u, v, w) in the subspace
         bool carry = true;                       // prevQ is where the next piece starts
-        bool done = false;
         for (int p = 0; p < 3; p++) {
             // piece p: a fillet from z0 to z1 (sign sg: psi from the inner end grows with z along
             // the travel, or shrinks), or the cylinder (x0B .. x0B + DB)
             bool cyl = p == 1;
-            if ((p == 0 && !hasA) || (cyl && !hasB) || done) continue;
+            if ((p == 0 && !hasA) || (cyl && !hasB)) continue;
             float qEnd = hitK - 2.0 * float(p);      // the nearest hit so far, or the ray's end
             if (qEnd <= 0.0) break;
-            vec2 base = p == 0 ? PA : (cyl ? PA : PA + PB - C0);       // cumulative = base + sg * S(z)
-            float sg = p == 0 ? -1.0 : 1.0;
-            float z0 = p == 0 ? zs : (cFromStart ? zs : f.zlo);
-            float z1 = p == 0 ? f.zlo : f.zhi;
-            float side = p == 0 ? sideA : sideC;
-            float plen = p == 0 ? PA.y : (cyl ? PB.y : PC.y);
             float psi0 = p == 0 ? 0.0 : (cyl ? PA.x : PA.x + PB.x);    // the piece's psi range
             float psi1 = p == 0 ? PA.x : (cyl ? PA.x + PB.x : tot.x);
+            // the windows: r from, to; w from, to (worked out here, not held through the search)
+            vec4 win = vec4(rc - reach, rc + reach, cb.z - reach, cb.z + reach);
             // the piece's part in the windows, as fractions q of it: on the cylinder r = rho0,
             // w = l = d pz and psi = psi0 + PB.x q; on a fillet r = rho0 + R (1 - cos th) and
             // side w = h - R + R sin th, both growing with th
@@ -693,13 +709,16 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     if (rho0 >= win.x && rho0 <= win.y)
                         qw = vec2(max(min(pw.x, pw.y), qa.x), min(max(pw.x, pw.y), qa.y));
                 } else {
+                    float side = p == 0 ? sideA : sideC;
+                    float z0 = p == 0 || cFromStart ? zs : f.zlo;
+                    float z1 = p == 0 ? f.zlo : f.zhi;
                     vec2 y = (side > 0.0 ? win.zw : -win.wz) - (wh_h - R);     // R sin th at the w bounds
                     if (y.y >= 0.0 && y.x <= R) {
                         vec2 yc = clamp(y, 0.0, R);
                         vec2 rw = rho0 + R - sqrt(R * R - yc * yc);
                         vec2 tw = clamp((vec2(max(win.x, rw.x), y.y >= R ? win.y : min(win.y, rw.y)) - f.ra) / f.span, 0.0, 1.0);
                         // z at those tau (wh_filMomT without the moments)
-                        vec2 zw = f.reg == 0 ? log((sqrt(tw + f.al) + sqrt(tw + f.ga)) / f.E0) : sqrt(tw + f.mn);
+                        vec2 zw = f.reg == 0 ? log((sqrt(tw + f.al) + sqrt(tw + f.ga)) / f.E0) : sqrt(tw + wh_mn(f));
                         float dz = z1 - z0;
                         vec2 qz = (zw - z0) / (abs(dz) > 1e-12 ? dz : 1e-12);
                         if (tw.y > tw.x) qw = vec2(min(qz.x, qz.y), max(qz.x, qz.y));
@@ -708,8 +727,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
             }
             qw = vec2(max(qw.x, 0.0), min(min(qw.y, 1.0), qEnd));
             if (qw.y <= qw.x) { carry = false; continue; }
-            int N = int(clamp(ceil(plen * (qw.y - qw.x) / ds), 1.0, float(max(budget, 1))));
-            budget -= N;
+            int N = int(clamp(ceil((p == 0 ? PA.y : (cyl ? PB.y : PC.y)) * (qw.y - qw.x) / (0.35 * size)), 1.0, 160.0));
             // the first sample: where the window starts, unless that is where the last one was
             int j0 = carry && qw.x <= 0.0 ? 1 : 0;
             float q0 = qw.x;
@@ -723,19 +741,20 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 // point where the chord enters (one sample routine for both: its code exists once)
                 for (int it = 0; it < 2; it++) {
                     float q = it == 0 ? qb : mix(q0, qb, tHit);
-                    float pz = cyl ? x0B + DB * q : mix(z0, z1, q);
+                    // the point at q, from the ray's values (the piece's own would be held through the search)
                     float psi; float r; float w4;
                     if (cyl) {
-                        psi = psi0 + kc * (pz - x0B);
+                        psi = PA.x + PB.x * q;
                         r = rho0;
-                        w4 = d * pz;
+                        w4 = d * (x0B + DB * q);
                     } else {
+                        bool pA = p == 0;
                         float t; vec4 m;
-                        wh_filMom(f, pz, t, m);
-                        psi = base.x + sg * dot(f.e, m);
+                        wh_filMom(f, mix(pA || cFromStart ? zs : f.zlo, pA ? f.zlo : f.zhi, q), t, m);
+                        psi = pA ? PA.x - dot(f.e, m) : PA.x + PB.x - C0.x + dot(f.e, m);
                         r = f.ra + f.span * t;
                         float cth = rho0 + R - r;           // R cos th
-                        w4 = side * (wh_h - R + sqrt(max(R * R - cth * cth, 0.0)));
+                        w4 = (pA ? sideA : sideC) * (wh_h - R + sqrt(max(R * R - cth * cth, 0.0)));
                     }
                     vec3 Q1 = vec3(r * cos(psi), r * sin(psi), w4);
                     if (it == 1) {
@@ -756,16 +775,15 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         if (miss <= sag && key < hitK) {
                             hitK = key;
                             hitI = isCube ? WH_MAXB + i : i;
-                            done = true;
                         }
                         break;
                     }
-                    vec3 D = Q1 - prevQ;
-                    float A = max(dot(D, D), 1e-20);
+                    vec3 D = Q1 - prevQ;     // the chord (Q1 itself is not held: prevQ + D)
                     float tc = -1.0;
                     if (j > 0) {
                         if (!isCube) {
                             vec3 a = prevQ - cb;
+                            float A = max(dot(D, D), 1e-20);
                             float B = dot(a, D);
                             float Cq = dot(a, a) + perp2 - size * size;
                             float disc = B * B - A * Cq;
@@ -774,13 +792,13 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                             tc = wh_chordInCube(i, prevQ, D, e1, e2, cb, perp2);
                         }
                     }
-                    prevQ = Q1;
+                    prevQ += D;
                     if (tc < 0.0 || tc > 1.0) break;
                     tHit = tc;
-                    sag = A / (8.0 * min(R, rho0)) + 1e-4;
+                    sag = dot(D, D) / (8.0 * min(R, rho0)) + 1e-4;
                 }
                 q0 = qb;
-                if (done) break;
+                if (2.0 * float(p) + qb > hitK) break;     // a hit before here (the later pieces end there too)
             }
             carry = qw.y >= 1.0;
         }
@@ -812,8 +830,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     }
     // leaves the shell at its edge, on side sideC: worked out after the search, which then holds
     // fewer numbers
-    ct = cos(tot.x);
-    st = sin(tot.x);
+    float ct = cos(tot.x);
+    float st = sin(tot.x);
     vec3 n = ct * e1 + st * e2;
     vec3 tt = ct * e2 - st * e1;
     float bR = b / Rout;
