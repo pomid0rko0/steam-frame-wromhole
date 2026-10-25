@@ -20,7 +20,7 @@ var shader_path := ""
 var gravity := 0
 var toys := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
+		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
 
 
 func _initialize() -> void:

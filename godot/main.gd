@@ -814,9 +814,15 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	var oc := region_order(cpos, rc, space.h, space.Rout)
 	var p := PackedVector4Array()
 	var c := PackedVector4Array()
+	var fb := PackedVector4Array()     # the sphere a flat sheet cuts from it, in that chart
 	for i in ob[0]:
 		p.append(pos[i])
 		c.append(col[i])
+		var C := pos[i]
+		var side := 1.0 if C.w > 0.0 else -1.0
+		var dw := C.w - side * space.h
+		var r2 := col[i].w * col[i].w - dw * dw
+		fb.append(Vector4(side * C.x, C.y, C.z, r2) if r2 > 0.0 else Vector4(0.0, 0.0, 0.0, -1.0))
 	var cp := PackedVector4Array()
 	var cc := PackedVector4Array()
 	var ax := PackedVector4Array()
@@ -831,6 +837,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	while p.size() < 12:
 		p.append(Vector4.ZERO)
 		c.append(Vector4.ZERO)
+		fb.append(Vector4(0.0, 0.0, 0.0, -1.0))
 	while cp.size() < 6:
 		cp.append(Vector4.ZERO)
 		cc.append(Vector4.ZERO)
@@ -844,6 +851,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	material.set_shader_parameter("wh_ballCol", c)
 	material.set_shader_parameter("wh_nBall", n)
 	material.set_shader_parameter("wh_bIdx", ob[1])
+	material.set_shader_parameter("wh_fball", fb)
 	material.set_shader_parameter("wh_cube", cp)
 	material.set_shader_parameter("wh_cubeE", ax)
 	material.set_shader_parameter("wh_cubeCol", cc)

@@ -102,6 +102,7 @@ uniform int wh_nCube;
 uniform vec4 wh_bound[4];
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
+uniform vec4 wh_fball[12];
 uniform float wh_pix;
 uniform float uL0;
 uniform vec3 uN0;
@@ -158,6 +159,13 @@ def render(ctx, state, size, tan, debug):
         cax += [tuple(a / half) for a in ax] + [tuple(float(np.dot(c, a / half)) for a in ax)]
     cax += [(0.0, 0.0, 0.0, 0.0)] * (5 * MAXC - len(cax))
     ccol = [tuple(col) + (half,) for _, _, half, col in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
+    # each ball's sphere in the sheet that cuts it, in that chart (main.set_objects)
+    fball = []
+    for c, rad, _ in BALLS:
+        side = 1.0 if c[3] > 0 else -1.0
+        r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
+        fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
+    fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
     # the bounding spheres of each universe's balls and of its cubes, as main.set_objects makes them
     bound = []
     for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
@@ -173,7 +181,7 @@ def render(ctx, state, size, tan, debug):
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
                      wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_bound=bound, wh_pix=0.002,
-                     wh_bIdx=BIDX, wh_cIdx=CIDX,
+                     wh_bIdx=BIDX, wh_cIdx=CIDX, wh_fball=fball,
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         if k in prog:      # the balls' and cubes' uniforms are gone from the shader without balls

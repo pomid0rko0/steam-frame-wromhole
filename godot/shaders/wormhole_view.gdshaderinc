@@ -55,6 +55,8 @@ uniform vec4 wh_bound[4];
 // where in the sorted lists the balls and cubes of universe A, of the shell and of universe B are
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
+// each ball's sphere in the flat universe whose sheet cuts it, in its chart (centre, radius^2)
+uniform vec4 wh_fball[12];
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
