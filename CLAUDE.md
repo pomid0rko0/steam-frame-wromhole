@@ -31,24 +31,26 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   goes back to the start (`tests/walking_test.gd`, `tests/walking_xr_test.gd`). Checked in the
   headset: all of it works, a little nausea, bearable; crossing the shell's outer edge by stick is
   clean (before `fast-rays` the picture glitched there: frames dropped at 16.6 ms). The cheaper
-  edge frames of `edge-120hz` (merged, below) and the cost model are in it too.
+  edge frames of `edge-120hz` (merged, below) and the cost model are in it too. Foveated
+  rendering (from `foveation`, merged, below) is on by default: our narrow map, the width first.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
   the avatar as balls (`tests/grab_test.gd`).
-- `foveation` (`main` merged in) — foveated rendering from the panel (off by default): SteamVR's
-  density map low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
-  `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`,
-  switched on the panel to compare by eye), both moved to where the eyes look (`XR_META_foveation_eye_tracked` → QCOM
-  offsets) (`main.set_foveation`); the 3D scene in a render pass of its own so that Turnip renders
-  it in tiles (`split_pass.gd`; without tiles the map does nothing); a gaze dot (`main.gaze_dot`,
+- `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
+  low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
+  `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
+  all moved to where the eyes look (`XR_META_foveation_eye_tracked` → QCOM offsets)
+  (`main.set_foveation`); the 3D scene in a render pass of its own so that Turnip renders it in
+  tiles (`split_pass.gd`; without tiles the map does nothing); a gaze dot (`main.gaze_dot`,
   `XR_EXT_eye_gaze_interaction`); the speed check timing this build six ways; `tools/fdm_check.sh`.
-  Checked in the headset with SteamVR's maps: they follow the gaze, -41% (low) / -50% (high) GPU
-  per frame, 120 Hz tour clean with high; the sharp zone's border shows (a square of whole tiles,
-  too small at high, seen catching up with the eyes; looking far aside it seemed to stay in one
-  eye). Our maps are not checked yet; README «Фовеальный рендеринг».
+  Checked in the headset: the maps follow the gaze; GPU per frame against before -41% / -50%
+  (SteamVR low / high), -9% / -38% (own wide / narrow); 120 Hz tours clean; our narrow map with
+  the width first at 144 Hz, 100%: "all super", no border to see, no frame missed in play (only in
+  the second of a switch). The height first shows in the periphery (the floor seen at a grazing
+  angle has more detail up and down). Default: narrow, the width first (`perf_panel.DEFAULT_*`).
 - `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
   4 nodes, README «Почему это real time»), the ray's direction interpolated from the screen's
   corners, one shading per pixel after the trace, the movable balls' code in a separate shader
@@ -82,7 +84,8 @@ Where the README wishes start (wishes without a branch start from `main`):
   `wormhole_core`, measured in the headset by the speed check; without a headset
   `tools/adreno_cost.sh`, then `tools/adreno_stats.sh`); next there: world B's outer edge facing
   the throat, where the model misses ~1 ms;
-- foveated rendering → `foveation` (it holds `main`; its checks in the headset come first);
+- foveated rendering → `main` (merged from `foveation`; the sharp zone is whole tiles, the
+  driver's limit);
 - placing wormholes by hand, several wormholes, flat portals, two-handed shooting, gun models,
   other shapes (torus, arbitrary SDF) → `main`; several wormholes, portals and other shapes are
   renderer work (`wormhole_core` and a reference in `ref/` first);
@@ -101,10 +104,11 @@ When branches are put together, these overlap:
   edge of the curved shell, as the feet do in `set_geometry`.
 - a throat change (`throat`) with `main`'s fillet table: the table depends on the shape: after
   `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop).
-- `foveation` and the render scale: the panel lets one of them be on (the eye-tracked map's
-  offsets are in full-size pixels). Its two rows sit under the scale's; its split pass is on the
-  XR camera's compositor: an effect added there by another branch splits the pass as well. Its
-  action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`).
+- foveation (on `main`) and the render scale: the panel lets one of them be on (the eye-tracked
+  map's offsets are in full-size pixels). Its rows sit under the scale's; its split pass is on the
+  XR camera's compositor: an effect added there by another branch splits the pass as well. The
+  action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`). Branches started
+  before the merge start with foveation off; merged with `main`, they get it on by default.
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).
@@ -179,8 +183,9 @@ draws next to ray-traced ones, check they line up the same way.
   on (#124787 drops that in 4.8), and in full-size pixels (wrong at a render scale below 1);
   `foveation_dynamic` reportedly does nothing on the Frame; the swapchain gets its density map only
   if `foveation_level` > 0 when it is created (so `project.godot` asks for 3 and "off" is
-  `vrs_mode` = disabled). `verbose_stdout` is on in this branch so that the headset's log lists the
-  enabled OpenXR extensions and the driver's density map support. The headset's log: all those
+  `vrs_mode` = disabled). With `debug/settings/stdout/verbose_stdout` on (off now: hundreds of
+  lines at each start) the headset's log lists the enabled OpenXR extensions and the driver's
+  density map support. The headset's log: all those
   extensions, FDM offsets (granularity 8), no shading-rate VRS ("Variable Rate Shading not
   supported"): density only per tile, so the sharp zone is a rectangle of whole tiles. The offsets
   move whatever map is attached, so our own map (`VRS_TEXTURE`, a `Texture2DArray` set with
@@ -195,8 +200,8 @@ draws next to ray-traced ones, check they line up the same way.
   foveated, subsampled swapchain in SteamVR's hands, or the lenses' distance (asked, never answered;
   eyes off the lens centres make the world warp as the head turns). The ray tracer now takes each
   pixel's ray from the corners' interpolation, never from its screen position, so a coarse pixel
-  gets the ray through its centre: exact under any density map. Turning foveation on still needs
-  the headset check (README «Фовеальный рендеринг»).
+  gets the ray through its centre: exact under any density map. With foveation working (eye
+  tracked, our maps, 144 Hz) the owner saw no such thing.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; its display does 72/80/90/96/108/120/144. Other developers report that SteamVR there answers `XR_FB_display_refresh_rate` requests with success and ignores them. It follows the app's own setting `steam.app.<SteamAppId>.preferredRefreshRate`, set with `/opt/steamvr/bin/linuxarm64/vrcmd`; on our Frame (SteamVR 2.18.2) the running app switches within a second, and `xrGetDisplayRefreshRateFB` then reports the true rate. `refresh-rate`'s panel does that from its rate buttons and measures the rate and missed frames from xrWaitFrame's timing (`rate_meter.gd`); its `refresh:` log lines are the data. Measured at 1728×1728 per eye (README, «Что видно в шлеме»): 72 and 80 Hz keep up, 90 Hz falls to every 2nd refresh at times, 96–120 Hz mostly at every 2nd; the GPU stays at its top clock (903 MHz), and a frame costs 6.5–7.7 ms with the wormhole small in view, 11–12 ms with it large: the rays through the curved region are the cost. SteamVR there does not offer `XR_EXT_performance_settings`.
 - **Kernel files.** A sysfs file reports a size of 4096 bytes whatever it holds, and `FileAccess.get_file_as_string` reads that many: garbage after the value, and on the Frame a log full of Unicode errors. Read them with `get_line()` (`perf_panel.gd`, `read_line`).

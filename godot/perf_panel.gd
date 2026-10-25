@@ -32,7 +32,7 @@ extends Label3D
 ##
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. Kept in user://settings.cfg,
-## as is the foveation. The two don't go together: one of them is chosen, the other goes back to
+## as is the foveation (until one is chosen: DEFAULT_FOVEATION). The two don't go together: one of them is chosen, the other goes back to
 ## 100% / off. (Godot asks for the eye-tracked density map's offsets in the headset's full-size
 ## pixels, so at a lower scale the sharp spot would sit beside where one looks.)
 ##
@@ -59,6 +59,9 @@ const SCALES := [1.0, 0.9, 0.8, 0.7]
 # main.set_foveation's levels: 0 off, 1..3 SteamVR's map, 4 and 5 our own (main.OWN_MAPS)
 const FOVEATIONS := ["выкл", "слабая", "средняя", "сильная", "широкая", "узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
+# until one is chosen: our narrow map, the width first (in the headset: no border to see, 144 Hz holds)
+const DEFAULT_FOVEATION := 5
+const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const STATUS_LINES := 4         # the head text, padded: the buttons below stay put
 const BTN_H := 0.06             # m
@@ -172,8 +175,8 @@ func _ready() -> void:
 		cfg.load(SETTINGS)
 		_set_scale(float(cfg.get_value("render", "scale", 1.0)))
 		if viewer:
-			viewer.own_order = clampi(int(cfg.get_value("render", "own_order", 0)), 0, 1)
-		_set_foveation(int(cfg.get_value("render", "foveation", 0)))
+			viewer.own_order = clampi(int(cfg.get_value("render", "own_order", DEFAULT_ORDER)), 0, 1)
+		_set_foveation(int(cfg.get_value("render", "foveation", DEFAULT_FOVEATION)))
 		if foveation > 0:
 			_set_scale(1.0)
 		find_app_setting()

@@ -5,7 +5,8 @@ extends SceneTree
 ## the Steam library, a ray pointed at a rate button and a trigger pull set this app's rate in
 ## SteamVR's settings, and as the display stays at 20 Hz the panel asks for a restart (a display
 ## that follows is answered too); choices made while vrcmd runs end with the last one written;
-## a scale button sets the render scale and keeps it; a foveation button turns foveated rendering
+## a scale button sets the render scale and keeps it; foveation starts with our narrow map; a
+## foveation button turns foveated rendering
 ## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
 ## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
 ## below 100% turns it off again; our own density map comes from a texture, and the order of its
@@ -101,6 +102,9 @@ func _process(_delta: float) -> bool:
 			check("panel heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		check("frames judged, green", p.keeps_up(p.seconds) == true and p.plate_mat.albedo_color == p.COLOR_OK)
 		# after the green check: each step of the render scale rebuilds the buffers, a missed frame or two
+		check("foveation at first: our narrow map, the width first", main.foveation == p.DEFAULT_FOVEATION
+				and main.own_order == p.DEFAULT_ORDER and _color(p, "fov", 5.0) == p.COLOR_ON
+				and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.split_pass.enabled)
 		check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _color(p, "scale", 1.0) == p.COLOR_ON
 				and p.titles[1].text.contains("128 точек на глаз"))
 		var at := _button_point(p, "scale", 0.9)
@@ -164,10 +168,12 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-## The foveation row: off at first; the right hand presses "сильная" with the scale at 80%.
+## The foveation rows (off by now: the scale was 90% a moment ago): off; the right hand presses
+## "сильная" with the scale at 80%.
 func _foveation(p: Label3D) -> void:
 	var oxr := main.xr as OpenXRInterface
-	check("foveation off at first", main.foveation == 0 and _color(p, "fov", 0.0) == p.COLOR_ON
+	p.choose_foveation(0)
+	check("выкл: no density map, no split", main.foveation == 0 and _color(p, "fov", 0.0) == p.COLOR_ON
 			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.split_pass.enabled)
 	check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported() and p.fov_title.text == "фовеация SteamVR · нет, своя карта Godot")
 	p.choose_scale(0.8)
