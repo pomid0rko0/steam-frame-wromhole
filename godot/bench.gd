@@ -15,9 +15,10 @@ extends Node
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## makes SteamVR step in, and the GPU time then grows by half for reasons of its own.
-## This build's ray tracer is timed five ways (FOVEATIONS): as it always ran, with the 3D scene in
+## This build's ray tracer is timed six ways (FOVEATIONS): as it always ran, with the 3D scene in
 ## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
-## foveated rendering at each level (main.set_foveation). The others run without foveation.
+## foveated rendering: SteamVR's map low and high, our own wide and narrow (main.set_foveation).
+## The others run without foveation.
 ##
 ## 2. The tour, at 120 Hz with this build's ray tracer: at each of TOUR_L the view sweeps from
 ## the throat round to the other side, in rows from 60 degrees down to 60 up; then walks through
@@ -27,7 +28,7 @@ extends Node
 ## to the start for a moment, so that a headset that fell to every 2nd refresh has come back.
 ##
 ## The panel's line says whether 120 Hz held (and where it did worst), how this build's ray
-## tracer compares with the first of the others, and what the strongest foveation saves. Render
+## tracer compares with the first of the others, and what the foveation saves. Render
 ## scale 100% throughout, the tour with the foveation chosen on the panel; afterwards the rate,
 ## the scale, the shader, the foveation and where one stood come back. A build made for measuring
 ## (tools/ab_shaders.sh --auto) runs it by itself once the headset has tracked the head for
@@ -64,8 +65,8 @@ const MISSED_OK := 0.01         # as the panel: at most 1% of the refreshes with
 # this build's ray tracer: [label, foveation level (main.set_foveation), split]; the first is the
 # reference the others are compared with
 const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
-	["this build, foveation 1 (low)", 1, false], ["this build, foveation 2 (medium)", 2, false],
-	["this build, foveation 3 (high)", 3, false]]
+	["this build, SteamVR low", 1, false], ["this build, SteamVR high", 3, false],
+	["this build, own wide", 4, false], ["this build, own narrow", 5, false]]
 
 var main: Node                  # main.gd
 var panel: Node                 # perf_panel.gd
@@ -342,8 +343,11 @@ func _compared() -> void:
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
 		print("bench: foveation, on average over the places against this build as it ran: %s" % ", ".join(summary))
-		var m := _ratio(variants.size() - 1, own)
-		parts.append("сильная фовеация: кадр %s на %d%%" % ["дешевле" if m < 1.0 else "дороже", roundi(absf(1.0 - m) * 100.0)])
+		# on the panel, what each foveation saves: SteamVR low, high, own wide, narrow
+		var pcts := []
+		for v in range(own + 2, variants.size()):
+			pcts.append("%+d" % roundi(100.0 * (_ratio(v, own) - 1.0)))
+		parts.append("фовеация %s%%" % "/".join(pcts))
 		verdict = " · ".join(parts)
 	if with_tour and panel.xr != null:
 		_show("замер: теперь 120 Гц, глаза закрыты")

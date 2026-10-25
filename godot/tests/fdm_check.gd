@@ -1,11 +1,12 @@
 extends SceneTree
 ## The XR view through the simulated headset (fake_hmd.gd, two eyes in one multiview pass) with
-## foveation off, with the 3D pass split alone, or on: tools/fdm_check.sh runs it on the Steam
+## foveation off, with the 3D pass split alone, on (the runtime's map), or own (our map,
+## main.OWN_MAPS): tools/fdm_check.sh runs it on the Steam
 ## Frame's GPU driver (Turnip, no GPU) and reads from the driver's trace how it rendered the pass.
 ## The simulated headset hands Godot a density map of its own making (XRVRS, the one Godot makes
 ## where the runtime has none), so the viewport has a density map to attach. The eyes' size in
 ## pixels is the second argument (tools/fdm_check.sh: 1728, as on the Frame).
-##   godot --path . -s res://tests/fdm_check.gd -- off|split|on [eye size in pixels]
+##   godot --path . -s res://tests/fdm_check.gd -- off|split|on|own [eye size in pixels]
 
 class Headset extends "res://tests/fake_hmd.gd":
 	var vrs := XRVRS.new()
@@ -37,7 +38,7 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 2:
-		main.set_foveation(main.FOVEATION_LEVELS if mode == "on" else 0, mode == "split")
+		main.set_foveation({"on": main.FOVEATION_LEVELS, "own": 4}.get(mode, 0), mode == "split")
 		print("fdm_check: %s, vrs_mode %d, split %s, view %dx%d" % [mode, main.xr_view.vrs_mode,
 				main.split_pass.enabled, hmd.size.x, hmd.size.y])
 	if frames == 14:

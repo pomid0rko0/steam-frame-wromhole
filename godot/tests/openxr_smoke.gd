@@ -8,7 +8,8 @@ extends SceneTree
 ## a scale button sets the render scale and keeps it; a foveation button turns foveated rendering
 ## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
 ## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
-## below 100% turns it off again; frames made too slow for the display
+## below 100% turns it off again; our own density map comes from a texture; the gaze dot shows and
+## hides; frames made too slow for the display
 ## turn the plate red; and the speed check's button runs it through (bench.gd: the comparison at
 ## 72 Hz, then the tour at 120 Hz, which Monado does not offer: it stays at 20) and puts the
 ## rate, the shader and the viewer back.
@@ -168,7 +169,7 @@ func _foveation(p: Label3D) -> void:
 	var oxr := main.xr as OpenXRInterface
 	check("foveation off at first", main.foveation == 0 and _color(p, "fov", 0.0) == p.COLOR_ON
 			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.split_pass.enabled)
-	check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported() and p.fov_title.text == "фовеация · карта Godot")
+	check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported() and p.fov_title.text == "фовеация SteamVR · нет, своя карта Godot")
 	p.choose_scale(0.8)
 	var at := _button_point(p, "fov", 3.0)
 	var from := at + p.transform.basis.z * 0.8
@@ -188,6 +189,32 @@ func _foveation(p: Label3D) -> void:
 	check("scale 90%: foveation off, kept", main.foveation == 0 and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
 			and not main.split_pass.enabled and cfg.get_value("render", "foveation", -1) == 0)
 	p.choose_scale(1.0)
+	# our own map: the viewport's density map from a texture, the pass split
+	at = _button_point(p, "fov", 4.0)
+	from = at + p.transform.basis.z * 0.8
+	p.point(1, from, (at - from).normalized(), 0.0)
+	p.point(1, from, (at - from).normalized(), 1.0)
+	p.point(1, from, (at - from).normalized(), 0.0)
+	p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
+	check("широкая: our own map, from a texture, the pass split", main.foveation == 4
+			and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.split_pass.enabled and _color(p, "fov", 4.0) == p.COLOR_ON)
+	var img: Image = main.own_maps[4].get_layer_data(0)
+	var mid: Color = img.get_pixel(32, 32)
+	var corner: Color = img.get_pixel(0, 0)
+	check("its map: full rate in the middle, 4x2 in the corner", mid.r8 == 0 and mid.g8 == 0 and corner.r8 == 192 and corner.g8 == 128)
+	p.choose_foveation(0)
+	check("off again: no density map, no split", main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.split_pass.enabled)
+	# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides
+	at = _button_point(p, "fov", p.GAZE_BUTTON)
+	from = at + p.transform.basis.z * 0.8
+	p.point(1, from, (at - from).normalized(), 0.0)
+	p.point(1, from, (at - from).normalized(), 1.0)
+	p.point(1, from, (at - from).normalized(), 0.0)
+	p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
+	check("точка: the gaze dot shows; Monado: no gaze", main.gaze_dot.visible and _color(p, "fov", p.GAZE_BUTTON) == p.COLOR_ON
+			and main.gaze_angles() == null)
+	p.show_gaze(false)
+	check("the gaze dot hides", not main.gaze_dot.visible)
 
 
 func _index(p: Label3D, kind: String, value: float) -> int:

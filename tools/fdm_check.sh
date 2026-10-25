@@ -8,9 +8,10 @@
 #          without tiles (Godot 4.7.2's subpass dependency lacks BY_REGION, split_pass.gd)
 #   split  the 3D scene in a pass of its own: in tiles
 #   on     foveation: in tiles, and with one attachment more than split (the density map)
+#   own    the same with our own density map (main.OWN_MAPS)
 # Each eye at 1728x1728, as SteamVR gives the app on the Frame; the tiles' size is printed too
 # (a density is per tile).
-#   tools/fdm_check.sh           (exit 0 if "on" renders the XR pass in tiles with the density map)
+#   tools/fdm_check.sh           (exit 0 if "on" and "own" render the XR pass in tiles with the density map)
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,7 +25,7 @@ printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_vers
 	"$LIB/libvulkan_freedreno.so" > "$TMP/icd.json"
 cd "$ROOT/godot"
 [ -d .godot ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
-for m in off split on; do
+for m in off split on own; do
 	mkdir -p "$TMP/data_$m"
 	XDG_DATA_HOME=$TMP/data_$m LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
 	VK_ICD_FILENAMES=$TMP/icd.json MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=$TMP/trace_$m.txt TU_DEBUG=perf \
@@ -56,15 +57,17 @@ def passes(m):
                 out.append((att, tiled, why, f'{b[0]} tiles of {b[1]}x{b[2]}' if tiled else ''))
             start = None
     return out[4:]       # the frames after foveation was set
-res = {m: passes(m) for m in ('off', 'split', 'on')}
+res = {m: passes(m) for m in ('off', 'split', 'on', 'own')}
 for m, p in res.items():
     c = collections.Counter(p)
     print(f'{m:5s}: ' + '; '.join(f'{n}x {a} attachments, {"in " + b if t else "no tiles (" + w + ")"}' for (a, t, w, b), n in c.items()))
-ok = bool(res['on']) and bool(res['split'])
-on = set(res['on']); split = set(res['split'])
-ok &= all(p[1] for p in on) and all(p[1] for p in split)
-ok &= {p[0] for p in on} == {p[0] + 1 for p in split}
-print('PASS: with foveation on the driver renders the XR pass in tiles, with the density map' if ok else 'FAIL')
+ok = bool(res['on']) and bool(res['split']) and bool(res['own'])
+split = set(res['split'])
+ok &= all(p[1] for p in split)
+for m in ('on', 'own'):
+    on = set(res[m])
+    ok &= all(p[1] for p in on) and {p[0] for p in on} == {p[0] + 1 for p in split}
+print('PASS: with foveation on (either map) the driver renders the XR pass in tiles, with the density map' if ok else 'FAIL')
 sys.exit(0 if ok else 1)
 PY
 code=$?

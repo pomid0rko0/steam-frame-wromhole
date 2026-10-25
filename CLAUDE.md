@@ -38,13 +38,16 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
   the avatar as balls (`tests/grab_test.gd`).
-- `foveation` (`main` merged in) — foveated rendering from the panel (off, low, medium, high;
-  off by default): SteamVR's density map (`XR_FB_foveation`, moved by the eyes with
-  `XR_META_foveation_eye_tracked`) on the XR view (`main.set_foveation`), the 3D scene in a
-  render pass of its own so that Turnip renders it in tiles (`split_pass.gd`; without tiles the
-  map does nothing), the speed check timing this build five ways (as before, passes split, three
-  levels), `tools/fdm_check.sh`. Not checked in the headset yet; README «Фовеальный рендеринг» has
-  the check and what is known about the old "breathing".
+- `foveation` (`main` merged in) — foveated rendering from the panel (off by default): SteamVR's
+  density map low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
+  `VRS_TEXTURE`), both moved to where the eyes look (`XR_META_foveation_eye_tracked` → QCOM
+  offsets) (`main.set_foveation`); the 3D scene in a render pass of its own so that Turnip renders
+  it in tiles (`split_pass.gd`; without tiles the map does nothing); a gaze dot (`main.gaze_dot`,
+  `XR_EXT_eye_gaze_interaction`); the speed check timing this build six ways; `tools/fdm_check.sh`.
+  Checked in the headset with SteamVR's maps: they follow the gaze, -41% (low) / -50% (high) GPU
+  per frame, 120 Hz tour clean with high; the sharp zone's border shows (a square of whole tiles,
+  too small at high, seen catching up with the eyes; looking far aside it seemed to stay in one
+  eye). Our maps are not checked yet; README «Фовеальный рендеринг».
 - `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
   4 nodes, README «Почему это real time»), the ray's direction interpolated from the screen's
   corners, one shading per pixel after the trace, the movable balls' code in a separate shader
@@ -98,8 +101,9 @@ When branches are put together, these overlap:
 - a throat change (`throat`) with `main`'s fillet table: the table depends on the shape: after
   `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop).
 - `foveation` and the render scale: the panel lets one of them be on (the eye-tracked map's
-  offsets are in full-size pixels). Its row sits under the scale's; its split pass is on the XR
-  camera's compositor: an effect added there by another branch splits the pass as well.
+  offsets are in full-size pixels). Its two rows sit under the scale's; its split pass is on the
+  XR camera's compositor: an effect added there by another branch splits the pass as well. Its
+  action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`).
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).
@@ -175,7 +179,14 @@ draws next to ray-traced ones, check they line up the same way.
   `foveation_dynamic` reportedly does nothing on the Frame; the swapchain gets its density map only
   if `foveation_level` > 0 when it is created (so `project.godot` asks for 3 and "off" is
   `vrs_mode` = disabled). `verbose_stdout` is on in this branch so that the headset's log lists the
-  enabled OpenXR extensions and the driver's density map support.
+  enabled OpenXR extensions and the driver's density map support. The headset's log: all those
+  extensions, FDM offsets (granularity 8), no shading-rate VRS ("Variable Rate Shading not
+  supported"): density only per tile, so the sharp zone is a rectangle of whole tiles. The offsets
+  move whatever map is attached, so our own map (`VRS_TEXTURE`, a `Texture2DArray` set with
+  `RenderingServer.viewport_set_vrs_texture`, since `Viewport.vrs_texture` takes a Texture2D only;
+  `VRS_UPDATE_ALWAYS`, or a buffer rebuild leaves the driver's map empty) follows the eyes too.
+  Godot maps a colour c to density 1 - c, Turnip a density d to 1/d floored to a power of two: 4x
+  is byte 192 (191 gives 3.98, so 2).
 - **The old "breathing".** With foveation first on (high, dynamic, subsampled), rays then from
   `SCREEN_UV`, the owner saw space around the head shrink and expand when turning, a little nausea,
   frames on time; the next build had it off (and the check grid fixed to the room, and the panel)

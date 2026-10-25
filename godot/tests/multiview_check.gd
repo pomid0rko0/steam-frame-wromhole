@@ -12,8 +12,8 @@ extends SceneTree
 ## so every mode walks and turns the same.
 ## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
 ## code); only the floor lines can be compared then.
-## fov: foveated rendering on at its strongest (main.set_foveation): the 3D scene in a render pass
-## of its own, the viewport asking for a density map. Software Vulkan has none, so what this tests
+## fov: foveated rendering on (main.set_foveation: the runtime's strongest in even cases, our own
+## map in odd ones): the 3D scene in a render pass of its own, the viewport asking for a density map. Software Vulkan has none, so what this tests
 ## is that the split pass draws everything where it was.
 
 var main: Node3D
@@ -58,7 +58,8 @@ func _process(_delta: float) -> bool:
 		if plain:
 			main.set_balls(PackedVector4Array(), PackedVector4Array())
 		if fov:
-			main.set_foveation(main.FOVEATION_LEVELS)
+			# SteamVR's level in even cases, our own map in odd ones
+			main.set_foveation(main.FOVEATION_LEVELS if case % 2 == 0 else 4)
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
 		match mode:
 			"ray":

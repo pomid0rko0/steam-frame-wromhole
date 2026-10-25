@@ -64,7 +64,7 @@ func _process(_d: float) -> bool:
 				for v in r:
 					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
-			check("all the others in it, this build five ways", b.variants.size() == b.others.size() + b.FOVEATIONS.size())
+			check("all the others in it, this build six ways", b.variants.size() == b.others.size() + b.FOVEATIONS.size())
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
