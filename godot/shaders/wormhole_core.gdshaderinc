@@ -1015,9 +1015,13 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float cq = dot(oc, oc) - S.w;
         float disc = bq * bq - cq;
         float e = -bq - bt;
+        // a branch that waves whose rays all miss skip: the compiler turns an if into selects (the
+        // root then taken for every ball), but not a loop (one pass: wh_nBall >= 0)
         if (cq > 0.0 && bq < 0.0 && disc >= 0.0 && (e < 0.0 || e * e < disc)) {
-            bt = -bq - sqrt(disc);
-            bi = i;
+            for (int k = 0; k < 1 + min(wh_nBall, 0); k++) {
+                bt = -bq - sqrt(disc);
+                bi = i;
+            }
         }
     }
     if (bi >= 0) {
