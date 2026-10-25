@@ -3,4 +3,6 @@ render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip
 
 // The ray tracer with movable balls and cubes (wormhole_balls.gdshader) and the floor coloured by gravity (main.set_gravity_view 1).
 #define WH_GRAVITY
+// The fillet polynomials from a table (main.gd sets it), as the plain ray tracer
+#define WH_TABLE
 #include "res://shaders/wormhole_view.gdshaderinc"

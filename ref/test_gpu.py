@@ -79,9 +79,9 @@ def region_order(objs, reach):
 # the shader gets them sorted, as from main.set_objects; the reference uses the same order
 BALLS, BIDX = region_order(BALLS, lambda o: o[1])
 CUBES, CIDX = region_order(CUBES, lambda o: 2.0 * o[2])
-# the fillet polynomials from a table, as Godot's shader without balls does (WH_TABLE=0: worked out
-# per ray, as the shader with balls and the web preview do)
-TABLE = os.environ.get('WH_TABLE', '0' if BALLS else '1') == '1'
+# the fillet polynomials from a table, as Godot's shaders do (WH_TABLE=0: worked out per ray, as the
+# web preview does)
+TABLE = os.environ.get('WH_TABLE', '1') == '1'
 
 FRAG = """#version 400
 """ + ("" if BALLS else "#define WH_NO_BALLS\n") + ("#define WH_TABLE\nuniform sampler2D wh_tab;\nuniform vec4 wh_tabLo;\n"
