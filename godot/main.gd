@@ -2,7 +2,8 @@ extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
 ## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
 ## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
-## pulling the trigger, set the refresh rate and the render scale (perf_panel.gd). Every pixel is
+## pulling the trigger, set the refresh rate, the render scale and foveated rendering
+## (perf_panel.gd, set_foveation). Every pixel is
 ## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
 ## viewer is in that curved space.
 ##
@@ -28,9 +29,26 @@ const MOUSE_SENS := 0.003
 # Stereo check (see _add_check): balls in chart A, in front of the start position
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
+# present in a build: the stereo check is on (a build for the one-eye check; not in git)
+const CHECK_FLAG := "res://check"
 # the ray tracer without movable balls, and with them (set_balls)
 const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
 const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
+const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
+# Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
+# eyes look, [radius, shading width, height in screen pixels]; the radius in each eye's picture,
+# its edge at 1 (about 52 degrees). Each step halves the pixels shaded, for a softer edge than
+# the runtime's maps: the width first, then the height (own_order 1 swaps them: 1x2, 2x4).
+# 4: wide, 5: narrow.
+const OWN_MAPS := {
+	4: [[0.7, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
+	5: [[0.45, 1, 1], [0.65, 2, 1], [0.85, 2, 2], [1.05, 4, 2], [99.0, 4, 4]],
+}
+const OWN_MAP_SIZE := 64             # texels a side: the driver samples it once per tile anyway
+const OWN_MAP_BYTE := {1: 0, 2: 128, 4: 192}     # shading size -> colour byte (_own_map)
+# Godot's own density map where the runtime has none (Monado, tests): its strength per level
+const OWN_MAP_STRENGTH := [0.5, 1.0, 2.0]
+const GAZE_DOT_DIST := 1.5           # m along the gaze: where the gaze dot is drawn
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -52,7 +70,7 @@ var recentered := false        # the runtime moved the play space: not a step
 var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
-var show_check := false         # the stereo check (see _add_check)
+var show_check := FileAccess.file_exists(CHECK_FLAG)   # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []   # left, right (XR only)
 var left_hand: XRController3D
 var right_hand: XRController3D
@@ -67,6 +85,12 @@ var hold := false               # the speed check: the feet stay while the head 
 var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
 var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
+var foveation := 0              # 0 off, 1..3: the level (set_foveation)
+var split_pass: CompositorEffect     # the 3D scene in a render pass of its own (split_pass.gd)
+var own_maps := {}              # OWN_MAPS made into textures, by level * 2 + own_order (_own_map)
+var own_order := 0              # our maps' steps: 0 the width first (2x1, 4x2), 1 the height (1x2, 2x4)
+var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
+var gaze_dot: MeshInstance3D    # drawn where they look, while the panel says so
 
 
 func _ready() -> void:
@@ -98,6 +122,9 @@ func _ready() -> void:
 	host.add_child(origin)
 	camera = XRCamera3D.new()
 	camera.near = 0.05
+	split_pass = preload("res://split_pass.gd").new()
+	camera.compositor = Compositor.new()
+	camera.compositor.compositor_effects = [split_pass]
 	origin.add_child(camera)
 	if in_xr:
 		for t in [&"left_hand", &"right_hand"]:
@@ -108,6 +135,26 @@ func _ready() -> void:
 			hands.append(c)
 		left_hand = hands[0]
 		right_hand = hands[1]
+		# the eyes' gaze, from SteamVR's eye tracking: logged with the panel's lines, and a dot
+		# drawn there on request (the panel), to see whether the sharp middle of the foveation
+		# follows it
+		gaze = XRNode3D.new()
+		gaze.tracker = &"/user/eyes_ext"
+		gaze.pose = &"eye_gaze_pose"
+		origin.add_child(gaze)
+		gaze_dot = MeshInstance3D.new()
+		var dot := SphereMesh.new()
+		dot.radius = 0.006
+		dot.height = 0.012
+		gaze_dot.mesh = dot
+		var dot_mat := StandardMaterial3D.new()
+		dot_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dot_mat.albedo_color = Color(1.0, 0.15, 0.9)
+		dot_mat.no_depth_test = true
+		dot_mat.render_priority = 24
+		gaze_dot.material_override = dot_mat
+		gaze_dot.visible = false
+		origin.add_child(gaze_dot)
 
 	material = ShaderMaterial.new()
 	material.shader = SHADER_PLAIN
@@ -170,6 +217,15 @@ func look_angles() -> Vector2:
 	var h := T.length()
 	var yaw := rad_to_deg(acos(clampf(toward * T.x / h, -1.0, 1.0))) if h > 1e-6 else 0.0
 	return Vector2(yaw, rad_to_deg(asin(clampf(f.y, -1.0, 1.0))))
+
+
+## Where the eyes look against where the head looks: degrees right and up, or null while there
+## is no gaze (no eye tracking, or it lost the eyes).
+func gaze_angles() -> Variant:
+	if gaze == null or not gaze.get_has_tracking_data():
+		return null
+	var d: Vector3 = camera.transform.basis.inverse() * -gaze.transform.basis.z
+	return Vector2(rad_to_deg(atan2(d.x, -d.z)), rad_to_deg(asin(clampf(d.y, -1.0, 1.0))))
 
 
 ## Turn the frame so that the head's current yaw looks along its forward (play-space forward
@@ -242,6 +298,8 @@ func _process(delta: float) -> void:
 		# the controls moved the world against the room; physical walking does not
 		_update_chart_map()
 	_point_panel()
+	if gaze_dot and gaze_dot.visible:
+		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part
 		overlay.visible = foot_l > space.L
@@ -467,6 +525,81 @@ func _add_check() -> void:
 	material.set_shader_parameter("wh_sph", none_sph)
 	material.set_shader_parameter("wh_pil", none_pil)
 	material.set_shader_parameter("wh_box", none_box)
+
+
+## Foveated rendering: the edges of each eye's picture are rendered coarser. level 0 is off,
+## 1..3 the runtime's density map at its level low, medium, high, 4 and 5 our own (OWN_MAPS);
+## split: the 3D scene in a render pass of its own without a density map (the speed check times
+## that alone).
+##
+## On the Steam Frame the runtime's density map is SteamVR's (XR_FB_foveation). SteamVR tracks the
+## eyes and hands Godot each frame where each eye looks (XR_META_foveation_eye_tracked; Godot 4.7.2
+## asks only with the eye gaze extension on, project.godot), and Godot hands the driver offsets
+## that move the density map there (VK_QCOM_fragment_density_map_offset), whichever map it is: so
+## our own maps follow the eyes too. They are centred in each eye's picture, where SteamVR's are
+## (the offsets are taken from the picture's centre). The GPU driver renders each tile at the
+## map's density there, only in tiles: hence split_pass.gd. The swapchain gets SteamVR's map when
+## it is created, so project.godot asks for the high level and "off" is the viewport's density
+## map taken away (vrs_mode), not the runtime's level 0. Without the runtime's map (Monado,
+## Godot's "Native mobile") levels 1..3 are Godot's own, round each eye's centre.
+##
+## The ray tracer stays exact under it: each pixel's ray is interpolated from the screen's
+## corners (shaders/wormhole_view.gdshaderinc), and a coarse pixel gets the ray through its
+## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position.
+func set_foveation(level: int, split := false) -> void:
+	foveation = clampi(level, 0, 5)
+	var target: Viewport = xr_view if xr_view else get_viewport()
+	var mode := Viewport.VRS_DISABLED
+	if OWN_MAPS.has(foveation):
+		mode = Viewport.VRS_TEXTURE
+		# a texture array, a layer per eye: Viewport.vrs_texture takes a Texture2D only. Copied
+		# into the driver's map every frame: a copy made once is lost when the buffers are made again
+		target.vrs_update_mode = Viewport.VRS_UPDATE_ALWAYS
+		RenderingServer.viewport_set_vrs_texture(target.get_viewport_rid(), _own_map(foveation).get_rid())
+	elif foveation > 0:
+		mode = Viewport.VRS_XR
+	if target.vrs_mode != mode:
+		target.vrs_mode = mode      # the 3D buffers are made again: not every call
+	split_pass.enabled = foveation > 0 or split
+	if foveation == 0 or OWN_MAPS.has(foveation) or xr == null:
+		return
+	var oxr := xr as OpenXRInterface
+	if oxr and oxr.is_foveation_supported():
+		oxr.foveation_level = foveation
+	elif "vrs_strength" in xr:
+		xr.set("vrs_strength", OWN_MAP_STRENGTH[foveation - 1])
+
+
+## One of OWN_MAPS as a density map Godot takes (Viewport.vrs_texture's colours: red and green
+## the shading width and height), a layer per eye. Godot makes a colour c into the density 1 - c,
+## and the driver a density d into a size 1/d rounded down to a power of two: hence 192, not 0.75
+## (191/255 would come out 3.98, so 2).
+func _own_map(level: int) -> Texture2DArray:
+	var key := level * 2 + own_order
+	if own_maps.has(key):
+		return own_maps[key]
+	var img := Image.create(OWN_MAP_SIZE, OWN_MAP_SIZE, false, Image.FORMAT_RG8)
+	for y in OWN_MAP_SIZE:
+		for x in OWN_MAP_SIZE:
+			var r := Vector2((x + 0.5) * 2.0 / OWN_MAP_SIZE - 1.0, (y + 0.5) * 2.0 / OWN_MAP_SIZE - 1.0).length()
+			for ring: Array in OWN_MAPS[level]:
+				if r < ring[0]:
+					var w: int = ring[1] if own_order == 0 else ring[2]
+					var h: int = ring[2] if own_order == 0 else ring[1]
+					img.set_pixel(x, y, Color8(OWN_MAP_BYTE[w], OWN_MAP_BYTE[h], 0))
+					break
+	var tex := Texture2DArray.new()
+	tex.create_from_images([img, img])
+	own_maps[key] = tex
+	return tex
+
+
+## Our maps' order of steps: 0 the width first (1x1, 2x1, 2x2, 4x2, 4x4), 1 the height first
+## (1x1, 1x2, 2x2, 2x4, 4x4). At once if one of them is on.
+func set_own_order(order: int) -> void:
+	own_order = clampi(order, 0, 1)
+	if OWN_MAPS.has(foveation):
+		set_foveation(foveation)
 
 
 ## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),

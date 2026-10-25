@@ -24,5 +24,9 @@ environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 [xr]
 
 openxr/enabled=true
+openxr/foveation_level=3
+openxr/foveation_eye_tracked=true
+openxr/foveation_with_subsampled_images=false
+openxr/extensions/eye_gaze_interaction=true
 openxr/startup_alert=false
 shaders/enabled=true

@@ -1,7 +1,8 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place,
 ## with the other ray tracers if res://shaders/ab/ holds some (tools/ab_shaders.sh), logs a line
-## per place, and gives back the shader and where the viewer stood. The panel has its button.
+## per place, with this build's ray tracer also with the passes split and with each foveation level,
+## and gives back the shader, the foveation and where the viewer stood. The panel has its button.
 ##   godot --path . -s res://tests/bench_test.gd
 
 var main: Node3D
@@ -48,8 +49,12 @@ func _process(_d: float) -> bool:
 			if absf(main.foot_l - place[0]) > 0.3:
 				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, place[0]])
 				started = false
-			if main.material.shader != b.variants[b.plan[b.step][1]][1]:
+			var v: Array = b.variants[b.plan[b.step][1]]
+			if main.material.shader != v[1]:
 				check("the segment's shader", false, b.plan[b.step][1])
+				started = false
+			if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
+				check("the segment's foveation", false, "%d %s" % [main.foveation, main.split_pass.enabled])
 				started = false
 		if not b.running:
 			check("finished", true, "%d frames" % frames)
@@ -59,13 +64,13 @@ func _process(_d: float) -> bool:
 				for v in r:
 					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
-			check("all the others in it", b.variants.size() == b.others.size() + 1)
+			check("all the others in it, this build six ways", b.variants.size() == b.others.size() + b.FOVEATIONS.size())
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("this build's shader back", main.material.shader == shader_before)
-			check("the panel shows the result", main.perf.bench_text.begins_with("замер готов") or main.perf.bench_text.begins_with("нов"),
-					main.perf.bench_text)
+			check("the foveation back (off)", main.foveation == 0 and not main.split_pass.enabled)
+			check("the panel shows the foveation's result", main.perf.bench_text.contains("фовеация"), main.perf.bench_text)
 			print("PASS" if ok else "FAIL")
 			quit(0 if ok else 1)
 			return true

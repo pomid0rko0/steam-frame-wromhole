@@ -3,7 +3,7 @@ extends SceneTree
 ## mode "ray" hides Godot's green overlay, "floor" shows only its floor lines, "domain" fills
 ## the area where it may draw floor lines, "balls" shows only its ball grids, "both" all of it.
 ## Comparing them shows whether green lands exactly on the ray-traced white lines and red balls.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case [plain]
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case [plain] [fov]
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
 ## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture;
 ## 3: as 1, then the left stick walks forward and right (keys W, D), the right stick snaps
@@ -12,6 +12,9 @@ extends SceneTree
 ## so every mode walks and turns the same.
 ## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
 ## code); only the floor lines can be compared then.
+## fov: foveated rendering on (main.set_foveation: the runtime's strongest in even cases, our own
+## map in odd ones): the 3D scene in a render pass of its own, the viewport asking for a density map. Software Vulkan has none, so what this tests
+## is that the split pass draws everything where it was.
 
 var main: Node3D
 var hmd
@@ -19,6 +22,7 @@ var frames := 0
 var mode: String
 var case := 0
 var plain := false
+var fov := false
 
 
 func _initialize() -> void:
@@ -26,7 +30,8 @@ func _initialize() -> void:
 	mode = args[1]
 	hmd = preload("res://tests/fake_hmd.gd").new()
 	case = int(args[2])
-	plain = args.size() > 3 and args[3] == "plain"
+	plain = args.slice(3).has("plain")
+	fov = args.slice(3).has("fov")
 	if case == 0:
 		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.0, 1.0, -1.1, 1.1))
 	else:
@@ -52,6 +57,9 @@ func _process(_delta: float) -> bool:
 		main.perf.visible = false        # it follows the head: in every view
 		if plain:
 			main.set_balls(PackedVector4Array(), PackedVector4Array())
+		if fov:
+			# SteamVR's level in even cases, our own map in odd ones
+			main.set_foveation(main.FOVEATION_LEVELS if case % 2 == 0 else 4)
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
 		match mode:
 			"ray":

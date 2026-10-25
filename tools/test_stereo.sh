@@ -56,6 +56,13 @@ done
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
+# foveated rendering on (main.set_foveation): the 3D scene in a render pass of its own
+for c in 0 1 2 3; do
+	for m in ray floor domain balls both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
+done
+for c in 0 1 2 3; do
+	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
+done
 wait
 # any script or shader error fails the suite
 if cat "$LOGS"/*.log | grep -qE "SCRIPT ERROR|SHADER ERROR"; then
@@ -75,6 +82,14 @@ done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done
+for c in 0 1 2 3; do
+	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"
+done
+for c in 0 1 2 3; do
+	verdict "simulated headset, case $c: floor lines, shader without balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
+done
+# the split pass changes nothing in the picture: each image with foveation on against the same off
+verdict "foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk:fov pln:fpl
 
 echo
 if [ $failed -eq 0 ]; then echo "ALL PASS"; else echo "FAILED"; fi
