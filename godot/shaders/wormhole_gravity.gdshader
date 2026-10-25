@@ -1,5 +1,7 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip_vertex_transform, fog_disabled;
+// where no movable ball or cube can be seen (stencil_mark.gdshader)
+stencil_mode read, compare_not_equal, 1;
 
 // The gravity view's floor (main.set_gravity_view 1): the plain ray tracer (no movable balls, the
 // fillet table) with the floor coloured by the strength of gravity. A shader of its own, as is the
