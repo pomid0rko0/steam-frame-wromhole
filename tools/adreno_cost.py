@@ -23,12 +23,18 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ir3_emu as E
 
-# the issue model against the headset's speed check (README, «Что видно в шлеме»): a wave's cycles
-# plus CAT5_CYCLES per texture-unit instruction, times MS_PER_CYCLE for a frame of both eyes at
-# 1728 x 1728, plus Godot's own cost
-CAT5_CYCLES = 20.0
-MS_PER_CYCLE = 3.1e-3
+# The estimate, fitted on the headset's speed check (main and three variants of edge-120hz, nine
+# poses each; rms 0.19 ms, the variants' means within 5%): per 64 pixels of a frame of both eyes at
+# 1728 x 1728, ms = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x
+# transcendental instructions + MS_CAT5 x texture-unit instructions (derivatives, samples). In waves
+# of 128 a 32-bit ALU op takes 2 cycles (Mesa's ir3.c) and a nop slot covers 128 pixels; a cat4 or
+# cat5 instruction's work is per pixel whatever the wave. The fit says transcendentals and
+# derivatives cost far more than their issue slots (16 and ~90 ALU cycles' worth).
 GODOT_MS = 0.8
+MS_ALU = 1.61e-3
+MS_NOP = 1.05e-3
+MS_CAT4 = 0.0258
+MS_CAT5 = 0.146
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
 
@@ -291,26 +297,18 @@ def main():
     prof = np.zeros(len(sh.instrs)) if '--profile' in flags else None
     n = opt['--tiles']
     tot = []
-    tot, tot2 = [], []
+    tot = []
     lanes = 128 if sh.wave128 else 64
     for pose, st in cost(sh, entries, n, opt['--size'], opt['--fov'], opt['--seed'], prof):
-        # per 64 pixels. Waves of 128 (Mesa's ir3.c): a 32-bit ALU op takes 2 cycles, a 16-bit one 1;
-        # whether a nop takes 1 or 2 is not known: both are given (w: 2, w2: 1)
-        if sh.wave128:
-            full = st.cycles - st.nops - st.half
-            w = (2 * full + st.half + 2 * st.nops) / (2 * n) + CAT5_CYCLES * 2 * st.cat5 / (2 * n)
-            w2 = (2 * full + st.half + st.nops) / (2 * n) + CAT5_CYCLES * 2 * st.cat5 / (2 * n)
-        else:
-            w = w2 = (st.cycles - st.half / 2 * 0 + CAT5_CYCLES * st.cat5) / n
-        tot.append(w)
-        tot2.append(w2)
-        extra = ('; nops at 1 cycle: %.2f ms' % (GODOT_MS + MS_PER_CYCLE * w2)) if sh.wave128 else ''
-        print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %6.0f cycles (%5.0f issued, %4.0f nops, %4.0f 16-bit, %4.1f cat5), %5.1f cat4, lanes busy %3.0f%%%s'
-              % (pose[0], pose[1], pose[2], GODOT_MS + MS_PER_CYCLE * w, w, st.cycles * 64 / lanes / n,
-                 st.nops * 64 / lanes / n, st.half * 64 / lanes / n, st.cat5 / n * 64 / lanes,
-                 st.cat4 / n * 64 / lanes, 100.0 * st.lane_instr / max(st.instr * lanes, 1), extra))
-    print('mean %.0f cycles per 64 pixels, %.2f ms%s' % (np.mean(tot), GODOT_MS + MS_PER_CYCLE * np.mean(tot),
-          ('; nops at 1 cycle: %.0f, %.2f ms' % (np.mean(tot2), GODOT_MS + MS_PER_CYCLE * np.mean(tot2))) if sh.wave128 else ''))
+        alu = (st.cycles - st.nops - st.half) * (2 if sh.wave128 else 1) / n * 64 / lanes + st.half / n * 64 / lanes
+        nop = st.nops / n * 64 / lanes
+        c4 = st.cat4 / n           # per pixel: each issue covers the wave's pixels
+        c5 = st.cat5 / n
+        ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
+        tot.append(ms)
+        print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%'
+              % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, 100.0 * st.lane_instr / max(st.instr * lanes, 1)))
+    print('mean %.2f ms (%s, waves of %d)' % (np.mean(tot), sh.name, lanes))
     if prof is not None:
         report(sh, prof)
 

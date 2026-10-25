@@ -51,9 +51,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   `atan` for rays that miss the floor, the fillet coefficients from a table by impact parameter
   (`WormholeSpace.fillet_table`, plain shader only), 4 screen derivatives instead of 6, one sky
   for both worlds, own `atan`/`asin`, the fog's path length estimated (12 registers: waves of
-  128). Same picture as `main` (within 1/255), same accuracy and stereo. Not measured in the
-  headset yet: its measuring build compares `main`, the changes at 13 registers, at 12 without
-  the table, and the branch. Also the cost model (`tools/adreno_cost.sh`, below).
+  128). Same picture as `main` (within 1/255), same accuracy and stereo. Measured in the
+  headset by the speed check: the edge 4.73 → 3.61 ms, -23% over the poses, 120 Hz tour 0 missed
+  of 20633; the variants: 13 registers -20%, 12 without the table -19%, the branch -23%. Then,
+  not measured yet (model -7%, world B's edge -10%): world B's boxes skipped by rays going up
+  above them, fewer roots and divisions; the speed check got three poses in world B. Its
+  measuring build compares the measured commit with the tree. Also the cost model
+  (`tools/adreno_cost.sh`, below).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -110,17 +114,19 @@ draws next to ray-traced ones, check they line up the same way.
   check's poses (one eye, 1728², 104°) and counts issue cycles, divergent branches included
   (lowest PC first, as `ir3_reconvergence.c` describes). `--check` compares the emulated colours
   with Godot's lavapipe picture: run it after every change, it caught an emulator bug that had
-  made a variant look 15% cheaper. Calibrated on main's speed check: ms ≈ 0.8 + 3.1e-3 × (cycles
-  per 64 pixels + 20 per screen derivative); per pose within ~10% of the headset. It does not
-  know cat4/memory waits, and in waves of 128 (≤ 12 registers) not whether a nop costs 1 or 2
-  cycles: it prints both. `--profile` (adreno_cost.py) gives cycles per stretch of code.
+  made a variant look 15% cheaper. Fitted on the headset's speed check (main and three variants
+  of this branch, nine poses each): per 64 pixels, ms ≈ 0.8 + 1.61e-3 × ALU issue cycles +
+  1.05e-3 × nop slots + 0.0258 × transcendentals (cat4) + 0.146 × texture-unit instructions
+  (cat5: derivatives, samples); rms 0.19 ms, the variants' means within 5%. A transcendental
+  costs ~16 ALU cycles, a screen derivative ~90. It does not know memory waits.
+  `--profile` (adreno_cost.py) gives cycles per stretch of code.
   The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
 - **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
   build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
   cost depends only on the pose (l, yaw from the throat, pitch, roll), so it goes through poses:
-  (1) at 72 Hz, nine fixed poses, each timing every ray tracer in the build (`godot/shaders/ab/`,
-  not in git: earlier commits, directories, or cost checks empty/flat/noshade/noderiv/nogrid/
-  nosky made from the tree) in a palindrome order, `bench:` lines; (2) at 120 Hz, this build's
+  (1) at 72 Hz, twelve fixed poses (three in world B), each timing every ray tracer in the build
+  (`godot/shaders/ab/`, not in git: earlier commits, directories, or cost checks empty/flat/
+  noshade/noderiv/nogrid/nosky made from the tree) in a palindrome order, `bench:` lines; (2) at 120 Hz, this build's
   ray tracer on a tour (view sweeps at ten l, walks through the throat, yaw/pitch/roll on the
   spot), a `tf` line per frame (time, pose, refreshes taken, GPU and CPU ms) and a `tour:` line
   per second. The panel ends with whether 120 Hz held and the comparison. Frame times from
@@ -157,6 +163,19 @@ draws next to ray-traced ones, check they line up the same way.
 - **Tests with `fake_hmd.gd` abort at exit** (status 134) unless the interface and trackers are taken down first; `walking_xr_test.gd` does it, so its exit status means something.
 - **Measure in the headset, not by counting instructions.** A rewrite of the flat trace (bounding balls, the hit's normal and colour picked at the end with dynamic indices) had fewer instructions for ir3 and was 7-15% slower on the Frame; 13 registers instead of 16 (14 waves instead of 12) made no difference. Compare variants with the speed check, at 72 Hz: at 120 Hz a variant that misses frames makes SteamVR step in, and its GPU time reads half as much again.
 - **Shading is ~40% of a frame at the shell's edge**, ~1.9 of 4.7 ms: the 6 screen derivatives (`dsx`/`dsy`) ~0.55 ms, atan/asin ~0.25, and the rest because near the throat one group of pixels holds both skies, the floor and objects and runs every branch. Godot's own cost (a one-colour shader) is 0.8 ms.
+- **144 Hz and SteamVR's half rate.** At 144 Hz (6.9 ms) our edge frame reads 3.4-4 ms and holds,
+  but one late frame sends SteamVR to every 2nd refresh for 6-14 s: it then fills in frames on
+  the same GPU, and our frame at the same pose reads 5.7-6.3 ms (at 120 → 60 Hz, 7-8 ms even at
+  the start, where it costs 2.6). It came back by itself once the frame got cheaper (looking away
+  from the throat: 4.7 ms trapped) or on a rate switch (120 and back to 144). More often in
+  world B: its boxes have no early out (tour: -5 m 4.04 ms, +5 m 3.72). The Steam overlay drops
+  the rate too (it draws on the GPU while open). The app can't stop SteamVR doing it; cheaper
+  frames make it rarer.
+- **Waves of 128 gained nothing in the headset:** 12 registers (waves of 128) against 13 (waves of
+  64) were 1.6% slower with the same changes; the fillet table gained 0.21 ms at the edge.
+- **`inversesqrt` rounding:** |w| from `inversesqrt(dot(w, w))` came out above 1 for rays along
+  the throat's cylinder (b = rho0 = rmin), and they took the fillet's branch: cyan specks on the
+  throat's circle. `min(dot(w, e2), 1.0)` fixes it; the image diff against main caught it.
 - **SteamVR's camera view** (when it shows the outside cameras) takes ~3 ms of GPU a frame: our 4.8 ms frame then reads ~8 ms, and at 120 Hz the headset falls to every 2nd refresh for seconds. 120 Hz that survives it needs ~3.5 ms at the edge.
 - **`adreno_stats.sh --disasm`** dumps the biggest program, Godot's generic ubershader (with its decal loop and its own derivatives), not the specialised one that runs. `KEEP_LOG=file` keeps the whole log; `--shader res://...` compiles another ray tracer (set before the first draw, so only it is compiled).
 - **Where the edge frame goes (model, main):** curved-region setup ~44%, the flat trace after the

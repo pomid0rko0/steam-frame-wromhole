@@ -34,6 +34,7 @@ const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
 const PLACES := [   # the comparison's poses: [l, degrees to the right of the throat, degrees up]
+	# (place_on_axis: at l < 0 the throat is behind at 0 degrees, ahead at 180)
 	[11.6, 0.0, 0.0],   # the start
 	[6.2, 0.0, 0.0],    # just outside the curved zone: the wormhole fills the view
 	[6.2, 60.0, 0.0],
@@ -43,6 +44,9 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[5.0, 0.0, -35.0],  # down at the floor
 	[5.0, 0.0, 35.0],   # up
 	[0.0, 0.0, 0.0],    # in the throat
+	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat: its boxes cost more than A's pillars
+	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat: where 144 Hz fell to 72
+	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
@@ -423,7 +427,7 @@ func _ru(l: float, yaw: float, pitch: float) -> String:
 	var where := "старт" if a >= 10.0 else ("снаружи у края" if a >= main.space.L else ("край зоны" if a >= main.space.Lc else "горло"))
 	if l < 0.0:
 		where += " (мир B)"
-	var y := fposmod(yaw, 360.0)
+	var y := fposmod(yaw if l >= 0.0 else 180.0 - yaw, 360.0)    # degrees from the throat
 	y = minf(y, 360.0 - y)
 	var dir := "на горло" if y < 45.0 else ("от горла" if y > 135.0 else "вбок")
 	if pitch > 20.0:

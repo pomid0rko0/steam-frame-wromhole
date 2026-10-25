@@ -149,7 +149,7 @@ void wh_filMom(WhFil f, float z, out float t, out vec4 m) {
     } else {
         t = max(z * z - f.mn, 0.0);
         if (f.reg == 1) {                              // w = 1 / (2 sqrt(t + mn))
-            float n0 = t / (z + sqrt(f.mn));
+            float n0 = t / (z + f.zlo);                // zlo = sqrt(mn)
             float ty = t * z;
             float n1 = (ty - 2.0 * f.mn * n0) / 3.0;
             ty *= t;
@@ -206,7 +206,12 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     f.mn = min(f.al, f.ga);
     f.mx = max(f.al, f.ga);
     f.reg = f.mx < 1.0 ? 0 : (f.mn < 1.0 ? 1 : 2);
-    f.E0 = max(sqrt(f.al) + sqrt(f.ga), 1e-6);
+    // Of al and ga only one is the ray's own: a passing ray's al is that of every passing ray, and a
+    // turning ray's ga is 0. So one square root per ray gives both roots.
+    float sq = sqrt(turn ? f.al : f.ga);
+    float sal = turn ? sq : sqrt((rmin - rho0) / max(wh_Rout() - rmin, 1e-6 * R));   // uniforms only
+    float sga = turn ? 0.0 : sq;
+    f.E0 = max(sal + sga, 1e-6);
 #ifdef WH_TABLE
     // f.e depends on b alone: sampled from the row of b's regime (the regime is taken from the row,
     // so that the moments match the table), with the factor the table leaves out put back
@@ -232,7 +237,7 @@ WhFil wh_fil(float b, bool turn, float rmin) {
 #endif
 #endif
     f.ib = 1.0 / max(b, 1e-30);
-    f.zlo = f.reg == 0 ? 0.0 : sqrt(f.mn);
+    f.zlo = f.reg == 0 ? 0.0 : min(sal, sga);    // sqrt(mn)
     vec4 m;
     f.zhi = wh_filMomT(f, 1.0, m);
     f.psi = dot(f.e, m);
@@ -286,11 +291,16 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     float s0 = sin(0.5 * th0);
     float rmin = rho0 + 2.0 * R * s0 * s0;
     float als = abs(ls);
-    float wn = length(w);
+    // the orbit plane's second axis and |w| from one inverse square root. A ray along the radius
+    // (w = 0) takes an axis orthogonal to n: the 1e-7 of it moves any ray's direction by 1e-7 rad
+    vec3 we = w + 1e-7 * (abs(ns.x) < 0.9 ? vec3(0.0, ns.z, -ns.y) : vec3(-ns.z, 0.0, ns.x));
+    vec3 e2 = we * inversesqrt(dot(we, we));
+    // |w| <= 1 (the ray is a unit vector): rounded above 1, a ray along the throat's cylinder
+    // (b = rho0 = rmin) would count as turning in a fillet it is not in
+    float wn = min(dot(w, e2), 1.0);
     float rs = eye.x;                // wh_eye(ls)
     float b = rs * wn;
     vec3 e1 = ns;
-    vec3 e2 = wn > 1e-7 ? w / wn : normalize(cross(ns, abs(ns.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
     hitL = 0.0; hitN = vec3(0.0); ballI = -1;
     outX = vec3(0.0); outD = vec3(0.0);
 
@@ -321,10 +331,10 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     float x0B = max(x, -Lc);
     float DB = hasB ? Lc - x0B : 0.0;
     float wc = b / rho0;
-    float vlc = max(sqrt(max(1.0 - wc * wc, 0.0)), 1e-7);
-    float kc = wc / (rho0 * vlc);
+    float ivlc = inversesqrt(max(1.0 - wc * wc, 1e-14));   // 1 / the radial velocity on the cylinder
+    float kc = wc / rho0 * ivlc;
     vec2 PA = hasA ? Ss : vec2(0.0);                       // (psi, path length) of each piece
-    vec2 PB = vec2(kc, 1.0 / vlc) * DB;
+    vec2 PB = vec2(kc, ivlc) * DB;
     vec2 C0 = cFromStart ? Ss : vec2(0.0);                 // piece C starts here on the fillet
     vec2 PC = vec2(f.psi, f.arc) - C0;
     vec2 tot = PA + PB + PC;
@@ -343,7 +353,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         if (psiF >= PA.x && psiF < PA.x + PB.x) {
             float xF = (psiF - PA.x) / max(kc, 1e-30);
             hitL = d * (x0B + xF);
-            arcEnd = PA.y + xF / vlc;
+            arcEnd = PA.y + xF * ivlc;
         } else {
             bool inA = psiF < PA.x;
             // psi from the fillet's inner end: piece A runs toward it, piece C away from it;
@@ -423,7 +433,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     vec2 cum;                // (psi, length) along the whole path
                     float r; float w4;
                     if (cyl) {
-                        cum = PA + vec2(kc, 1.0 / vlc) * (pz - x0B);
+                        cum = PA + vec2(kc, ivlc) * (pz - x0B);
                         r = rho0;
                         w4 = d * pz;
                     } else {
@@ -459,7 +469,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         // qb: just inside the ball
                         float pzb = cyl ? x0B + DB * qb : mix(z0, z1, qb);
                         float tb = 0.0;
-                        vec2 cb = cyl ? PA + vec2(kc, 1.0 / vlc) * (pzb - x0B) : base + sg * wh_filAt(f, pzb, tb);
+                        vec2 cb = cyl ? PA + vec2(kc, ivlc) * (pzb - x0B) : base + sg * wh_filAt(f, pzb, tb);
                         if (cb.y < bestArc) {
                             bestArc = cb.y;
                             ballI = enter;
@@ -607,6 +617,8 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float t = -x.z / d.z;
         if (t > 0.0) { h.t = t; h.kind = 1; h.nrm = vec3(0.0, 0.0, 1.0); }
     }
+    // the boxes stand on the floor: a ray above the tallest one's top going up passes over all of
+    // them (whole regions of the view at once: the sky). The pillars test themselves.
     if (side > 0.0) {
         wh_hitSphere(x, d, wh_sph[0], vec3(0.80, 0.15, 0.10), h);
         wh_hitSphere(x, d, wh_sph[1], vec3(0.95, 0.75, 0.15), h);
@@ -616,7 +628,14 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         wh_hitSphere(x, d, wh_sph[3], vec3(0.75, 0.15, 0.70), h);
         wh_hitSphere(x, d, wh_sph[4], vec3(0.15, 0.75, 0.30), h);
         wh_hitSphere(x, d, wh_sph[5], vec3(0.20, 0.35, 0.85), h);
-        for (int i = 0; i < 4; i++) wh_hitBox(x, d, wh_box[i].xyz, vec3(wh_box[i].w), vec3(0.90, 0.90, 0.95), h);
+        float top = max(max(wh_box[0].z + wh_box[0].w, wh_box[1].z + wh_box[1].w),
+                        max(wh_box[2].z + wh_box[2].w, wh_box[3].z + wh_box[3].w));
+        if (x.z < top || d.z < 0.0) {
+            wh_hitBox(x, d, wh_box[0].xyz, vec3(wh_box[0].w), vec3(0.90, 0.90, 0.95), h);
+            wh_hitBox(x, d, wh_box[1].xyz, vec3(wh_box[1].w), vec3(0.90, 0.90, 0.95), h);
+            wh_hitBox(x, d, wh_box[2].xyz, vec3(wh_box[2].w), vec3(0.90, 0.90, 0.95), h);
+            wh_hitBox(x, d, wh_box[3].xyz, vec3(wh_box[3].w), vec3(0.90, 0.90, 0.95), h);
+        }
     }
 #ifndef WH_NO_BALLS
     // balls: the chord ball cut by this universe's sheet w = side*h is an ordinary sphere;
@@ -759,8 +778,9 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
                 dbg = vec4(side > 0.0 ? 1.0 : 0.0, normalize(d));
             } else if (h.kind == 1) {
                 kind = 1;
-                fn = wh_M(side, p) / length(p);
-                fl = side * (length(p) - wh_Rout() + wh_Lsh());
+                float ip = inversesqrt(dot(p, p));
+                fn = wh_M(side, p) * ip;
+                fl = side * (dot(p, p) * ip - wh_Rout() + wh_Lsh());
                 dist += h.t;
                 dbg = vec4(side > 0.0 ? 3.0 : 2.0, fl, fn.xy);
             } else {
@@ -804,11 +824,12 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     else c = vec3(1.0, 0.0, 1.0);
     // what the kinds share: the grid lines (sky faint, floor bright), the throat circle on the
     // floor, and fog on the floor and on objects
-    vec2 gf = abs(fract(gq + 0.5) - 0.5) / fw;
+    vec2 ifw = vec2(fw.y, fw.x) / (fw.x * fw.y);       // 1 / fw, one division
+    vec2 gf = abs(fract(gq + 0.5) - 0.5) * ifw;
     float line = 1.0 - clamp(min(gf.x, gf.y), 0.0, 1.0);
     c = mix(c, kind == 1 ? vec3(0.95) : (side > 0.0 ? vec3(1.0, 0.9, 0.8) : vec3(1.0)),
             (kind == 1 ? 0.55 : (kind == 0 ? 0.12 : 0.0)) * line);
-    c = mix(c, vec3(0.2, 1.0, 0.9), kind == 1 ? 1.0 - clamp(abs(gq.x) / fw.x - 1.0, 0.0, 1.0) : 0.0);
+    c = mix(c, vec3(0.2, 1.0, 0.9), kind == 1 ? 1.0 - clamp(abs(gq.x) * ifw.x - 1.0, 0.0, 1.0) : 0.0);
     float fog = kind == 1 || kind == 2 ? 1.0 - exp(-dist * 0.012) : 0.0;
     return mix(c, side > 0.0 ? vec3(0.95, 0.60, 0.35) : vec3(0.70, 0.82, 0.95), fog);
 }
