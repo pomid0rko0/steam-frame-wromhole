@@ -3,15 +3,22 @@ extends SceneTree
 ## mode "ray" hides Godot's green overlay, "floor" shows only its floor lines, "domain" fills
 ## the area where it may draw floor lines, "balls" shows only its ball grids, "both" all of it.
 ## Comparing them shows whether green lands exactly on the ray-traced white lines and red balls.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case [plain]
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
-## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture.
+## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture;
+## 3: as 1, then the left stick walks forward and right (keys W, D), the right stick snaps
+## 30 degrees right (key E), and after a switch to smooth turns (Tab) turns 15 degrees left
+## while walking forward (Q, W): the overlay must follow the world. Run with --fixed-fps 60,
+## so every mode walks and turns the same.
+## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
+## code); only the floor lines can be compared then.
 
 var main: Node3D
 var hmd
 var frames := 0
 var mode: String
 var case := 0
+var plain := false
 
 
 func _initialize() -> void:
@@ -19,6 +26,7 @@ func _initialize() -> void:
 	mode = args[1]
 	hmd = preload("res://tests/fake_hmd.gd").new()
 	case = int(args[2])
+	plain = args.size() > 3 and args[3] == "plain"
 	if case == 0:
 		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.0, 1.0, -1.1, 1.1))
 	else:
@@ -30,6 +38,8 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "FakeHMD"
 	main.show_check = true
+	if case == 3:
+		main.smooth_turn = false
 	root.add_child(main)
 
 
@@ -39,6 +49,9 @@ func _process(_delta: float) -> bool:
 		# then the head turns back to the start yaw: the view should face the throat
 		main.place(1.0, main.START_POS, main.START_FORWARD)
 	if frames == 4:
+		main.perf.visible = false        # it follows the head: in every view
+		if plain:
+			main.set_balls(PackedVector4Array(), PackedVector4Array())
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
 		match mode:
 			"ray":
@@ -55,7 +68,29 @@ func _process(_delta: float) -> bool:
 				grid.visible = false
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05)) * hmd.head
-	if frames == 24:
+	if case == 3:
+		match frames:
+			5:
+				_key(KEY_W, true)
+				_key(KEY_D, true)
+			15:
+				_key(KEY_W, false)
+				_key(KEY_D, false)
+			16:
+				_key(KEY_E, true)
+			18:
+				_key(KEY_E, false)
+			19:
+				_key(KEY_TAB, true)
+			20:
+				_key(KEY_TAB, false)
+			21:
+				_key(KEY_Q, true)
+				_key(KEY_W, true)
+			31:
+				_key(KEY_Q, false)
+				_key(KEY_W, false)
+	if frames == (34 if case == 3 else 24):
 		var rid: RID = main.xr_view.get_texture().get_rid()
 		for i in 2:
 			var img: Image = RenderingServer.texture_2d_layer_get(rid, i)
@@ -64,3 +99,11 @@ func _process(_delta: float) -> bool:
 		print("saved ", mode)
 		return true
 	return false
+
+
+func _key(code: Key, down: bool) -> void:
+	var ev := InputEventKey.new()
+	ev.keycode = code
+	ev.physical_keycode = code
+	ev.pressed = down
+	Input.parse_input_event(ev)

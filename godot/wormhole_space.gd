@@ -161,3 +161,78 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	if l < 0.0:
 		x.x = -x.x
 	return x
+
+
+# ---------------------------------------------------------------- the fillet table
+## The ray tracer's fillet polynomials (wormhole_core.gdshaderinc, "curved part") depend on the
+## ray's impact parameter b alone: the shader samples them from this table instead of working them
+## out per ray. Four rows of TABLE_N knots, one per span of b with one regime of the moments
+## (rows 0, 1: rays that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots
+## evenly spaced over the row. A factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which goes to
+## zero like a square root at the shell's edge, is taken out (the shader puts it back): what is
+## left is smooth enough for linear interpolation (psi within 1e-5 rad).
+const TABLE_N := 256
+const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]
+const _A := [
+	[1.0635954209629264, -0.06994895315294707, 0.0072202981818859785, -0.0008667659918653305],
+	[-13.363790651033874, 14.746483787306632, -1.5723807203730116, 0.1896875841002548],
+	[35.770406476784, -49.259940350673936, 15.558746458518186, -2.0692125846282434],
+	[-25.12406687051129, 37.32760503465092, -15.881390739642725, 3.6778525755030924]]
+
+
+## {image: the table (TABLE_N x 4, RGBA float), lo: each row's first b, inv: (TABLE_N - 1) / its
+## span of b, reg: its regime}: the shader's wh_tab, wh_tabLo, wh_tabInv, wh_tabReg.
+func fillet_table() -> Dictionary:
+	var s0 := sin(0.5 * th0)
+	var rmin := rho0 + 2.0 * fillet * s0 * s0
+	var sp := maxf(Rout - rmin, 1e-6 * fillet)       # the span of passing rays
+	var al_pass := (rmin - rho0) / sp
+	var b1 := clampf(rmin - sp, 0.0, rmin)           # passing: ga = (rmin - b) / sp >= 1 below
+	var b3 := clampf(0.5 * (Rout + rho0), rmin, Rout)   # turning: al = (b - rho0) / (Rout - b) >= 1 above
+	var lo := [0.0, b1, rmin, b3]
+	var hi := [b1, rmin, b3, Rout]
+	var reg := [2 if al_pass >= 1.0 else 1, 1 if al_pass >= 1.0 else 0, 0, 1]
+	var data := PackedFloat32Array()
+	data.resize(TABLE_N * 4 * 4)
+	var inv := Vector4.ZERO
+	for row in 4:
+		var span_b: float = hi[row] - lo[row]
+		inv[row] = (TABLE_N - 1) / span_b if span_b > 0.0 else 0.0
+		for i in TABLE_N:
+			var b: float = lo[row] + span_b * i / (TABLE_N - 1)
+			var e := _fillet_coef(b, row >= 2, reg[row], rmin)
+			for c in 4:
+				data[(row * TABLE_N + i) * 4 + c] = e[c]
+	var img := Image.create_from_data(TABLE_N, 4, false, Image.FORMAT_RGBAF, data.to_byte_array())
+	return {"image": img, "lo": Vector4(lo[0], lo[1], lo[2], lo[3]), "inv": inv,
+			"reg": Vector4(reg[0], reg[1], reg[2], reg[3])}
+
+
+## The shader's f.e for impact parameter b in the given regime, times sqrt(mx) (and sqrt(mn) in
+## regime 2): wh_fil, in float64.
+func _fillet_coef(b: float, turn: bool, reg: int, rmin: float) -> Vector4:
+	var ra := b if turn else rmin
+	var span := maxf(Rout - ra, 1e-6 * fillet)
+	var al := (ra - rho0) / span
+	var ga := 0.0 if turn else (rmin - b) / span
+	var mn := minf(al, ga)
+	var mx := maxf(al, ga)
+	var F := []
+	for k in 4:
+		var r: float = ra + span * _TAU[k]
+		var u := (r - rho0) / (2.0 * fillet)
+		var q := (1.0 - u) * (r + b)
+		if reg >= 1:
+			q *= _TAU[k] + mx
+		if reg == 2:
+			q *= _TAU[k] + mn
+		F.append(b * sqrt(2.0 * fillet) / sqrt(q * r * r))
+	var scale := 1.0
+	if reg >= 1:
+		scale *= sqrt(mx)
+	if reg == 2:
+		scale *= sqrt(mn)
+	var e := Vector4.ZERO
+	for j in 4:
+		e[j] = scale * (_A[j][0] * F[0] + _A[j][1] * F[1] + _A[j][2] * F[2] + _A[j][3] * F[3])
+	return e
