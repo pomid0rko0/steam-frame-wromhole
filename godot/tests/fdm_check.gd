@@ -31,6 +31,7 @@ func _initialize() -> void:
 	hmd.initialize()
 	XRServer.primary_interface = hmd
 	main = load("res://main.tscn").instantiate()
+	main.physics = false            # the driver's passes, the same with or without toys
 	main.xr_name = "FakeHMD"
 	root.add_child(main)
 

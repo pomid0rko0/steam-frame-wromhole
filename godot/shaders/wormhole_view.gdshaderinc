@@ -28,6 +28,31 @@ uniform vec4 wh_tabLo;
 uniform vec4 wh_tabInv;
 uniform vec4 wh_tabReg;
 #endif
+#ifdef WH_GRAVITY
+uniform vec4 grav_cyl;
+uniform vec4 grav_g[2];
+uniform vec4 grav_d[2];
+#endif
+// a pixel's angle: the arrows' soft edges, the cubes' edge lines
+#ifndef WH_NO_BALLS
+#define WH_PIX
+#else
+#ifdef WH_ARROWS
+#define WH_PIX
+#endif
+#endif
+#ifdef WH_PIX
+uniform float wh_pix = 0.0015;
+#endif
+#ifndef WH_NO_BALLS
+uniform vec4 wh_cube[6];
+uniform vec4 wh_cubeE[30];
+uniform vec4 wh_cubeCol[6];
+uniform int wh_nCube = 0;
+// balls' and cubes' bounding spheres (R^4 xyz of the centre, radius; < 0: none) in universe A, B
+// (main.set_objects): a ray of a flat universe that misses one tests none of them
+uniform vec4 wh_bound[4];
+#endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
 

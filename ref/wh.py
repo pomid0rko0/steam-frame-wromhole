@@ -71,12 +71,20 @@ class Wormhole:
         return tuple(yi + h / 6 * (a1 + 2 * a2 + 2 * a3 + a4)
                      for yi, a1, a2, a3, a4 in zip(y, k1, k2, k3, k4))
 
-    def brute(self, l, n, vl, w, h=1e-3, smax=200.0, balls=()):
+    def brute(self, l, n, vl, w, h=1e-3, smax=200.0, balls=(), cubes=()):
         """Integrate until the ray leaves the curved shell (|l| >= L moving outward)
         or crosses the floor n_z = 0 from above, or enters a ball (centre in R^4, radius):
-        the ball is the set of points whose chord distance in R^4 to the centre is < radius.
-        kind: +1/-1 exit side, 2 floor, 10 + j ball j, 0 unfinished."""
-        balls = [(np.asarray(c, float), float(rad)) for c, rad in balls]
+        the ball is the set of points whose chord distance in R^4 to the centre is < radius;
+        or enters a cube (centre in R^4, 4x4 orthonormal axes as rows, half size): the points
+        of the 4D box |(P - centre) . axis_k| < half for all four axes.
+        kind: +1/-1 exit side, 2 floor, 10 + j object j (the balls, then the cubes), 0 unfinished."""
+        def ball_in(c, rad):
+            return lambda E: np.sum((E - c) ** 2, -1) < rad * rad
+
+        def cube_in(c, ax, a):
+            return lambda E: np.all(np.abs((E - c) @ ax.T) < a, -1)
+        objs = [ball_in(np.asarray(c, float), float(rad)) for c, rad in balls] + \
+               [cube_in(np.asarray(c, float), np.asarray(ax, float), float(a)) for c, ax, a in cubes]
         l, n, vl, w = l.copy(), n.copy(), vl.copy(), w.copy()
         m = l.shape[0]
         alive = np.ones(m, bool)
@@ -93,10 +101,10 @@ class Wormhole:
             leave = (np.abs(ln) >= self.L) & (np.sign(ln) * vln > 0)
             ev = floor | leave
             enter = np.full(len(idx), -1)
-            if balls:
+            if objs:
                 Eo, En = self.embed(y[0], y[1]), self.embed(ln, nn)
-                for jb, (c, rad) in enumerate(balls):
-                    e = (np.sum((Eo - c) ** 2, -1) >= rad * rad) & (np.sum((En - c) ** 2, -1) < rad * rad) & (enter < 0)
+                for jb, inside in enumerate(objs):
+                    e = ~inside(Eo) & inside(En) & (enter < 0)
                     enter[e] = jb
                 ev = ev | (enter >= 0)
             if self.th0 > 0:
@@ -118,10 +126,9 @@ class Wormhole:
                     cands.append(('floor', lambda ym: ym[1][0, 2] <= 0))
                 if leave[j]:
                     cands.append(('leave', lambda ym: abs(ym[0][0]) >= self.L))
-                for jb, (c, rad) in enumerate(balls):
-                    if np.sum((self.embed(ln[j:j + 1], nn[j:j + 1])[0] - c) ** 2) < rad * rad and \
-                            np.sum((self.embed(yy[0], yy[1])[0] - c) ** 2) >= rad * rad:
-                        cands.append((10 + jb, lambda ym, c=c, rad=rad: np.sum((self.embed(ym[0], ym[1] / np.linalg.norm(ym[1]))[0] - c) ** 2) < rad * rad))
+                for jb, inside in enumerate(objs):
+                    if inside(self.embed(ln[j:j + 1], nn[j:j + 1]))[0] and not inside(self.embed(yy[0], yy[1]))[0]:
+                        cands.append((10 + jb, lambda ym, inside=inside: inside(self.embed(ym[0], ym[1] / np.linalg.norm(ym[1])))[0]))
                 best = None
                 for tag, test in cands:
                     lo, hi = 0.0, h

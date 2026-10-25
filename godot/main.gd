@@ -3,7 +3,12 @@ extends Node3D
 ## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
 ## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
 ## pulling the trigger, set the refresh rate, the render scale and foveated rendering
-## (perf_panel.gd, set_foveation). Every pixel is
+## (perf_panel.gd, set_foveation). Gravity through the wormhole, from Laplace's equation on the
+## space itself (WormholeSpace.gravity_f): balls roll and bounce in it, cubes slide and stop
+## (ball_world.gd). A moment after the start a cube and a ball are thrown, then two balls are
+## dropped together: one beside the wormhole, one in the middle of the throat, where gravity is a
+## fifth; A (R) puts everything back and does it again. The floor coloured by gravity's strength
+## and arrows of its field are shown on request (set_gravity_view; the panel, left Y, G). Every pixel is
 ## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
 ## viewer is in that curved space.
 ##
@@ -29,11 +34,21 @@ const MOUSE_SENS := 0.003
 # Stereo check (see _add_check): balls in chart A, in front of the start position
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
+# and a magenta cube on the floor, turned (chart A centre, half size, yaw)
+const CHECK_CUBE := Vector3(6.9, 0.9, 0.3)
+const CHECK_CUBE_HALF := 0.3
+const CHECK_CUBE_YAW := 0.5
+const CHECK_CUBE_COLOR := Color(0.85, 0.1, 0.9)
 # present in a build: the stereo check is on (a build for the one-eye check; not in git)
 const CHECK_FLAG := "res://check"
 # the ray tracer without movable balls, and with them (set_balls)
 const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
 const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
+const SHADER_GRAVITY := preload("res://shaders/wormhole_gravity.gdshader")    # set_gravity_view 1
+const SHADER_ARROWS := preload("res://shaders/wormhole_arrows.gdshader")      # set_gravity_view 2
+const SHADER_BALLS_GRAVITY := preload("res://shaders/wormhole_balls_gravity.gdshader")   # with balls
+const SHADER_BALLS_ARROWS := preload("res://shaders/wormhole_balls_arrows.gdshader")
+const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
 # eyes look, [radius, shading width, height in screen pixels]; the radius in each eye's picture,
@@ -52,6 +67,13 @@ const GAZE_DOT_DIST := 1.5           # m along the gaze: where the gaze dot is d
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
+var world := BallWorld.new(space, scene)
+var physics := true             # simulate and draw the balls and cubes; the stereo check and tests that draw their own turn it off
+var throw_toys := true          # the throw and the drop after the start and each reset
+var launch_in := -1.0           # seconds until the throw; < 0: none pending
+var drop_in := -1.0             # seconds until the two balls are dropped; < 0: none pending
+var toys_drawn := -1            # balls and cubes the shader was last given (_upload_toys)
+var pixel_angle := 0.0          # wh_pix as last set (_pixel_angle)
 var xr: XRInterface
 var xr_name := "OpenXR"        # tests use "Native mobile": Godot's own stereo renderer, same multiview path
 var in_xr := false
@@ -91,6 +113,8 @@ var own_maps := {}              # OWN_MAPS made into textures, by level * 2 + ow
 var own_order := 0              # our maps' steps: 0 the width first (2x1, 4x2), 1 the height (1x2, 2x4)
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
 var gaze_dot: MeshInstance3D    # drawn where they look, while the panel says so
+var balls := 0                  # movable balls and cubes in the ray tracer (set_balls, _upload_toys)
+var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 
 
 func _ready() -> void:
@@ -162,6 +186,7 @@ func _ready() -> void:
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
 	_upload_fillet_table()
+	_upload_gravity()
 	_upload_scene()
 	var quad := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -178,6 +203,9 @@ func _ready() -> void:
 	_build_overlay()
 	if show_check:
 		_add_check()
+	elif physics:
+		_spawn_toys()
+		_upload_toys()
 
 
 ## Put the feet at chart position pos (z = 0) on the given side, looking along forward.
@@ -275,6 +303,9 @@ func _process(delta: float) -> void:
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	var moved := false if hold else _handle_turn_and_reset(dt)
+	# left Y / G: the next gravity view (not during the speed check: it times what it set up)
+	if _pressed_once("gravity", Input.is_key_pressed(KEY_G) or (in_xr and left_hand.is_button_pressed(&"by_button"))) and not hold:
+		set_gravity_view((gravity_view + 1) % GRAVITY_VIEWS.size())
 
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
@@ -294,6 +325,12 @@ func _process(delta: float) -> void:
 		moved = true
 	if not hold:
 		_walk(step)
+	_toys(delta)
+	# a pixel's angle (the cubes' edge lines, the arrows' soft edges) follows the render scale
+	var pix := _pixel_angle()
+	if pix != pixel_angle:
+		pixel_angle = pix
+		material.set_shader_parameter("wh_pix", pix)
 	if moved:
 		# the controls moved the world against the room; physical walking does not
 		_update_chart_map()
@@ -397,7 +434,131 @@ func _handle_turn_and_reset(delta: float) -> bool:
 		snap_armed = true
 	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))):
 		place(1.0, START_POS, START_FORWARD)    # also redoes the chart -> play map
+		if physics:
+			_spawn_toys()
+			print("toys: back in place, throwing again")
 	return moved
+
+
+# ---------------------------------------------------------------- the toys
+const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
+		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
+const CUBE_COLORS := [Color(0.93, 0.93, 0.88), Color(0.95, 0.45, 0.55), Color(0.35, 0.8, 0.75),
+		Color(0.95, 0.7, 0.3), Color(0.55, 0.6, 0.95), Color(0.6, 0.85, 0.35)]
+const LAUNCH_DELAY := 1.5
+const DROP_DELAY := 6.5         # after the thrown ball has rolled through the throat
+const DROP_HEIGHT := 2.0
+const DROP_COLOR := Color(0.95, 0.95, 0.97)
+const DROP_SPOT_A := Vector3(4.5, 4.2, DROP_HEIGHT)   # to the right of the wormhole
+const DROP_RADIUS := 0.35
+
+
+## The throw and the drop when due, the physics, the shader's copy. Not during the speed check:
+## it times the same scene at every pose.
+func _toys(delta: float) -> void:
+	if not physics:
+		return
+	if not await_pose and not hold:
+		if launch_in >= 0.0:
+			launch_in -= delta
+			if launch_in < 0.0:
+				_throw()
+		if drop_in >= 0.0:
+			drop_in -= delta
+			if drop_in < 0.0:
+				_drop()
+		world.step(delta, [])
+	_upload_toys()
+
+
+## Everything back in place: the balls and cubes at rest, the throw LAUNCH_DELAY s later, the
+## drop DROP_DELAY s later.
+func _spawn_toys() -> void:
+	world.balls.clear()
+	world.cubes.clear()
+	var spots := [Vector2(7.0, -1.5), Vector2(7.0, 0.0), Vector2(7.0, 1.5), Vector2(6.0, -0.75), Vector2(6.0, 0.75)]
+	for i in spots.size():
+		var rad := 0.25 if i < 3 else 0.35
+		var p := space.point_from_chart(1.0, Vector3(spots[i].x, spots[i].y, rad))
+		world.add(p[0], p[1], Vector4.ZERO, rad, BALL_COLORS[i % BALL_COLORS.size()])
+	_cube_on_floor(Vector2(5.4, -2.5), 0.3, 0.35, CUBE_COLORS[0])
+	_cube_on_floor(Vector2(6.2, 3.6), 0.25, -0.5, CUBE_COLORS[2])
+	_cube_in_throat(0.8, -0.45, 0.3, CUBE_COLORS[5])
+	launch_in = LAUNCH_DELAY if throw_toys else -1.0
+	drop_in = DROP_DELAY if throw_toys else -1.0
+
+
+## From chest height in front of the start: a tumbling cube that lands to the left of the balls
+## and slides to a stop, and a ball that bounces, rolls on and goes through to universe B.
+func _throw() -> void:
+	var p := space.point_from_chart(1.0, Vector3(9.0, -1.9, 1.4))
+	var b := Basis.from_euler(Vector3(0.4, 0.3, 0.2))
+	var F := []
+	for ax in [b.x, b.y, b.z]:
+		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
+	world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
+			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
+	var q := space.point_from_chart(1.0, Vector3(9.0, 2.4, 1.4))
+	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-3.0, -0.2, 1.0)), 0.25, BALL_COLORS[5])
+	print("toys: thrown")
+
+
+## Two white balls let go at the same moment from the same height: one beside the wormhole,
+## where gravity is ordinary, and one in the middle of the throat, where it is about a fifth of
+## that. The second is straight ahead in the throat (azimuth 0): from the start it is seen in the
+## middle of the wormhole against universe B's sky, and falls and bounces in slow motion.
+func _drop() -> void:
+	var p := space.point_from_chart(1.0, DROP_SPOT_A)
+	world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
+	world.add(0.0, throat_point(0.0, DROP_HEIGHT), Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
+	print("toys: two balls dropped")
+
+
+## The direction n at height H = r(0) n.z above the floor in the middle of the throat, at azimuth phi.
+func throat_point(phi: float, height: float) -> Vector3:
+	var z := height / space.r(0.0)
+	return Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)
+
+
+## A cube resting on the floor of universe A at chart position pos, turned by yaw.
+func _cube_on_floor(pos: Vector2, half: float, yaw: float, color: Color) -> Dictionary:
+	var p := space.point_from_chart(1.0, Vector3(pos.x, pos.y, half))
+	var F := []
+	for ax in [Vector3(cos(yaw), sin(yaw), 0.0), Vector3(-sin(yaw), cos(yaw), 0.0), Vector3(0.0, 0.0, 1.0)]:
+		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
+	return world.add_cube(p[0], p[1], Vector4.ZERO, F, Vector3.ZERO, half, color)
+
+
+## A cube resting on the floor inside the throat, at l and azimuth phi.
+func _cube_in_throat(l: float, phi: float, half: float, color: Color) -> Dictionary:
+	var z := half / space.r(l)
+	var n := Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)
+	var up := space.height_grad(l, n).normalized()
+	var across := WormholeSpace.tangent(n, Vector4(0.0, -sin(phi), cos(phi), 0.0))
+	return world.add_cube(l, n, Vector4.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), up, across], Vector3.ZERO, half, color)
+
+
+## The balls and cubes for the shader: a ball's centre as a point of R^4 and its radius (chord
+## distance in R^4); a cube's 4D box (centre, four axes over the half size) and colour.
+func _upload_toys() -> void:
+	var pos := PackedVector4Array()
+	var col := PackedVector4Array()
+	for b in world.balls:
+		pos.append(space.embed(b["l"], b["n"]))
+		var c: Color = b["color"]
+		col.append(Vector4(c.r, c.g, c.b, b["radius"]))
+	var cpos := PackedVector4Array()
+	var axes := PackedVector4Array()
+	var ccol := PackedVector4Array()
+	for c in world.cubes:
+		var box := world.box4(c)
+		var half: float = c["half"]
+		cpos.append(box[0])
+		for k in 4:
+			axes.append(box[1 + k] / half)
+		var cc: Color = c["color"]
+		ccol.append(Vector4(cc.r, cc.g, cc.b, half))
+	set_objects(pos, col, cpos, axes, ccol)
 
 
 ## Each controller points at the panel; its trigger presses the button it points at.
@@ -471,9 +632,11 @@ func _build_overlay() -> void:
 
 
 ## The stereo check. Godot's standard renderer draws green lines on top of what the ray tracer
-## draws: on the white lines of the flat floor and as a grid on three red balls. With one eye
-## closed, green must lie exactly on white / on red; two separate grids mean wrong stereo.
+## draws: on the white lines of the flat floor, as a grid on three red balls and along the edges
+## of a magenta cube. With one eye closed, green must lie exactly on white / on red / on the cube's
+## dark edges; two separate grids mean wrong stereo.
 func _add_check() -> void:
+	physics = false                 # the check's red balls take the shader's ball slots
 	var floor_mat := ShaderMaterial.new()
 	floor_mat.shader = load("res://shaders/check_grid.gdshader")
 	floor_mat.set_shader_parameter("rout", space.Rout)
@@ -483,6 +646,7 @@ func _add_check() -> void:
 	for c in CHECK_BALLS:
 		bl.append(Vector4(c.x, c.y, c.z, CHECK_BALL_RADIUS))
 	floor_mat.set_shader_parameter("balls", bl)
+	floor_mat.set_shader_parameter("cube", Vector4(CHECK_CUBE.x, CHECK_CUBE.y, CHECK_CUBE.z, sqrt(3.0) * CHECK_CUBE_HALF))
 	var plane := PlaneMesh.new()
 	plane.orientation = PlaneMesh.FACE_Z
 	plane.size = Vector2(60.0, 60.0)
@@ -512,7 +676,25 @@ func _add_check() -> void:
 		m.material_override = ball_mat
 		m.position = c
 		overlay.add_child(m)
-	set_balls(pos, col)
+	# the cube: Godot draws its edges green, the ray tracer the 4D box of sheet A (axes over the half size)
+	var yaw := CHECK_CUBE_YAW
+	var box := MeshInstance3D.new()
+	box.name = "Cube"
+	box.mesh = BoxMesh.new()
+	box.mesh.size = Vector3.ONE * 2.0 * CHECK_CUBE_HALF
+	box.material_override = ShaderMaterial.new()
+	box.material_override.shader = load("res://shaders/check_cube.gdshader")
+	box.material_override.set_shader_parameter("half", CHECK_CUBE_HALF)
+	box.material_override.render_priority = 11
+	box.transform = Transform3D(Basis(Vector3(0.0, 0.0, 1.0), yaw), CHECK_CUBE)
+	overlay.add_child(box)
+	var axes := PackedVector4Array([Vector4(cos(yaw), sin(yaw), 0.0, 0.0), Vector4(-sin(yaw), cos(yaw), 0.0, 0.0),
+			Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0)])
+	for k in 4:
+		axes[k] /= CHECK_CUBE_HALF
+	var cc := CHECK_CUBE_COLOR
+	set_objects(pos, col, PackedVector4Array([Vector4(CHECK_CUBE.x, CHECK_CUBE.y, CHECK_CUBE.z, space.h)]), axes,
+			PackedVector4Array([Vector4(cc.r, cc.g, cc.b, CHECK_CUBE_HALF)]))
 	# no other objects: Godot's floor lines would be drawn over them where the floor is hidden
 	var none_sph := PackedVector4Array()
 	var none_pil := PackedVector4Array()
@@ -608,16 +790,119 @@ func set_own_order(order: int) -> void:
 ## shader is chosen here, so set the balls at the start: changing it later costs a hitch while the
 ## GPU compiles the other one.
 func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
+	set_objects(pos, col, PackedVector4Array(), PackedVector4Array(), PackedVector4Array())
+
+
+## Movable balls (as set_balls) and cubes, at most 6: a cube's 4D box of R^4, cut by the space as
+## a box of a 4D SDF scene: centre as a point of R^4 (cpos), four orthonormal axes divided by the
+## half size (axes: three body axes tangent to the space, then its normal; four per cube),
+## (rgb, half size) (ccol). The shader with balls draws both; it gets each cube's axes and then
+## dot(centre, axis) for the four, five vectors per cube (wormhole_core.gdshaderinc).
+func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedVector4Array,
+		axes: PackedVector4Array, ccol: PackedVector4Array) -> void:
 	var n := pos.size()
+	var nc := cpos.size()
 	var p := pos.duplicate()
 	var c := col.duplicate()
+	var cp := cpos.duplicate()
+	var ax := PackedVector4Array()
+	for i in nc:
+		var o := Vector4.ZERO
+		for k in 4:
+			ax.append(axes[4 * i + k])
+			o[k] = cpos[i].dot(axes[4 * i + k])
+		ax.append(o)
+	var cc := ccol.duplicate()
 	while p.size() < 12:
 		p.append(Vector4.ZERO)
 		c.append(Vector4.ZERO)
-	material.shader = SHADER_BALLS if n > 0 else SHADER_PLAIN
+	while cp.size() < 6:
+		cp.append(Vector4.ZERO)
+		cc.append(Vector4.ZERO)
+	while ax.size() < 30:
+		ax.append(Vector4.ZERO)
+	balls = n + nc
+	if (balls > 0) != (toys_drawn > 0):
+		_pick_shader()                 # only when it changes: a new shader is a hitch
+	toys_drawn = balls
 	material.set_shader_parameter("wh_ball", p)
 	material.set_shader_parameter("wh_ballCol", c)
 	material.set_shader_parameter("wh_nBall", n)
+	material.set_shader_parameter("wh_cube", cp)
+	material.set_shader_parameter("wh_cubeE", ax)
+	material.set_shader_parameter("wh_cubeCol", cc)
+	material.set_shader_parameter("wh_nCube", nc)
+	# the bounding spheres per flat universe: balls a sheet w = side h cuts, cubes the same (half
+	# diagonal 2 half)
+	var bounds := PackedVector4Array()
+	for group in 2:
+		for side in [1.0, -1.0]:
+			var lo := Vector3(INF, INF, INF)
+			var hi := -lo
+			var pts := []
+			var count := n if group == 0 else nc
+			for i in count:
+				var C: Vector4 = pos[i] if group == 0 else cpos[i]
+				var rr: float = col[i].w if group == 0 else 2.0 * ccol[i].w
+				if absf(C.w - side * space.h) < rr:
+					var c3 := Vector3(C.x, C.y, C.z)
+					lo = lo.min(c3)
+					hi = hi.max(c3)
+					pts.append([c3, rr])
+			if pts.is_empty():
+				bounds.append(Vector4(0.0, 0.0, 0.0, -1.0))
+				continue
+			var mid := 0.5 * (lo + hi)
+			var rad := 0.0
+			for q in pts:
+				rad = maxf(rad, mid.distance_to(q[0]) + q[1])
+			bounds.append(Vector4(mid.x, mid.y, mid.z, rad))
+	# order: balls A, balls B, cubes A, cubes B
+	material.set_shader_parameter("wh_bound", bounds)
+
+
+## How gravity is shown (README, «Гравитация через червоточину»): 0 not at all, 1 the floor
+## coloured by its strength (optozorax's palette: dark is none, yellow 1 g), 2 also arrows of the
+## field on the vertical surface through the wormhole that faces the start (x = 0 in both
+## universes, through the throat). Ray tracers of their own (wormhole_gravity.gdshader,
+## wormhole_arrows.gdshader, and with movable balls and cubes wormhole_balls_gravity.gdshader,
+## wormhole_balls_arrows.gdshader).
+func set_gravity_view(view: int) -> void:
+	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
+	material.set_shader_parameter("wh_pix", _pixel_angle())
+	_pick_shader()
+	if perf:
+		perf._paint()
+	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
+
+
+## The ray tracer for what is on: the gravity view, movable balls, or neither.
+func _pick_shader() -> void:
+	if balls > 0:
+		material.shader = [SHADER_BALLS, SHADER_BALLS_GRAVITY, SHADER_BALLS_ARROWS][gravity_view]
+	else:
+		material.shader = [SHADER_PLAIN, SHADER_GRAVITY, SHADER_ARROWS][gravity_view]
+
+
+## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the
+## cubes' edge lines): the headset's field of view is about 104 degrees up and down.
+func _pixel_angle() -> float:
+	var h := float(get_viewport().get_visible_rect().size.y)
+	var fov := deg_to_rad(camera.fov)
+	if in_xr:
+		h = xr.get_render_target_size().y * xr_view.scaling_3d_scale
+		fov = deg_to_rad(104.0)
+	return 2.0 * tan(0.5 * fov) / maxf(h, 1.0)
+
+
+## Gravity for the gravity view's ray tracer: f / r and f' as the shader evaluates them
+## (WormholeSpace.gravity_shader). A change of the throat's shape needs them again.
+func _upload_gravity() -> void:
+	var g := space.gravity_shader()
+	material.set_shader_parameter("grav_cyl", g.cyl)
+	material.set_shader_parameter("grav_g", PackedVector4Array(g.g))
+	material.set_shader_parameter("grav_d", PackedVector4Array(g.d))
+	material.set_shader_parameter("wh_pix", _pixel_angle())
 
 
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a

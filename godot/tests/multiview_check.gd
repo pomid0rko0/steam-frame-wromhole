@@ -1,9 +1,10 @@
 extends SceneTree
 ## The in-headset stereo check scene through the simulated headset (tests/fake_hmd.gd):
 ## mode "ray" hides Godot's green overlay, "floor" shows only its floor lines, "domain" fills
-## the area where it may draw floor lines, "balls" shows only its ball grids, "both" all of it.
-## Comparing them shows whether green lands exactly on the ray-traced white lines and red balls.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|both case [plain] [fov]
+## the area where it may draw floor lines, "balls" shows only its ball grids, "cube" only the
+## cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
+## ray-traced white lines, red balls and magenta cube.
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
 ## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
 ## 2: as 1, then the head walks 0.7 m and turns 35 degrees over ten frames before the capture;
 ## 3: as 1, then the left stick walks forward and right (keys W, D), the right stick snaps
@@ -11,7 +12,9 @@ extends SceneTree
 ## while walking forward (Q, W): the overlay must follow the world. Run with --fixed-fps 60,
 ## so every mode walks and turns the same.
 ## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
-## code); only the floor lines can be compared then.
+## code); only the floor lines can be compared then. gravity, arrows: the gravity view
+## (main.set_gravity_view 1, 2: the floor coloured by gravity, also the field's arrows), its own ray
+## tracers with the balls and the cube (with plain, without them).
 ## fov: foveated rendering on (main.set_foveation: the runtime's strongest in even cases, our own
 ## map in odd ones): the 3D scene in a render pass of its own, the viewport asking for a density map. Software Vulkan has none, so what this tests
 ## is that the split pass draws everything where it was.
@@ -22,6 +25,7 @@ var frames := 0
 var mode: String
 var case := 0
 var plain := false
+var gravity := 0
 var fov := false
 
 
@@ -31,6 +35,7 @@ func _initialize() -> void:
 	hmd = preload("res://tests/fake_hmd.gd").new()
 	case = int(args[2])
 	plain = args.slice(3).has("plain")
+	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
 	fov = args.slice(3).has("fov")
 	if case == 0:
 		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.0, 1.0, -1.1, 1.1))
@@ -57,10 +62,13 @@ func _process(_delta: float) -> bool:
 		main.perf.visible = false        # it follows the head: in every view
 		if plain:
 			main.set_balls(PackedVector4Array(), PackedVector4Array())
+		if gravity > 0:
+			main.set_gravity_view(gravity)
 		if fov:
 			# SteamVR's level in even cases, our own map in odd ones
 			main.set_foveation(main.FOVEATION_LEVELS if case % 2 == 0 else 4)
 		var grid: MeshInstance3D = main.overlay.get_node("Grid")
+		var cube: MeshInstance3D = main.overlay.get_node("Cube")
 		match mode:
 			"ray":
 				for c in main.overlay.get_children():
@@ -74,6 +82,10 @@ func _process(_delta: float) -> bool:
 				grid.material_override.set_shader_parameter("solid", true)
 			"balls":
 				grid.visible = false
+				cube.visible = false
+			"cube":
+				for c in main.overlay.get_children():
+					c.visible = c == cube
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05)) * hmd.head
 	if case == 3:

@@ -30,6 +30,7 @@ func _initialize() -> void:
 	hmd.initialize()
 	XRServer.primary_interface = hmd
 	main = load("res://main.tscn").instantiate()
+	main.physics = false            # this test draws its own balls
 	main.xr_name = "FakeHMD"
 	main.show_check = false   # its balls and grids would cover the test balls
 	root.add_child(main)

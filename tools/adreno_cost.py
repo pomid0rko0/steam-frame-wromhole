@@ -40,10 +40,13 @@ SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
 
 
 def ray_program(log):
-    """The specialised ray tracer from an ir3 log: of the two big fragment programs, the smaller."""
+    """The specialised ray tracer from an ir3 log: of the two big fragment programs, the smaller.
+    A shader with more than 100 vec4 of constants also gets a variant /2 that reads them from
+    memory ("safe constlen"); Turnip runs it only when the pipeline's stages need more than 512 in
+    all (ir3_trim_constlen), and ours need ~200, so the /1 runs."""
     text = open(log, errors='replace').read().replace('MESA: info: ', '')
     progs = {}
-    for m in re.finditer(r'; FRAG prog (\d+/\d+): (\d+) instr', text):
+    for m in re.finditer(r'; FRAG prog (\d+/1): (\d+) instr', text):
         progs[m.group(1)] = int(m.group(2))
     big = max(progs.values())
     cands = sorted((n, p) for p, n in progs.items() if n >= 0.5 * big)
@@ -51,7 +54,9 @@ def ray_program(log):
     end = text.index('; FRAG prog %s:' % p)
     start = text.rfind('Native code for', 0, end)
     body = text[start:end]
-    lines = body.split('\n')
+    # Godot compiles in threads: another shader's "NIR (final form) for ..." header can land
+    # inside this program's listing
+    lines = [x for x in body.split('\n') if not x.startswith('NIR (')]
     hdr = body[body.rfind('; FRAG: outputs'):]
     # the program's instructions: from the first line after the @in/@out declarations
     first = 0
@@ -60,29 +65,64 @@ def ray_program(log):
     return lines[first:], hdr, p, progs[p]
 
 
-def material_ubo(balls=None):
-    """Godot's material uniform block, std140 in declaration order (wormhole_view.gdshaderinc)."""
-    u = np.zeros(4 * 64, np.float32)
-    # (wh_tab* sit after head_pos when the shader has them: set by material_ubo's caller)
-    u[0:3] = [3.0, 5.0, 1.0]                    # wh_rho0, wh_h, wh_fillet
-    sph = SCENE['spheres_A'] + SCENE['spheres_B']
-    for i, s in enumerate(sph):
-        u[4 * (1 + i):4 * (2 + i)] = s
-    for i, s in enumerate(SCENE['pillars_A']):
-        u[4 * (7 + i):4 * (8 + i)] = s
-    for i, s in enumerate(SCENE['boxes_B']):
-        u[4 * (11 + i):4 * (12 + i)] = s
-    # wh_tabLo, wh_tabInv, wh_tabReg (WH_TABLE), after head_l .. head_pos (vec4 39-44)
-    tab, lo, inv, reg = fillet_table()
-    u[4 * 45:4 * 46] = lo
-    u[4 * 46:4 * 47] = inv
-    u[4 * 47:4 * 48] = reg
+# The material's uniforms in declaration order (wormhole_view.gdshaderinc), with the defines that
+# keep each: (name, type, array length). Godot lays them out std140-like: a scalar takes 4 bytes on
+# a 4-byte boundary, a vec3 12 bytes on a 16-byte one, a vec4 and every array element 16 bytes.
+UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f', 0, None),
+            ('wh_sph', 'v4', 6, None), ('wh_pil', 'v4', 4, None), ('wh_box', 'v4', 4, None),
+            ('wh_ball', 'v4', 12, None), ('wh_ballCol', 'v4', 12, None), ('wh_nBall', 'i', 0, None),
+            ('head_l', 'f', 0, None), ('head_n', 'v3', 0, None), ('head_f', 'v4', 3, None), ('head_pos', 'v3', 0, None),
+            ('wh_tabLo', 'v4', 0, 'WH_TABLE'), ('wh_tabInv', 'v4', 0, 'WH_TABLE'), ('wh_tabReg', 'v4', 0, 'WH_TABLE'),
+            ('grav_cyl', 'v4', 0, 'WH_GRAVITY'), ('grav_g', 'v4', 2, 'WH_GRAVITY'), ('grav_d', 'v4', 2, 'WH_GRAVITY'),
+            ('wh_pix', 'f', 0, 'WH_PIX'),
+            ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
+            ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS')]
+
+
+def shader_defines(path):
+    """The WH_* defines of a ray tracer's .gdshader (res:// path or file), as the view include sees them."""
+    f = path.replace('res://', os.path.join(ROOT, 'godot') + '/') if path.startswith('res://') else path
+    d = set(re.findall(r'^#define (WH_\w+)', open(f).read(), re.M))
+    if 'WH_NO_BALLS' not in d:
+        d.add('BALLS')
+    if 'BALLS' in d or 'WH_ARROWS' in d:
+        d.add('WH_PIX')
+    return d
+
+
+def ubo_layout(defines):
+    """Byte offset of each uniform the shader with these defines declares."""
+    out, off = {}, 0
+    for name, typ, n, need in UNIFORMS:
+        if need and need not in defines:
+            continue
+        size, align = {'f': (4, 4), 'i': (4, 4), 'v3': (12, 16), 'v4': (16, 16)}[typ]
+        if n:
+            size, align = 16 * n, 16
+        off = (off + align - 1) // align * align
+        out[name] = (off, typ, n)
+        off += size
+    return out
+
+
+def material_ubo(defines, values):
+    """Godot's material uniform block for a shader with these defines; values: name -> number or
+    list (tests/emu_dump.gd's "uniforms"); the scene's static objects and the fillet table by default."""
+    u = np.zeros(4 * 160, np.float32)
     ui = u.view(np.uint32)
-    if balls:
-        for i, (c, col) in enumerate(balls):
-            u[4 * (15 + i):4 * (16 + i)] = c
-            u[4 * (27 + i):4 * (28 + i)] = col
-        ui[4 * 39] = len(balls)
+    tab, lo, inv, reg = fillet_table()
+    vals = {'wh_rho0': 3.0, 'wh_h': 5.0, 'wh_fillet': 1.0, 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
+            'wh_pil': SCENE['pillars_A'], 'wh_box': SCENE['boxes_B'], 'wh_tabLo': lo, 'wh_tabInv': inv, 'wh_tabReg': reg}
+    vals.update(values or {})
+    for name, (off, typ, n) in ubo_layout(defines).items():
+        if name not in vals:
+            continue
+        v = np.ravel(np.asarray(vals[name], np.float64))
+        k = off // 4
+        if typ == 'i':
+            ui[k] = int(v[0])
+        else:
+            u[k:k + len(v)] = v
     return ui
 
 
@@ -93,14 +133,8 @@ def fillet_table():
     return Wormhole(3.0, 5.0, 1.0).fillet_table()
 
 
-def check_balls_scene():
-    """The stereo check's movable balls (main.gd CHECK_BALLS) and its emptied static objects."""
-    return [([7.5, -0.5, 1.5, 5.0], [0.85, 0.08, 0.06, 0.3]), ([8.0, -1.8, 1.1, 5.0], [0.85, 0.08, 0.06, 0.3]),
-            ([8.3, 1.6, 1.9, 5.0], [0.85, 0.08, 0.06, 0.3])]
-
-
 class Shader:
-    def __init__(self, log, balls=None):
+    def __init__(self, log, defines, uniforms=None):
         lines, self.hdr, self.name, self.ninstr = ray_program(log)
         self.instrs, self.labels = E.parse_program(lines)
         ps = next(i for i, x in enumerate(self.instrs) if x.op == 'shps')
@@ -108,8 +142,9 @@ class Shader:
         self.start = self.instrs[ps].target
         self.consts = np.zeros(8192, np.uint32)
         self.tex = fillet_table()[0]
-        ubo = material_ubo(balls)
-        self.consts = E.run_preamble(self.instrs, ps, pe + 1, self.consts, {3: ubo})
+        ubo = material_ubo(defines, uniforms)
+        self.ubos = {3: ubo}            # the main program loads from it too (ldc at a computed index)
+        self.consts = E.run_preamble(self.instrs, ps, pe + 1, self.consts, self.ubos)
         # the inputs: smooth (bary.f) and flat (flat.b) varying slots, in slot order
         self.smooth, self.flat = [], []
         for x in self.instrs:
@@ -128,7 +163,7 @@ class Shader:
 
     def run(self, varyings, profile=None):
         L = varyings.shape[1]
-        w = E.Wave(L, self.consts, None, varyings)
+        w = E.Wave(L, self.consts, self.ubos, varyings)
         w.tex = self.tex
         st = E.Stats()
         st.pc = profile
@@ -287,9 +322,15 @@ def main():
             pos.append(args[i]); i += 1
     log, dump = pos
     entries = json.load(open(dump))
-    balls = check_balls_scene() if entries[0].get('balls') else None
-    sh = Shader(log, balls)
-    order = find_flat_order(sh, entries)
+    defines = shader_defines(entries[0]['shader'])
+    uniforms = dict(entries[0].get('uniforms', {}))
+    if 'wh_pix' in uniforms and '--check' not in flags:
+        # soft edges: a pixel of the headset's eye, not of the dump's picture
+        uniforms['wh_pix'] = 2.0 * np.tan(np.radians(opt['--fov']) / 2.0) / opt['--size']
+    # the packing of the flat inputs: found against Godot's picture, with its uniforms
+    order = find_flat_order(Shader(log, defines, dict(entries[0].get('uniforms', {}))), entries)
+    sh = Shader(log, defines, uniforms)
+    sh.flat_order = order
     print('%s: prog %s, %d instr; flat inputs %s' % (os.path.basename(log), sh.name, sh.ninstr, ', '.join(order)))
     if '--check' in flags:
         bad = check(sh, entries, opt['--tiles'], np.random.default_rng(opt['--seed']))
