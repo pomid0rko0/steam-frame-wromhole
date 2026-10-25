@@ -13,7 +13,8 @@ extends Label3D
 ## Below, rows of buttons: the refresh rate, the 3D render scale, foveated rendering with
 ## SteamVR's density map (main.set_foveation: off, low, high) and with our own softer ones
 ## (wide, narrow), and "точка", a dot where SteamVR's eye tracking says the eyes look
-## (main.gaze_dot). A controller points
+## (main.gaze_dot); then which way our maps coarsen first (main.set_own_order: the width or the
+## height, to compare by eye). A controller points
 ## with a ray from its aim pose; its trigger presses the button the ray is on. Green: in effect;
 ## yellow: chosen, not (yet) in effect.
 ##
@@ -66,6 +67,8 @@ const RATE_W := 0.08
 const SCALE_W := 0.12
 const FOV_W := 0.15
 const GAZE_BUTTON := 9.0        # the second foveation row's last button: the gaze dot, on or off
+const ORDERS := ["по горизонтали", "по вертикали"]     # main.set_own_order's 0 and 1
+const ORDER_W := 0.3
 const BENCH_W := 0.36
 const COLOR_BTN := Color(0.17, 0.19, 0.24, 0.96)
 const COLOR_ON := Color(0.12, 0.50, 0.22, 0.96)       # in effect
@@ -118,7 +121,7 @@ var foveation := 0              # the foveation level chosen (main.set_foveation
 var fov_title: Label3D
 var plate: MeshInstance3D
 var plate_mat: StandardMaterial3D
-var buttons: Array = []         # {kind "rate" / "scale" / "fov" / "bench", value, rect (panel x, y), mat, label}
+var buttons: Array = []         # {kind "rate" / "scale" / "fov" / "order" / "bench", value, rect (panel x, y), mat, label}
 var rate_options: Array = []
 var titles: Array = []          # Label3D: the rows' titles and the hint under them
 var bench_text := "замер скорости"
@@ -168,6 +171,8 @@ func _ready() -> void:
 		var cfg := ConfigFile.new()
 		cfg.load(SETTINGS)
 		_set_scale(float(cfg.get_value("render", "scale", 1.0)))
+		if viewer:
+			viewer.own_order = clampi(int(cfg.get_value("render", "own_order", 0)), 0, 1)
 		_set_foveation(int(cfg.get_value("render", "foveation", 0)))
 		if foveation > 0:
 			_set_scale(1.0)
@@ -228,7 +233,8 @@ func _layout() -> void:
 	var y := -STATUS_LINES * line - 0.02
 	var rows := [["частота, Гц", "rate", rate_options, RATE_W], ["разрешение", "scale", SCALES, SCALE_W],
 			["фовеация SteamVR", "fov", [0.0, 1.0, 3.0], FOV_W],
-			["фовеация плавная · точка взгляда", "fov", [4.0, 5.0, GAZE_BUTTON], FOV_W]]
+			["фовеация плавная · точка взгляда", "fov", [4.0, 5.0, GAZE_BUTTON], FOV_W],
+			["плавная: сперва грубее", "order", [0.0, 1.0], ORDER_W]]
 	if viewer and viewer.get("bench"):
 		rows.append([bench_text, "bench", [0.0], BENCH_W])
 	var width := 0.0
@@ -259,6 +265,8 @@ func _layout() -> void:
 				t = "сравнить с прежним" if viewer.bench.has_ab() else "замерить"
 			elif row[1] == "fov":
 				t = "точка" if v == GAZE_BUTTON else FOVEATIONS[int(v)]
+			elif row[1] == "order":
+				t = ORDERS[i]
 			var label := _text(t, 32, Vector3(x, y - 0.5 * BTN_H, 0.0))
 			buttons.append({"kind": row[1], "value": v, "mat": mat, "mesh": mesh, "label": label,
 					"rect": Rect2(x - 0.5 * w, y - BTN_H, w, BTN_H)})
@@ -285,6 +293,9 @@ func _paint() -> void:
 		elif b.kind == "bench":
 			if viewer.bench.running:
 				c = COLOR_PENDING
+		elif b.kind == "order":
+			if viewer and int(b.value) == viewer.own_order:
+				c = COLOR_ON
 		elif b.kind == "fov":
 			if b.value == GAZE_BUTTON:
 				if viewer and viewer.gaze_dot and viewer.gaze_dot.visible:
@@ -336,6 +347,8 @@ func point(hand: int, from: Vector3, dir: Vector3, trigger: float, tracked := tr
 				choose_scale(b.value)
 			elif b.kind == "fov" and b.value == GAZE_BUTTON:
 				show_gaze(not viewer.gaze_dot.visible)
+			elif b.kind == "order":
+				choose_order(int(b.value))
 			elif b.kind == "fov":
 				choose_foveation(int(b.value))
 			else:
@@ -470,6 +483,17 @@ func choose_foveation(level: int) -> void:
 	_set_text(_compose())
 
 
+## An order button: which way our own maps coarsen first; kept for the next start.
+func choose_order(order: int) -> void:
+	if xr == null or viewer == null:
+		return
+	viewer.set_own_order(order)
+	_save_render()
+	print("refresh: own maps coarsen the %s first, foveation %d (%s)"
+			% ["width" if viewer.own_order == 0 else "height", foveation, FOV_LOG[foveation]])
+	_paint()
+
+
 ## The gaze dot: where SteamVR's eye tracking says the eyes look (main.gaze_dot).
 func show_gaze(on: bool) -> void:
 	if viewer == null or viewer.gaze_dot == null:
@@ -490,6 +514,8 @@ func _save_render() -> void:
 	cfg.load(SETTINGS)
 	cfg.set_value("render", "scale", render_scale)
 	cfg.set_value("render", "foveation", foveation)
+	if viewer:
+		cfg.set_value("render", "own_order", viewer.own_order)
 	cfg.save(SETTINGS)
 
 
@@ -718,10 +744,10 @@ func _log() -> void:
 		var look: Vector2 = viewer.look_angles()
 		where = "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 				"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d, gaze %s"
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s"
 			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
-			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds), foveation, _gaze_text()])
+			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds), foveation, "width" if viewer and viewer.own_order == 0 else "height", _gaze_text()])
 	clock_min = 0
 	clock_max = 0
 

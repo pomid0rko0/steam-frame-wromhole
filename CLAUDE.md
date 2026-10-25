@@ -40,7 +40,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   the avatar as balls (`tests/grab_test.gd`).
 - `foveation` (`main` merged in) — foveated rendering from the panel (off by default): SteamVR's
   density map low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
-  `VRS_TEXTURE`), both moved to where the eyes look (`XR_META_foveation_eye_tracked` → QCOM
+  `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`,
+  switched on the panel to compare by eye), both moved to where the eyes look (`XR_META_foveation_eye_tracked` → QCOM
   offsets) (`main.set_foveation`); the 3D scene in a render pass of its own so that Turnip renders
   it in tiles (`split_pass.gd`; without tiles the map does nothing); a gaze dot (`main.gaze_dot`,
   `XR_EXT_eye_gaze_interaction`); the speed check timing this build six ways; `tools/fdm_check.sh`.

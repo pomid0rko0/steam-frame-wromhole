@@ -186,7 +186,8 @@ func start() -> void:
 	var names := []
 	for i in variants.size():
 		names.append("%d = %s" % [i + 1, variants[i][0]])
-	print("bench: start, %s; %d places, %.1f s timed per segment" % [", ".join(names), PLACES.size(), time])
+	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first"
+			% [", ".join(names), PLACES.size(), time, "width" if main.own_order == 0 else "height"])
 	var tour_s := 0.0
 	for s in tour:
 		tour_s += s.secs + (TOUR_RECOVER * tour_scale if s.recover else 0.0)
@@ -212,8 +213,8 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
-				% [panel.rate, main.foveation, tour.size()])
+		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
+				% [panel.rate, main.foveation, "width" if main.own_order == 0 else "height", tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
 

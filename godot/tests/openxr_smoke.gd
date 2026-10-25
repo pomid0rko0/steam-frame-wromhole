@@ -8,8 +8,8 @@ extends SceneTree
 ## a scale button sets the render scale and keeps it; a foveation button turns foveated rendering
 ## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
 ## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
-## below 100% turns it off again; our own density map comes from a texture; the gaze dot shows and
-## hides; frames made too slow for the display
+## below 100% turns it off again; our own density map comes from a texture, and the order of its
+## steps switches (the width or the height first); the gaze dot shows and hides; frames made too slow for the display
 ## turn the plate red; and the speed check's button runs it through (bench.gd: the comparison at
 ## 72 Hz, then the tour at 120 Hz, which Monado does not offer: it stays at 20) and puts the
 ## rate, the shader and the viewer back.
@@ -198,10 +198,26 @@ func _foveation(p: Label3D) -> void:
 	p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
 	check("широкая: our own map, from a texture, the pass split", main.foveation == 4
 			and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.split_pass.enabled and _color(p, "fov", 4.0) == p.COLOR_ON)
-	var img: Image = main.own_maps[4].get_layer_data(0)
+	var img: Image = main.own_maps[4 * 2 + 0].get_layer_data(0)
 	var mid: Color = img.get_pixel(32, 32)
 	var corner: Color = img.get_pixel(0, 0)
 	check("its map: full rate in the middle, 4x2 in the corner", mid.r8 == 0 and mid.g8 == 0 and corner.r8 == 192 and corner.g8 == 128)
+	# the height first: the same map turned, 2x4 in the corner, at once and kept
+	var at2 := _button_point(p, "order", 1.0)
+	var from2 := at2 + p.transform.basis.z * 0.8
+	p.point(0, from2, (at2 - from2).normalized(), 0.0)
+	p.point(0, from2, (at2 - from2).normalized(), 1.0)
+	p.point(0, from2, (at2 - from2).normalized(), 0.0)
+	p.point(0, Vector3.ZERO, Vector3.FORWARD, 0.0)
+	var img2: Image = main.own_maps[4 * 2 + 1].get_layer_data(0)
+	var corner2: Color = img2.get_pixel(0, 0)
+	var ring2: Color = img2.get_pixel(32 + 26, 32)    # r 0.83: the ring after full rate
+	cfg.load("user://settings.cfg")
+	check("по вертикали: 2x4 in the corner, 1x2 next to the middle, kept", main.own_order == 1 and corner2.r8 == 128
+			and corner2.g8 == 192 and ring2.r8 == 0 and ring2.g8 == 128 and cfg.get_value("render", "own_order", -1) == 1
+			and _color(p, "order", 1.0) == p.COLOR_ON and main.foveation == 4)
+	p.choose_order(0)
+	check("по горизонтали again", main.own_order == 0 and _color(p, "order", 0.0) == p.COLOR_ON)
 	p.choose_foveation(0)
 	check("off again: no density map, no split", main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.split_pass.enabled)
 	# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides

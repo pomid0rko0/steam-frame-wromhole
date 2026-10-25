@@ -38,7 +38,8 @@ const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
 # eyes look, [radius, shading width, height in screen pixels]; the radius in each eye's picture,
 # its edge at 1 (about 52 degrees). Each step halves the pixels shaded, for a softer edge than
-# the runtime's maps. 4: wide, 5: narrow.
+# the runtime's maps: the width first, then the height (own_order 1 swaps them: 1x2, 2x4).
+# 4: wide, 5: narrow.
 const OWN_MAPS := {
 	4: [[0.7, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
 	5: [[0.45, 1, 1], [0.65, 2, 1], [0.85, 2, 2], [1.05, 4, 2], [99.0, 4, 4]],
@@ -86,7 +87,8 @@ var view_roll := 0.0            # the head's own (the speed check; the head stay
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
 var foveation := 0              # 0 off, 1..3: the level (set_foveation)
 var split_pass: CompositorEffect     # the 3D scene in a render pass of its own (split_pass.gd)
-var own_maps := {}              # OWN_MAPS made into textures, by level (_own_map)
+var own_maps := {}              # OWN_MAPS made into textures, by level * 2 + own_order (_own_map)
+var own_order := 0              # our maps' steps: 0 the width first (2x1, 4x2), 1 the height (1x2, 2x4)
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
 var gaze_dot: MeshInstance3D    # drawn where they look, while the panel says so
 
@@ -573,20 +575,31 @@ func set_foveation(level: int, split := false) -> void:
 ## and the driver a density d into a size 1/d rounded down to a power of two: hence 192, not 0.75
 ## (191/255 would come out 3.98, so 2).
 func _own_map(level: int) -> Texture2DArray:
-	if own_maps.has(level):
-		return own_maps[level]
+	var key := level * 2 + own_order
+	if own_maps.has(key):
+		return own_maps[key]
 	var img := Image.create(OWN_MAP_SIZE, OWN_MAP_SIZE, false, Image.FORMAT_RG8)
 	for y in OWN_MAP_SIZE:
 		for x in OWN_MAP_SIZE:
 			var r := Vector2((x + 0.5) * 2.0 / OWN_MAP_SIZE - 1.0, (y + 0.5) * 2.0 / OWN_MAP_SIZE - 1.0).length()
 			for ring: Array in OWN_MAPS[level]:
 				if r < ring[0]:
-					img.set_pixel(x, y, Color8(OWN_MAP_BYTE[ring[1]], OWN_MAP_BYTE[ring[2]], 0))
+					var w: int = ring[1] if own_order == 0 else ring[2]
+					var h: int = ring[2] if own_order == 0 else ring[1]
+					img.set_pixel(x, y, Color8(OWN_MAP_BYTE[w], OWN_MAP_BYTE[h], 0))
 					break
 	var tex := Texture2DArray.new()
 	tex.create_from_images([img, img])
-	own_maps[level] = tex
+	own_maps[key] = tex
 	return tex
+
+
+## Our maps' order of steps: 0 the width first (1x1, 2x1, 2x2, 4x2, 4x4), 1 the height first
+## (1x1, 1x2, 2x2, 2x4, 4x4). At once if one of them is on.
+func set_own_order(order: int) -> void:
+	own_order = clampi(order, 0, 1)
+	if OWN_MAPS.has(foveation):
+		set_foveation(foveation)
 
 
 ## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),
