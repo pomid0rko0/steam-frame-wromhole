@@ -5,7 +5,10 @@ extends SceneTree
 ## the Steam library, a ray pointed at a rate button and a trigger pull set this app's rate in
 ## SteamVR's settings, and as the display stays at 20 Hz the panel asks for a restart (a display
 ## that follows is answered too); choices made while vrcmd runs end with the last one written;
-## a scale button sets the render scale and keeps it; frames made too slow for the display
+## a scale button sets the render scale and keeps it; a foveation button turns foveated rendering
+## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
+## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
+## below 100% turns it off again; frames made too slow for the display
 ## turn the plate red; and the speed check's button runs it through (bench.gd: the comparison at
 ## 72 Hz, then the tour at 120 Hz, which Monado does not offer: it stays at 20) and puts the
 ## rate, the shader and the viewer back.
@@ -111,6 +114,7 @@ func _process(_delta: float) -> bool:
 		p.point(0, Vector3.ZERO, Vector3.FORWARD, 0.0)
 		p.choose_scale(1.0)
 		check("back to 100%", p.target.scaling_3d_scale == 1.0)
+		_foveation(p)
 	if frames > 260 and frames <= 320:
 		OS.delay_msec(70)           # longer than a 50 ms refresh: every frame misses one
 	if frames == 320:
@@ -146,6 +150,8 @@ func _process(_delta: float) -> bool:
 		check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
 				and main.material.shader == main.SHADER_PLAIN)
 		check("speed check: the rate set back", p.desired == bench_stored)
+		check("speed check: the foveation set back (off)", main.foveation == 0 and not main.split_pass.enabled
+				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
 		check("speed check: the panel says it is done", p.bench_text.contains("Гц") or p.bench_text.begins_with("замер готов")
 				or p.bench_text.begins_with("нов"))
 		print("PASS" if ok else "FAIL")
@@ -155,6 +161,33 @@ func _process(_delta: float) -> bool:
 		print("FAIL")
 		return true
 	return false
+
+
+## The foveation row: off at first; the right hand presses "сильная" with the scale at 80%.
+func _foveation(p: Label3D) -> void:
+	var oxr := main.xr as OpenXRInterface
+	check("foveation off at first", main.foveation == 0 and _color(p, "fov", 0.0) == p.COLOR_ON
+			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.split_pass.enabled)
+	check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported() and p.fov_title.text == "фовеация · карта Godot")
+	p.choose_scale(0.8)
+	var at := _button_point(p, "fov", 3.0)
+	var from := at + p.transform.basis.z * 0.8
+	p.point(1, from, (at - from).normalized(), 0.0)
+	p.point(1, from, (at - from).normalized(), 1.0)
+	p.point(1, from, (at - from).normalized(), 0.0)
+	p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
+	var cfg := ConfigFile.new()
+	cfg.load("user://settings.cfg")
+	check("right hand on сильная: foveation 3, density map on, 3D pass split", main.foveation == 3
+			and main.xr_view.vrs_mode == Viewport.VRS_XR and main.split_pass.enabled and _color(p, "fov", 3.0) == p.COLOR_ON)
+	check("Godot's own map at the strongest", is_equal_approx(oxr.vrs_strength, main.OWN_MAP_STRENGTH[2]))
+	check("foveation on: scale back to 100%, both kept", p.target.scaling_3d_scale == 1.0
+			and cfg.get_value("render", "foveation", -1) == 3 and cfg.get_value("render", "scale", 0.0) == 1.0)
+	p.choose_scale(0.9)
+	cfg.load("user://settings.cfg")
+	check("scale 90%: foveation off, kept", main.foveation == 0 and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+			and not main.split_pass.enabled and cfg.get_value("render", "foveation", -1) == 0)
+	p.choose_scale(1.0)
 
 
 func _index(p: Label3D, kind: String, value: float) -> int:

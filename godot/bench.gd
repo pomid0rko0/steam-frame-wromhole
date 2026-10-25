@@ -15,6 +15,9 @@ extends Node
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## makes SteamVR step in, and the GPU time then grows by half for reasons of its own.
+## This build's ray tracer is timed five ways (FOVEATIONS): as it always ran, with the 3D scene in
+## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
+## foveated rendering at each level (main.set_foveation). The others run without foveation.
 ##
 ## 2. The tour, at 120 Hz with this build's ray tracer: at each of TOUR_L the view sweeps from
 ## the throat round to the other side, in rows from 60 degrees down to 60 up; then walks through
@@ -23,9 +26,10 @@ extends Node
 ## and the GPU and CPU time; every second a "tour:" line. Before each place the viewer goes back
 ## to the start for a moment, so that a headset that fell to every 2nd refresh has come back.
 ##
-## The panel's line says whether 120 Hz held (and where it did worst) and how this build's ray
-## tracer compares with the first of the others. Render scale 100% throughout; afterwards the
-## rate, the scale, the shader and where one stood come back. A build made for measuring
+## The panel's line says whether 120 Hz held (and where it did worst), how this build's ray
+## tracer compares with the first of the others, and what the strongest foveation saves. Render
+## scale 100% throughout, the tour with the foveation chosen on the panel; afterwards the rate,
+## the scale, the shader, the foveation and where one stood come back. A build made for measuring
 ## (tools/ab_shaders.sh --auto) runs it by itself once the headset has tracked the head for
 ## AUTO_AFTER seconds: start it, put the headset on, close the eyes, send the log afterwards.
 
@@ -57,6 +61,11 @@ const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const MISSED_OK := 0.01         # as the panel: at most 1% of the refreshes without a new frame
+# this build's ray tracer: [label, foveation level (main.set_foveation), split]; the first is the
+# reference the others are compared with
+const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
+	["this build, foveation 1 (low)", 1, false], ["this build, foveation 2 (medium)", 2, false],
+	["this build, foveation 3 (high)", 3, false]]
 
 var main: Node                  # main.gd
 var panel: Node                 # perf_panel.gd
@@ -68,7 +77,10 @@ var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var others: Array = []          # [label, Shader] from res://shaders/ab/
-var variants: Array = []        # this run's: others (if the scene has no movable balls), then this build's
+var variants: Array = []        # this run's [label, Shader, foveation, split]: others (if the scene
+                                # has no movable balls), then this build's (FOVEATIONS)
+var own := 0                    # the variant that is this build as it always ran
+var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
@@ -136,9 +148,15 @@ func start() -> void:
 	if running:
 		return
 	running = true
-	var own: Shader = main.material.shader
+	own_shader = main.material.shader
+	variants = []
 	# others are ray tracers without movable balls: compared only with the same kind
-	variants = (others if own == main.SHADER_PLAIN else []) + [["this build", own]]
+	if own_shader == main.SHADER_PLAIN:
+		for o in others:
+			variants.append([o[0], o[1], 0, false])
+	own = variants.size()
+	for f in FOVEATIONS:
+		variants.append([f[0], own_shader, f[1], f[2]])
 	saved_pose = main.get_pose()
 	main.hold = true
 	saved_scale = panel.render_scale
@@ -193,8 +211,8 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
-				% [panel.rate, tour.size()])
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
+				% [panel.rate, main.foveation, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
 
@@ -238,7 +256,14 @@ func _process(delta: float) -> void:
 func _prepare() -> void:
 	phase_t = 0.0
 	main.place_on_axis(PLACES[0][0], PLACES[0][1], PLACES[0][2])
-	main.material.shader = variants[variants.size() - preparing][1]
+	_use(variants[variants.size() - preparing])
+
+
+## A variant's ray tracer and foveation.
+func _use(v: Array) -> void:
+	main.material.shader = v[1]
+	if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
+		main.set_foveation(v[2], v[3])
 
 
 func _segment() -> void:
@@ -268,7 +293,7 @@ func _begin(i: int) -> void:
 	step = i
 	var place: Array = PLACES[plan[i][0]]
 	main.place_on_axis(place[0], place[1], place[2])
-	main.material.shader = variants[plan[i][1]][1]
+	_use(variants[plan[i][1]])
 	phase_t = 0.0
 	gpu_ms.clear()
 	if i == 0 or plan[i][0] != plan[i - 1][0]:
@@ -298,27 +323,28 @@ func _end_segment() -> void:
 
 
 func _compared() -> void:
-	main.material.shader = variants.back()[1]
+	main.material.shader = own_shader
+	main.set_foveation(panel.foveation)     # the tour runs with the foveation chosen on the panel
 	if variants.size() > 1:
 		# each variant against the first, averaged over the places (geometric mean)
-		var own := variants.size() - 1
 		var summary := []
-		var own_mean := 1.0
 		for v in range(1, variants.size()):
-			var log_sum := 0.0
-			for r in results:
-				log_sum += log(_mean(r[v]) / _mean(r[0]))
-			var m := exp(log_sum / results.size())
-			summary.append("%d/1 %.3f" % [v + 1, m])
-			if v == own:
-				own_mean = m
+			summary.append("%d/1 %.3f" % [v + 1, _ratio(v, 0)])
 		print("bench: compared, on average over the places %s (1 = %s)" % [", ".join(summary), variants[0][0]])
-		var pct := roundi(absf(1.0 - own_mean) * 100.0)
-		verdict = "новый и прежний одинаковы"
-		if own_mean < 0.98:
-			verdict = "новый быстрее прежнего на %d%%" % pct
-		elif own_mean > 1.02:
-			verdict = "новый медленнее прежнего на %d%%" % pct
+		var parts := []
+		if own > 0:
+			var m := _ratio(own, 0)
+			var pct := roundi(absf(1.0 - m) * 100.0)
+			parts.append("новый и прежний одинаковы" if absf(1.0 - m) <= 0.02 else
+					("новый %s прежнего на %d%%" % ["быстрее" if m < 1.0 else "медленнее", pct]))
+		# the foveation against this build as it always ran
+		summary.clear()
+		for v in range(own + 1, variants.size()):
+			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
+		print("bench: foveation, on average over the places against this build as it ran: %s" % ", ".join(summary))
+		var m := _ratio(variants.size() - 1, own)
+		parts.append("сильная фовеация: кадр %s на %d%%" % ["дешевле" if m < 1.0 else "дороже", roundi(absf(1.0 - m) * 100.0)])
+		verdict = " · ".join(parts)
 	if with_tour and panel.xr != null:
 		_show("замер: теперь 120 Гц, глаза закрыты")
 		_rate(TOUR_RATE, "tour")
@@ -441,7 +467,8 @@ func _finish(tour_line: String) -> void:
 	running = false
 	counting = false
 	phase = ""
-	main.material.shader = variants.back()[1]
+	main.material.shader = own_shader
+	main.set_foveation(panel.foveation)
 	main.hold = false
 	main.set_pose(saved_pose)
 	panel._set_scale(saved_scale)
@@ -454,6 +481,17 @@ func _finish(tour_line: String) -> void:
 	if verdict != "":
 		parts.append(verdict)
 	_show(" · ".join(parts) if not parts.is_empty() else "замер готов, он в логе")
+
+
+## Variant a's time against b's, averaged over the places (geometric mean).
+func _ratio(a: int, b: int) -> float:
+	var log_sum := 0.0
+	var n := 0
+	for r in results:
+		if _mean(r[a]) > 0.0 and _mean(r[b]) > 0.0:
+			log_sum += log(_mean(r[a]) / _mean(r[b]))
+			n += 1
+	return exp(log_sum / n) if n > 0 else 1.0
 
 
 static func _mean(v: Array) -> float:

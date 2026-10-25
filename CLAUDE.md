@@ -38,8 +38,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
   the avatar as balls (`tests/grab_test.gd`).
-- `foveation` — foveated rendering on, as it was when space "breathed" in the headset; the
-  cause is not found.
+- `foveation` (`main` merged in) — foveated rendering from the panel (off, low, medium, high;
+  off by default): SteamVR's density map (`XR_FB_foveation`, moved by the eyes with
+  `XR_META_foveation_eye_tracked`) on the XR view (`main.set_foveation`), the 3D scene in a
+  render pass of its own so that Turnip renders it in tiles (`split_pass.gd`; without tiles the
+  map does nothing), the speed check timing this build five ways (as before, passes split, three
+  levels), `tools/fdm_check.sh`. Not checked in the headset yet; README «Фовеальный рендеринг» has
+  the check and what is known about the old "breathing".
 - `fast-rays` — cheaper rays: the curved-region integral without loops (product integration on
   4 nodes, README «Почему это real time»), the ray's direction interpolated from the screen's
   corners, one shading per pixel after the trace, the movable balls' code in a separate shader
@@ -73,7 +78,7 @@ Where the README wishes start (wishes without a branch start from `main`):
   `wormhole_core`, measured in the headset by the speed check; without a headset
   `tools/adreno_cost.sh`, then `tools/adreno_stats.sh`); next there: world B's outer edge facing
   the throat, where the model misses ~1 ms;
-- foveated rendering → `foveation`;
+- foveated rendering → `foveation` (it holds `main`; its checks in the headset come first);
 - placing wormholes by hand, several wormholes, flat portals, two-handed shooting, gun models,
   other shapes (torus, arbitrary SDF) → `main`; several wormholes, portals and other shapes are
   renderer work (`wormhole_core` and a reference in `ref/` first);
@@ -92,6 +97,9 @@ When branches are put together, these overlap:
   edge of the curved shell, as the feet do in `set_geometry`.
 - a throat change (`throat`) with `main`'s fillet table: the table depends on the shape: after
   `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop).
+- `foveation` and the render scale: the panel lets one of them be on (the eye-tracked map's
+  offsets are in full-size pixels). Its row sits under the scale's; its split pass is on the XR
+  camera's compositor: an effect added there by another branch splits the pass as well.
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).
@@ -106,7 +114,9 @@ draws next to ray-traced ones, check they line up the same way.
 
 - **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
-- **Stereo:** `tools/test_stereo.sh` (~2 min: the renders run in parallel, one Godot per core, each with its own display and shader cache).
+- **Stereo:** `tools/test_stereo.sh` (~5 min: the renders run in parallel, one Godot per core, each with its own display and shader cache; the check scene again with foveation on, and those pictures against the ones without).
+- **Foveation in the Frame's driver:** `tools/fdm_check.sh` (~10 s): Godot on Turnip over the noop drm-shim, the XR view through `fake_hmd.gd` at 1728² per eye, and the driver's trace (`MESA_GPU_TRACES=print`, `TU_DEBUG=perf`) per render pass: in tiles or not, attachments, tiles. Off: no tiles; split: tiles; on: tiles and one attachment more (the density map).
+- **A build for the one-eye check:** an empty file `godot/check` before the export turns the stereo check scene on (`main.CHECK_FLAG`, in the export's include filter, not in git); delete it afterwards.
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
 - **Cost without a headset:** `tools/adreno_cost.sh [--check] [source]...` (sources as
@@ -147,7 +157,34 @@ draws next to ray-traced ones, check they line up the same way.
 
 - **Godot multiview.** `INV_VIEW_MATRIX` is a shared camera between the eyes; each eye's offset and rotation live in its `PROJECTION_MATRIX`; `EYE_OFFSET` is the eye in that view space. Rays must start at the eye (README, «Стерео»). Starting them at the head centre made the eyes look in different directions.
 - **The overlay's chart → play map** is computed at placement and recentre (and after stick moves and turns), never every frame from the feet. Then it is fixed to the room, and world drift shows as green parting from white.
-- **Foveated rendering** (VRS, `xr/openxr/foveation_*`) made space "breathe" around the head and caused nausea on the Frame. It is off; don't turn it on without a headset check.
+- **Foveated rendering on the Frame (Godot 4.7.2).** The Frame's SteamVR offers `XR_FB_foveation`
+  (+ configuration, vulkan, swapchain update state), `XR_META_foveation_eye_tracked` and
+  `XR_EXT_eye_gaze_interaction` (Valve's developer docs). Godot then attaches the runtime's density
+  map (VK_EXT_fragment_density_map: on Qualcomm Godot prefers it to shading rate). Turnip applies
+  a density map per tile, only when it renders in tiles (18 tiles of 288×576 per 1728² eye in
+  Mesa 25.2), and it renders a render pass without tiles if any subpass dependency lacks
+  `VK_DEPENDENCY_BY_REGION_BIT` ("Disabling gmem rendering due to invalid subpass dependency";
+  25.2's trace then says "Can't fit attachments into gmem"). Godot 4.7.2's two-subpass pass (3D +
+  tone map, used at render scale 100% without post effects) has such a dependency
+  (godotengine/godot#124141, fixed by #124811 after 4.7.2): there the map did nothing. A
+  CompositorEffect with a POST_TRANSPARENT callback (`split_pass.gd`, empty) makes Godot split the
+  pass; FXAA, glow or a render scale below 1 do too. Also: subsampled images
+  (`foveation_with_subsampled_images`, default on) SteamVR on the Frame can't read yet: off;
+  Godot 4.7.2 asks for the eye-tracked offsets only with `xr/openxr/extensions/eye_gaze_interaction`
+  on (#124787 drops that in 4.8), and in full-size pixels (wrong at a render scale below 1);
+  `foveation_dynamic` reportedly does nothing on the Frame; the swapchain gets its density map only
+  if `foveation_level` > 0 when it is created (so `project.godot` asks for 3 and "off" is
+  `vrs_mode` = disabled). `verbose_stdout` is on in this branch so that the headset's log lists the
+  enabled OpenXR extensions and the driver's density map support.
+- **The old "breathing".** With foveation first on (high, dynamic, subsampled), rays then from
+  `SCREEN_UV`, the owner saw space around the head shrink and expand when turning, a little nausea,
+  frames on time; the next build had it off (and the check grid fixed to the room, and the panel)
+  and "all works". By the above the map did nothing at 100% then, so the cause is not proven: the
+  foveated, subsampled swapchain in SteamVR's hands, or the lenses' distance (asked, never answered;
+  eyes off the lens centres make the world warp as the head turns). The ray tracer now takes each
+  pixel's ray from the corners' interpolation, never from its screen position, so a coarse pixel
+  gets the ray through its centre: exact under any density map. Turning foveation on still needs
+  the headset check (README «Фовеальный рендеринг»).
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; its display does 72/80/90/96/108/120/144. Other developers report that SteamVR there answers `XR_FB_display_refresh_rate` requests with success and ignores them. It follows the app's own setting `steam.app.<SteamAppId>.preferredRefreshRate`, set with `/opt/steamvr/bin/linuxarm64/vrcmd`; on our Frame (SteamVR 2.18.2) the running app switches within a second, and `xrGetDisplayRefreshRateFB` then reports the true rate. `refresh-rate`'s panel does that from its rate buttons and measures the rate and missed frames from xrWaitFrame's timing (`rate_meter.gd`); its `refresh:` log lines are the data. Measured at 1728×1728 per eye (README, «Что видно в шлеме»): 72 and 80 Hz keep up, 90 Hz falls to every 2nd refresh at times, 96–120 Hz mostly at every 2nd; the GPU stays at its top clock (903 MHz), and a frame costs 6.5–7.7 ms with the wormhole small in view, 11–12 ms with it large: the rays through the curved region are the cost. SteamVR there does not offer `XR_EXT_performance_settings`.
 - **Kernel files.** A sysfs file reports a size of 4096 bytes whatever it holds, and `FileAccess.get_file_as_string` reads that many: garbage after the value, and on the Frame a log full of Unicode errors. Read them with `get_line()` (`perf_panel.gd`, `read_line`).

@@ -2,7 +2,8 @@ extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
 ## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
 ## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
-## pulling the trigger, set the refresh rate and the render scale (perf_panel.gd). Every pixel is
+## pulling the trigger, set the refresh rate, the render scale and foveated rendering
+## (perf_panel.gd, set_foveation). Every pixel is
 ## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
 ## viewer is in that curved space.
 ##
@@ -28,9 +29,14 @@ const MOUSE_SENS := 0.003
 # Stereo check (see _add_check): balls in chart A, in front of the start position
 const CHECK_BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const CHECK_BALL_RADIUS := 0.3
+# present in a build: the stereo check is on (a build for the one-eye check; not in git)
+const CHECK_FLAG := "res://check"
 # the ray tracer without movable balls, and with them (set_balls)
 const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
 const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
+const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
+# Godot's own density map where the runtime has none (Monado, tests): its strength per level
+const OWN_MAP_STRENGTH := [0.5, 1.0, 2.0]
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -52,7 +58,7 @@ var recentered := false        # the runtime moved the play space: not a step
 var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
-var show_check := false         # the stereo check (see _add_check)
+var show_check := FileAccess.file_exists(CHECK_FLAG)   # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []   # left, right (XR only)
 var left_hand: XRController3D
 var right_hand: XRController3D
@@ -67,6 +73,8 @@ var hold := false               # the speed check: the feet stay while the head 
 var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
 var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var overlay: Node3D            # drawn by Godot itself in chart A coordinates; maps chart A -> play
+var foveation := 0              # 0 off, 1..3: the level (set_foveation)
+var split_pass: CompositorEffect     # the 3D scene in a render pass of its own (split_pass.gd)
 
 
 func _ready() -> void:
@@ -98,6 +106,9 @@ func _ready() -> void:
 	host.add_child(origin)
 	camera = XRCamera3D.new()
 	camera.near = 0.05
+	split_pass = preload("res://split_pass.gd").new()
+	camera.compositor = Compositor.new()
+	camera.compositor.compositor_effects = [split_pass]
 	origin.add_child(camera)
 	if in_xr:
 		for t in [&"left_hand", &"right_hand"]:
@@ -467,6 +478,37 @@ func _add_check() -> void:
 	material.set_shader_parameter("wh_sph", none_sph)
 	material.set_shader_parameter("wh_pil", none_pil)
 	material.set_shader_parameter("wh_box", none_box)
+
+
+## Foveated rendering: the edges of each eye's picture are rendered coarser. level 0 is off,
+## 1..3 the runtime's density map at its level low, medium, high; split: the 3D scene in a
+## render pass of its own without a density map (the speed check times that alone).
+##
+## On the Steam Frame the density map is SteamVR's (XR_FB_foveation), and it follows the eyes
+## where SteamVR tracks them (XR_META_foveation_eye_tracked; Godot 4.7.2 asks for the offsets
+## only with the eye gaze extension on, project.godot). The GPU driver renders each tile at the
+## map's density there, only in tiles: hence split_pass.gd. The swapchain gets its density map
+## when it is created, so project.godot asks for the high level and "off" is the viewport's
+## density map taken away (vrs_mode), not the runtime's level 0. Without the runtime's map
+## (Monado, Godot's "Native mobile") Godot makes its own, round each eye's centre.
+##
+## The ray tracer stays exact under it: each pixel's ray is interpolated from the screen's
+## corners (shaders/wormhole_view.gdshaderinc), and a coarse pixel gets the ray through its
+## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position.
+func set_foveation(level: int, split := false) -> void:
+	foveation = clampi(level, 0, FOVEATION_LEVELS)
+	var target: Viewport = xr_view if xr_view else get_viewport()
+	var mode := Viewport.VRS_XR if foveation > 0 else Viewport.VRS_DISABLED
+	if target.vrs_mode != mode:
+		target.vrs_mode = mode      # the 3D buffers are made again: not every call
+	split_pass.enabled = foveation > 0 or split
+	if foveation == 0 or xr == null:
+		return
+	var oxr := xr as OpenXRInterface
+	if oxr and oxr.is_foveation_supported():
+		oxr.foveation_level = foveation
+	elif "vrs_strength" in xr:
+		xr.set("vrs_strength", OWN_MAP_STRENGTH[foveation - 1])
 
 
 ## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),
