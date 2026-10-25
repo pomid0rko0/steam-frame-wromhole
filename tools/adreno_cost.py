@@ -60,8 +60,9 @@ def ray_program(log):
     return lines[first:], hdr, p, progs[p]
 
 
-def material_ubo(balls=None):
-    """Godot's material uniform block, std140 in declaration order (wormhole_view.gdshaderinc)."""
+def material_ubo(balls=None, grav=None):
+    """Godot's material uniform block, std140 in declaration order (wormhole_view.gdshaderinc).
+    grav: the gravity view's uniforms (tests/emu_dump.gd's "gravity" entry), after wh_tabReg."""
     u = np.zeros(4 * 64, np.float32)
     # (wh_tab* sit after head_pos when the shader has them: set by material_ubo's caller)
     u[0:3] = [3.0, 5.0, 1.0]                    # wh_rho0, wh_h, wh_fillet
@@ -78,6 +79,11 @@ def material_ubo(balls=None):
     u[4 * 46:4 * 47] = inv
     u[4 * 47:4 * 48] = reg
     ui = u.view(np.uint32)
+    if grav:
+        u[4 * 48:4 * 49] = grav['cyl']
+        u[4 * 49:4 * 51] = np.ravel(grav['g'])
+        u[4 * 51:4 * 53] = np.ravel(grav['d'])
+        u[4 * 53] = grav['pix']             # with WH_ARROWS only
     if balls:
         for i, (c, col) in enumerate(balls):
             u[4 * (15 + i):4 * (16 + i)] = c
@@ -100,7 +106,7 @@ def check_balls_scene():
 
 
 class Shader:
-    def __init__(self, log, balls=None):
+    def __init__(self, log, balls=None, grav=None):
         lines, self.hdr, self.name, self.ninstr = ray_program(log)
         self.instrs, self.labels = E.parse_program(lines)
         ps = next(i for i, x in enumerate(self.instrs) if x.op == 'shps')
@@ -108,7 +114,7 @@ class Shader:
         self.start = self.instrs[ps].target
         self.consts = np.zeros(8192, np.uint32)
         self.tex = fillet_table()[0]
-        ubo = material_ubo(balls)
+        ubo = material_ubo(balls, grav)
         self.consts = E.run_preamble(self.instrs, ps, pe + 1, self.consts, {3: ubo})
         # the inputs: smooth (bary.f) and flat (flat.b) varying slots, in slot order
         self.smooth, self.flat = [], []
@@ -288,7 +294,11 @@ def main():
     log, dump = pos
     entries = json.load(open(dump))
     balls = check_balls_scene() if entries[0].get('balls') else None
-    sh = Shader(log, balls)
+    grav = entries[0].get('gravity')
+    if grav and '--check' not in flags:
+        # the arrows' soft edges: a pixel of the headset's eye, not of the dump's picture
+        grav = dict(grav, pix=2.0 * np.tan(np.radians(opt['--fov']) / 2.0) / opt['--size'])
+    sh = Shader(log, balls, grav)
     order = find_flat_order(sh, entries)
     print('%s: prog %s, %d instr; flat inputs %s' % (os.path.basename(log), sh.name, sh.ninstr, ', '.join(order)))
     if '--check' in flags:

@@ -56,6 +56,13 @@ done
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
+# the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
+# ray tracers of their own, without the balls
+for v in gravity arrows; do
+	for c in 0 1 2 3; do
+		for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
+	done
+done
 # foveated rendering on (main.set_foveation): the 3D scene in a render pass of its own
 for c in 0 1 2 3; do
 	for m in ray floor domain balls both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
@@ -81,6 +88,12 @@ for c in 0 1 2 3; do
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
+done
+for c in 0 1 2 3; do
+	verdict "simulated headset, case $c: floor lines, gravity view: the floor" python3 "$CMP/check_scene.py" "$OUT/gra$c" --floor-only
+done
+for c in 0 1 2 3; do
+	verdict "simulated headset, case $c: floor lines, gravity view: the arrows" python3 "$CMP/check_scene.py" "$OUT/arr$c" --floor-only
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"

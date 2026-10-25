@@ -186,8 +186,9 @@ func start() -> void:
 	var names := []
 	for i in variants.size():
 		names.append("%d = %s" % [i + 1, variants[i][0]])
-	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first"
-			% [", ".join(names), PLACES.size(), time, "width" if main.own_order == 0 else "height"])
+	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first; gravity view %s"
+			% [", ".join(names), PLACES.size(), time, "width" if main.own_order == 0 else "height",
+			main.GRAVITY_VIEWS[main.gravity_view]])
 	var tour_s := 0.0
 	for s in tour:
 		tour_s += s.secs + (TOUR_RECOVER * tour_scale if s.recover else 0.0)

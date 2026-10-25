@@ -12,6 +12,12 @@
 //   with WH_TABLE defined: sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
 //                                           the fillet polynomials by impact parameter
 //                                           (WormholeSpace.fillet_table), instead of per ray
+//   with WH_GRAVITY defined: vec4 grav_cyl, grav_g[2], grav_d[2]
+//                                           the gravity view (WormholeSpace.gravity_shader): the
+//                                           floor coloured by the strength of gravity
+//   with WH_ARROWS defined too: float grav_pix  also arrows of the field on the vertical surface
+//                                           n.x = 0 through the wormhole; grav_pix is a pixel's
+//                                           angle (the arrows' soft edges)
 //
 // Geometry: optozorax's SDF world, union_round(planes w = +-h, extrude_w(sphere rho0, h), fillet) in R^4.
 // It is SO(3)-symmetric, so its induced metric is exactly
@@ -86,6 +92,114 @@ vec2 wh_eye(float l) {
     float ths = th0 + max(abs(l) - wh_Lc(), 0.0) / wh_fillet;
     return vec2(wh_r(l), 2.0 * wh_fillet * sin(0.5 * (ths + th0)) * sin(0.5 * (ths - th0)));
 }
+
+#ifdef WH_GRAVITY
+// ---------------------------------------------------------------- gravity
+// The potential is g f(l) n_z (WormholeSpace.gravity_f: Laplace's equation on the space itself,
+// as in optozorax's video about gravity and portals). (f / r, d(f / r)/dl, f') at l: f / r is the
+// strength of gravity on the floor, in g. Cylinder: f = a cosh(k l); fillet: polynomials of degree 7
+// in x = (|l| - Lc) / (L - Lc); flat: f = r + beta / r^2.
+vec3 wh_grav(float l) {
+    float al = abs(l);
+    float sg = l < 0.0 ? -1.0 : 1.0;
+    float L = wh_Lsh();
+    float Lc = wh_Lc();
+    if (al >= L) {
+        float rr = al - L + wh_Rout();
+        float b = grav_cyl.w / (rr * rr * rr);
+        return vec3(1.0 + b, -3.0 * b / rr * sg, (1.0 - 2.0 * b) * sg);
+    }
+    if (al <= Lc) {
+        float e = exp(grav_cyl.y * al);
+        float ie = 1.0 / e;
+        return vec3(0.5 * grav_cyl.x * (e + ie), 0.5 * grav_cyl.x * grav_cyl.y * (e - ie) * sg,
+                    0.5 * grav_cyl.z * (e - ie) * sg);
+    }
+    float is = 1.0 / (L - Lc);
+    float x = (al - Lc) * is;
+    vec4 a = grav_g[0];
+    vec4 b = grav_g[1];
+    float g = a.x + x * (a.y + x * (a.z + x * (a.w + x * (b.x + x * (b.y + x * (b.z + x * b.w))))));
+    float dg = a.y + x * (2.0 * a.z + x * (3.0 * a.w + x * (4.0 * b.x + x * (5.0 * b.y + x * (6.0 * b.z + x * 7.0 * b.w)))));
+    vec4 c = grav_d[0];
+    vec4 e = grav_d[1];
+    float fp = c.x + x * (c.y + x * (c.z + x * (c.w + x * (e.x + x * (e.y + x * (e.z + x * e.w))))));
+    return vec3(g, dg * is * sg, fp * sg);
+}
+
+// optozorax's palette: dark is no gravity, yellow 1 g, then red and white at 10 g; bands of 0.1 g
+// below 1 g and of a tenth of a decade above. wh_gravBand(g) is the band coordinate.
+float wh_gravBand(float g) {
+    return g < 1.0 ? 10.0 * g : 10.0 + 4.342944819 * log(g);
+}
+
+vec3 wh_gravColour(float t) {
+    float band = floor(t);
+    float u = clamp((band + 0.5) / 10.0, 0.0, 1.0);
+    vec3 c = u < 0.5 ? mix(vec3(0.03, 0.03, 0.10), vec3(0.45, 0.08, 0.50), u * 2.0)
+                     : mix(vec3(0.45, 0.08, 0.50), vec3(0.95, 0.40, 0.12), u * 2.0 - 1.0);
+    c = mix(c, vec3(0.95, 0.80, 0.18), smoothstep(0.85, 0.95, u));
+    if (t >= 10.0) {
+        float v = clamp((band - 9.5) / 10.0, 0.0, 1.0);
+        c = v < 0.5 ? mix(vec3(0.95, 0.80, 0.18), vec3(0.95, 0.12, 0.05), v * 2.0)
+                    : mix(vec3(0.95, 0.12, 0.05), vec3(1.0), v * 2.0 - 1.0);
+    }
+    return c;
+}
+
+// The floor in the colour of its gravity: the band's colour, darker at the bands' edges (the
+// contours), the checker kept as brightness. q.x is the floor point's l, fw the screen footprint
+// of q (wh_floor): the band coordinate depends on l alone, so its footprint is its slope times fw.x.
+vec3 wh_gravFloor(vec2 q, vec2 fw) {
+    vec2 cell = floor(q);
+    float chk = mix(0.5, mod(cell.x + cell.y, 2.0), 1.0 - clamp(max(fw.x, fw.y) - 0.5, 0.0, 1.0));
+    vec3 G = wh_grav(q.x);
+    float t = wh_gravBand(G.x);
+    float dt = abs(G.y) * (G.x < 1.0 ? 10.0 : 4.342944819 / G.x) * fw.x;
+    float edge = clamp(abs(fract(t + 0.5) - 0.5) / max(dt, 1e-4), 0.0, 1.0);
+    return wh_gravColour(t) * (0.8 + 0.2 * edge) * (0.85 + 0.15 * chk);
+}
+
+#ifdef WH_ARROWS
+const float WH_ARROW_REACH = 4.5;     // arrows up to this far outside the shell
+
+// The arrows of the field on the surface n.x = 0 (x = 0 in both charts, through the throat; totally
+// geodesic, as the floor is), above the floor. At the point (l, n), n = (0, cos a, sin a): the arrow
+// of the nearest node, on the rings l = k (1 m apart), spaced about 1 m along each half circle; the
+// surface's metric there is dl^2 + r(l)^2 da^2. Length 0.6 m at 1 g, colour the palette. foot: a
+// pixel's size there (m), for soft edges. Returns colour and coverage.
+vec4 wh_arrow(float l, vec2 nyz, float foot) {
+    if (nyz.y <= 0.0 || abs(l) > wh_Lsh() + WH_ARROW_REACH) return vec4(0.0);
+    float a = wh_atan2(nyz.y, nyz.x);
+    float lk = round(l);
+    float rk = wh_r(lk);
+    float N = max(1.0, round(WH_PI * rk));
+    float j = min(floor(a * N / WH_PI), N - 1.0);
+    float aj = (j + 0.5) * WH_PI / N;
+    vec3 G = wh_grav(lk);
+    // the field at the node, along l and along a (unit vectors), in g
+    vec2 g = vec2(-G.z * sin(aj), -G.x * cos(aj));
+    float gm = length(g);
+    vec2 u = g / max(gm, 1e-6);
+    vec2 q = vec2(l - lk, rk * (a - aj));
+    float s = dot(q, u);
+    float c = abs(dot(q, vec2(-u.y, u.x)));
+    float len = 0.6 * min(gm, 1.4);
+    float hl = min(0.3, 0.6 * len);       // the head's length
+    float hw = 0.13;                      // the head's half width
+    float sw = 0.035;                     // the shaft's half width
+    float s0 = 0.5 * len - hl;
+    float dShaft = max(c - sw, max(-0.5 * len - s, s - s0));
+    float dHead = max(s0 - s, ((s - s0) * hw + (c - hw) * hl) * inversesqrt(hw * hw + hl * hl));
+    float d = min(dShaft, dHead);
+    float f = max(foot, 1e-4);
+    float cover = clamp(0.5 - d / f, 0.0, 1.0);
+    float rim = clamp(0.5 - (d + 0.02) / f, 0.0, 1.0);    // a dark outline
+    vec3 col = mix(vec3(0.02), 1.15 * wh_gravColour(wh_gravBand(gm)), rim);
+    return vec4(col, gm > 1e-4 ? 0.92 * cover : 0.0);
+}
+#endif
+#endif
 
 // ---------------------------------------------------------------- curved part
 // A fillet in u = s^2 = (r - rho0) / 2R, s = sin(th/2):  dl = 2R ds / sqrt(1 - s^2), and with
@@ -276,13 +390,19 @@ vec2 wh_filLW(WhFil f, float t, float side) {
 // Ray starting inside (or on the boundary of) the shell, |ls| <= L. Returns
 //   0: leaves the shell, given in flat chart coordinates (outSide, outX, outD)
 //   1: hits the floor at (hitL, hitN)        2: enters ball ballI at (hitL, hitN)
-// arc = path length travelled inside the shell.
+// arc = path length travelled inside the shell. WH_ARROWS: if slc.w < 0 (none found before), the
+// first crossing of the arrows' surface n.x = 0 before the ray's end goes into slc: (l, n.y, n.z,
+// path length from the eye), dist0 being the path length before the shell.
 // The path: piece A, a fillet travelled inward from the start (to the throat, or to the turning
 // point); piece B, the cylinder; piece C, a fillet travelled outward to the shell's edge. Both
 // fillets have the same profile, so one WhFil serves both.
 int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
               out float hitL, out vec3 hitN, out int ballI,
-              out float outSide, out vec3 outX, out vec3 outD, out float arc) {
+              out float outSide, out vec3 outX, out vec3 outD, out float arc
+#ifdef WH_ARROWS
+              , inout vec4 slc, float dist0
+#endif
+              ) {
     float rho0 = wh_rho0;
     float R = wh_fillet;
     float Lc = wh_Lc();
@@ -376,6 +496,32 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         outD = wh_M(outSide, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
     }
     arc = arcEnd;
+
+#ifdef WH_ARROWS
+    if (slc.w < 0.0) {
+        // n.x = 0 along (cos psi, sin psi) = (-e2.x, e1.x) * sign(e1.x) / |.|: the first zero, as
+        // the floor's, unless the ray ends first (on the floor, or by leaving the shell)
+        float sx = e1.x >= 0.0 ? 1.0 : -1.0;
+        float psiS = wh_atan2(abs(e1.x), -sx * e2.x);
+        if (psiS < (floorHit ? wh_atan2(e1.z, -e2.z) : tot.x)) {
+            float lS; float aS;
+            if (psiS >= PA.x && psiS < PA.x + PB.x) {
+                float xS = (psiS - PA.x) / max(kc, 1e-30);
+                lS = d * (x0B + xS);
+                aS = PA.y + xS * ivlc;
+            } else {
+                bool inA = psiS < PA.x;
+                float T = inA ? PA.x - psiS : C0.x + psiS - PA.x - PB.x;
+                float t; vec4 m;
+                wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
+                lS = wh_filLW(f, t, inA ? sideA : sideC).x;
+                aS = (inA ? PA.y : PA.y + PB.y - C0.y) + (inA ? -1.0 : 1.0) * wh_filLen(f, m);
+            }
+            vec3 nS = cos(psiS) * e1 + sin(psiS) * e2;
+            slc = vec4(lS, nS.y, nS.z, dist0 + aS);
+        }
+    }
+#endif
 
 #ifndef WH_NO_BALLS
     // Balls that this ray can reach: the whole ray lies in span(e1, e2, w-axis) of R^4,
@@ -743,10 +889,17 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     vec3 col = vec3(0.0);
     vec3 nrm = vec3(0.0, 0.0, 1.0);
     dbg = vec4(-1.0);
+#ifdef WH_ARROWS
+    vec4 slc = vec4(-1.0);          // the arrows' surface: (l, n.y, n.z, path length), w < 0: none
+#endif
     for (int seg = 0; seg < 2; seg++) {
         if (inShell) {
             float hl; vec3 hn; int bi; float arc;
-            int ev = wh_curved(l0, n0, vl, w, eye, hl, hn, bi, side, x, d, arc);
+            int ev = wh_curved(l0, n0, vl, w, eye, hl, hn, bi, side, x, d, arc
+#ifdef WH_ARROWS
+                               , slc, dist
+#endif
+                               );
             dist += arc;
             if (ev == 1) {
                 kind = 1; fl = hl; fn = hn;
@@ -771,6 +924,15 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
             shellAhead = false;
         }
         WhHit h = wh_traceFlat(side, x, d, shellAhead);
+#ifdef WH_ARROWS
+        // a straight segment's crossing of x = 0 before what it ends on
+        float tS = -x.x / (abs(d.x) > 1e-9 ? d.x : 1e-9);
+        if (slc.w < 0.0 && tS > 0.0 && tS < h.t) {
+            vec3 p = x + tS * d;
+            float ip = inversesqrt(dot(p, p));
+            slc = vec4(side * (dot(p, p) * ip - wh_Rout() + wh_Lsh()), p.yz * ip, dist + tS);
+        }
+#endif
         if (h.kind != 3) {
             vec3 p = x + h.t * d;
             if (h.kind == 0) {
@@ -819,7 +981,11 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     fw = ex && ey ? vec2(1e-4) : max(fw, vec2(1e-4));     // tiny: no line, no circle
     vec3 c;
     if (kind == 0) c = wh_sky(side, dn);
+#ifdef WH_GRAVITY
+    else if (kind == 1) c = wh_gravFloor(gq, fw);
+#else
     else if (kind == 1) c = wh_floor(gq, fw);
+#endif
     else if (kind == 2) c = wh_shade(side, col, nrm);
     else c = vec3(1.0, 0.0, 1.0);
     // what the kinds share: the grid lines (sky faint, floor bright), the throat circle on the
@@ -831,6 +997,18 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
             (kind == 1 ? 0.55 : (kind == 0 ? 0.12 : 0.0)) * line);
     c = mix(c, vec3(0.2, 1.0, 0.9), kind == 1 ? 1.0 - clamp(abs(gq.x) * ifw.x - 1.0, 0.0, 1.0) : 0.0);
     float fog = kind == 1 || kind == 2 ? 1.0 - exp(-dist * 0.012) : 0.0;
+#ifdef WH_ARROWS
+    // an arrow lies over what the ray ends on, in the fog of its own distance
+    if (slc.w >= 0.0) {
+        vec4 ar = wh_arrow(slc.x, slc.yz, slc.w * grav_pix);
+        c = mix(c, ar.rgb, ar.a);
+        fog = mix(fog, 1.0 - exp(-slc.w * 0.012), ar.a);
+        if (ar.a > 0.5) side = slc.x >= 0.0 ? 1.0 : -1.0;       // the fog of the arrow's universe
+    }
+#ifdef WH_SLICE_OUT
+    WH_SLICE_OUT = slc;           // ref/test_slice.py: the crossing itself
+#endif
+#endif
     return mix(c, side > 0.0 ? vec3(0.95, 0.60, 0.35) : vec3(0.70, 0.82, 0.95), fog);
 }
 

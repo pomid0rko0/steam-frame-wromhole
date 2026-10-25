@@ -10,7 +10,8 @@ extends SceneTree
 ## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
 ## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
 ## below 100% turns it off again; our own density map comes from a texture, and the order of its
-## steps switches (the width or the height first); the gaze dot shows and hides; frames made too slow for the display
+## steps switches (the width or the height first); the gaze dot shows and hides; the gravity row
+## switches the gravity view (the floor, the arrows, off) and its ray tracers; frames made too slow for the display
 ## turn the plate red; and the speed check's button runs it through (bench.gd: the comparison at
 ## 72 Hz, then the tour at 120 Hz, which Monado does not offer: it stays at 20) and puts the
 ## rate, the shader and the viewer back.
@@ -237,6 +238,24 @@ func _foveation(p: Label3D) -> void:
 			and main.gaze_angles() == null)
 	p.show_gaze(false)
 	check("the gaze dot hides", not main.gaze_dot.visible)
+	_gravity(p)
+
+
+## The gravity row: the right hand presses "пол", then "стрелки", then "выкл".
+func _gravity(p: Label3D) -> void:
+	var seen := []
+	for v in [1.0, 2.0, 0.0]:
+		var at := _button_point(p, "grav", v)
+		var from := at + p.transform.basis.z * 0.8
+		p.point(1, from, (at - from).normalized(), 0.0)
+		p.point(1, from, (at - from).normalized(), 1.0)
+		p.point(1, from, (at - from).normalized(), 0.0)
+		p.point(1, Vector3.ZERO, Vector3.FORWARD, 0.0)
+		seen.append([main.gravity_view, main.material.shader.resource_path.get_file(), _color(p, "grav", v) == p.COLOR_ON])
+	check("гравитация: пол, стрелки, выкл", seen == [[1, "wormhole_gravity.gdshader", true],
+			[2, "wormhole_arrows.gdshader", true], [0, "wormhole.gdshader", true]])
+	if seen != [[1, "wormhole_gravity.gdshader", true], [2, "wormhole_arrows.gdshader", true], [0, "wormhole.gdshader", true]]:
+		print("  ", seen)
 
 
 func _index(p: Label3D, kind: String, value: float) -> int:

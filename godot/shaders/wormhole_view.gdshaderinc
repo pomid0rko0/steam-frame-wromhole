@@ -28,6 +28,14 @@ uniform vec4 wh_tabLo;
 uniform vec4 wh_tabInv;
 uniform vec4 wh_tabReg;
 #endif
+#ifdef WH_GRAVITY
+uniform vec4 grav_cyl;
+uniform vec4 grav_g[2];
+uniform vec4 grav_d[2];
+#endif
+#ifdef WH_ARROWS
+uniform float grav_pix = 0.0015;
+#endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
 

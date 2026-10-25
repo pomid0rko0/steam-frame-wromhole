@@ -13,6 +13,9 @@ extends RefCounted
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 
 const STEP := 0.02  # metres per RK4 step
+const GRAV_NODES := 256  # nodes of the gravity table on the fillet: 6 mm apart here
+const GRAV_SUB := 2      # RK4 steps between nodes
+const GRAV_DEG := 7      # the shader's polynomials on the fillet (gravity_shader)
 
 var rho0: float
 var h: float
@@ -21,6 +24,12 @@ var Lc: float
 var th0: float
 var L: float
 var Rout: float
+# gravity (see gravity_f): f = grav_a cosh(grav_k l) on the cylinder, a table on the fillet,
+# r + grav_beta / r^2 in the flat universes
+var grav_a := 1.0
+var grav_k := 1.0
+var grav_beta := 0.0
+var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_NODES, interleaved
 
 
 func _init(throat_radius: float, half_length: float, fillet_radius: float) -> void:
@@ -35,6 +44,7 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	th0 = asin(maxf(1.0 - h / fillet, 0.0))
 	L = Lc + fillet * (PI / 2.0 - th0)
 	Rout = rho0 + fillet
+	_build_gravity()
 
 
 func _theta(al: float) -> float:
@@ -153,6 +163,168 @@ func w(l: float) -> float:
 func embed(l: float, n: Vector3) -> Vector4:
 	var p := r(l) * n
 	return Vector4(p.x, p.y, p.z, w(l))
+
+
+# ---------------------------------------------------------------- gravity
+# Gravity through the wormhole as in optozorax's video about gravity and portals: the potential
+# obeys Poisson's equation on the curved space itself. There is no mass near the wormhole (the
+# field comes from far below, like the Earth's), so the potential is harmonic, and far away it
+# is ordinary uniform gravity, g z, in both universes. The space is SO(3)-symmetric, so with
+# phi = g f(l) n_z the equation separates exactly into (r^2 f')' = 2 f, f even, f = r + beta / r^2
+# in the flat universes (ref/gravity.py, checked there against a 2D solve of the full equation).
+# On the throat's cylinder f = a cosh(sqrt(2) l / rho0): the field is screened, and in the
+# middle of the long throat gravity on the floor is about 0.2 g.
+# Everything here is in plain floats (double precision): GDScript's Vector2/3/4 are single
+# precision, and an ODE or a table kept in them made the field's second derivative noisy.
+
+## Solve the ODE for the current profile: closed form on the cylinder, RK4 over the fillet into
+## a table, then scale so that f = r + beta / r^2 outside.
+func _build_gravity() -> void:
+	grav_k = sqrt(2.0) / rho0
+	# f and the flux p = r^2 f' at l = Lc (p is continuous even across the crease of h < R)
+	var f := 1.0
+	var p := 0.0
+	if Lc > 0.0:
+		f = cosh(grav_k * Lc)
+		p = rho0 * rho0 * grav_k * sinh(grav_k * Lc)
+	var d := (L - Lc) / GRAV_NODES
+	var hs := d / GRAV_SUB
+	var raw := PackedFloat64Array()
+	for i in GRAV_NODES + 1:
+		var l := Lc + i * d
+		raw.append(f)
+		raw.append(p / (r(l) * r(l)))
+		if i == GRAV_NODES:
+			break
+		for _s in GRAV_SUB:               # RK4 for f' = p / r^2, p' = 2 f
+			var rm := r(l + 0.5 * hs)
+			var r1 := r(l + hs)
+			var f1 := p / (r(l) * r(l))
+			var p1 := 2.0 * f
+			var f2 := (p + 0.5 * hs * p1) / (rm * rm)
+			var p2 := 2.0 * (f + 0.5 * hs * f1)
+			var f3 := (p + 0.5 * hs * p2) / (rm * rm)
+			var p3 := 2.0 * (f + 0.5 * hs * f2)
+			var f4 := (p + hs * p3) / (r1 * r1)
+			var p4 := 2.0 * (f + hs * f3)
+			f += hs / 6.0 * (f1 + 2.0 * f2 + 2.0 * f3 + f4)
+			p += hs / 6.0 * (p1 + 2.0 * p2 + 2.0 * p3 + p4)
+			l += hs
+	var fe: float = raw[2 * GRAV_NODES]                 # at l = L, where r = Rout
+	var fpe: float = raw[2 * GRAV_NODES + 1]
+	var a := (2.0 * fe + Rout * fpe) / (3.0 * Rout)
+	grav_beta = Rout * Rout * (fe - Rout * fpe) / (3.0 * a)
+	grav_a = 1.0 / a
+	_grav_tab = PackedFloat64Array()
+	for v in raw:
+		_grav_tab.append(v / a)
+
+
+## [f, df/dl] at l: the potential is g f(l) n_z. f is even, f' odd. On the fillet a cubic Hermite
+## interpolant of the table, and f' is its derivative, so the force is exactly minus the
+## gradient of the potential (energy is conserved). Plain floats, not a Vector2 (single precision).
+func gravity_f(l: float) -> PackedFloat64Array:
+	var al := absf(l)
+	var sg := -1.0 if l < 0.0 else 1.0
+	if al >= L:
+		var rr := al - L + Rout
+		return PackedFloat64Array([rr + grav_beta / (rr * rr), sg * (1.0 - 2.0 * grav_beta / (rr * rr * rr))])
+	if al <= Lc:
+		return PackedFloat64Array([grav_a * cosh(grav_k * al), sg * grav_a * grav_k * sinh(grav_k * al)])
+	var d := (L - Lc) / GRAV_NODES
+	var x := (al - Lc) / d
+	var i := mini(int(x), GRAV_NODES - 1)
+	var t := x - i
+	var f0 := _grav_tab[2 * i]
+	var m0 := _grav_tab[2 * i + 1]
+	var f1 := _grav_tab[2 * i + 2]
+	var m1 := _grav_tab[2 * i + 3]
+	var t2 := t * t
+	var t3 := t2 * t
+	var f := (2.0 * t3 - 3.0 * t2 + 1.0) * f0 + (t3 - 2.0 * t2 + t) * d * m0 \
+			+ (3.0 * t2 - 2.0 * t3) * f1 + (t3 - t2) * d * m1
+	var fp := ((6.0 * t2 - 6.0 * t) * (f0 - f1)) / d + (3.0 * t2 - 4.0 * t + 1.0) * m0 \
+			+ (3.0 * t2 - 2.0 * t) * m1
+	return PackedFloat64Array([f, sg * fp])
+
+
+## The potential divided by g, in metres: the chart height z far from the wormhole.
+func potential(l: float, n: Vector3) -> float:
+	return gravity_f(l)[0] * n.z
+
+
+## Its gradient; gravity is -g times this. On the floor it is the floor normal times
+## floor_gravity(l).
+func potential_grad(l: float, n: Vector3) -> Vector4:
+	var F := gravity_f(l)
+	var u := (Vector3(0.0, 0.0, 1.0) - n.z * n) * (F[0] / r(l))
+	return Vector4(F[1] * n.z, u.x, u.y, u.z)
+
+
+## Strength of gravity on the floor at l, in g.
+func floor_gravity(l: float) -> float:
+	return gravity_f(l)[0] / r(l)
+
+
+## The ray tracer's gravity view (wormhole_gravity.gdshader) without a table: on the cylinder
+## f / r = (a / rho0) cosh(k l) and f' = a k sinh(k l); outside f / r = 1 + beta / r^3 and
+## f' = 1 - 2 beta / r^3; on the fillet f / r and f' as polynomials of degree GRAV_DEG in
+## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (near the best fit:
+## within 1e-6 g here, 4e-5 on a fillet as long as the throat's radius; the gravity test checks
+## them). {cyl: (a / rho0, k, a k, beta), g: [2 Vector4], d: [2 Vector4]}: the shader's grav_cyl,
+## grav_g, grav_d, coefficients from x^0 up.
+func gravity_shader() -> Dictionary:
+	var n := GRAV_DEG + 1
+	var V: Array = []
+	var yg := PackedFloat64Array()
+	var yd := PackedFloat64Array()
+	for i in n:
+		var x := 0.5 - 0.5 * cos(PI * (i + 0.5) / n)
+		var l := Lc + x * (L - Lc)
+		var F := gravity_f(l)
+		var row := PackedFloat64Array()
+		for k in n:
+			row.append(pow(x, k))
+		V.append(row)
+		yg.append(F[0] / r(l))
+		yd.append(F[1])
+	var cg := _solve(V, yg)
+	var cd := _solve(V, yd)
+	return {"cyl": Vector4(grav_a / rho0, grav_k, grav_a * grav_k, grav_beta),
+			"g": [Vector4(cg[0], cg[1], cg[2], cg[3]), Vector4(cg[4], cg[5], cg[6], cg[7])],
+			"d": [Vector4(cd[0], cd[1], cd[2], cd[3]), Vector4(cd[4], cd[5], cd[6], cd[7])]}
+
+
+## A x = y by Gaussian elimination with partial pivoting, in doubles (rows: PackedFloat64Array).
+static func _solve(rows: Array, y: PackedFloat64Array) -> PackedFloat64Array:
+	var n := y.size()
+	var A: Array = []
+	for i in n:
+		var line: PackedFloat64Array = rows[i].duplicate()
+		line.append(y[i])
+		A.append(line)
+	for c in n:
+		var piv := c
+		for k in range(c + 1, n):
+			if absf(A[k][c]) > absf(A[piv][c]):
+				piv = k
+		var tmp: PackedFloat64Array = A[c]
+		A[c] = A[piv]
+		A[piv] = tmp
+		for k in range(c + 1, n):
+			var q: float = A[k][c] / A[c][c]
+			var rk: PackedFloat64Array = A[k]
+			for j in range(c, n + 1):
+				rk[j] -= q * A[c][j]
+			A[k] = rk
+	var out := PackedFloat64Array()
+	out.resize(n)
+	for c in range(n - 1, -1, -1):
+		var s: float = A[c][n]
+		for j in range(c + 1, n):
+			s -= A[c][j] * out[j]
+		out[c] = s / A[c][c]
+	return out
 
 
 ## Chart side and chart position of a point in a flat region.

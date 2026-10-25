@@ -13,7 +13,8 @@ extends SceneTree
 ## 4. A goes back to the start
 ## 5. with the left controller pointed at the frame rate panel, the left trigger presses the
 ##    panel's buttons and does not run: the left stick walks at walking speed
-## 6. while the speed check holds the viewer (main.hold), the sticks and A do nothing
+## 6. while the speed check holds the viewer (main.hold), the sticks and A do nothing; then
+##    left Y shows gravity: the floor, the arrows, off (main.set_gravity_view)
 
 # action name -> binding paths the action map must have for it, per profile
 const BINDINGS := {
@@ -22,18 +23,21 @@ const BINDINGS := {
 		"primary_click": ["/user/hand/right/input/thumbstick/click"],
 		"trigger": ["/user/hand/left/input/trigger/value"],
 		"ax_button": ["/user/hand/right/input/primary/click"],
+		"by_button": ["/user/hand/left/input/secondary/click"],
 	},
 	"/interaction_profiles/oculus/touch_controller": {
 		"primary": ["/user/hand/left/input/thumbstick", "/user/hand/right/input/thumbstick"],
 		"primary_click": ["/user/hand/right/input/thumbstick/click"],
 		"trigger": ["/user/hand/left/input/trigger/value"],
 		"ax_button": ["/user/hand/right/input/a/click"],
+		"by_button": ["/user/hand/left/input/y/click"],
 	},
 	"/interaction_profiles/valve/index_controller": {
 		"primary": ["/user/hand/left/input/thumbstick", "/user/hand/right/input/thumbstick"],
 		"primary_click": ["/user/hand/right/input/thumbstick/click"],
 		"trigger": ["/user/hand/left/input/trigger/value"],
 		"ax_button": ["/user/hand/right/input/a/click"],
+		"by_button": ["/user/hand/left/input/b/click"],
 	},
 }
 
@@ -43,6 +47,7 @@ var left: XRControllerTracker
 var right: XRControllerTracker
 var frames := 0
 var fails := 0
+var gravity_seen := []
 
 
 func _initialize() -> void:
@@ -67,6 +72,7 @@ func _controller(tracker_name: StringName) -> XRControllerTracker:
 	t.set_input(&"primary_click", false)
 	t.set_input(&"trigger", 0.0)
 	t.set_input(&"ax_button", false)
+	t.set_input(&"by_button", false)
 	XRServer.add_tracker(t)
 	return t
 
@@ -196,6 +202,13 @@ func _process(_delta: float) -> bool:
 			_check("while the speed check holds the viewer, the sticks do nothing", absf(p.x - 9.25) < 1e-4 and absf(p.y) < 1e-4, "feet at (%.4f, %.4f), expected (9.25, 0)" % [p.x, p.y])
 			_check_turn("... nor does the right stick turn", 0.0)
 			main.hold = false
+		313, 315, 317:
+			left.set_input(&"by_button", true)
+		314, 316, 318:
+			left.set_input(&"by_button", false)
+			gravity_seen.append(main.gravity_view)
+		319:
+			_check("left Y shows gravity: the floor, the arrows, off", gravity_seen == [1, 2, 0], "views %s" % [gravity_seen])
 			print("FAILURES: ", fails)
 			_finish()
 	return false

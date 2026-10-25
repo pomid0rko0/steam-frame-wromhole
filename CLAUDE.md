@@ -68,12 +68,21 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   accuracy and stereo; one-eye check passed. Measured by the speed check: the edge 4.73 → 3.6 ms,
   -23% over world A's poses, 120 Hz tour 0 missed of 20630. Not solved: 144 Hz in world B at
   5.5-6 m facing the throat (4.8 ms, frames up to 6; README «Мир B у внешнего края дороже всего»).
+- `gravity` — gravity through the wormhole from Laplace's equation, as in optozorax's video about
+  gravity and portals (README «Гравитация через червоточину»): the math from `physics` (e493a20:
+  `ref/gravity.py`, `ref/test_gravity.py`, `WormholeSpace.gravity_f`, `potential`, `potential_grad`,
+  `floor_gravity`, all in doubles) and a view of it on `main`'s fast core: the floor coloured by its
+  strength, arrows of the field on the surface x = 0 through the wormhole (`wormhole_gravity.gdshader`,
+  `wormhole_arrows.gdshader`, `main.set_gravity_view`; the panel's row, left Y, G;
+  `tests/gravity_test.gd`, `ref/test_slice.py`). The plain shader compiles exactly as on `main`; the
+  model: the floor view +5%, the arrows +28% (`tools/adreno_cost.sh --gravity 1|2`).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
 Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
-- free flight in 3D with gravity on/off → `main` (the gravity field is in `physics`);
+- free flight in 3D with gravity on/off → `main` (the honest gravity field is in `gravity`:
+  `WormholeSpace.potential_grad`; `physics` has it too, with balls on the old core);
 - pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
   are there);
 - cubes next to balls → `physics`;
@@ -98,12 +107,18 @@ When branches are put together, these overlap:
 - the right stick: x turns on `main` (its click switches smooth/snap), y changes the throat in
   `throat`; that fits.
 - the speed check (`bench.gd`) sets the viewer's pose itself: while it runs (`main.hold`) the
-  sticks and A do nothing. `grab` and `throat` add their own buttons: keep them out of it too.
+  sticks and A do nothing. `grab` and `throat` add their own buttons: keep them out of it too (`gravity`'s Y, G and panel
+  row are).
 - A resets on `main`, in `throat` and `grab`: one reset does all of it.
+- left Y shows gravity in `gravity` and in `physics` (the same views; `physics` draws them on the
+  old core): keep `gravity`'s. Its views are ray tracers without movable balls: with `physics` or
+  `grab` the balls vanish while a view is on (a variant with both is new work).
 - a throat change with balls (`throat` + `physics`): balls must keep their distance to the
   edge of the curved shell, as the feet do in `set_geometry`.
 - a throat change (`throat`) with `main`'s fillet table: the table depends on the shape: after
-  `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop).
+  `space.set_profile`, `main._upload_fillet_table()` again (3 ms in GDScript on the desktop). The
+  same for `gravity`: `set_profile` rebuilds the gravity table, `main._upload_gravity()` sends the
+  shader its polynomials again.
 - foveation (on `main`) and the render scale: the panel lets one of them be on (the eye-tracked
   map's offsets are in full-size pixels). Its rows sit under the scale's; its split pass is on the
   XR camera's compositor: an effect added there by another branch splits the pass as well. The
@@ -157,7 +172,9 @@ draws next to ray-traced ones, check they line up the same way.
 - **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
   (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; `edge-120hz`
   matched the main before it within 1/255 at every pose.
-- **Tests:** on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
+- **Tests:** on `gravity`, `--rendering-method mobile --fixed-fps 60 -s res://tests/gravity_test.gd`
+  under xvfb (the field against `ref/test_gravity.py`, Laplace, the shader's polynomials, the views'
+  colours) and `python3 ref/test_slice.py` (the arrows' surface against RK4 rays, ~2 min); on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails). Monado's simulated controllers (`SIMULATED_LEFT=wmr`) bind to none of our profiles; for controller input use `XRControllerTracker`s with inputs set by hand (`tests/walking_xr_test.gd`).
 - **GitHub from this environment:** branch pushes work through the session's git proxy, tag pushes are refused (403). The owner creates tags on GitHub.
@@ -249,5 +266,12 @@ draws next to ray-traced ones, check they line up the same way.
   b → Rout; interpolating e itself erred 0.3°, e·sqrt(mx) (put back per pixel) 1e-5 rad. One row
   per regime: the regime comes from the row, so the moments match the table. Turnip filters
   RGBA32F linearly (not on A702); sample with `textureLod` (no implicit derivatives).
+- **GDScript's `Vector2/3/4` are single precision** (`float` is double). An ODE integrated in
+  `Vector2` and a `PackedVector2Array` table made the gravity's second derivative noisy at 10⁻³
+  (`physics`); keep such states in plain floats or `PackedFloat64Array` (`gravity_f` returns one).
+- **A view's code costs its shader even when off.** The gravity arrows (a crossing carried through
+  the trace) took the shader from 12 to 16 registers (waves of 64); with one shader for the floor
+  view and the arrows, switched by a uniform, the floor view cost 3.94 ms by the model, as its own
+  shader 3.68 (`main` 3.51).
 - **The fog's path length** only needs ~5%: r²/b × psi with r at the weight's mean tau is within
   1.5% here; dropping the exact polynomial took the plain shader from 13 to 12 registers.

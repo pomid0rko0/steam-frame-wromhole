@@ -2,8 +2,9 @@ extends SceneTree
 ## For tools/adreno_cost.py: puts the viewer at a speed check pose, renders a frame and writes what
 ## the ray tracer gets (the head's point and frame, the camera) and the picture, so the emulated
 ## shader can be fed the same inputs and checked against the picture.
-##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch;..." [fov] [plain|balls] [shader]
+##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch;..." [fov] [plain|balls|gravity1|gravity2] [shader]
 ## Each pose gives out_<i>.png and an entry in out.json. fov: vertical, degrees (default 90);
+## gravity1, gravity2: the gravity view (main.set_gravity_view), its uniforms in the entries;
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
@@ -14,6 +15,7 @@ var fov := 90.0
 var entries: Array = []
 var i := 0
 var shader_path := ""
+var gravity := 0
 
 
 func _initialize() -> void:
@@ -27,6 +29,8 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
 	main.show_check = a.size() > 3 and a[3] == "balls"
+	if a.size() > 3 and a[3].begins_with("gravity"):
+		gravity = int(a[3].substr(7))
 	root.add_child(main)
 	if a.size() > 4 and a[4] != "":
 		shader_path = a[4]
@@ -37,6 +41,8 @@ func _process(_d: float) -> bool:
 	if frames == 1 and shader_path != "":
 		main.material.shader = load(shader_path)
 	if frames == 2:
+		if gravity > 0:
+			main.set_gravity_view(gravity)
 		main.perf.visible = false
 		main.camera.fov = fov
 		if main.overlay:
@@ -72,6 +78,12 @@ func _process(_d: float) -> bool:
 			"size": [img.get_width(), img.get_height()],
 			"balls": main.material.shader == main.SHADER_BALLS,
 		})
+		if gravity > 0:
+			var g: PackedVector4Array = m.get_shader_parameter("grav_g")
+			var dd: PackedVector4Array = m.get_shader_parameter("grav_d")
+			entries.back()["gravity"] = {"view": gravity, "cyl": _v4(m.get_shader_parameter("grav_cyl")),
+					"g": [_v4(g[0]), _v4(g[1])], "d": [_v4(dd[0]), _v4(dd[1])],
+					"pix": m.get_shader_parameter("grav_pix")}
 		i += 1
 	return false
 

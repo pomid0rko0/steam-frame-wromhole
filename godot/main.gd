@@ -3,7 +3,9 @@ extends Node3D
 ## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
 ## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
 ## pulling the trigger, set the refresh rate, the render scale and foveated rendering
-## (perf_panel.gd, set_foveation). Every pixel is
+## (perf_panel.gd, set_foveation). Gravity through the wormhole, from Laplace's equation on the
+## space itself (WormholeSpace.gravity_f), is shown on request: the floor coloured by its strength,
+## arrows of its field (set_gravity_view; the panel, left Y, G). Every pixel is
 ## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
 ## viewer is in that curved space.
 ##
@@ -34,6 +36,9 @@ const CHECK_FLAG := "res://check"
 # the ray tracer without movable balls, and with them (set_balls)
 const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
 const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
+const SHADER_GRAVITY := preload("res://shaders/wormhole_gravity.gdshader")    # set_gravity_view 1
+const SHADER_ARROWS := preload("res://shaders/wormhole_arrows.gdshader")      # set_gravity_view 2
+const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
 # eyes look, [radius, shading width, height in screen pixels]; the radius in each eye's picture,
@@ -91,6 +96,8 @@ var own_maps := {}              # OWN_MAPS made into textures, by level * 2 + ow
 var own_order := 0              # our maps' steps: 0 the width first (2x1, 4x2), 1 the height (1x2, 2x4)
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
 var gaze_dot: MeshInstance3D    # drawn where they look, while the panel says so
+var balls := 0                  # movable balls in the ray tracer (set_balls)
+var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 
 
 func _ready() -> void:
@@ -162,6 +169,7 @@ func _ready() -> void:
 	material.set_shader_parameter("wh_h", space.h)
 	material.set_shader_parameter("wh_fillet", space.fillet)
 	_upload_fillet_table()
+	_upload_gravity()
 	_upload_scene()
 	var quad := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -275,6 +283,9 @@ func _process(delta: float) -> void:
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	var moved := false if hold else _handle_turn_and_reset(dt)
+	# left Y / G: the next gravity view (not during the speed check: it times what it set up)
+	if _pressed_once("gravity", Input.is_key_pressed(KEY_G) or (in_xr and left_hand.is_button_pressed(&"by_button"))) and not hold:
+		set_gravity_view((gravity_view + 1) % GRAVITY_VIEWS.size())
 
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
@@ -614,10 +625,52 @@ func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
 	while p.size() < 12:
 		p.append(Vector4.ZERO)
 		c.append(Vector4.ZERO)
-	material.shader = SHADER_BALLS if n > 0 else SHADER_PLAIN
+	balls = n
+	_pick_shader()
 	material.set_shader_parameter("wh_ball", p)
 	material.set_shader_parameter("wh_ballCol", c)
 	material.set_shader_parameter("wh_nBall", n)
+
+
+## How gravity is shown (README, «Гравитация через червоточину»): 0 not at all, 1 the floor
+## coloured by its strength (optozorax's palette: dark is none, yellow 1 g), 2 also arrows of the
+## field on the vertical surface through the wormhole that faces the start (x = 0 in both
+## universes, through the throat). Ray tracers of their own (wormhole_gravity.gdshader,
+## wormhole_arrows.gdshader), without movable balls: in the stereo check the red balls go while it
+## is on, their green grids stay.
+func set_gravity_view(view: int) -> void:
+	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
+	material.set_shader_parameter("grav_pix", _pixel_angle())
+	_pick_shader()
+	if perf:
+		perf._paint()
+	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
+
+
+## The ray tracer for what is on: the gravity view, movable balls, or neither.
+func _pick_shader() -> void:
+	material.shader = [SHADER_BALLS if balls > 0 else SHADER_PLAIN, SHADER_GRAVITY, SHADER_ARROWS][gravity_view]
+
+
+## A pixel's angle in the middle of the view, radians (the gravity arrows' soft edges): the
+## headset's field of view is about 104 degrees up and down.
+func _pixel_angle() -> float:
+	var h := float(get_viewport().get_visible_rect().size.y)
+	var fov := deg_to_rad(camera.fov)
+	if in_xr:
+		h = xr.get_render_target_size().y * xr_view.scaling_3d_scale
+		fov = deg_to_rad(104.0)
+	return 2.0 * tan(0.5 * fov) / maxf(h, 1.0)
+
+
+## Gravity for the gravity view's ray tracer: f / r and f' as the shader evaluates them
+## (WormholeSpace.gravity_shader). A change of the throat's shape needs them again.
+func _upload_gravity() -> void:
+	var g := space.gravity_shader()
+	material.set_shader_parameter("grav_cyl", g.cyl)
+	material.set_shader_parameter("grav_g", PackedVector4Array(g.g))
+	material.set_shader_parameter("grav_d", PackedVector4Array(g.d))
+	material.set_shader_parameter("grav_pix", _pixel_angle())
 
 
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a
