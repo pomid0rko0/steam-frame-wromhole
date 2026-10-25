@@ -22,6 +22,12 @@ uniform float head_l = 10.0;
 uniform vec3 head_n = vec3(1.0, 0.0, 0.0);
 uniform vec4 head_f[3];
 uniform vec3 head_pos;
+#ifdef WH_TABLE
+uniform sampler2D wh_tab : filter_linear, repeat_disable;
+uniform vec4 wh_tabLo;
+uniform vec4 wh_tabInv;
+uniform vec4 wh_tabReg;
+#endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
 
@@ -30,6 +36,7 @@ varying flat vec3 v_n;
 varying flat vec4 v_f0;
 varying flat vec4 v_f1;
 varying flat vec4 v_f2;
+varying flat vec2 v_eye;        // wh_eye(v_l): once per eye, not per pixel
 varying vec4 v_ray;
 
 void vertex() {
@@ -47,6 +54,7 @@ void vertex() {
 		wh_geodesic(l, n, dir, len, f0, f1, f2);
 	}
 	v_l = l; v_n = n; v_f0 = f0; v_f1 = f1; v_f2 = f2;
+	v_eye = wh_eye(l);
 	// this corner's ray: the line from the eye, EYE_OFFSET, through the corner unprojected at two
 	// depths (the far point, whatever the depth convention). Unnormalised, it is affine in the
 	// screen position, so the interpolated value is each pixel's ray exactly.
@@ -61,5 +69,5 @@ void vertex() {
 void fragment() {
 	vec4 V = normalize(v_ray);
 	vec4 dbg;
-	ALBEDO = wh_render(v_l, v_n, V.x, V.yzw, dbg);
+	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
 }

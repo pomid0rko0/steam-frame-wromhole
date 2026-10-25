@@ -5,18 +5,22 @@ extends SceneTree
 ## balls; check_nooverlay: without Godot's green overlay; plain_balls: normal scene + the balls;
 ## near: 6.5 m from the centre, the wormhole filling most of the view (the costly rays);
 ## away: the same spot looking away from it. A suffix _scale80 or _scale70 renders at 80% / 70%
-## 3D render scale (plain_scale80, near_scale70, ...).
+## 3D render scale (plain_scale80, near_scale70, ...). A second argument, a shader's path (such
+## as res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), replaces the ray tracer.
 
 var main: Node3D
 var frames := 0
 var t0 := 0
 var gpu := 0.0
 var variant: String
+var shader_path := ""
 
 
 func _initialize() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	variant = OS.get_cmdline_user_args()[0]
+	if OS.get_cmdline_user_args().size() > 1:
+		shader_path = OS.get_cmdline_user_args()[1]
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
 	main.show_check = variant.begins_with("check")
@@ -25,6 +29,8 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	if frames == 1 and shader_path != "":
+		main.material.shader = load(shader_path)     # before anything is drawn: only it is compiled
 	if frames == 2:
 		main.perf.visible = false        # the scene alone
 		for sc in [80, 70]:

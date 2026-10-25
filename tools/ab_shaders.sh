@@ -68,14 +68,14 @@ elif kind in ('noderiv', 'nogrid', 'nosky'):
         b = s.index(end, a) + len(end)
         return s[:a] + new + s[b:]
     if kind in ('noderiv', 'nogrid'):
-        s = cut(s, '    float cls = kind == 1 ? 10.0', 'max(fw, vec2(1e-4));     // tiny: no line, no circle',
+        s = cut(s, '    float cls = kind == 0 ?', 'max(fw, vec2(1e-4));     // tiny: no line, no circle',
                 '    vec2 fw = vec2(%s);' % ('0.02' if kind == 'noderiv' else '1e-4'))
     if kind == 'nogrid':
         s = cut(s, '    vec2 ga = kind == 1 ? fn.xy : dn.xy;', '* (180.0 / WH_PI / 15.0);',
                 '    vec2 gq = vec2(0.5) + 1e-6 * vec2(fl, fn.x);')
     if kind == 'nosky':
-        s = cut(s, '    vec3 col;\n    if (side > 0.0) {   // A: sunset', 'clamp(-el * 8.0, 0.0, 1.0));',
-                '    vec3 col = side > 0.0 ? vec3(0.9, 0.6, 0.4) : vec3(0.5, 0.7, 1.0);')
+        s = cut(s, '    float sd = dot(d, wh_sunDir(side));', 'clamp(-el * 8.0, 0.0, 1.0));',
+                '    return side > 0.0 ? vec3(0.9, 0.6, 0.4) : vec3(0.5, 0.7, 1.0) + 1e-6 * el;')
     open(core, 'w').write(s)
     open(d + '/label', 'w').write({'noderiv': 'grid lines of a fixed width, no screen derivatives',
                                    'nogrid': 'no grid lines: no atan, asin or derivatives',
@@ -83,7 +83,8 @@ elif kind in ('noderiv', 'nogrid', 'nosky'):
 else:
     s = open(d + '/wormhole_core.gdshaderinc').read()
     a = s.index('    if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;')
-    b = s.index('    return c;\n}', a) + len('    return c;\n}')
+    end = '    return mix(c, side > 0.0 ? vec3(0.95, 0.60, 0.35) : vec3(0.70, 0.82, 0.95), fog);\n}'
+    b = s.index(end, a) + len(end)
     s = s[:a] + """    if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;
     vec3 tint = side > 0.0 ? vec3(1.0, 0.85, 0.7) : vec3(0.7, 0.85, 1.0);
     if (kind == 0) return 0.8 * tint;

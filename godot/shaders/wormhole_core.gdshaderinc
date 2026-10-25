@@ -9,6 +9,9 @@
 //                                           (rgb, radius). A ball is every point of space whose chord
 //                                           distance in R^4 to the centre is below the radius.
 //                                           With WH_NO_BALLS defined first their code is left out.
+//   with WH_TABLE defined: sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
+//                                           the fillet polynomials by impact parameter
+//                                           (WormholeSpace.fillet_table), instead of per ray
 //
 // Geometry: optozorax's SDF world, union_round(planes w = +-h, extrude_w(sphere rho0, h), fillet) in R^4.
 // It is SO(3)-symmetric, so its induced metric is exactly
@@ -50,6 +53,40 @@ float wh_r(float l) { return wh_prof(l).x; }
 
 vec3 wh_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
 
+// atan(y, x) for arguments of order 1 (components of unit vectors): one range reduction and a
+// minimax polynomial, error below 2e-6 rad. The built-in atan reduces twice and guards against
+// huge arguments.
+float wh_atan2(float y, float x) {
+    float ax = abs(x);
+    float ay = abs(y);
+    float t = min(ax, ay) / max(max(ax, ay), 1e-30);
+    float t2 = t * t;
+    float t4 = t2 * t2;
+    // in pairs (Estrin): a shorter chain of dependent steps than one product after another
+    float p = t * ((0.999977219 - 0.332622826 * t2) + t4 * ((0.193540363 - 0.116426447 * t2)
+            + t4 * (0.052647312 - 0.0117191196 * t2)));
+    p = ay > ax ? 0.5 * WH_PI - p : p;
+    p = x < 0.0 ? WH_PI - p : p;
+    return y < 0.0 ? -p : p;
+}
+
+// asin, for the sky's latitude lines: pi/2 - sqrt(1 - |x|) P(|x|), no division, error 5e-6 rad
+float wh_asin(float x) {
+    float a = min(abs(x), 1.0);
+    float p = (1.57079153 - 0.214280613 * a) + a * a * ((0.0856383856 - 0.0376182282 * a) + 0.00973297445 * a * a);
+    float r = 0.5 * WH_PI - sqrt(1.0 - a) * p;
+    return x < 0.0 ? -r : r;
+}
+
+// The values of a ray's start point that do not depend on its direction: (r, r - rmin), the
+// second as a product (no cancellation near the fillet's inner end). The same for every pixel
+// of an eye: the view shader computes them per eye (wh_render's eye argument).
+vec2 wh_eye(float l) {
+    float th0 = wh_th0();
+    float ths = th0 + max(abs(l) - wh_Lc(), 0.0) / wh_fillet;
+    return vec2(wh_r(l), 2.0 * wh_fillet * sin(0.5 * (ths + th0)) * sin(0.5 * (ths - th0)));
+}
+
 // ---------------------------------------------------------------- curved part
 // A fillet in u = s^2 = (r - rho0) / 2R, s = sin(th/2):  dl = 2R ds / sqrt(1 - s^2), and with
 // sig = (b - rho0) / 2R
@@ -74,10 +111,14 @@ const vec4 WH_A0 = vec4(1.0635954209629264, -0.06994895315294707, 0.007220298181
 const vec4 WH_A1 = vec4(-13.363790651033874, 14.746483787306632, -1.5723807203730116, 0.1896875841002548);
 const vec4 WH_A2 = vec4(35.770406476784, -49.259940350673936, 15.558746458518186, -2.0692125846282434);
 const vec4 WH_A3 = vec4(-25.12406687051129, 37.32760503465092, -15.881390739642725, 3.6778525755030924);
+const float WH_TABN = 256.0;     // knots per row of wh_tab (WormholeSpace.TABLE_N)
 
 struct WhFil {
     vec4 e;                // psi integrand (times the factor moved out of the weight), powers of tau
-    vec4 g;                // path length integrand, the same
+#ifndef WH_NO_BALLS
+    vec4 g;                // path length integrand, the same (wh_filLen)
+#endif
+    float ib;              // 1 / b
     float al; float ga; float mn; float mx;
     int reg;
     float E0;              // sqrt(al) + sqrt(ga)
@@ -108,7 +149,7 @@ void wh_filMom(WhFil f, float z, out float t, out vec4 m) {
     } else {
         t = max(z * z - f.mn, 0.0);
         if (f.reg == 1) {                              // w = 1 / (2 sqrt(t + mn))
-            float n0 = t / (z + sqrt(f.mn));
+            float n0 = t / (z + f.zlo);                // zlo = sqrt(mn)
             float ty = t * z;
             float n1 = (ty - 2.0 * f.mn * n0) / 3.0;
             ty *= t;
@@ -140,6 +181,19 @@ float wh_poly(vec4 c, float t) { return c.x + t * (c.y + t * (c.z + t * c.w)); }
 
 vec4 wh_coef(vec4 v) { return vec4(dot(WH_A0, v), dot(WH_A1, v), dot(WH_A2, v), dot(WH_A3, v)); }
 
+// The path length from the fillet's inner end, m the moments there. With movable balls it is exact:
+// their hits are ordered by it. Without, only the fog uses it: r^2 / b times psi (r^2 / b is the
+// length per angle), r taken at the weight's mean tau, within 1.5% here and 7% on long fillets;
+// and the shader holds one polynomial less (12 registers, waves of 128 pixels).
+float wh_filLen(WhFil f, vec4 m) {
+#ifndef WH_NO_BALLS
+    return dot(f.g, m);
+#else
+    float re = f.ra + f.span * m.y / max(m.x, 1e-30);
+    return re * re * dot(f.e, m) * f.ib;
+#endif
+}
+
 // the fillet of a ray with impact parameter b; turn: it turns around inside the fillet (b > rmin)
 WhFil wh_fil(float b, bool turn, float rmin) {
     WhFil f;
@@ -152,19 +206,42 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     f.mn = min(f.al, f.ga);
     f.mx = max(f.al, f.ga);
     f.reg = f.mx < 1.0 ? 0 : (f.mn < 1.0 ? 1 : 2);
-    f.E0 = max(sqrt(f.al) + sqrt(f.ga), 1e-6);
+    // Of al and ga only one is the ray's own: a passing ray's al is that of every passing ray, and a
+    // turning ray's ga is 0. So one square root per ray gives both roots.
+    float sq = sqrt(turn ? f.al : f.ga);
+    float sal = turn ? sq : sqrt((rmin - rho0) / max(wh_Rout() - rmin, 1e-6 * R));   // uniforms only
+    float sga = turn ? 0.0 : sq;
+    f.E0 = max(sal + sga, 1e-6);
+#ifdef WH_TABLE
+    // f.e depends on b alone: sampled from the row of b's regime (the regime is taken from the row,
+    // so that the moments match the table), with the factor the table leaves out put back
+    int row = turn ? (b >= wh_tabLo.w ? 3 : 2) : (b >= wh_tabLo.y ? 1 : 0);
+    vec3 rw = turn ? (row == 3 ? vec3(wh_tabLo.w, wh_tabInv.w, wh_tabReg.w) : vec3(wh_tabLo.z, wh_tabInv.z, wh_tabReg.z))
+                   : (row == 1 ? vec3(wh_tabLo.y, wh_tabInv.y, wh_tabReg.y) : vec3(wh_tabLo.x, wh_tabInv.x, wh_tabReg.x));
+    f.reg = int(rw.z);
+    float x = clamp((b - rw.x) * rw.y, 0.0, WH_TABN - 1.0);
+    vec4 et = textureLod(wh_tab, vec2((x + 0.5) / WH_TABN, (float(row) + 0.5) * 0.25), 0.0);
+    f.e = f.reg == 0 ? et : et * inversesqrt(f.mx * (f.reg == 2 ? f.mn : 1.0));
+#else
     vec4 r = f.ra + f.span * WH_TAU;
     vec4 u = (r - rho0) / (2.0 * R);
-    vec4 G = sqrt(2.0 * R) * r * inversesqrt((1.0 - u) * (r + b));
-    if (f.reg >= 1) G *= inversesqrt(WH_TAU + f.mx);
-    if (f.reg == 2) G *= inversesqrt(WH_TAU + f.mn);
-    f.e = wh_coef(b * G / (r * r));
-    f.g = wh_coef(G);
-    f.zlo = f.reg == 0 ? 0.0 : sqrt(f.mn);
+    // G = sqrt(2R) r / sqrt(q) and F = b G / r^2, q holding the factors moved out of the weight:
+    // one inverse square root per node serves both
+    vec4 q = (1.0 - u) * (r + b);
+    if (f.reg >= 1) q *= WH_TAU + f.mx;
+    if (f.reg == 2) q *= WH_TAU + f.mn;
+    vec4 k = sqrt(2.0 * R) * inversesqrt(q * r * r);
+    f.e = wh_coef(b * k);
+#ifndef WH_NO_BALLS
+    f.g = wh_coef(r * r * k);
+#endif
+#endif
+    f.ib = 1.0 / max(b, 1e-30);
+    f.zlo = f.reg == 0 ? 0.0 : min(sal, sga);    // sqrt(mn)
     vec4 m;
     f.zhi = wh_filMomT(f, 1.0, m);
     f.psi = dot(f.e, m);
-    f.arc = dot(f.g, m);
+    f.arc = wh_filLen(f, m);
     return f;
 }
 
@@ -172,7 +249,7 @@ WhFil wh_fil(float b, bool turn, float rmin) {
 vec2 wh_filAt(WhFil f, float z, out float t) {
     vec4 m;
     wh_filMom(f, z, t, m);
-    return vec2(dot(f.e, m), dot(f.g, m));
+    return vec2(dot(f.e, m), wh_filLen(f, m));
 }
 
 // z where psi from the inner end reaches T (Newton; psi(z) is smooth and increasing, and two
@@ -203,7 +280,7 @@ vec2 wh_filLW(WhFil f, float t, float side) {
 // The path: piece A, a fillet travelled inward from the start (to the throat, or to the turning
 // point); piece B, the cylinder; piece C, a fillet travelled outward to the shell's edge. Both
 // fillets have the same profile, so one WhFil serves both.
-int wh_curved(float ls, vec3 ns, float vl, vec3 w,
+int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
               out float hitL, out vec3 hitN, out int ballI,
               out float outSide, out vec3 outX, out vec3 outD, out float arc) {
     float rho0 = wh_rho0;
@@ -214,11 +291,16 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     float s0 = sin(0.5 * th0);
     float rmin = rho0 + 2.0 * R * s0 * s0;
     float als = abs(ls);
-    float wn = length(w);
-    float rs = wh_r(ls);
+    // the orbit plane's second axis and |w| from one inverse square root. A ray along the radius
+    // (w = 0) takes an axis orthogonal to n: the 1e-7 of it moves any ray's direction by 1e-7 rad
+    vec3 we = w + 1e-7 * (abs(ns.x) < 0.9 ? vec3(0.0, ns.z, -ns.y) : vec3(-ns.z, 0.0, ns.x));
+    vec3 e2 = we * inversesqrt(dot(we, we));
+    // |w| <= 1 (the ray is a unit vector): rounded above 1, a ray along the throat's cylinder
+    // (b = rho0 = rmin) would count as turning in a fillet it is not in
+    float wn = min(dot(w, e2), 1.0);
+    float rs = eye.x;                // wh_eye(ls)
     float b = rs * wn;
     vec3 e1 = ns;
-    vec3 e2 = wn > 1e-7 ? w / wn : normalize(cross(ns, abs(ns.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
     hitL = 0.0; hitN = vec3(0.0); ballI = -1;
     outX = vec3(0.0); outD = vec3(0.0);
 
@@ -226,15 +308,14 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     WhFil f = wh_fil(b, turn, rmin);
     // the start point's tau (when it is on a fillet)
     bool fromEdge = als >= wh_Lsh() * (1.0 - 1e-6);
-    float ths = th0 + max(als - Lc, 0.0) / R;
-    float ts = turn ? rs * vl * vl / (1.0 + wn)                                 // r_s - b
-                    : 2.0 * R * sin(0.5 * (ths + th0)) * sin(0.5 * (ths - th0));   // r_s - rmin
+    float ts = turn ? rs * vl * vl / (1.0 + wn)     // r_s - b
+                    : eye.y;                        // r_s - rmin
     float zs = f.zhi;
     vec2 Ss = vec2(f.psi, f.arc);           // inner end -> start
     if (!fromEdge) {
         vec4 ms;
         zs = wh_filMomT(f, clamp(ts / f.span, 0.0, 1.0), ms);
-        Ss = vec2(dot(f.e, ms), dot(f.g, ms));
+        Ss = vec2(dot(f.e, ms), wh_filLen(f, ms));
     }
 
     // pieces
@@ -250,24 +331,29 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
     float x0B = max(x, -Lc);
     float DB = hasB ? Lc - x0B : 0.0;
     float wc = b / rho0;
-    float vlc = max(sqrt(max(1.0 - wc * wc, 0.0)), 1e-7);
-    float kc = wc / (rho0 * vlc);
+    float ivlc = inversesqrt(max(1.0 - wc * wc, 1e-14));   // 1 / the radial velocity on the cylinder
+    float kc = wc / rho0 * ivlc;
     vec2 PA = hasA ? Ss : vec2(0.0);                       // (psi, path length) of each piece
-    vec2 PB = vec2(kc, 1.0 / vlc) * DB;
+    vec2 PB = vec2(kc, ivlc) * DB;
     vec2 C0 = cFromStart ? Ss : vec2(0.0);                 // piece C starts here on the fillet
     vec2 PC = vec2(f.psi, f.arc) - C0;
     vec2 tot = PA + PB + PC;
 
-    // first crossing of the floor (n.z = 0) in the orbit plane
-    float psiF = mod(atan(e2.z, e1.z) + 0.5 * WH_PI, WH_PI);
-    bool floorHit = ns.z > 0.0 && psiF <= tot.x;
+    // first crossing of the floor in the orbit plane, n = cos psi e1 + sin psi e2: n.z starts
+    // positive and its zeros are pi apart, so the ray meets the floor in the shell if it turns by pi
+    // or more, or if n.z is negative where it leaves. Only those rays need the crossing's angle.
+    float ct = cos(tot.x);
+    float st = sin(tot.x);
+    bool floorHit = ns.z > 0.0 && (tot.x >= WH_PI || ns.z * ct + e2.z * st < 0.0);
     float arcEnd = tot.y;
     if (floorHit) {
-        hitN = cos(psiF) * e1 + sin(psiF) * e2;
+        // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
+        float psiF = wh_atan2(e1.z, -e2.z);
+        hitN = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
         if (psiF >= PA.x && psiF < PA.x + PB.x) {
             float xF = (psiF - PA.x) / max(kc, 1e-30);
             hitL = d * (x0B + xF);
-            arcEnd = PA.y + xF / vlc;
+            arcEnd = PA.y + xF * ivlc;
         } else {
             bool inA = psiF < PA.x;
             // psi from the fillet's inner end: piece A runs toward it, piece C away from it;
@@ -279,12 +365,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
             float t; vec4 m;
             wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
             hitL = wh_filLW(f, t, side).x;
-            arcEnd = a0 + sa * dot(f.g, m);
+            arcEnd = a0 + sa * wh_filLen(f, m);
         }
     } else {
         // leaves the shell at its edge, on side sideC
-        vec3 n = cos(tot.x) * e1 + sin(tot.x) * e2;
-        vec3 tt = -sin(tot.x) * e1 + cos(tot.x) * e2;
+        vec3 n = ct * e1 + st * e2;
+        vec3 tt = ct * e2 - st * e1;
         float bR = b / Rout;
         outX = wh_M(outSide, Rout * n);
         outD = wh_M(outSide, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
@@ -347,7 +433,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                     vec2 cum;                // (psi, length) along the whole path
                     float r; float w4;
                     if (cyl) {
-                        cum = PA + vec2(kc, 1.0 / vlc) * (pz - x0B);
+                        cum = PA + vec2(kc, ivlc) * (pz - x0B);
                         r = rho0;
                         w4 = d * pz;
                     } else {
@@ -383,7 +469,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w,
                         // qb: just inside the ball
                         float pzb = cyl ? x0B + DB * qb : mix(z0, z1, qb);
                         float tb = 0.0;
-                        vec2 cb = cyl ? PA + vec2(kc, 1.0 / vlc) * (pzb - x0B) : base + sg * wh_filAt(f, pzb, tb);
+                        vec2 cb = cyl ? PA + vec2(kc, ivlc) * (pzb - x0B) : base + sg * wh_filAt(f, pzb, tb);
                         if (cb.y < bestArc) {
                             bestArc = cb.y;
                             ballI = enter;
@@ -531,6 +617,8 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         float t = -x.z / d.z;
         if (t > 0.0) { h.t = t; h.kind = 1; h.nrm = vec3(0.0, 0.0, 1.0); }
     }
+    // the boxes stand on the floor: a ray above the tallest one's top going up passes over all of
+    // them (whole regions of the view at once: the sky). The pillars test themselves.
     if (side > 0.0) {
         wh_hitSphere(x, d, wh_sph[0], vec3(0.80, 0.15, 0.10), h);
         wh_hitSphere(x, d, wh_sph[1], vec3(0.95, 0.75, 0.15), h);
@@ -540,7 +628,14 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         wh_hitSphere(x, d, wh_sph[3], vec3(0.75, 0.15, 0.70), h);
         wh_hitSphere(x, d, wh_sph[4], vec3(0.15, 0.75, 0.30), h);
         wh_hitSphere(x, d, wh_sph[5], vec3(0.20, 0.35, 0.85), h);
-        for (int i = 0; i < 4; i++) wh_hitBox(x, d, wh_box[i].xyz, vec3(wh_box[i].w), vec3(0.90, 0.90, 0.95), h);
+        float top = max(max(wh_box[0].z + wh_box[0].w, wh_box[1].z + wh_box[1].w),
+                        max(wh_box[2].z + wh_box[2].w, wh_box[3].z + wh_box[3].w));
+        if (x.z < top || d.z < 0.0) {
+            wh_hitBox(x, d, wh_box[0].xyz, vec3(wh_box[0].w), vec3(0.90, 0.90, 0.95), h);
+            wh_hitBox(x, d, wh_box[1].xyz, vec3(wh_box[1].w), vec3(0.90, 0.90, 0.95), h);
+            wh_hitBox(x, d, wh_box[2].xyz, vec3(wh_box[2].w), vec3(0.90, 0.90, 0.95), h);
+            wh_hitBox(x, d, wh_box[3].xyz, vec3(wh_box[3].w), vec3(0.90, 0.90, 0.95), h);
+        }
     }
 #ifndef WH_NO_BALLS
     // balls: the chord ball cut by this universe's sheet w = side*h is an ordinary sphere;
@@ -580,54 +675,38 @@ vec3 wh_sunDir(float side) {
     return side > 0.0 ? normalize(vec3(-0.6, 0.55, 0.18)) : normalize(vec3(0.35, -0.45, 0.82));
 }
 
-// faint latitude/longitude lines make the lensing readable; gq = (lon, lat) / 15 deg
-vec3 wh_sky(float side, vec3 d, vec2 gq, vec2 fw) {
-    vec3 s = wh_sunDir(side);
+// The sky of either universe, one code for both (the GPU runs pixels of both skies together near
+// the throat): A a sunset, B a day with a big moon. d: unit direction in the chart.
+vec3 wh_sky(float side, vec3 d) {
+    bool A = side > 0.0;
     float el = d.z;
-    vec3 col;
-    if (side > 0.0) {   // A: sunset
-        vec3 hor = vec3(1.00, 0.55, 0.25);
-        vec3 zen = vec3(0.10, 0.12, 0.35);
-        col = mix(hor, zen, pow(clamp(el, 0.0, 1.0), 0.45));
-        float sd = max(dot(d, s), 0.0);
-        sd *= sd; sd *= sd;
-        col += vec3(1.0, 0.6, 0.3) * 0.6 * sd * sd;
-        col += vec3(1.0, 0.9, 0.7) * smoothstep(0.9990, 0.9995, dot(d, s)) * 4.0;
-    } else {            // B: day with a big moon
-        vec3 hor = vec3(0.75, 0.88, 1.00);
-        vec3 zen = vec3(0.15, 0.40, 0.90);
-        col = mix(hor, zen, pow(clamp(el, 0.0, 1.0), 0.6));
-        col += vec3(1.0) * smoothstep(0.9993, 0.9996, dot(d, s)) * 4.0;
-        vec3 m = normalize(vec3(-0.8, -0.3, 0.35));
-        float md = dot(d, m);
-        col = mix(col, vec3(0.85, 0.85, 0.80) * (0.6 + 0.4 * d.z), smoothstep(0.9930, 0.9940, md));
-    }
-    if (el < 0.0) col = mix(col, side > 0.0 ? vec3(0.35, 0.22, 0.15) : vec3(0.30, 0.35, 0.42), clamp(-el * 8.0, 0.0, 1.0));
-    vec2 gf = abs(fract(gq + 0.5) - 0.5) / fw;
-    float line = 1.0 - clamp(min(gf.x, gf.y), 0.0, 1.0);
-    col = mix(col, side > 0.0 ? vec3(1.0, 0.9, 0.8) : vec3(1.0), 0.12 * line);
-    return col;
+    float sd = dot(d, wh_sunDir(side));
+    vec3 col = mix(A ? vec3(1.00, 0.55, 0.25) : vec3(0.75, 0.88, 1.00),
+                   A ? vec3(0.10, 0.12, 0.35) : vec3(0.15, 0.40, 0.90),
+                   pow(clamp(el, 0.0, 1.0), A ? 0.45 : 0.6));
+    float glow = max(sd, 0.0);         // A: the sun's glow, glow^8
+    glow *= glow; glow *= glow;
+    col += A ? vec3(0.6, 0.36, 0.18) * glow * glow : vec3(0.0);
+    // the sun's disc: smoothstep(0.9990, 0.9995) in A, (0.9993, 0.9996) in B
+    float t = clamp((sd - (A ? 0.9990 : 0.9993)) * (A ? 2000.0 : 1.0 / 0.0003), 0.0, 1.0);
+    col += (A ? vec3(4.0, 3.6, 2.8) : vec3(4.0)) * (t * t * (3.0 - 2.0 * t));
+    // B: the moon
+    float mk = A ? 0.0 : smoothstep(0.9930, 0.9940, dot(d, normalize(vec3(-0.8, -0.3, 0.35))));
+    col = mix(col, vec3(0.85, 0.85, 0.80) * (0.6 + 0.4 * d.z), mk);
+    // below the horizon
+    return mix(col, A ? vec3(0.35, 0.22, 0.15) : vec3(0.30, 0.35, 0.42), clamp(-el * 8.0, 0.0, 1.0));
 }
 
 // floor in intrinsic coordinates: q = (l, phi * 24 / 2pi), l the proper radial distance from the
-// throat: 1 m rings, 24 spokes
+// throat: 1 m rings, 24 spokes (drawn with the sky's lines in wh_renderE); checker cells, faded out
+// when they get smaller than a pixel
 vec3 wh_floor(vec2 q, vec2 fw) {
-    float l = q.x;
-    vec2 gf = abs(fract(q + 0.5) - 0.5) / fw;
-    float line = 1.0 - clamp(min(gf.x, gf.y), 0.0, 1.0);
-    // checker cells, faded out when they get smaller than a pixel
     vec2 cell = floor(q);
-    float chk = mod(cell.x + cell.y, 2.0);
-    float chkVis = 1.0 - clamp(max(fw.x, fw.y) - 0.5, 0.0, 1.0);
-    float sA = smoothstep(-0.5, 0.5, l);      // which universe the floor point belongs to
-    vec3 baseA = mix(vec3(0.62, 0.42, 0.28), vec3(0.72, 0.52, 0.36), mix(0.5, chk, chkVis));
-    vec3 baseB = mix(vec3(0.28, 0.34, 0.44), vec3(0.38, 0.45, 0.55), mix(0.5, chk, chkVis));
-    vec3 col = mix(baseB, baseA, sA);
-    col = mix(col, vec3(0.95), 0.55 * line);
-    // throat circle
-    float th = abs(l) / fw.x;
-    col = mix(col, vec3(0.2, 1.0, 0.9), 1.0 - clamp(th - 1.0, 0.0, 1.0));
-    return col;
+    float chk = mix(0.5, mod(cell.x + cell.y, 2.0), 1.0 - clamp(max(fw.x, fw.y) - 0.5, 0.0, 1.0));
+    float sA = smoothstep(-0.5, 0.5, q.x);      // which universe the floor point belongs to
+    vec3 baseA = mix(vec3(0.62, 0.42, 0.28), vec3(0.72, 0.52, 0.36), chk);
+    vec3 baseB = mix(vec3(0.28, 0.34, 0.44), vec3(0.38, 0.45, 0.55), chk);
+    return mix(baseB, baseA, sA);
 }
 
 vec3 wh_shade(float side, vec3 col, vec3 nrm) {
@@ -637,20 +716,16 @@ vec3 wh_shade(float side, vec3 col, vec3 nrm) {
     return col * (amb + sun * dif);
 }
 
-vec3 wh_fog(float side, vec3 col, float dist) {
-    vec3 fc = side > 0.0 ? vec3(0.95, 0.60, 0.35) : vec3(0.70, 0.82, 0.95);
-    return mix(col, fc, 1.0 - exp(-dist * 0.012));
-}
-
 // ---------------------------------------------------------------- entry point
-// Ray from an eye at manifold point (l0, n0) with manifold direction (vl, w), unit length.
+// Ray from an eye at manifold point (l0, n0) with manifold direction (vl, w), unit length;
+// eye = wh_eye(l0).
 // dbg receives geometry for testing: x = 2*kind + (side > 0 ? 1 : 0), then
 //   kind 0 sky: final chart direction    kind 1 floor: (l, n.x, n.y)    kind 2 object: chart hit point
 //   balls: x = 100 + index, then the hit point's R^4 xyz (= r n)
 // The ray is traced first (flat, curved, flat) to what it ends on, and that is shaded once: in a
 // wave of pixels that end on different things each kind of shading then runs once, not once per
 // place in the trace where a ray can end.
-vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
+vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     float side = l0 > 0.0 ? 1.0 : -1.0;
     vec3 x = vec3(0.0);
     vec3 d = vec3(0.0);
@@ -671,7 +746,7 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
     for (int seg = 0; seg < 2; seg++) {
         if (inShell) {
             float hl; vec3 hn; int bi; float arc;
-            int ev = wh_curved(l0, n0, vl, w, hl, hn, bi, side, x, d, arc);
+            int ev = wh_curved(l0, n0, vl, w, eye, hl, hn, bi, side, x, d, arc);
             dist += arc;
             if (ev == 1) {
                 kind = 1; fl = hl; fn = hn;
@@ -703,8 +778,9 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
                 dbg = vec4(side > 0.0 ? 1.0 : 0.0, normalize(d));
             } else if (h.kind == 1) {
                 kind = 1;
-                fn = wh_M(side, p) / length(p);
-                fl = side * (length(p) - wh_Rout() + wh_Lsh());
+                float ip = inversesqrt(dot(p, p));
+                fn = wh_M(side, p) * ip;
+                fl = side * (dot(p, p) * ip - wh_Rout() + wh_Lsh());
                 dist += h.t;
                 dbg = vec4(side > 0.0 ? 3.0 : 2.0, fl, fn.xy);
             } else {
@@ -718,30 +794,46 @@ vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
         }
         dist += h.t;
         wh_enter(side, x + h.t * d, d, l0, n0, vl, w);
+        eye = vec2(wh_Rout(), 0.0);    // at the shell's edge (where r - rmin is not used)
         inShell = true;
     }
     if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;
-    // grid coordinates and their derivatives, for every pixel
-    vec3 dn = normalize(d);
+    // grid coordinates and their derivatives, for every pixel (d is a unit vector)
+    vec3 dn = d;
     vec2 ga = kind == 1 ? fn.xy : dn.xy;
-    float az = atan(ga.y, ga.x);
+    float az = wh_atan2(ga.y, ga.x);
     vec2 gq = kind == 1 ? vec2(fl, az * 24.0 / (2.0 * WH_PI))
-                        : vec2(az, asin(clamp(dn.z, -1.0, 1.0))) * (180.0 / WH_PI / 15.0);
+                        : vec2(az, wh_asin(dn.z)) * (180.0 / WH_PI / 15.0);
     // fwidth = |d/dx| + |d/dy|. Across the edge of what the rays end on (floor next to an object,
     // sky of A next to sky of B) a difference is meaningless and huge, and drew the throat circle
     // along such edges: there the other screen axis stands in, and with edges both ways there are
-    // no lines in that pixel.
-    float cls = kind == 1 ? 10.0 : float(kind) * 4.0 + side;
-    vec2 gdx = dFdx(gq);
-    vec2 gdy = dFdy(gq);
-    bool ex = dFdx(cls) != 0.0;
-    bool ey = dFdy(cls) != 0.0;
+    // no lines in that pixel. The edges are found in the same derivatives: the second coordinate
+    // carries 64 per class (sky A, sky B, floor, object), and between neighbours of one class it
+    // changes by 24 at most (the spokes' cut), so a change above 32 is an edge.
+    float cls = kind == 0 ? (side > 0.0 ? 0.0 : 1.0) : (kind == 1 ? 2.0 : 3.0);
+    vec2 gdx = dFdx(gq + vec2(0.0, 64.0 * cls));
+    vec2 gdy = dFdy(gq + vec2(0.0, 64.0 * cls));
+    bool ex = abs(gdx.y) > 32.0;
+    bool ey = abs(gdy.y) > 32.0;
     vec2 fw = abs(ex ? gdy : gdx) + abs(ey ? gdx : gdy);
     fw = ex && ey ? vec2(1e-4) : max(fw, vec2(1e-4));     // tiny: no line, no circle
     vec3 c;
-    if (kind == 0) c = wh_sky(side, dn, gq, fw);
-    else if (kind == 1) c = wh_fog(side, wh_floor(gq, fw), dist);
-    else if (kind == 2) c = wh_fog(side, wh_shade(side, col, nrm), dist);
+    if (kind == 0) c = wh_sky(side, dn);
+    else if (kind == 1) c = wh_floor(gq, fw);
+    else if (kind == 2) c = wh_shade(side, col, nrm);
     else c = vec3(1.0, 0.0, 1.0);
-    return c;
+    // what the kinds share: the grid lines (sky faint, floor bright), the throat circle on the
+    // floor, and fog on the floor and on objects
+    vec2 ifw = vec2(fw.y, fw.x) / (fw.x * fw.y);       // 1 / fw, one division
+    vec2 gf = abs(fract(gq + 0.5) - 0.5) * ifw;
+    float line = 1.0 - clamp(min(gf.x, gf.y), 0.0, 1.0);
+    c = mix(c, kind == 1 ? vec3(0.95) : (side > 0.0 ? vec3(1.0, 0.9, 0.8) : vec3(1.0)),
+            (kind == 1 ? 0.55 : (kind == 0 ? 0.12 : 0.0)) * line);
+    c = mix(c, vec3(0.2, 1.0, 0.9), kind == 1 ? 1.0 - clamp(abs(gq.x) * ifw.x - 1.0, 0.0, 1.0) : 0.0);
+    float fog = kind == 1 || kind == 2 ? 1.0 - exp(-dist * 0.012) : 0.0;
+    return mix(c, side > 0.0 ? vec3(0.95, 0.60, 0.35) : vec3(0.70, 0.82, 0.95), fog);
+}
+
+vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
+    return wh_renderE(l0, n0, vl, w, wh_eye(l0), dbg);
 }
