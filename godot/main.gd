@@ -1084,6 +1084,8 @@ func _rig_frame(rig: Dictionary) -> float:
 	R = WormholeSpace.orthonormalize(R)
 	var u_old := BallWorld.to_body(R, space.project(ml, mn, space.embed_vector(rig["l"], rig["n"], rig["u"]))).normalized()
 	var u_new := BallWorld.to_body(R, u).normalized()
+	if u_old.dot(u_new) < 0.5:
+		return -sep                    # the line turned over 60 degrees in a frame: the hands crossed
 	var twist := 0.0
 	var dt: float = clock - rig["t"]
 	for h in [a, b]:
@@ -1116,6 +1118,13 @@ func _rig_aim(toy: Dictionary) -> void:
 	var snap: bool = a.get("snap", false) or b.get("snap", false)
 	# moved with the viewer, the rig is made anew where the hands are (its old frame is elsewhere)
 	var sep := _rig_fresh(rig) if snap else _rig_frame(rig)
+	if sep < 0.0:
+		# the hands crossed (or jumped): the rig anew, from where the toy is now
+		var sep0: float = rig["sep0"]
+		_rig_start(toy)
+		rig = toy["rig"]
+		rig["sep0"] = sep0
+		sep = -sep
 	var lag := 0.0
 	for i in 2:
 		var h: Dictionary = toy["holds"][grips[i].tracker]
@@ -1155,7 +1164,7 @@ func _release(i: int) -> void:
 	st.erase("held")
 	st.erase("grip_at")
 	world.let_go(toy, grips[i].tracker)
-	toy["ghost"] = grips[i].tracker      # this hand does not push it until they are apart
+	BallWorld.ghost(toy, grips[i].tracker)    # this hand does not push it until they are apart
 	toy.erase("rig")
 	if not toy["holds"].is_empty():
 		var j := 1 - i

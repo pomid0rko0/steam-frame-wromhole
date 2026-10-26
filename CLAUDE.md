@@ -85,39 +85,53 @@ one-eye check; its tag marks the commit), the others have not; each README descr
 - `strength` (from `main`) — a hand of finite strength, the grip by size and two hands on one toy
   (README «Руки: взять и бросить», wishes «Рука конечной силы», «Хват по размеру»), asked for by
   the owner as the fix of the throw's physics. A held toy is a body, not a copy of the hand:
-  `BallWorld`'s holding section (`take`, `aim`, `snap`, `let_go`, `grip_place`, `_hold_toy`,
-  `_muscle`). Per substep each hand that holds it gives an impulse at its grip point (the toy's
-  point where the hand's centre was, `g` in body coordinates) and a twist about it, solved in
-  closed form (isotropic inertia: the grip point moves by P / m along g, by P (1 / m + |g|^2 / I)
-  across it) so that the grip point's velocity and the spin become the hand's plus what takes the
-  place and turn left over out in `HOLD_TIME` (0.02 s, no faster than half the spare strength can
-  stop: `_closing`), the spin no more than `WRIST_SPEED` (10 rad/s); limited: the arm's impulse
-  first (`HAND_FORCE` 150 N), the twist for that impulse (`HAND_TORQUE` 30 N m; what slows the spin
-  may be `BRAKING` 1.5x), then the impulse found again for that twist. The weight is in it (half a
-  substep's fall counted in: the average velocity is what moves the toy). Two hands: Gauss-Seidel
-  over the grips, `HOLD_ITERATIONS` 4. Balls get axes while held (`hF`, `hw`). `b["held"]` (a
-  tracker) is now `b["holds"]` (tracker -> hold); a held toy collides with its own mass, does not
-  bounce off the floor or statics, is not pushed by its own hand. `main`: per frame `_track_hands`
-  (poses; velocity, spin and acceleration from the 60 ms parabola; a hand farther than `SLIP`
-  0.3 m from its grip point lets the toy slip, before it pulls; `_aim`), then `_toys` (the step),
-  then `_use_hands` (grip, B, X, `_pair`; `grip_at`: the hand drawn and pushing at its grip point,
-  `_hand_at`): a toy let go flies on from this frame's pull, no frame late. One hand holds a ball up
-  to 25 cm, a cube up to 20 cm (`ONE_HAND_*`); a bigger toy only between both hands at its opposite
-  sides (`OPPOSITE`): alone a hand waits on it (`wants`, yellow), let go by one the other drops it.
-  B makes a 22 cm ball, X a 20 cm cube; a crate (`CRATE_*`, 60 cm, 5.4 kg at the same 25 kg/m³)
-  stands to the left of the start. The aims are at the frame's end; each substep pulls toward the
-  grip point's aim moved back along the hand's velocity and acceleration. A hand that jumps more
-  than `HAND_JUMP` 0.25 m in a frame or comes back after losing its tracking has no motion before;
-  `_forget_motion` snaps held toys with the hands. The release velocity hack and `MAX_THROW_*`
-  are gone. Measured (grab_test): a light ball follows within 3 mm, a flick of 38 rad/s spins a
-  cube to 10 rad/s, a turn at 6 rad/s is followed within 0.02°, a ball held in front of the hand
-  leaves a flick at 1.6 m/s, pressed into the floor it stays, an arc throw leaves within 1.4°. CPU:
-  ~0.1 ms a frame per held toy on the desktop; the 90 cm crate by the model (`--toys --split`):
-  4.50 -> 4.51 ms over the speed check's 13 poses, 2.61 -> 2.69 looking at it from the start (the
-  60 cm one is smaller). The owner's first try in the headset (15 N m, the twist falling off from
-  0 with the toy's spin, sizes as on `main`): the flick and the throw right; turns sluggish, a
-  jerked ball swung round the wrist, a ball pressed into the floor rolled off, one hand nearly
-  lifted the 90 cm crate and its hand flew off it: all reworked as above, not yet tried again.
+  `BallWorld`'s holding section (`take`, `aim`, `snap`, `strength`, `let_go`, `grip_place`,
+  `_hold_toy`, `_muscle`). Per substep each hand that holds it gives an impulse at its grip point
+  (the toy's point where the hand's centre was, `g` in body coordinates) and a twist about it,
+  solved in closed form (isotropic inertia: the grip point moves by P / m along g, by P (1 / m +
+  |g|^2 / I) across it) so that the grip point's velocity and the spin become the aim's plus what
+  takes the place and turn left over out in `HOLD_TIME` (0.02 s, no faster than half the spare
+  strength can stop: `_closing`), the spin no more than `WRIST_SPEED` (20 rad/s); limited: the
+  arm's impulse first (the hold's force, `HAND_FORCE` 150 N whole), the twist for that impulse (the
+  hold's torque, `HAND_TORQUE` 30 N m whole; what slows the spin may be `BRAKING` 1.5x), then the
+  impulse again for that twist. The weight is in it (half a substep's fall counted in). Two
+  holds: Gauss-Seidel, `HOLD_ITERATIONS` 4. Balls get axes while held (`hF`, `hw`). `b["held"]`
+  (a tracker) is now `b["holds"]` (tracker -> hold), `b["ghost"]` a list of trackers. A held toy
+  collides with its own mass, does not bounce off the floor or statics, is not pushed by its own
+  hand. Pushes by a hand are finite too (`_push`, the cubes' hand contacts: `HAND_FORCE`, no bounce,
+  `PALM_FRICTION`, the overlap undone `HAND_SLOP` a substep along the hand's motion).
+  `main`: per frame `_track_hands` (poses; velocity, spin and acceleration from the 60 ms
+  parabola; one hand farther than `SLIP` 0.35 m from its grip point lets the toy slip, before it
+  pulls; `_aim`; a toy both hands hold, `_rig_aim`), then `_toys` (the step), then `_use_hands`
+  (grip, B, X; `grip_at`: the hand drawn and pushing at its grip point, `_hand_at`): a toy let go
+  flies on from this frame's pull. One hand grips a ball up to 25 cm, a cube up to 20 cm
+  (`ONE_HAND_*`) with its whole strength, a bigger toy with the fingertips (`WEAK_FORCE` 0.3,
+  `WEAK_TORQUE` 0.05; yellow); two hands on a big toy squeeze it from fingertips at 90 degrees apart
+  round it to whole at 120 (`SQUEEZE_*`, `_strengths`). Two hands on one toy are one rig
+  (`toy["rig"]`, `_rig_start`, `_rig_fresh`, `_rig_frame`, `_rig_aim`): the hands' midpoint, the
+  line between them, turned by the line's least turn and the hands' average spin about it; the
+  toy's pose against it is kept, both grips get the same aim, the hands' distance apart does not
+  matter (the owner: in VR the hands cannot feel the toy between them, over the head the least);
+  it slips if the hands part `RIG_SPREAD` 0.6 m wider than they took it or it lags `RIG_LAG`
+  0.45 m; the line turning over 60 degrees in a frame (hands crossed) makes the rig anew. B makes
+  a 22 cm ball, X a 20 cm cube; a crate (`CRATE_*`, 60 cm, 5.4 kg at the same 25 kg/m³) stands
+  to the left of the start. A hand that jumps more than `HAND_JUMP` 0.25 m in a frame or comes back
+  after losing its tracking has no motion before; `_forget_motion` snaps held toys with the hands
+  (a rig anew). The release velocity hack and `MAX_THROW_*` are gone. `WormholeSpace.geodesic` takes
+  a segment of a flat universe out of the shell as a line of its chart (`straight`; physics_test
+  checks it against the steps): the hands' tracking took 3 ms a frame on the desktop, now 0.15.
+  Measured (grab_test, probes): a light ball follows within 3 mm (a 5 Hz shake: 4 mm), a cube a
+  2.5 Hz twist of +-60 degrees within 1.6 (with a cap of 10 rad/s: 26), a flick of 38 rad/s spins
+  it to 20, pressed into the floor a ball stays, two hands carry a big toy while they part by
+  +-25 cm, wobble, lift fast, turn by the stick, swing it over the head and throw it at their speed;
+  a 4.5 kg ball hit at 3 m/s gets 0.56 m/s in the first frame. The owner's tries in the headset:
+  the first (15 N m, the twist falling off from 0 with the toy's spin, sizes as on `main`): the
+  flick and the throw right; turns sluggish, a jerked ball swung round the wrist, a ball pressed
+  into the floor rolled off, one hand nearly lifted the 90 cm crate and its hand flew off it. The
+  second (cap 10 rad/s; a big toy only between both hands at opposite sides, each grip aiming on
+  its own): throws better; turns still sluggish, big toys slipped as soon as the hands moved, one
+  hand could not even tip the crate, no ball could be lifted with one hand, pushed toys felt
+  weightless, a ball rolled out from under a pressing hand. All reworked as above, not yet tried.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
@@ -512,6 +526,11 @@ they line up the same way.
 - **`tools/adreno_cost.py` took the first pose's uniforms for every pose:** right for the demo's
   toys at rest, wrong for toys that move with the viewer. With `--hands` / `--held` (emu_dump.gd
   `+hands` / `+held`) each pose has its own (`Shader.set_uniforms`).
+- **Two hands on one toy in VR** (`strength`): never hold it by the hands' distance apart or by
+  two aims that each want it where its own hand is: the hands cannot feel it and part and close
+  by tens of cm (a test that parts them by +-15 cm dropped it 3 times of 4). One aim from both (the
+  rig) does not care. A test of hands that jumps (a pose set far from the last, a path with a
+  step in it) only finds the jump: twice it looked like a slip or a fling of the model.
 - **A held toy pulled at its grip point** (`strength`): limit the arm's impulse before the twist
   is found for it: the twist found for the impulse the arm would want, when the arm is at its limit
   (pressing into the floor), over-turned the toy the other way (a ball pressed down rolled off). A

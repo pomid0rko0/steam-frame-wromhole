@@ -310,17 +310,26 @@ func _push(b: Dictionary, hand: Dictionary) -> void:
 	_move(b, out, minf(pen, HAND_SLOP))
 
 
-## A toy just let go (ghost: the hand's tracker) is not pushed by the hand that let it go until
-## they are 1 cm apart: the hand held it touching or inside, and set down gently it would be pushed
-## away at once.
+## A toy just let go is not pushed by the hands that let it go (ghost: their trackers) until each
+## is 1 cm apart from it: they held it touching or inside, and set down gently, or thrown with both
+## hands, it would be pushed away at once.
 func _ghosted(b: Dictionary, hand: Dictionary) -> bool:
-	var g: StringName = b.get("ghost", &"")
-	if g == &"" or g != hand.get("tracker", &""):
+	var ghosts: Array = b.get("ghost", [])
+	var t: StringName = hand.get("tracker", &"")
+	if not ghosts.has(t):
 		return false
 	if distance_to(b, space.embed(hand["l"], hand["n"])) < hand["radius"] + 0.01:
 		return true
-	b.erase("ghost")
+	ghosts.erase(t)
 	return false
+
+
+## Hand `tracker` let go of b: it does not push it until they are apart (_ghosted).
+static func ghost(b: Dictionary, tracker: StringName) -> void:
+	var ghosts: Array = b.get("ghost", [])
+	if not ghosts.has(tracker):
+		ghosts.append(tracker)
+	b["ghost"] = ghosts
 
 
 func _move(b: Dictionary, dir: Vector4, dist: float) -> void:
@@ -774,7 +783,8 @@ func take(b: Dictionary, tracker: StringName, g: Vector3, ball_axes: Array) -> v
 	b["holds"][tracker] = {"g": g, "l": b["l"], "n": b["n"],
 			"A": (b["F"] if b.has("F") else b["hF"]).duplicate(), "V": Vector4.ZERO, "W": Vector4.ZERO,
 			"acc": Vector4.ZERO, "force": was.get("force", HAND_FORCE), "torque": was.get("torque", HAND_TORQUE)}
-	b.erase("ghost")
+	if b.has("ghost"):
+		b["ghost"].erase(tracker)
 	if b.has("F"):
 		b["still"] = 0.0
 
