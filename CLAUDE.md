@@ -15,6 +15,7 @@ the branches and the wishlist.
 - **Name the branch yourself.** The session hands you a `claude/<random-name>` branch: don't use it. Name the wish's branch with a short English word (`throat`, `grab`), start it from the branch listed below for the wish, and push there. The owner allows this; it is their standing permission to push to a branch other than the one the session gives you.
 - **Versions are git tags,** set on a commit once the owner has checked it in the headset. Don't put versions or a history of builds into docs or comments; git keeps them.
 - **Deliver a build** as `wormhole_vr_<label>_steam_frame.zip` holding one `.arm64`, and actually attach it to the chat.
+- **Long runs first, in the background; the build at once.** The owner checks builds in the headset while the tests run and does not want to wait for them. As soon as the code for a build is in place: start `tools/test_stereo.sh` in the background first (it gates the build: the hard rule below), export the build meanwhile, and attach it the moment `test_stereo.sh` passes on exactly that source. Every other check that takes minutes (`tools/test_openxr.sh` ~3 min, not together with `test_stereo.sh`: Monado; `gravity_test`, `physics_test`, `grab_test`, `bench_test`, ~1-2 min each; `ref/test_gpu.py` ~4 min) runs in the background too, after or beside it, and what it finds is reported and fixed afterwards. Never sit in the foreground on a run of minutes while the owner waits.
 
 ## Branches
 
@@ -170,7 +171,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   generic profile put X and Y there, so the hands do the same as before. Starting the speed check
   closes the menu. Tests: `walking_xr_test.gd` (both profiles, through trackers),
   `openxr_smoke.gd` (the rows under Monado, by the menu's own calls), `grab_test.gd` (the menu
-  keeps B, X, the D-pad and A from the hands). Not yet seen in the headset: whether SteamVR takes
+  keeps B, X, the D-pad and A from the hands). Also here, asked by the owner: the cyan circle the
+  floor had in the middle of the throat (l = 0, `wh_renderE`) is gone; the white 1 m ring there
+  stays. Not yet seen in the headset: whether SteamVR takes
   the Frame profile (the log's `interaction profile` lines) and lets View and Menu reach the app.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
@@ -264,7 +267,7 @@ draws next to ray-traced ones, check they line up the same way.
 
 - **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
-- **Stereo:** `tools/test_stereo.sh` (~5 min: the renders run in parallel, one Godot per core, each with its own display and shader cache; the check scene again with foveation on, and those pictures against the ones without).
+- **Stereo:** `tools/test_stereo.sh` (~5 min alone, ~12 with other tests beside it: the renders run in parallel, one Godot per core, each with its own display and shader cache; the check scene again with foveation on, and those pictures against the ones without).
 - **Foveation in the Frame's driver:** `tools/fdm_check.sh` (~10 s): Godot on Turnip over the noop drm-shim, the XR view through `fake_hmd.gd` at 1728² per eye, and the driver's trace (`MESA_GPU_TRACES=print`, `TU_DEBUG=perf`) per render pass: in tiles or not, attachments, tiles. Off: no tiles; split: tiles; on: tiles and one attachment more (the density map).
 - **A build for the one-eye check:** an empty file `godot/check` before the export turns the stereo check scene on (`main.CHECK_FLAG`, in the export's include filter, not in git); delete it afterwards.
 - **Tracer accuracy:** `python3 ref/test_gpu.py` (~4 min; needs EGL: `libegl1 libegl-mesa0`, which `setup.sh` installs), `ref/test_fast.py`, `ref/test_eye.py`. It prints errors, no verdict: compare them with the same run on the code before a change (`WH_BALLS=0` too: it compiles the shader without balls). `ref/wh.py` `fast` mirrors the shader's curved-region method in float64; keep the two in step.

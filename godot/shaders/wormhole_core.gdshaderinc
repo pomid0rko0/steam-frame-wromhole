@@ -1285,8 +1285,8 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     vec2 gq = kind == 1 ? vec2(fl, az * 24.0 / (2.0 * WH_PI))
                         : vec2(az, wh_asin(dn.z)) * (180.0 / WH_PI / 15.0);
     // fwidth = |d/dx| + |d/dy|. Across the edge of what the rays end on (floor next to an object,
-    // sky of A next to sky of B) a difference is meaningless and huge, and drew the throat circle
-    // along such edges: there the other screen axis stands in, and with edges both ways there are
+    // sky of A next to sky of B) a difference is meaningless and huge, and drew grid lines along
+    // such edges: there the other screen axis stands in, and with edges both ways there are
     // no lines in that pixel. The edges are found in the same derivatives: the second coordinate
     // carries 64 per class (sky A, sky B, floor, object), and between neighbours of one class it
     // changes by 24 at most (the spokes' cut), so a change above 32 is an edge.
@@ -1306,14 +1306,13 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
 #endif
     else if (kind == 2) c = wh_shade(side, col, nrm);
     else c = vec3(1.0, 0.0, 1.0);
-    // what the kinds share: the grid lines (sky faint, floor bright), the throat circle on the
-    // floor, and fog on the floor and on objects
+    // what the kinds share: the grid lines (sky faint, floor bright) and fog on the floor and on
+    // objects
     vec2 ifw = vec2(fw.y, fw.x) / (fw.x * fw.y);       // 1 / fw, one division
     vec2 gf = abs(fract(gq + 0.5) - 0.5) * ifw;
     float line = 1.0 - clamp(min(gf.x, gf.y), 0.0, 1.0);
     c = mix(c, kind == 1 ? vec3(0.95) : (side > 0.0 ? vec3(1.0, 0.9, 0.8) : vec3(1.0)),
             (kind == 1 ? 0.55 : (kind == 0 ? 0.12 : 0.0)) * line);
-    c = mix(c, vec3(0.2, 1.0, 0.9), kind == 1 ? 1.0 - clamp(abs(gq.x) * ifw.x - 1.0, 0.0, 1.0) : 0.0);
     float fog = kind == 1 || kind == 2 ? 1.0 - exp(-dist * 0.012) : 0.0;
 #ifdef WH_ARROWS
     // an arrow lies over what the ray ends on, in the fog of its own distance
