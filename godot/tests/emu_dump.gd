@@ -6,7 +6,9 @@ extends SceneTree
 ## Each pose gives out_<i>.png and an entry in out.json with the ray tracer's path and its
 ## uniforms. fov: vertical, degrees (default 90); scene: plain (default), balls (the stereo
 ## check's), toys (the demo after the throw and the drop, everything at rest: 8 balls, 4 cubes),
-## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2;
+## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2; with
+## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
+## right one in front of the chest (what the hands and grabbing add to a frame);
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
@@ -19,6 +21,8 @@ var i := 0
 var shader_path := ""
 var gravity := 0
 var toys := false
+var held := false
+var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
 		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
 
@@ -38,6 +42,8 @@ func _initialize() -> void:
 	main.physics = scene.begins_with("toys")
 	main.throw_toys = false
 	toys = main.physics
+	held = scene.contains("held")
+	hands = held or scene.contains("hands")
 	if scene.contains("gravity"):
 		gravity = int(scene.substr(scene.find("gravity") + 7, 1))
 	root.add_child(main)
@@ -76,6 +82,8 @@ func _process(_d: float) -> bool:
 			return true
 		var p: Array = poses[i]
 		main.place_on_axis(p[0], p[1], p[2])
+		if hands:
+			_hold_ball()
 	elif k == 2:
 		var img := root.get_texture().get_image()
 		var png := out.get_basename() + "_%d.png" % i
@@ -102,6 +110,25 @@ func _process(_d: float) -> bool:
 		})
 		i += 1
 	return false
+
+
+## Both hands as the app has them (main.hand_state), and with +held a ball (radius 0.25) held by the
+## right one, 0.3 m in front of it: placed from the head as main._update_hands does, in the room's axes.
+func _hold_ball() -> void:
+	var sp: WormholeSpace = main.space
+	var hp: Array = sp.geodesic(main.foot_l, main.foot_n, main.frame[1], main.DESKTOP_HEAD_HEIGHT, main.frame)
+	if main.world.balls.size() > 0 and main.world.balls.back()["held"] == &"right_hand":
+		main.world.balls.pop_back()
+	for k in 2:
+		var off := Vector3(0.22 if k == 1 else -0.22, -0.35, -0.3)
+		var dir := WormholeSpace.combine(hp[2], off)
+		var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
+		main.hand_state[k] = {"on": true, "l": at[0], "n": at[1], "F": at[2], "U": Vector4.ZERO, "ready": k == 1}
+		if k == 1 and held:
+			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
+			var b: Dictionary = main.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97))
+			b["held"] = &"right_hand"
+	main._upload_toys()
 
 
 func _proxies() -> Array:

@@ -144,6 +144,28 @@ static func orthonormalize(f: Array) -> Array:
 	return [ex.normalized(), ey, ez]
 
 
+## Linear combination c.x f[0] + c.y f[1] + c.z f[2]: a vector given in a frame's coordinates.
+static func combine(f: Array, c: Vector3) -> Vector4:
+	return c.x * f[0] + c.y * f[1] + c.z * f[2]
+
+
+## The tangent vector at (l, n) whose geodesic, followed for its length, reaches (tl, tn): the
+## inverse of geodesic, for points within a hand's reach. The chord of R^4 seen from (l, n) is a
+## first guess (on the fillet it misses by d^3 / R^2, 4 mm at 30 cm); two corrections by where its
+## geodesic lands leave micrometres.
+func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
+	var E := embed(l, n)
+	var T := embed(tl, tn)
+	var D := project(l, n, T - E)
+	if D.length() < 1e-7:
+		return Vector4.ZERO
+	D = D.normalized() * (T - E).length()
+	for _it in 2:
+		var res := geodesic(l, n, D.normalized(), D.length(), [])
+		D += project(l, n, T - embed(res[0], res[1]))
+	return D
+
+
 ## Chart of the flat region on one side: side A (l >= L) x = r n, side B x = P r n,
 ## P = diag(-1, 1, 1). Converts a chart position to a manifold point.
 func point_from_chart(side: float, x: Vector3) -> Array:

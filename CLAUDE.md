@@ -36,13 +36,50 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   Gravity through the wormhole, its views and the balls-and-cubes demo (from `gravity`, merged,
   below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`. The cheaper
   demo (from `toys`, merged, below) is in it too: the toys sorted by region and searched in
-  windows, the frame split by the stencil, and the throat's "stripe" fixed.
+  windows, the frame split by the stencil, and the throat's "stripe" fixed. Grab and throw (from
+  `throw`, merged, below) are in it too: the hands as balls, grip takes a ball or a cube and lets
+  it fly, right B a new ball, left X a new cube.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
-  the avatar as balls (`tests/grab_test.gd`).
+  the avatar as balls (`tests/grab_test.gd`). The old core; `throw` (merged into `main`) redid it there.
+- `throw` — merged into `main` (the owner tried it in the headset twice and asked to merge): grab
+  and throw (README «Руки: взять и бросить»): each hand a 4 cm
+  ray-traced ball at the grip pose (`main.grips`), placed by a geodesic from the head with the
+  room's axes carried along (`main._update_hands`); it pushes the toys and turns green within
+  12 cm of one; grip takes the nearest ball or cube, kept at its offset and turn in the hand's
+  axes (`WormholeSpace.toward`, the inverse of `geodesic`); let go, it flies with the velocity and
+  spin of its last 60 ms in the hand (`main._velocity`: the derivative of the parabola through
+  three places, no lag on an arc); held toys are kinematic in `BallWorld` (`held`); right B a new
+  ball, left X a new cube in the hand; haptics; nothing during `main.hold`; A empties the hands.
+  `tests/grab_test.gd` drives it through `fake_hmd.gd` and controller trackers (grip poses set,
+  tracking lost with `invalidate_pose`, as Godot's OpenXR does) and looks at the left eye.
+  Tried in the headset: grabbing, throwing, bouncing, rolling work. Found there and fixed: a crack
+  through a toy at the shell's edge (`wh_filMom`'s 0 / 0, below), the frame at 25 ms with a toy
+  held at the shell's edge (the fillet's psi window, below), the hand and held toys pushing at
+  1.85x their speed and flinging what they press (`BallWorld.RESTITUTION_KINEMATIC` 0.3), throws
+  at 15-20 m/s from a flick of the wrist (a toy leaves with the hand's velocity, not its own: held
+  half a metre off, the wrist's turn times that lever). Then the owner wanted to watch a ball set
+  down at the shell's edge roll into the throat by itself: gravity pulls along the floor there
+  only 0.01 g (0.06-0.1 g where the fillet meets the cylinder), and 0.04 g of rolling friction held
+  it still. Now rolling friction is 0.005 g + 0.1/s times the speed, with air drag (as v², in
+  flight too, `BallWorld.TOY_DENSITY` 25 kg/m³; `air` off in physics_test's checks of the motion
+  itself), a hand slower than 0.15 m/s sets its toy down at rest (`main.SET_DOWN_SPEED`), the hand
+  that let go does not push it until 1 cm apart (`ghost`), and the demo's ball is thrown 1.8x
+  harder to climb out of the throat's well into B. The second try in the headset: balls throw
+  "really well", toys feel heavy (good); cubes spun at 37-39 rad/s from a flick of the wrist and
+  hopped about (no energy gained, checked). The cause: a held toy is kinematic, so the hand is
+  infinitely strong. A share of the hand's turn at the release was tried and called a crutch by the
+  owner; the honest fix, a hand of finite strength (README wish «Рука конечной силы»: the held toy a
+  body pulled to its place by a limited force and torque), is for another chat. A ball set down half a metre outside the shell's edge rolled
+  in: right (the field at its centre, 20-35 cm up, leans 0.3-0.5° toward the throat; the arrows
+  and the floor's colours can't show that; README «Почему мяч скатывается и снаружи кривой зоны»).
+  Its log: 72 Hz always holds; at 120 Hz frames in the shell cost 4.4-5 ms, but a ball held at the
+  edge gives single frames up to 8 ms and the arrows 1.5-2 ms more, and one late frame traps
+  SteamVR at 60 Hz until one leaves the shell. Not solved: that, the cubes' spin, the hands' ~8%
+  (model), 144 Hz.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
@@ -120,8 +157,9 @@ Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
 - free flight in 3D with gravity on/off → `main` (the honest field, `WormholeSpace.potential_grad`,
   and bodies that move in it, `ball_world.gd`);
-- pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
-  are there; `main` has the same balls, cubes and honest gravity on the fast core);
+- pick up and throw, the hand of finite strength, pulling objects like in Half-Life: Alyx → `main`
+  (grip grab and throw of balls and cubes on the fast core, the hands on the curved space, merged
+  from `throw`; `grab` is the old sketch);
 - cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
   the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
@@ -140,6 +178,14 @@ Where the README wishes start (wishes without a branch start from `main`):
   and the frame drops; it is off by default in `grab`.
 
 When branches are put together, these overlap:
+- the grip (on `main`, from `throw`) and `throat`'s: there the right grip held makes the right
+  stick's y the fillet, on `main` it grabs. Right B and left X are taken (a new ball, a new cube).
+- the hands (on `main`, from `throw`) take two of the shader's 12 ball slots (`BallWorld.MAX_BALLS` 8 + 2). Per frame
+  `main._process` steps the free toys first (the hands pushing from last frame's places), then
+  places the hands and what they hold (`_update_hands`), then uploads: a toy let go starts from
+  the hand, not a frame ahead. Teleports (`place`, `set_pose`, a snap turn) forget the hands'
+  recent places (`_forget_motion`), or the jump would be a throw.
+- `grab` and `main` (from `throw`) both have a `tests/grab_test.gd`: keep `main`'s.
 - the left trigger, on `main`: a trigger presses the panel's button its controller points at, and
   the left one runs, but not while the left ray is on the panel (`perf.on_plate[0]`).
 - the right stick: x turns on `main` (its click switches smooth/snap), y changes the throat in
@@ -294,6 +340,8 @@ draws next to ray-traced ones, check they line up the same way.
 - **Controllers.** Our action map has no profile of the Steam Frame's own (Godot 4.7.2 knows it, `/interaction_profiles/valve/frame_controller_valve`). On our Frame (SteamVR 2.18.2) the log's `interaction profile` lines show both controllers as `/interaction_profiles/khr/generic_controller`; its bindings (thumbstick, trigger, `primary/click` for A) are what the headset uses, and `walking_xr_test.gd` checks them. One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
 - **Logs from a release build.** Without `application/run/flush_stdout_on_print` (on in `project.godot`) an export buffers `print()`, and an abort on quit loses every printed line from `godot.log`, the headset's too.
 - **Tests with `fake_hmd.gd` abort at exit** (status 134) unless the interface and trackers are taken down first; `walking_xr_test.gd` does it, so its exit status means something.
+  With four Godots at once it sometimes hangs at exit after all its checks passed (`main` too: 2 of
+  12 runs, under `timeout` status 124); run alone, it exits.
 - **Measure in the headset, not by counting instructions.** A rewrite of the flat trace (bounding balls, the hit's normal and colour picked at the end with dynamic indices) had fewer instructions for ir3 and was 7-15% slower on the Frame; 13 registers instead of 16 (14 waves instead of 12) made no difference. Compare variants with the speed check, at 72 Hz: at 120 Hz a variant that misses frames makes SteamVR step in, and its GPU time reads half as much again.
 - **Shading is ~40% of a frame at the shell's edge**, ~1.9 of 4.7 ms: the 6 screen derivatives (`dsx`/`dsy`) ~0.55 ms, atan/asin ~0.25, and the rest because near the throat one group of pixels holds both skies, the floor and objects and runs every branch. Godot's own cost (a one-colour shader) is 0.8 ms.
 - **144 Hz and SteamVR's half rate.** At 144 Hz (6.9 ms) our edge frame reads 3.4-4 ms and holds,
@@ -370,6 +418,22 @@ draws next to ray-traced ones, check they line up the same way.
   5.2 ms over four poses where `main`'s plain shader takes 3.3. Tried and dropped: ordering the
   hits by the fog's length estimate (monotonic along the path, so the order stays right) to take
   the fillet table: the estimate's division at every sample cost more than the table saved.
+- **A turning ray's turning point was 0 / 0** in `wh_filMom` (regime 1, `t / (z + zlo)` at t = 0,
+  z = zlo = 0: rays that turn in the fillet's outer half). The floor's Newton solve never lands
+  there exactly, but the toys' search samples at q = 0 and 1 of each fillet piece: NaN there made
+  every later chord NaN (`tc < 0 || tc > 1` is false for NaN), and a toy straddling the shell's
+  edge showed a crack where those rays passed it. Now `z - zlo`. `ref/test_gpu.py`'s poses never
+  had a toy near such a turning point; a scan of viewpoints around a ball at the edge did (82 of
+  516 ball pixels lost against RK4).
+- **The toys' search on a fillet** was bounded by the r and w windows only (psi only said whether
+  to search): a ray grazing the shell near its edge stays within them for metres, and a ball held
+  there (near the eye: a candidate for a third of the rays) cost the frame 3.5x by the model. The
+  psi window's ends are now solved for z (`wh_filSolve`, two Newton steps, one copy of the code by
+  a loop bound the compiler cannot see), 5e-3 rad of margin; 24 registers still, the demo's
+  frames as they were. Single silhouette pixels flip either way (the sampling's phase moved).
+- **`tools/adreno_cost.py` took the first pose's uniforms for every pose:** right for the demo's
+  toys at rest, wrong for toys that move with the viewer. With `--hands` / `--held` (emu_dump.gd
+  `+hands` / `+held`) each pose has its own (`Shader.set_uniforms`).
 - **Godot prints shader float constants with 14 decimals:** `1e-30` and `1e-20` become 0.0
   (`max(x, 1e-30)` compiles to `max(x, 0.0)`); `1e-12` survives. GPUs' `max`/`min` return the
   other operand for a NaN, which hides most of it (the emulator now does the same: `np.fmax`).

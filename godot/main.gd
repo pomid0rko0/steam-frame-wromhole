@@ -115,6 +115,10 @@ var desktop_pitch := 0.0
 var await_pose := false        # XR: place the viewer once head tracking delivers a pose
 var show_check := FileAccess.file_exists(CHECK_FLAG)   # the stereo check (see _add_check)
 var hands: Array[XRController3D] = []   # left, right (XR only)
+var grips: Array[XRController3D] = []   # the same at their grip pose: the hands that grab
+# per hand (left, right): where it is in the curved space and what it holds (_update_hands)
+var hand_state: Array[Dictionary] = [{}, {}]
+var clock := 0.0                # seconds since the start: the hands' and held toys' recent places
 var left_hand: XRController3D
 var right_hand: XRController3D
 var button_was := {}
@@ -178,6 +182,11 @@ func _ready() -> void:
 			c.pose = &"aim"            # the panel's buttons are pointed at
 			origin.add_child(c)
 			hands.append(c)
+			var g := XRController3D.new()
+			g.tracker = t
+			g.pose = &"grip"           # where the hand holds the controller: what it grabs with
+			origin.add_child(g)
+			grips.append(g)
 		left_hand = hands[0]
 		right_hand = hands[1]
 		# the eyes' gaze, from SteamVR's eye tracking: logged with the panel's lines, and a dot
@@ -244,6 +253,7 @@ func place(side: float, pos: Vector3, forward: Vector3) -> void:
 			WormholeSpace.vector_from_chart(side, foot_n, up),
 			WormholeSpace.vector_from_chart(side, foot_n, back)]
 	_face_head()
+	_forget_motion()
 
 
 ## Put the feet at l on the axis through the throat (n = +x), looking yaw degrees to the right of
@@ -256,6 +266,7 @@ func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	frame = [Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)]
 	_rotate_frame(deg_to_rad(yaw))
 	_face_head()
+	_forget_motion()
 	view_pitch = pitch
 	view_roll = roll
 
@@ -301,6 +312,7 @@ func set_pose(p: Array) -> void:
 	view_roll = 0.0
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
+	_forget_motion()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -348,7 +360,6 @@ func _process(delta: float) -> void:
 		moved = true
 	if not hold:
 		_walk(step)
-	_toys(delta)
 	# a pixel's angle (the cubes' edge lines, the arrows' soft edges) follows the render scale
 	var pix := _pixel_angle()
 	if pix != pixel_angle:
@@ -373,6 +384,13 @@ func _process(delta: float) -> void:
 	_param("head_n", hp[1])
 	_param("head_f", PackedVector4Array(hf))
 	_param("head_pos", head.origin)
+	clock += delta
+	# the free toys up to this frame (pushed by the hands where they were), then the hands and
+	# what they hold to this frame: a toy let go now starts from where the hand has it
+	_toys(delta)
+	_update_hands(hp, head)
+	if physics:
+		_upload_toys()
 	_update_proxies(hp[0], hp[1], hf, head.origin)
 
 
@@ -452,6 +470,7 @@ func _handle_turn_and_reset(delta: float) -> bool:
 		snap_armed = absf(turn) < 0.3
 	elif absf(turn) > 0.7 and snap_armed:
 		_rotate_frame(signf(turn) * SNAP_ANGLE)
+		_forget_motion()            # the hands jump with the world: no throw
 		snap_armed = false
 		moved = true
 	elif absf(turn) < 0.3:
@@ -477,27 +496,27 @@ const DROP_SPOT_A := Vector3(4.5, 4.2, DROP_HEIGHT)   # to the right of the worm
 const DROP_RADIUS := 0.35
 
 
-## The throw and the drop when due, the physics, the shader's copy. Not during the speed check:
-## it times the same scene at every pose.
+## The throw and the drop when due, the physics. Not during the speed check: it times the same
+## scene at every pose.
 func _toys(delta: float) -> void:
-	if not physics:
+	if not physics or await_pose or hold:
 		return
-	if not await_pose and not hold:
-		if launch_in >= 0.0:
-			launch_in -= delta
-			if launch_in < 0.0:
-				_throw()
-		if drop_in >= 0.0:
-			drop_in -= delta
-			if drop_in < 0.0:
-				_drop()
-		world.step(delta, [])
-	_upload_toys()
+	if launch_in >= 0.0:
+		launch_in -= delta
+		if launch_in < 0.0:
+			_throw()
+	if drop_in >= 0.0:
+		drop_in -= delta
+		if drop_in < 0.0:
+			_drop()
+	world.step(delta, _hand_balls())
 
 
 ## Everything back in place: the balls and cubes at rest, the throw LAUNCH_DELAY s later, the
 ## drop DROP_DELAY s later.
 func _spawn_toys() -> void:
+	for st in hand_state:
+		st.erase("held")
 	world.balls.clear()
 	world.cubes.clear()
 	var spots := [Vector2(7.0, -1.5), Vector2(7.0, 0.0), Vector2(7.0, 1.5), Vector2(6.0, -0.75), Vector2(6.0, 0.75)]
@@ -523,7 +542,8 @@ func _throw() -> void:
 	world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
 			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
 	var q := space.point_from_chart(1.0, Vector3(9.0, 2.4, 1.4))
-	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-3.0, -0.2, 1.0)), 0.25, BALL_COLORS[5])
+	# fast enough to climb out of the throat's well into B against the rolling and the air's drag
+	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-5.4, -0.36, 1.8)), 0.25, BALL_COLORS[5])
 	print("toys: thrown")
 
 
@@ -563,7 +583,8 @@ func _cube_in_throat(l: float, phi: float, half: float, color: Color) -> Diction
 
 
 ## The balls and cubes for the shader: a ball's centre as a point of R^4 and its radius (chord
-## distance in R^4); a cube's 4D box (centre, four axes over the half size) and colour.
+## distance in R^4), then the hands' balls; a cube's 4D box (centre, four axes over the half
+## size) and colour.
 func _upload_toys() -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
@@ -571,6 +592,11 @@ func _upload_toys() -> void:
 		pos.append(space.embed(b["l"], b["n"]))
 		var c: Color = b["color"]
 		col.append(Vector4(c.r, c.g, c.b, b["radius"]))
+	for st in hand_state:
+		if st.get("on", false):
+			pos.append(space.embed(st["l"], st["n"]))
+			var c: Color = HAND_COLOR_READY if st["ready"] else HAND_COLOR
+			col.append(Vector4(c.r, c.g, c.b, HAND_RADIUS))
 	var cpos := PackedVector4Array()
 	var axes := PackedVector4Array()
 	var ccol := PackedVector4Array()
@@ -583,6 +609,292 @@ func _upload_toys() -> void:
 		var cc: Color = c["color"]
 		ccol.append(Vector4(cc.r, cc.g, cc.b, half))
 	set_objects(pos, col, cpos, axes, ccol)
+
+
+# ---------------------------------------------------------------- the hands
+const HAND_RADIUS := 0.04        # m: the ball drawn at each hand's grip; it pushes the toys
+const GRAB_REACH := 0.12         # m from the hand's centre to a toy's surface: the grip takes it
+const GRIP_ON := 0.7             # the grip's value that grabs, and the one below which it lets
+const GRIP_OFF := 0.45           # go: apart, so a half-closed hand does not grab and drop by turns
+const HAND_COLOR := Color(0.55, 0.62, 0.75)
+const HAND_COLOR_READY := Color(0.35, 0.95, 0.5)   # a toy within reach, or held
+const VELOCITY_WINDOW := 0.06    # s of recent places a velocity is taken from (_velocity)
+const STALE := 0.1               # s: places older than this give no velocity (tracking lost)
+const MAX_THROW_SPEED := 25.0    # m/s: a tracking glitch at the release flings nothing farther
+const MAX_THROW_SPIN := 40.0     # rad/s
+const SET_DOWN_SPEED := 0.15     # m/s and rad/s: a hand slower than this, turning slower than
+const SET_DOWN_SPIN := 1.0       # this, sets its toy down at rest
+const NEW_BALL_RADIUS := 0.2     # right B: a new ball in the right hand
+const NEW_CUBE_HALF := 0.15      # left X: a new cube in the left hand
+
+
+## Each hand in the curved space: the geodesic from the head along the hand's offset in the room
+## (as the shader places each eye), with the room's axes carried along it, the hand's own axes
+## from its pose there, its velocity from its recent places. The grip grabs the nearest toy within
+## reach, carries it and lets it go with the hand's motion (_take, _carry, _release); right B and
+## left X put a new ball or cube in the hand. Nothing during the speed check (it times the same
+## scene at every pose; the hands are not drawn then).
+func _update_hands(hp: Array, head: Transform3D) -> void:
+	if not in_xr:
+		return
+	var new_ball := _pressed_once("new_ball", right_hand.is_button_pressed(&"by_button"))
+	var new_cube := _pressed_once("new_cube", left_hand.is_button_pressed(&"ax_button"))
+	for i in grips.size():
+		var c := grips[i]
+		var st := hand_state[i]
+		st["on"] = false
+		if hold or await_pose or not physics:
+			continue
+		if c.get_has_tracking_data():
+			var xf := c.transform
+			var off := xf.origin - head.origin
+			var at := hp
+			if off.length() > 1e-6:
+				var dir := WormholeSpace.combine(hp[2], off)
+				at = space.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
+			var b := xf.basis.orthonormalized()
+			st["l"] = at[0]
+			st["n"] = at[1]
+			st["F"] = [WormholeSpace.combine(at[2], b.x), WormholeSpace.combine(at[2], b.y),
+					WormholeSpace.combine(at[2], b.z)]
+			_remember(st, "hist", [clock, at[0], at[1]])
+			st["U"] = _velocity(st["hist"])[0]
+			st["on"] = true
+		# the held toy where the hand is now, also in the frame it lets go
+		if st.has("held") and st["on"]:
+			_carry(i)
+		# the grip, with a gap between grabbing and letting go
+		var g := c.get_float(&"grip")
+		var was: bool = st.get("grip", false)
+		var grip := g > GRIP_OFF if was else g > GRIP_ON
+		st["grip"] = grip
+		if grip and not was and st["on"]:
+			var toy := _nearest(i)
+			if not toy.is_empty():
+				_take(i, toy)
+		elif was and not grip:
+			_release(i)
+		if st["on"] and ((i == 1 and new_ball) or (i == 0 and new_cube)):
+			_new_toy(i, i == 0)
+		var ready: bool = st.has("held") or (st["on"] and not _nearest(i).is_empty())
+		if ready and not st.get("ready", false) and not st.has("held"):
+			c.trigger_haptic_pulse(&"haptic", 0.0, 0.15, 0.02, 0.0)    # a tick: within reach
+		st["ready"] = ready
+
+
+## The hands as kinematic balls for the physics: they push the toys.
+func _hand_balls() -> Array:
+	var out := []
+	for i in grips.size():
+		var st := hand_state[i]
+		if st.get("on", false):
+			out.append({"l": st["l"], "n": st["n"], "U": st["U"], "radius": HAND_RADIUS,
+					"tracker": grips[i].tracker})
+	return out
+
+
+## The toy nearest to hand i's centre within GRAB_REACH of its surface (not one it holds), or {}.
+func _nearest(i: int) -> Dictionary:
+	var st := hand_state[i]
+	var P := space.embed(st["l"], st["n"])
+	var best := {}
+	var best_d := GRAB_REACH
+	for b in world.balls + world.cubes:
+		if b["held"] == grips[i].tracker:
+			continue
+		var d := world.distance_to(b, P)
+		if d < best_d:
+			best_d = d
+			best = b
+	return best
+
+
+## Hand i takes the toy where it is: from now on it keeps its place and its turn against the
+## hand, as an offset in the hand's axes (the geodesic from the hand that reaches it) and, for a
+## cube, its axes in the hand's axes carried there. Taken from the other hand, that one lets go.
+func _take(i: int, toy: Dictionary) -> void:
+	var st := hand_state[i]
+	var other := hand_state[1 - i]
+	if other.has("held") and is_same(other["held"], toy):
+		other.erase("held")
+	_release(i)
+	toy["held"] = grips[i].tracker
+	toy.erase("ghost")
+	var D := space.toward(st["l"], st["n"], toy["l"], toy["n"])
+	var F: Array = st["F"]
+	st["held"] = toy
+	st["off"] = BallWorld.to_body(F, D)
+	st["thist"] = []
+	if toy.has("F"):
+		var at := _hold_point(st)
+		var rel := []
+		for A: Vector4 in toy["F"]:
+			rel.append(BallWorld.to_body(at[2], A))
+		st["rel"] = rel
+	grips[i].trigger_haptic_pulse(&"haptic", 0.0, 0.6, 0.06, 0.0)
+	print("grab: %s hand takes a %s (%.2f m from the hand)" % [_hand_name(i),
+			"cube" if toy.has("F") else "ball", D.length()])
+
+
+## Where hand st holds its toy: the end of the geodesic of its offset, with the hand's axes there.
+func _hold_point(st: Dictionary) -> Array:
+	var D := WormholeSpace.combine(st["F"], st["off"])
+	if D.length() < 1e-7:
+		return [st["l"], st["n"], st["F"]]
+	return space.geodesic(st["l"], st["n"], D / D.length(), D.length(), st["F"])
+
+
+## The held toy follows hand i; its velocity (and a cube's spin) from its recent places: what it
+## pushes others with, and what it flies off with.
+func _carry(i: int) -> void:
+	var st := hand_state[i]
+	var toy: Dictionary = st["held"]
+	var at := _hold_point(st)
+	toy["l"] = at[0]
+	toy["n"] = at[1]
+	var F := []
+	if toy.has("F"):
+		var rel: Array = st["rel"]
+		F = WormholeSpace.orthonormalize([WormholeSpace.combine(at[2], rel[0]),
+				WormholeSpace.combine(at[2], rel[1]), WormholeSpace.combine(at[2], rel[2])])
+		toy["F"] = F
+	_remember(st, "thist", [clock, at[0], at[1], F])
+	var v := _velocity(st["thist"])
+	toy["U"] = v[0]
+	if toy.has("F"):
+		toy["w"] = v[1]
+
+
+## Hand i lets its toy go: it flies off with the hand's velocity and turns as the hand turned. Not
+## with its own velocity in the hand: held off the hand (half a metre to a big ball's centre), it
+## also moved with the turn of the wrist times that lever, and a flick of the wrist threw it at
+## 15-20 m/s (the headset's log).
+func _release(i: int) -> void:
+	var st := hand_state[i]
+	if not st.has("held"):
+		return
+	var toy: Dictionary = st["held"]
+	st.erase("held")
+	toy["held"] = &""
+	var v := _velocity(st.get("thist", []))
+	var U: Vector4 = _velocity(st.get("hist", []))[0]
+	var D := WormholeSpace.combine(st["F"], st["off"])
+	if D.length() > 1e-7 and U != Vector4.ZERO:
+		U = space.geodesic(st["l"], st["n"], D / D.length(), D.length(), [U])[2][0]    # carried to the toy
+	if U.length() > MAX_THROW_SPEED:
+		U *= MAX_THROW_SPEED / U.length()
+	# a hand held still sets its toy down at rest: the tracking's tremble would push it
+	var gentle := U.length() < SET_DOWN_SPEED and (v[1] as Vector3).length() < SET_DOWN_SPIN
+	toy["U"] = Vector4.ZERO if gentle else U
+	if toy.has("F"):
+		toy["w"] = Vector3.ZERO if gentle else (v[1] as Vector3).limit_length(MAX_THROW_SPIN)
+		toy["still"] = 0.0
+	toy["ghost"] = grips[i].tracker      # this hand does not push it until they are apart
+	print("%s: %s hand lets a %s go at %.2f m/s%s" % ["set down" if gentle else "throw", _hand_name(i),
+			"cube" if toy.has("F") else "ball", toy["U"].length(),
+			(", spin %.1f rad/s" % toy["w"].length()) if toy.has("F") else ""])
+
+
+## A new ball (right B) or cube (left X) just in front of hand i, moving with it: held if the grip
+## is closed and the hand holds nothing else. The oldest toy goes if there are too many
+## (BallWorld.MAX_BALLS, MAX_CUBES), never a held one.
+func _new_toy(i: int, cube: bool) -> void:
+	var st := hand_state[i]
+	if st.has("held"):
+		return
+	var size := NEW_CUBE_HALF if cube else NEW_BALL_RADIUS
+	var F: Array = st["F"]
+	# 1 cm from the hand's ball: not touching it
+	var at := space.geodesic(st["l"], st["n"], -F[2], size + HAND_RADIUS + 0.01, F + [st["U"]])
+	var toy: Dictionary
+	if cube:
+		toy = world.add_cube(at[0], at[1], at[2][3], at[2].slice(0, 3), Vector3.ZERO, size,
+				CUBE_COLORS[randi() % CUBE_COLORS.size()])
+	else:
+		toy = world.add(at[0], at[1], at[2][3], size, BALL_COLORS[randi() % BALL_COLORS.size()])
+	print("new %s in the %s hand" % ["cube" if cube else "ball", _hand_name(i)])
+	if st["grip"]:
+		_take(i, toy)
+
+
+## The viewer was put somewhere else: the hands' and held toys' places before are no motion.
+func _forget_motion() -> void:
+	for st in hand_state:
+		st.erase("hist")
+		st.erase("thist")
+
+
+func _hand_name(i: int) -> String:
+	return "left" if i == 0 else "right"
+
+
+## Adds a sample [t, ...] to st[key], keeping the newest one at least VELOCITY_WINDOW old and the
+## ones after it.
+func _remember(st: Dictionary, key: String, sample: Array) -> void:
+	var hist: Array = st.get(key, [])
+	hist.append(sample)
+	while hist.size() > 2 and sample[0] - hist[1][0] >= VELOCITY_WINDOW:
+		hist.pop_front()
+	st[key] = hist
+
+
+## A body's velocity from its recent places (hist: [t, l, n] or [t, l, n, F], the newest last):
+## [the tangent velocity at the newest place, and with axes F the angular velocity in the newest
+## body coordinates]. The derivative at the newest of the parabola through it, the oldest kept
+## (about VELOCITY_WINDOW back) and the one half way: an average over the window would lag the
+## hand by half of it, and a throw, which is an arc, would leave in the wrong direction. Each
+## place is seen from the newest one (the chord of R^4 there), each turn as the axes carried
+## there along the chord.
+func _velocity(hist: Array) -> Array:
+	var none := [Vector4.ZERO, Vector3.ZERO]
+	var m := hist.size()
+	if m < 2 or clock - hist[m - 1][0] > STALE:
+		return none
+	var s0: Array = hist[m - 1]
+	var t0: float = s0[0]
+	if t0 - hist[0][0] < 1e-3:
+		return none
+	var E0 := space.embed(s0[1], s0[2])
+	var picks := [0]
+	var weights := [1.0 / (hist[0][0] - t0)]
+	if m > 2:
+		# the one nearest half way
+		var k1 := 1
+		var mid: float = 0.5 * (t0 + hist[0][0])
+		for k in range(1, m - 1):
+			if absf(hist[k][0] - mid) < absf(hist[k1][0] - mid):
+				k1 = k
+		var t1: float = hist[k1][0]
+		var t2: float = hist[0][0]
+		picks = [k1, 0]
+		weights = [(t0 - t2) / ((t1 - t0) * (t1 - t2)), (t0 - t1) / ((t2 - t0) * (t2 - t1))]
+	var U := Vector4.ZERO
+	var w := Vector3.ZERO
+	var spin: bool = s0.size() > 3 and not s0[3].is_empty()
+	for j in picks.size():
+		var s: Array = hist[picks[j]]
+		var Ek := space.embed(s[1], s[2])
+		U += weights[j] * space.project(s0[1], s0[2], Ek - E0)
+		if spin:
+			# the axes then, carried here: their turn to the axes now, as a rotation vector
+			var Fk: Array = s[3]
+			var D := space.project(s[1], s[2], E0 - Ek)
+			if D.length() > 1e-7:
+				Fk = space.geodesic(s[1], s[2], D / D.length(), (E0 - Ek).length(), Fk)[2]
+			var F0: Array = s0[3]
+			var G := Basis(BallWorld.to_body(F0, Fk[0]), BallWorld.to_body(F0, Fk[1]), BallWorld.to_body(F0, Fk[2]))
+			w += weights[j] * _rotation_vector(G.orthonormalized().get_rotation_quaternion())
+	return [U, w]
+
+
+static func _rotation_vector(q: Quaternion) -> Vector3:
+	if q.w < 0.0:
+		q = -q
+	var v := Vector3(q.x, q.y, q.z)
+	var s := v.length()
+	if s < 1e-9:
+		return 2.0 * v
+	return v * (2.0 * atan2(s, q.w) / s)
 
 
 ## Each controller points at the panel; its trigger presses the button it points at.

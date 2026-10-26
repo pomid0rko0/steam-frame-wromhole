@@ -345,7 +345,10 @@ void wh_filMom(WhFil f, float z, out float t, out vec4 m) {
         float mn = wh_mn(f);
         t = max(z * z - mn, 0.0);
         if (f.reg == 1) {                              // w = 1 / (2 sqrt(t + mn))
-            float n0 = t / (z + f.zlo);                // zlo = sqrt(mn)
+            // int_0^t w dt = sqrt(t + mn) - sqrt(mn) = z - zlo. As t / (z + zlo) it was 0 / 0 at a
+            // turning ray's turning point (z = zlo = 0), where the toys' search samples: NaN there
+            // blinded the rest of the ray, and toys near the shell's edge showed a crack
+            float n0 = max(z - f.zlo, 0.0);
             float ty = t * z;
             float n1 = (ty - 2.0 * mn * n0) / 3.0;
             ty *= t;
@@ -588,7 +591,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     //    floor by then), so one window. On the cylinder psi is linear along the path: there it
     //    bounds the samples (a ray looking sideways in the throat winds round it slowly in l, and
     //    with r and w alone a ball in the throat was within reach for metres of its path); on a
-    //    fillet it only tells whether to search it.
+    //    fillet psi grows along the piece too, and the window's ends are solved for z.
     // There the path is sampled at steps of a third of the object's size; between two samples
     // the ray is taken as the chord in R^4: where the chord enters the object, the path's point at
     // that fraction (one more sample) is the hit, if it lies in the object or within the chord's
@@ -692,6 +695,21 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                             float dz = z1 - z0;
                             vec2 qz = (zw - z0) / (abs(dz) > 1e-12 ? dz : 1e-12);
                             if (tw.y > tw.x) qw = vec2(min(qz.x, qz.y), max(qz.x, qz.y));
+                        }
+                        // psi bounds the samples here too: it grows along the piece (not linearly
+                        // in z), so its window's ends are solved for z, as the floor's crossing is.
+                        // A ray that grazes the shell near its edge stays within the r and w windows
+                        // of a toy there for metres: a ball held there made the frame 3.5x dearer
+                        if (dps < 9.0 && qw.y > qw.x) {
+                            // psi from the fillet's inner end: piece A runs toward it, piece C away
+                            vec2 ps = clamp(vec2(psc - dps, psc + dps) + vec2(-5e-3, 5e-3), psi0, psi1);
+                            vec2 T = p == 0 ? PA.x - ps : C0.x + ps - PA.x - PB.x;
+                            vec2 zq;
+                            for (int e = 0; e < 2 + min(wh_nBall, 0); e++)     // one solve's code
+                                zq[e] = wh_filSolve(f, clamp(T[e], 0.0, f.psi));
+                            float dz = z1 - z0;
+                            vec2 qp = (zq - z0) / (abs(dz) > 1e-12 ? dz : 1e-12);
+                            qw = vec2(max(qw.x, min(qp.x, qp.y)), min(qw.y, max(qp.x, qp.y)));
                         }
                     }
                 }

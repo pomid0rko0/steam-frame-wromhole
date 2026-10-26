@@ -22,7 +22,20 @@ const GRAVITY := 9.81
 const DT := 1.0 / 180.0
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
-const ROLLING_RESISTANCE := 0.02     # rolling friction coefficient: deceleration 0.02 g on a flat floor
+# Rolling friction: a small part that follows the weight, and a part that follows the speed; air
+# drag on top. A ball at rest stays where the floor pulls along itself less than ROLLING_RESISTANCE g;
+# near the wormhole gravity pulls along the floor toward the throat, 0.01 g at the shell's edge
+# (0.06-0.1 g where the fillet meets the throat), so a ball set down there rolls in by itself. 0.04 g
+# alone held it still for the outer metre and a half of the fillet; 0.02 g alone let a thrown ball
+# roll for 40 m. Air drag (as the square of the speed) slows fast balls, in flight too, but hardly a
+# slow roll: that is the rolling drag's. A 50 cm ball rolling at 4 m/s stops in 19 m, at 2 m/s in
+# 9.5 m, at 1 m/s in 4 m (0.04 g alone: 20, 5, 1.3 m).
+const ROLLING_RESISTANCE := 0.005
+const ROLLING_DRAG := 0.1            # 1/s: the deceleration per m/s of rolling speed
+const AIR_DENSITY := 1.2             # kg/m^3
+const TOY_DENSITY := 25.0            # kg/m^3: big rubber toys (a 50 cm ball 1.6 kg); masses go as size^3
+const DRAG_BALL := 0.47              # drag coefficients of a sphere and of a cube
+const DRAG_CUBE := 1.05
 const MAX_BALLS := 8
 const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls nearby
 const MAX_CUBES := 6
@@ -31,9 +44,14 @@ const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelera
 const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
 const KINEMATIC := 1e9               # mass of held balls and hands
+# a hand or a held toy against a free ball: it moves on regardless, so with the balls' 0.85 a ball
+# it meets flew off at 1.85 times its speed, and one pressed against the floor or another ball
+# gained speed from nothing; this is a soft hand's
+const RESTITUTION_KINEMATIC := 0.3
 
 var space: WormholeSpace
 var scene: Dictionary
+var air := true                      # air drag (tests of the motion itself turn it off)
 var balls: Array = []                # Dictionary: l, n, U, radius, color, held (StringName or &"")
 var cubes: Array = []                # Dictionary: l, n, U, F (3 body axes), w (body), half, color, held
 var _acc := 0.0
@@ -46,7 +64,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary) -> void:
 
 func add(l: float, n: Vector3, U: Vector4, radius: float, color: Color) -> Dictionary:
 	if balls.size() >= MAX_BALLS:
-		balls.pop_front()
+		_drop_oldest(balls)
 	var b := {"l": l, "n": n, "U": U, "radius": radius, "color": color, "held": &""}
 	balls.append(b)
 	return b
@@ -56,7 +74,7 @@ func add(l: float, n: Vector3, U: Vector4, radius: float, color: Color) -> Dicti
 ## w in body coordinates (rad/s), half the edge length.
 func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: float, color: Color) -> Dictionary:
 	if cubes.size() >= MAX_CUBES:
-		cubes.pop_front()
+		_drop_oldest(cubes)
 	var axes := []
 	for A: Vector4 in F:
 		axes.append(WormholeSpace.tangent(n, A))
@@ -66,7 +84,31 @@ func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: floa
 	return c
 
 
+## Makes room for a new ball or cube: the oldest one goes, unless a hand holds it.
+static func _drop_oldest(list: Array) -> void:
+	for i in list.size():
+		if list[i]["held"] == &"":
+			list.remove_at(i)
+			return
+	list.pop_front()
+
+
+## How far the point P of R^4 is from the surface of a ball or a cube (chord distance; a ball's
+## inside is negative, a cube's 0): what a hand reaches.
+func distance_to(b: Dictionary, P: Vector4) -> float:
+	if not b.has("F"):
+		return (P - space.embed(b["l"], b["n"])).length() - b["radius"]
+	var box := box4(b)
+	var d: Vector4 = P - box[0]
+	var a: float = b["half"]
+	var q := Vector4(clampf(d.dot(box[1]), -a, a), clampf(d.dot(box[2]), -a, a),
+			clampf(d.dot(box[3]), -a, a), clampf(d.dot(box[4]), -a, a))
+	return (d - q.x * box[1] - q.y * box[2] - q.z * box[3] - q.w * box[4]).length()
+
+
 ## Advance by delta seconds with fixed substeps. hands: Array of {l, n, U, radius} (kinematic).
+## A held ball or cube (held: the hand's tracker) is kinematic too: the hand places it and sets its
+## U (and w) before each step, and it pushes the others without being pushed back.
 func step(delta: float, hands: Array) -> void:
 	_acc = minf(_acc + delta, 0.1)
 	while _acc >= DT:
@@ -78,7 +120,7 @@ func step(delta: float, hands: Array) -> void:
 			var s := space.dynamics_step(b["l"], b["n"], b["U"], DT, GRAVITY)
 			b["l"] = s[0]
 			b["n"] = s[1]
-			b["U"] = s[2]
+			b["U"] = _air(s[2], 3.0 * AIR_DENSITY * DRAG_BALL / (8.0 * TOY_DENSITY * b["radius"]))
 			_floor(b, before)
 			_statics(b)
 		for c in cubes:
@@ -93,6 +135,11 @@ func step(delta: float, hands: Array) -> void:
 					_push(b, hand)
 		if not cubes.is_empty():
 			_solve_cubes(hands)
+
+
+## A step of air drag, -k |U| U (k: drag / mass per metre), integrated implicitly: stable at any speed.
+func _air(U: Vector4, k: float) -> Vector4:
+	return U / (1.0 + k * U.length() * DT) if air else U
 
 
 ## Signed chord distance between the surfaces of two balls (negative: overlap).
@@ -120,7 +167,7 @@ func _floor(b: Dictionary, before: Array) -> void:
 	if speed > 0.0:
 		# rolling friction follows the weight on the floor, which is weaker in the throat
 		var weight := GRAVITY * maxf(space.potential_grad(b["l"], b["n"]).dot(N), 0.0)
-		var stop := ROLLING_RESISTANCE * weight * DT
+		var stop := (ROLLING_RESISTANCE * weight + ROLLING_DRAG * speed) * DT
 		if speed <= stop and before[2].length() < 1e-6:
 			# at rest and held by friction: gravity pulls slightly along the floor near the
 			# wormhole, so undo this step's motion instead of letting the ball creep
@@ -196,8 +243,10 @@ func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
 		return
 	var Na := space.project(a["l"], a["n"], D).normalized()      # at a, toward b
 	var Nb := space.project(b["l"], b["n"], -D).normalized()     # at b, toward a
-	var ma: float = pow(a["radius"], 3.0) if a["held"] == &"" else 1e9
-	var mb: float = pow(b["radius"], 3.0) if b["held"] == &"" else 1e9
+	var ma: float = pow(a["radius"], 3.0) if a["held"] == &"" else KINEMATIC
+	var mb: float = pow(b["radius"], 3.0) if b["held"] == &"" else KINEMATIC
+	if a["held"] != &"" or b["held"] != &"":
+		e = RESTITUTION_KINEMATIC
 	var Ua: Vector4 = a["U"]
 	var Ub: Vector4 = b["U"]
 	var approach := Ua.dot(Na) + Ub.dot(Nb)
@@ -214,6 +263,8 @@ func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
 
 ## A hand (kinematic sphere) pushing a free ball.
 func _push(b: Dictionary, hand: Dictionary) -> void:
+	if _ghosted(b, hand):
+		return
 	var Eb := space.embed(b["l"], b["n"])
 	var Eh := space.embed(hand["l"], hand["n"])
 	var D := Eb - Eh
@@ -226,8 +277,21 @@ func _push(b: Dictionary, hand: Dictionary) -> void:
 	var Ub: Vector4 = b["U"]
 	var rel: float = hand["U"].dot(Nh) - Ub.dot(Nb)
 	if rel > 0.0:
-		b["U"] = Ub + (1.0 + RESTITUTION_BALL) * rel * Nb
+		b["U"] = Ub + (1.0 + RESTITUTION_KINEMATIC) * rel * Nb
 	_move(b, Nb, pen)
+
+
+## A toy just let go (ghost: the hand's tracker) is not pushed by the hand that let it go until
+## they are 1 cm apart: the hand held it touching or inside, and set down gently it would be pushed
+## away at once.
+func _ghosted(b: Dictionary, hand: Dictionary) -> bool:
+	var g: StringName = b.get("ghost", &"")
+	if g == &"" or g != hand.get("tracker", &""):
+		return false
+	if distance_to(b, space.embed(hand["l"], hand["n"])) < hand["radius"] + 0.01:
+		return true
+	b.erase("ghost")
+	return false
 
 
 func _move(b: Dictionary, dir: Vector4, dist: float) -> void:
@@ -296,7 +360,7 @@ func _integrate_cube(c: Dictionary) -> void:
 	var s := space.dynamics_step(c["l"], c["n"], c["U"], DT, GRAVITY, c["F"])
 	c["l"] = s[0]
 	c["n"] = s[1]
-	c["U"] = s[2]
+	c["U"] = _air(s[2], AIR_DENSITY * DRAG_CUBE / (4.0 * TOY_DENSITY * c["half"]))
 	var F: Array = s[3]
 	var w: Vector3 = c["w"]
 	var rate := w.length()
@@ -417,19 +481,25 @@ func _solve_cubes(hands: Array) -> void:
 		boxes.append(box4(c))
 	for i in cubes.size():
 		var c: Dictionary = cubes[i]
-		if c["still"] <= SLEEP_TIME:
+		var free: bool = c["held"] == &""
+		if free and c["still"] <= SLEEP_TIME:
 			_floor_contacts(c, "f%d" % i, contacts)
 			_static_contacts(c, "s%d" % i, contacts)
 		for j in balls.size():
-			_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
-		for j in hands.size():
-			_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
+			if free or balls[j]["held"] == &"":
+				_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
+		if free:
+			for j in hands.size():
+				if not _ghosted(c, hands[j]):
+					_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
 		for j in range(i + 1, cubes.size()):
 			if (boxes[i][0] - boxes[j][0]).length() < 2.0 * (c["half"] + cubes[j]["half"]):
 				_points_in_box(c, boxes[i], cubes[j], boxes[j], "c%d_%d" % [i, j], contacts)
 				_points_in_box(cubes[j], boxes[j], c, boxes[i], "c%d_%d" % [i, j], contacts)
 	for _it in ITERATIONS:
 		for ct in contacts:
+			if ct.k[0] <= 0.0:
+				continue                     # both held (or asleep): nothing to push
 			var jn := maxf(ct.jn + (ct.target - ct.speed(0)) / ct.k[0], 0.0)
 			ct.push(0, jn - ct.jn)
 			ct.jn = jn
@@ -459,6 +529,9 @@ func _solve_cubes(hands: Array) -> void:
 	# sleep: a cube that has hardly moved for a while stops being simulated until something
 	# moving touches it
 	for c in cubes:
+		if c["held"] != &"":
+			c["still"] = 0.0                 # let go, it falls at once
+			continue
 		var U: Vector4 = c["U"]
 		var w: Vector3 = c["w"]
 		if U.length() < SLEEP_SPEED and w.length() < SLEEP_SPIN:
