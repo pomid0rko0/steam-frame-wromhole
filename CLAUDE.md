@@ -150,6 +150,28 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   8.5 ms where the tour took 3.5-4 (the tour holds the physics; in play the throat's ball may still
   be falling slowly: not checked). The "stripe" in the throat is fixed here (below, «Rays that go
   round the throat»).
+- `menu` — the GUI as buttons, not a ray (README «Что видно в шлеме», «Управление»): the big
+  panel pointed at with a ray and pressed with the trigger is gone. `perf_panel.gd` is a hidden
+  menu, a list of rows (rate, scale, foveation, its order, gaze dot, gravity, turn, the line,
+  the speed check; `toggle`, `move`, `change`, `press`, `back`), and, while it is closed, a line
+  low in the view (`strip`: the rate, the verdict, the GPU time, a choice's answer, the speed
+  check's progress and result until the menu is opened). Input in `main._menu_input`: Menu (right)
+  or View (left) on the Steam Frame's own controller profile, now in the action map
+  (`/interaction_profiles/valve/frame_controller_valve`, paths from Valve's Steamworks page «Steam
+  Frame Input»: left D-pad as four buttons and View, right A B X Y and Menu), or a left stick click
+  (any profile: the generic one has no menu button); the D-pad or the left stick (hysteresis
+  0.6/0.3) picks rows and changes values, held they repeat (0.4 s, then every 0.12 s); a value
+  takes effect `SETTLE` (0.5 s) later, at once on A, on another row or on closing (stepping
+  through rates does not switch the display each step); A on a row with nothing stepped to sets
+  the next value (not the rate); B closes. While it is open (`main.menu_active`, the whole frame
+  that closes it too) A, B, the D-pad and the left stick are the menu's: no walking, no reset, no
+  new ball or cube, no gravity view. Closed, with the Frame's profile, the D-pad down makes a cube
+  (left X elsewhere), up/left/right step the gravity view (left Y elsewhere): Valve's remap of the
+  generic profile put X and Y there, so the hands do the same as before. Starting the speed check
+  closes the menu. Tests: `walking_xr_test.gd` (both profiles, through trackers),
+  `openxr_smoke.gd` (the rows under Monado, by the menu's own calls), `grab_test.gd` (the menu
+  keeps B, X, the D-pad and A from the hands). Not yet seen in the headset: whether SteamVR takes
+  the Frame profile (the log's `interaction profile` lines) and lets View and Menu reach the app.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -164,6 +186,8 @@ Where the README wishes start (wishes without a branch start from `main`):
   the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
+- the menu, its rows, controller buttons for settings → `menu` (a hidden list worked with the
+  D-pad, A and B; the Frame's own controller profile);
 - refresh rate and render scale → `main` (the panel is there; the owner wants no automatic way
   out of SteamVR's half rate for now); cheaper rays near the wormhole → `main` (`wh_curved` in
   `wormhole_core`, measured in the headset by the speed check; without a headset
@@ -187,12 +211,20 @@ When branches are put together, these overlap:
   recent places (`_forget_motion`), or the jump would be a throw.
 - `grab` and `main` (from `throw`) both have a `tests/grab_test.gd`: keep `main`'s.
 - the left trigger, on `main`: a trigger presses the panel's button its controller points at, and
-  the left one runs, but not while the left ray is on the panel (`perf.on_plate[0]`).
+  the left one runs, but not while the left ray is on the panel (`perf.on_plate[0]`). On `menu`
+  there is no ray: the triggers only run (left) and the panel is a menu worked with buttons.
+- the menu (`menu`): while it is open, A, B, the D-pad and the left stick are its
+  (`main.menu_active`): a branch's own buttons must check it too, and stay off the left stick
+  click, View and Menu. A new action must be bound in the Frame's profile of the action map as
+  well (SteamVR takes that profile when the app offers it: an action missing there gets nothing);
+  left X / Y of the other profiles are the Frame's D-pad down / up, left, right. A setting of
+  another branch fits the menu as a row (`perf_panel.ROWS`, `_count`, `_current`, `_apply`,
+  `_value_text`).
 - the right stick: x turns on `main` (its click switches smooth/snap), y changes the throat in
   `throat`; that fits.
 - the speed check (`bench.gd`) sets the viewer's pose itself: while it runs (`main.hold`) the
   sticks and A do nothing. `grab` and `throat` add their own buttons: keep them out of it too (`gravity`'s Y, G and panel
-  row are).
+  row are; on `menu` the menu's rows are greyed then).
 - A resets on `main`, in `throat` and `grab`: one reset does all of it.
 - left Y shows gravity in `gravity` and in `physics` (the same views; `physics` draws them on the
   old core): keep `gravity`'s, which has them with the balls and cubes too. `gravity` holds
@@ -260,7 +292,7 @@ draws next to ray-traced ones, check they line up the same way.
   tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`); with
   `--toys` other sources are timed with their own balls shader (`tools/ab_shaders.sh` copies it).
   The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
-- **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
+- **Measuring in the headset without the owner walking:** the menu's last row, A (on `main` the panel's lowest button; or, in a
   build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
   cost depends only on the pose (l, yaw from the throat, pitch, roll), so it goes through poses:
   (1) at 72 Hz, twelve fixed poses (three in world B), each timing every ray tracer in the build
@@ -337,7 +369,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **Render scale and the stereo test.** At a 3D render scale below 1 the bilinear upscale blends the balls' edges with the background, and the one-colour red threshold of `tools/compare` then shifts the shaded ray-traced ball by 0.2–0.4 px against Godot's flat red one. With `SCALING_3D_MODE_NEAREST` the whole suite passes at 80% within 0.02 px: the geometry is exact, test a scale that way.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
-- **Controllers.** Our action map has no profile of the Steam Frame's own (Godot 4.7.2 knows it, `/interaction_profiles/valve/frame_controller_valve`). On our Frame (SteamVR 2.18.2) the log's `interaction profile` lines show both controllers as `/interaction_profiles/khr/generic_controller`; its bindings (thumbstick, trigger, `primary/click` for A) are what the headset uses, and `walking_xr_test.gd` checks them. One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
+- **Controllers.** Up to `main` our action map had no profile of the Steam Frame's own (Godot 4.7.2 knows it, `/interaction_profiles/valve/frame_controller_valve`, extension `XR_VALVE_frame_controller_interaction`, which Godot asks for by itself). On our Frame (SteamVR 2.18.2) the log's `interaction profile` lines showed both controllers as `/interaction_profiles/khr/generic_controller`; its bindings (thumbstick, trigger, `primary/click` for A) were what the headset used. Valve's page «Steam Frame Input» (Steamworks docs) lists the Frame profile's paths: left `dpad_up/down/left/right`, `view`, `system`, `bumper`; right `a`, `b`, `x`, `y`, `menu`, `system`, `bumper`; both `squeeze` (value, click, touch), `trigger`, `thumbstick`, `grip/pose`, `aim/pose`, `output/haptic`. SteamVR, it says, always takes the Frame profile when the app suggests it, else the generic one, else Touch, remapped: Touch's menu is View, its upper button (B / Y) all three upper buttons (D-pad left, up, right / X, Y, B). `menu` adds the Frame profile (paths from that page only); `walking_xr_test.gd` checks the bindings of each profile. Monado has no such extension: Godot leaves the profile out there, silently. The default font (Open Sans) has no arrows or triangles (‹ › « » it has): `perf_panel.gd` draws its arrows as meshes. One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
 - **Logs from a release build.** Without `application/run/flush_stdout_on_print` (on in `project.godot`) an export buffers `print()`, and an abort on quit loses every printed line from `godot.log`, the headset's too.
 - **Tests with `fake_hmd.gd` abort at exit** (status 134) unless the interface and trackers are taken down first; `walking_xr_test.gd` does it, so its exit status means something.
   With four Godots at once it sometimes hangs at exit after all its checks passed (`main` too: 2 of

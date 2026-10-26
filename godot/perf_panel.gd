@@ -1,23 +1,34 @@
-extends Label3D
-## The frame rate panel: a small menu drawn by Godot itself on a plate. It hangs in the room
-## 1.3 m in front of the head and a little below the eyes, and follows: as the head walks, at
-## once; as it turns, only once it has turned well away, then smoothly; not while a controller
-## points at it. So it is there at the wormhole and inside it, without being glued to the view.
+extends Node3D
+## The menu, drawn by Godot itself, and the line under it. The menu is hidden until the menu
+## button opens it (main._menu_input: Menu on the right controller, View on the left, or a click
+## of the left stick; M on the desktop) and is worked with buttons, nothing pointed at: the D-pad
+## (or the left stick) up and down picks a row, left and right change its value, A presses, B
+## closes. It opens 1.1 m in front of where the head looks, a little below the eyes, and follows:
+## as the head walks, at once; as it turns, only once it has turned well away, then smoothly. So
+## it is there at the wormhole and inside it, without being glued to the view.
 ##
-## This label is its head: the refresh rate the headset really runs at, measured from OpenXR's
-## frame timing (rate_meter.gd) rather than taken from what the runtime reports, whether frames
-## keep up, the frames we delivered of the refreshes in the last second, and the GPU time per
-## frame against the time one frame may take. The plate is green while the display gets a new
-## frame from us at (nearly) every refresh, red when it does not, grey while it is measuring.
+## Its head: the refresh rate the headset really runs at, measured from OpenXR's frame timing
+## (rate_meter.gd) rather than taken from what the runtime reports, whether frames keep up, the
+## frames we delivered of the refreshes in the last second, and the GPU time per frame against the
+## time one frame may take; on a plate green while the display gets a new frame from us at
+## (nearly) every refresh, red when it does not, grey while it is measuring.
 ##
-## Below, rows of buttons: the refresh rate, the 3D render scale, foveated rendering with
-## SteamVR's density map (main.set_foveation: off, low, high) and with our own softer ones
-## (wide, narrow), and "точка", a dot where SteamVR's eye tracking says the eyes look
-## (main.gaze_dot); then which way our maps coarsen first (main.set_own_order: the width or the
-## height, to compare by eye); then how gravity is shown (main.set_gravity_view: off, the floor
-## coloured by it, also arrows of its field; left Y does the same). A controller points
-## with a ray from its aim pose; its trigger presses the button the ray is on. Green: in effect;
-## yellow: chosen, not (yet) in effect.
+## Its rows: the refresh rate, the 3D render scale, foveated rendering (main.set_foveation: off,
+## SteamVR's density map low or high, our own softer ones wide or narrow), which way our maps
+## coarsen first (main.set_own_order: the width or the height, to compare by eye), the gaze dot
+## where SteamVR's eye tracking says the eyes look (main.gaze_dot), how gravity is shown
+## (main.set_gravity_view: off, the floor coloured by it, also arrows of its field), smooth or
+## snap turns (main.set_smooth_turn), the line below on or off, and the speed check (bench.gd; its
+## result under its row). A value stepped to with left and right takes effect once it has stayed
+## SETTLE seconds, or at once with A, on going to another row or on closing: stepping through the
+## rates does not switch the headset at every step, nor the foveations rebuild the buffers. A on
+## a value that is in effect steps to the next one at once (a switch: on, off). Yellow: chosen, not
+## (yet) in effect; grey: nothing to change here now (during the speed check, which sets these).
+##
+## While the menu is closed, a line low in the view shows the rate, whether frames keep up and the
+## GPU time on the same colours, and what came of a choice; also the speed check while it runs and
+## its result until the menu is opened. The menu's row "строка частоты" turns it off (kept in
+## user://settings.cfg).
 ##
 ## The refresh rate. SteamVR on the Steam Frame accepts an app's own request
 ## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
@@ -25,11 +36,9 @@ extends Label3D
 ## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs;
 ## on our Frame (SteamVR 2.18) the running app switches within a second, others report it only
 ## from the next start. So when the app was started from the Steam library and vrcmd is there,
-## a rate button sets that (one vrcmd call on a worker thread; a choice made meanwhile is written
+## choosing a rate sets that (one vrcmd call on a worker thread; a choice made meanwhile is written
 ## next), the display's own rate tells when it followed, and if it has not a few seconds after
-## the write the panel asks for a restart. Otherwise the button asks the runtime directly.
-##
-## The last row starts the speed check (bench.gd); its title shows how it goes and what came out.
+## the write the head asks for a restart. Otherwise the choice asks the runtime directly.
 ##
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. Kept in user://settings.cfg,
@@ -49,7 +58,7 @@ const MISSED_OK := 0.01         # refreshes without a new frame that still count
 const REQUEST_WAIT := 3.0       # seconds the headset gets to follow a request
 const LOG_EVERY := 1            # seconds between log lines
 const LATE_LINES := 30          # late frames logged one by one per second, at most
-const NOTE_SECONDS := 8         # how long the answer to a press stays on the panel
+const NOTE_SECONDS := 8         # how long the answer to a choice stays up
 const FRAME_RATES := [72.0, 80.0, 90.0, 96.0, 108.0, 120.0, 144.0]   # SteamVR's per-app choices on the Frame
 const VRCMD := "/opt/steamvr/bin/linuxarm64/vrcmd"
 const VRSETTINGS := "/.config/openvr/config/steamvr.vrsettings"     # under $HOME
@@ -58,38 +67,54 @@ const DEVFREQ := "/sys/class/devfreq"                             # the kernel's
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 # main.set_foveation's levels: 0 off, 1..3 SteamVR's map, 4 and 5 our own (main.OWN_MAPS)
-const FOVEATIONS := ["выкл", "слабая", "средняя", "сильная", "широкая", "узкая"]
+const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
+const FOV_CHOICES := [0, 1, 3, 4, 5]     # the menu's: off, SteamVR low and high, our own wide and narrow
 # until one is chosen: our narrow map, the width first (in the headset: no border to see, 144 Hz holds)
 const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
-const STATUS_LINES := 4         # the head text, padded: the buttons below stay put
-const BTN_H := 0.06             # m
-const BTN_GAP := 0.01
-const RATE_W := 0.08
-const SCALE_W := 0.12
-const FOV_W := 0.15
-const GAZE_BUTTON := 9.0        # the second foveation row's last button: the gaze dot, on or off
 const ORDERS := ["по горизонтали", "по вертикали"]     # main.set_own_order's 0 and 1
-const ORDER_W := 0.3
 const GRAVITY_VIEWS := ["выкл", "пол", "стрелки"]   # main.set_gravity_view's 0, 1, 2
-const BENCH_W := 0.36
-const COLOR_BTN := Color(0.17, 0.19, 0.24, 0.96)
-const COLOR_ON := Color(0.12, 0.50, 0.22, 0.96)       # in effect
-const COLOR_PENDING := Color(0.62, 0.50, 0.08, 0.96)  # chosen, not (yet) in effect
-const COLOR_RAY := Color(0.55, 0.85, 1.0, 0.6)
-const DIST := 1.3               # m in front of the head
-const DROP := 0.45              # m below the eyes
-const TURN := deg_to_rad(30.0)  # the head turned this far from the panel: it comes round
+const TURNS := ["плавный", "рывком 30°"]           # main.smooth_turn true, false
+const OFF_ON := ["выкл", "вкл"]
+const ON_OFF := ["вкл", "выкл"]
+# the rows, top to bottom (those that make no sense here are left out: _layout)
+const ROWS := ["rate", "scale", "fov", "order", "gaze", "grav", "turn", "strip", "bench"]
+const NAMES := {"rate": "частота", "scale": "разрешение", "fov": "фовеация", "order": "плавная грубее",
+	"gaze": "точка взгляда", "grav": "гравитация", "turn": "поворот", "strip": "строка частоты",
+	"bench": "замер скорости"}
+const HINT := "крестовина или левый стик: выбрать, менять\nA — нажать · B — закрыть"
+const SETTLE := 0.5             # s a value stepped to waits before it takes effect
+const STATUS_LINES := 4         # the head's lines at least: the rows below stay put
+const PIXEL := 0.001            # m per font pixel
+const FONT_STATUS := 24
+const FONT_ROW := 26
+const FONT_SMALL := 19          # the speed check's result, the hint
+const FONT_STRIP := 22
+const ROW_H := 0.038            # m
+const PAD := 0.02
+const GAP := 0.012
+const ARROW := 0.012            # m: the arrows by the picked row's value
+const STRIP_WRAP := 0.6         # m: the line below wraps at this width
+const MENU_DIST := 1.1          # m in front of the head
+const MENU_DROP := 0.3          # m below the eyes
+const STRIP_DIST := 1.3
+const STRIP_DROP := 0.55
+const TURN := deg_to_rad(30.0)  # the head turned this far from the menu: it comes round
+const COLOR_TEXT := Color(1.0, 0.97, 0.88)
+const COLOR_PENDING := Color(1.0, 0.8, 0.25)        # chosen, not (yet) in effect
+const COLOR_OFF := Color(0.5, 0.5, 0.52)            # nothing to change here now
+const COLOR_PANEL := Color(0.05, 0.06, 0.09, 0.97)
+const COLOR_CURSOR := Color(0.2, 0.3, 0.48, 0.96)
 const COLOR_OK := Color(0.05, 0.33, 0.12, 0.92)
 const COLOR_BAD := Color(0.45, 0.06, 0.05, 0.92)
 const COLOR_WAIT := Color(0.05, 0.06, 0.09, 0.9)
 
 var target: Viewport            # the viewport the scene is rendered into
-var viewer: Node                # main: where the feet are (foot_l, space.L), for the log
+var viewer: Node                # main: where the feet are (foot_l, space.L), for the log; its settings
 var head: Node3D                # the XR camera, a sibling in the play space; null: stay put
-var yaw := 0.0                  # the panel's bearing from the head
+var yaw := 0.0                  # the menu's bearing from the head
 var turning := false
 var placed := false
 var xr: OpenXRInterface         # null on the desktop
@@ -112,7 +137,7 @@ var desired := 0.0              # the rate last chosen; written after the one be
 var requested := 0.0            # a rate the display has not followed yet
 var request_from := 0.0
 var request_age := 0.0
-var note := ""                  # what came of the last press
+var note := ""                  # what came of the last choice
 var note_failed := false
 var note_left := 0
 var logged := 0
@@ -123,58 +148,67 @@ var clock_min := 0              # MHz, over the log window
 var clock_max := 0
 var render_scale := 1.0         # 3D render scale of the XR viewport
 var foveation := 0              # the foveation level chosen (main.set_foveation)
-var fov_title: Label3D
-var plate: MeshInstance3D
-var plate_mat: StandardMaterial3D
-var buttons: Array = []         # {kind "rate" / "scale" / "fov" / "order" / "grav" / "bench", value, rect (panel x, y), mat, label}
+var text := ""                  # the head's lines
+var open := false               # the menu is shown
+var strip_on := true            # the line below is shown while the menu is closed
+var cursor := 0                 # the row picked
+var pending := -1               # the picked row's value stepped to, not yet in effect; -1 none
+var pending_t := 0.0
+var rows: Array = []            # {key, name: Label3D, value: Label3D, y}
 var rate_options: Array = []
-var titles: Array = []          # Label3D: the rows' titles and the hint under them
-var bench_text := "замер скорости"
-var bench_title: Label3D
-var plate_rect := Rect2()
-var hover := [-1, -1]           # per hand (left, right): the button its ray is on, -1 none
-var on_plate := [false, false]  # per hand: its ray is on the panel
-var trigger_down := [false, false]
-var rays: Array = []            # per hand: the ray drawn from the controller
+var bench_text := ""            # the speed check's line: how it goes, what came out
+var bench_unseen := false       # the line below shows it until the menu is opened
+var menu: Node3D
+var strip: Node3D
+var plate: MeshInstance3D       # behind the head's lines, coloured by the verdict
+var plate_mat: StandardMaterial3D
+var panel: MeshInstance3D       # behind all of the menu
+var cursor_quad: MeshInstance3D
+var status_label: Label3D
+var bench_label: Label3D
+var hint_label: Label3D
+var arrows: Array = []          # MeshInstance3D: left and right of the picked row's value
+var strip_label: Label3D
+var strip_plate: MeshInstance3D
+var strip_mat: StandardMaterial3D
+var menu_w := 0.5               # m
+var name_x := 0.0               # the names' left edge, the values' column: centre and half width
+var value_x := 0.0
+var value_half := 0.0
 
 
 func _ready() -> void:
-	no_depth_test = true
-	render_priority = 22
-	pixel_size = 0.001
-	font_size = 40
-	outline_size = 0
-	modulate = Color(1.0, 0.97, 0.88)
-	horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	plate_mat = StandardMaterial3D.new()
-	plate_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	plate_mat.albedo_color = COLOR_WAIT
-	plate_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	plate_mat.no_depth_test = true
-	plate_mat.render_priority = 19
-	plate = MeshInstance3D.new()
-	plate.mesh = QuadMesh.new()
-	plate.material_override = plate_mat
-	add_child(plate)
-	for i in 2:
-		var ray := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3(0.004, 0.004, 1.0)
-		ray.mesh = box
-		ray.material_override = _flat(COLOR_RAY, 23)
-		ray.top_level = true
-		ray.visible = false
-		add_child(ray)
-		rays.append(ray)
+	menu = Node3D.new()
+	menu.transform = Transform3D(Basis(Vector3.RIGHT, -atan2(MENU_DROP, MENU_DIST)), Vector3(0.0, -MENU_DROP, -MENU_DIST))
+	add_child(menu)
+	strip = Node3D.new()
+	strip.transform = Transform3D(Basis(Vector3.RIGHT, -atan2(STRIP_DROP, STRIP_DIST)), Vector3(0.0, -STRIP_DROP, -STRIP_DIST))
+	add_child(strip)
+	panel = _quad(menu, _flat(COLOR_PANEL, 19))
+	plate_mat = _flat(COLOR_WAIT, 20)
+	plate = _quad(menu, plate_mat)
+	cursor_quad = _quad(menu, _flat(COLOR_CURSOR, 21))
+	status_label = _text(menu, "", FONT_STATUS, HORIZONTAL_ALIGNMENT_LEFT, VERTICAL_ALIGNMENT_TOP)
+	bench_label = _text(menu, "", FONT_SMALL, HORIZONTAL_ALIGNMENT_LEFT, VERTICAL_ALIGNMENT_TOP)
+	bench_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint_label = _text(menu, HINT, FONT_SMALL, HORIZONTAL_ALIGNMENT_LEFT, VERTICAL_ALIGNMENT_TOP)
+	hint_label.modulate = COLOR_OFF.lerp(COLOR_TEXT, 0.5)
+	for side in [-1.0, 1.0]:
+		arrows.append(_arrow(side))
+	strip_mat = _flat(COLOR_WAIT, 20)
+	strip_plate = _quad(strip, strip_mat)
+	strip_label = _text(strip, "", FONT_STRIP, HORIZONTAL_ALIGNMENT_CENTER, VERTICAL_ALIGNMENT_CENTER)
+	strip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	strip_label.width = STRIP_WRAP / PIXEL
 	RenderingServer.viewport_set_measure_render_time(target.get_viewport_rid(), true)
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS)
+	strip_on = bool(cfg.get_value("ui", "strip", true))
 	if xr:
 		api = OpenXRAPIExtension.new()
 		# a method, not a lambda: a lambda left connected to the interface corrupted memory at exit
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
-		var cfg := ConfigFile.new()
-		cfg.load(SETTINGS)
 		_set_scale(float(cfg.get_value("render", "scale", 1.0)))
 		if viewer:
 			viewer.own_order = clampi(int(cfg.get_value("render", "own_order", DEFAULT_ORDER)), 0, 1)
@@ -184,6 +218,7 @@ func _ready() -> void:
 		find_app_setting()
 		_log_foveation()
 	_set_text("...")
+	_show()
 
 
 func _flat(c: Color, priority: int) -> StandardMaterial3D:
@@ -196,18 +231,59 @@ func _flat(c: Color, priority: int) -> StandardMaterial3D:
 	return m
 
 
-func _text(t: String, size: int, pos: Vector3) -> Label3D:
+func _quad(parent: Node3D, mat: StandardMaterial3D) -> MeshInstance3D:
+	var q := MeshInstance3D.new()
+	q.mesh = QuadMesh.new()
+	q.material_override = mat
+	parent.add_child(q)
+	return q
+
+
+func _text(parent: Node3D, s: String, size: int, h: HorizontalAlignment, v: VerticalAlignment) -> Label3D:
 	var l := Label3D.new()
-	l.text = t
+	l.text = s
 	l.font_size = size
-	l.pixel_size = pixel_size
+	l.pixel_size = PIXEL
 	l.outline_size = 0
 	l.no_depth_test = true
 	l.render_priority = 22
-	l.modulate = modulate
-	l.position = pos
-	add_child(l)
+	l.modulate = COLOR_TEXT
+	l.horizontal_alignment = h
+	l.vertical_alignment = v
+	parent.add_child(l)
 	return l
+
+
+## A small triangle pointing left (side -1) or right (+1): the picked row's value can go there.
+func _arrow(side: float) -> MeshInstance3D:
+	var m := ArrayMesh.new()
+	var a := []
+	a.resize(Mesh.ARRAY_MAX)
+	var s := 0.5 * ARROW
+	a[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(side * s, 0.0, 0.0), Vector3(-side * s, 0.7 * ARROW, 0.0),
+			Vector3(-side * s, -0.7 * ARROW, 0.0)])
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+	var mi := MeshInstance3D.new()
+	mi.mesh = m
+	mi.material_override = _flat(COLOR_TEXT, 22)
+	mi.material_override.cull_mode = BaseMaterial3D.CULL_DISABLED
+	menu.add_child(mi)
+	return mi
+
+
+static func _font() -> Font:
+	return ThemeDB.fallback_font
+
+
+static func _width(s: String, size: int) -> float:
+	var w := 0.0
+	for line in s.split("\n"):
+		w = maxf(w, _font().get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x * PIXEL)
+	return w
+
+
+static func _line(size: int) -> float:
+	return _font().get_height(size) * PIXEL
 
 
 ## The rate choices: SteamVR's per-app ones on the Frame, else what the runtime offers.
@@ -221,155 +297,313 @@ func _rate_options() -> Array:
 	return offered
 
 
-## The menu below the head text: titles, button rows, a hint; and the plate under all of it.
-## Built again when the rate choices change.
-func _layout() -> void:
-	for b in buttons:
-		b.mesh.queue_free()
-		b.label.queue_free()
-	for l in titles:
-		l.queue_free()
-	buttons.clear()
-	titles.clear()
-	fov_title = null
-	rate_options = _rate_options()
-	var f: Font = font if font else ThemeDB.fallback_font
-	var line := f.get_height(font_size) * pixel_size
-	var y := -STATUS_LINES * line - 0.02
-	var rows := [["частота, Гц", "rate", rate_options, RATE_W], ["разрешение", "scale", SCALES, SCALE_W],
-			["фовеация SteamVR", "fov", [0.0, 1.0, 3.0], FOV_W],
-			["фовеация плавная · точка взгляда", "fov", [4.0, 5.0, GAZE_BUTTON], FOV_W],
-			["плавная: сперва грубее", "order", [0.0, 1.0], ORDER_W]]
-	if viewer and "gravity_view" in viewer:
-		rows.append(["гравитация · Y на левом", "grav", [0.0, 1.0, 2.0], FOV_W])
-	if viewer and viewer.get("bench"):
-		rows.append([bench_text, "bench", [0.0], BENCH_W])
-	var width := 0.0
-	for row in rows:
-		titles.append(_text(row[0], 30, Vector3(0.0, y - 0.015, 0.0)))
-		if row[1] == "bench":
-			bench_title = titles.back()
-		elif row[1] == "fov" and fov_title == null:
-			fov_title = titles.back()
-		y -= 0.045
-		var n: int = row[2].size()
-		var w: float = row[3]
-		var row_w := n * w + (n - 1) * BTN_GAP
-		width = maxf(width, row_w)
-		for i in n:
-			var v: float = row[2][i]
-			var x := -0.5 * row_w + 0.5 * w + i * (w + BTN_GAP)
-			var mesh := MeshInstance3D.new()
-			var q := QuadMesh.new()
-			q.size = Vector2(w, BTN_H)
-			mesh.mesh = q
-			var mat := _flat(COLOR_BTN, 21)
-			mesh.material_override = mat
-			mesh.position = Vector3(x, y - 0.5 * BTN_H, -0.002)
-			add_child(mesh)
-			var t := "%.0f" % v if row[1] == "rate" else "%d%%" % roundi(v * 100.0)
-			if row[1] == "bench":
-				t = "сравнить с прежним" if viewer.bench.has_ab() else "замерить"
-			elif row[1] == "fov":
-				t = "точка" if v == GAZE_BUTTON else FOVEATIONS[int(v)]
-			elif row[1] == "order":
-				t = ORDERS[i]
-			elif row[1] == "grav":
-				t = GRAVITY_VIEWS[i]
-			var label := _text(t, 32, Vector3(x, y - 0.5 * BTN_H, 0.0))
-			buttons.append({"kind": row[1], "value": v, "mat": mat, "mesh": mesh, "label": label,
-					"rect": Rect2(x - 0.5 * w, y - BTN_H, w, BTN_H)})
-		y -= BTN_H + 0.02
-	titles.append(_text("наведи контроллер на кнопку и нажми курок", 26, Vector3(0.0, y - 0.01, 0.0)))
-	y -= 0.04
-	width = maxf(width, 0.66) + 0.06
-	plate_rect = Rect2(-0.5 * width, y - 0.01, width, -y + 0.03)
-	(plate.mesh as QuadMesh).size = plate_rect.size
-	plate.position = Vector3(plate_rect.get_center().x, plate_rect.get_center().y, -0.005)
+# ---------------------------------------------------------------- the menu
+
+## Open or close the menu (the menu button). Closing puts a value stepped to into effect.
+func toggle() -> void:
+	set_open(not open)
 
 
-## Colour the buttons: in effect, chosen and pending, under a ray.
-func _paint() -> void:
-	for i in buttons.size():
-		var b: Dictionary = buttons[i]
-		var c := COLOR_BTN
-		if b.kind == "rate":
-			var chosen := requested if requested > 0.0 else (desired if writing else stored)
-			if rate > 0.0 and absf(b.value - rate) < 0.5:
-				c = COLOR_ON
-			elif chosen > 0.0 and absf(b.value - chosen) < 0.5:
-				c = COLOR_PENDING
-		elif b.kind == "bench":
+func set_open(on: bool) -> void:
+	if on == open:
+		return
+	if not on:
+		_apply_pending()
+	open = on
+	if open:
+		bench_unseen = false    # it is under its row now
+		_follow(0.0, true)      # in front of where the head looks now
+		refresh()
+	_show()
+	_update_strip()
+	print("menu: %s" % ("open" if open else "closed"))
+
+
+## The picked row up (step -1) or down (+1), round at the ends. What was stepped to on the row
+## left takes effect.
+func move(step: int) -> void:
+	if not open or rows.is_empty():
+		return
+	_apply_pending()
+	cursor = posmod(cursor + step, rows.size())
+	refresh()
+
+
+## The picked row's value one to the left (step -1) or right (+1); it takes effect SETTLE s later
+## (or at once with A, on another row, on closing).
+func change(step: int) -> void:
+	if not open or rows.is_empty():
+		return
+	var k: String = rows[cursor].key
+	if not _enabled(k):
+		return
+	var from := pending if pending >= 0 else _current(k)
+	var to := clampi(from + step, 0, _count(k) - 1)
+	if to == from:
+		return
+	pending = -1 if to == _current(k) else to
+	pending_t = 0.0
+	refresh()
+
+
+## A: the picked row's action (the speed check), or the value stepped to in effect now, or else
+## the next value at once (round at the end: a switch goes on and off; not the rate, whose next
+## one is a switch of the display nobody asked for).
+func press() -> void:
+	if not open or rows.is_empty():
+		return
+	var k: String = rows[cursor].key
+	if not _enabled(k):
+		return
+	if k == "bench":
+		viewer.bench.start()
+		set_open(false)         # eyes closed now: the line below says how it goes
+		return
+	if pending < 0 and _count(k) > 1 and k != "rate":
+		pending = posmod(_current(k) + 1, _count(k))
+	_apply_pending()
+
+
+## B: close.
+func back() -> void:
+	set_open(false)
+
+
+## Pick the row with this key (tests).
+func select(key: String) -> bool:
+	for i in rows.size():
+		if rows[i].key == key:
+			_apply_pending()
+			cursor = i
+			refresh()
+			return true
+	return false
+
+
+func picked() -> String:
+	return rows[cursor].key if not rows.is_empty() else ""
+
+
+func _apply_pending() -> void:
+	if pending < 0 or rows.is_empty():
+		return
+	var k: String = rows[cursor].key
+	var i := pending
+	pending = -1
+	if _enabled(k):
+		_apply(k, i)
+	refresh()
+
+
+## How many values a row has (the speed check's: one, its action).
+func _count(k: String) -> int:
+	match k:
+		"rate": return rate_options.size()
+		"scale": return SCALES.size()
+		"fov": return FOV_CHOICES.size()
+		"grav": return GRAVITY_VIEWS.size()
+		"bench": return 1
+	return 2
+
+
+## The value in effect (the rate: the one chosen, in effect or not yet).
+func _current(k: String) -> int:
+	match k:
+		"rate":
+			var chosen := requested if requested > 0.0 else (desired if writing else (stored if stored > 0.0 else rate))
+			for i in rate_options.size():
+				if absf(rate_options[i] - chosen) < 0.5:
+					return i
+			return -1
+		"scale": return maxi(SCALES.find(render_scale), 0)
+		"fov":
+			var i := FOV_CHOICES.size() - 1
+			while i > 0 and FOV_CHOICES[i] > foveation:
+				i -= 1
+			return i
+		"order": return viewer.own_order
+		"gaze": return 1 if viewer.gaze_dot.visible else 0
+		"grav": return viewer.gravity_view
+		"turn": return 0 if viewer.smooth_turn else 1
+		"strip": return 0 if strip_on else 1
+	return 0
+
+
+func _apply(k: String, i: int) -> void:
+	match k:
+		"rate": choose_rate(rate_options[i])
+		"scale": choose_scale(SCALES[i])
+		"fov": choose_foveation(FOV_CHOICES[i])
+		"order": choose_order(i)
+		"gaze": show_gaze(i == 1)
+		"grav": choose_gravity(i)
+		"turn": viewer.set_smooth_turn(i == 0)
+		"strip": set_strip(i == 0)
+
+
+## Whether the row can be changed now: not what the speed check sets while it runs.
+func _enabled(k: String) -> bool:
+	var held: bool = viewer != null and viewer.get("hold")
+	match k:
+		"rate": return xr != null and rate_options.size() > 1 and not held
+		"scale", "fov", "order": return xr != null and not held
+		"grav": return not held
+		"bench": return not viewer.bench.running and not held
+	return true
+
+
+## The row's i-th value in words.
+func _value_text(k: String, i: int) -> String:
+	if i < 0:
+		return "%.0f Гц" % rate if k == "rate" and rate > 0.0 else "—"
+	match k:
+		"rate": return "%.0f Гц" % rate_options[i]
+		"scale":
+			var px := roundi(xr.get_render_target_size().x * SCALES[i]) if xr else 0
+			return "%d%% (%d точек)" % [roundi(SCALES[i] * 100.0), px] if px > 0 else "%d%%" % roundi(SCALES[i] * 100.0)
+		"fov": return FOVEATIONS[FOV_CHOICES[i]]
+		"order": return ORDERS[i]
+		"gaze": return OFF_ON[i]
+		"grav": return GRAVITY_VIEWS[i]
+		"turn": return TURNS[i]
+		"strip": return ON_OFF[i]
+		"bench":
 			if viewer.bench.running:
-				c = COLOR_PENDING
-		elif b.kind == "order":
-			if viewer and int(b.value) == viewer.own_order:
-				c = COLOR_ON
-		elif b.kind == "grav":
-			if viewer and int(b.value) == viewer.gravity_view:
-				c = COLOR_ON
-		elif b.kind == "fov":
-			if b.value == GAZE_BUTTON:
-				if viewer and viewer.gaze_dot and viewer.gaze_dot.visible:
-					c = COLOR_ON
-			elif int(b.value) == foveation:
-				c = COLOR_ON
-		elif is_equal_approx(b.value, render_scale):
-			c = COLOR_ON
-		if hover.has(i):
-			c = c.lerp(Color(1.0, 1.0, 1.0, c.a), 0.3)
-		b.mat.albedo_color = c
+				return "идёт"
+			return "сравнить с прежним" if viewer.bench.has_ab() else "замерить"
+	return ""
 
 
-## A hand's ray this frame: from, a unit direction (both in the play space, the panel's parent's
-## space), and its trigger. Hovers the button the ray is on; a trigger press presses it.
-func point(hand: int, from: Vector3, dir: Vector3, trigger: float, tracked := true) -> void:
-	var was: int = hover[hand]
-	hover[hand] = -1
-	on_plate[hand] = false
-	var hit := Vector3.ZERO
-	if tracked and dir.length() > 0.5:
-		var inv := transform.affine_inverse()
-		var o := inv * from
-		var d := inv.basis * dir
-		if d.z < -1e-4 and o.z > 0.0:
-			hit = o - d * (o.z / d.z)
-			var p := Vector2(hit.x, hit.y)
-			on_plate[hand] = plate_rect.grow(0.15).has_point(p)
-			for i in buttons.size():
-				if buttons[i].rect.has_point(p):
-					hover[hand] = i
-	var ray: MeshInstance3D = rays[hand]
-	ray.visible = on_plate[hand]
-	if on_plate[hand]:
-		var end := transform * hit
-		var len := from.distance_to(end)
-		var up := Vector3.UP if absf(dir.y) < 0.95 else Vector3.BACK
-		ray.global_transform = get_parent().global_transform * Transform3D(
-				Basis.looking_at(dir, up) * Basis.from_scale(Vector3(1.0, 1.0, len)), from + 0.5 * len * dir)
-	if trigger_down[hand]:
-		trigger_down[hand] = trigger > 0.3
-	elif trigger >= 0.7:
-		trigger_down[hand] = true
-		if hover[hand] >= 0:
-			var b: Dictionary = buttons[hover[hand]]
-			if b.kind == "rate":
-				choose_rate(b.value)
-			elif b.kind == "scale":
-				choose_scale(b.value)
-			elif b.kind == "fov" and b.value == GAZE_BUTTON:
-				show_gaze(not viewer.gaze_dot.visible)
-			elif b.kind == "order":
-				choose_order(int(b.value))
-			elif b.kind == "grav":
-				choose_gravity(int(b.value))
-			elif b.kind == "fov":
-				choose_foveation(int(b.value))
-			else:
-				viewer.bench.start()
-				_paint()
-	if hover[hand] != was:
-		_paint()
+func _name_text(k: String) -> String:
+	if k == "fov" and _foveation_source() != "":
+		return NAMES[k] + " · " + _foveation_source()
+	return NAMES[k]
+
+
+## A value chosen but not (yet) in effect: the rate the display has not followed.
+func _waiting(k: String) -> bool:
+	if k == "rate":
+		var i := _current(k)
+		return i >= 0 and rate > 0.0 and absf(rate_options[i] - rate) > 0.5
+	return false
+
+
+## The rows and their labels. Built again when the rate choices change.
+func _layout() -> void:
+	for r in rows:
+		r.name.queue_free()
+		r.value.queue_free()
+	rows.clear()
+	rate_options = _rate_options()
+	var keys := []
+	for k: String in ROWS:
+		var here := true
+		match k:
+			"rate", "scale", "fov", "order": here = xr != null
+			"gaze": here = viewer != null and viewer.get("gaze_dot") != null
+			"grav": here = viewer != null and "gravity_view" in viewer
+			"turn": here = viewer != null and "smooth_turn" in viewer
+			"bench": here = viewer != null and viewer.get("bench") != null
+		if here:
+			keys.append(k)
+	# the widest name and value make the columns
+	var name_w := 0.0
+	var val_w := 0.0
+	for k: String in keys:
+		name_w = maxf(name_w, _width(_name_text(k), FONT_ROW))
+		for i in _count(k):
+			val_w = maxf(val_w, _width(_value_text(k, i), FONT_ROW))
+	val_w = maxf(val_w, _width("100% (8888 точек)", FONT_ROW) if xr else 0.0)
+	var arrow_w := ARROW
+	menu_w = 2.0 * PAD + name_w + 2.0 * GAP + 2.0 * (arrow_w + GAP) + val_w
+	for s: String in [HINT, "кадров 144 из 144 · GPU 13.9 из 13.9 мс", "в SteamVR задано 144 Гц, а шлем на 144",
+			"задано 144 Гц: выйди и запусти снова", STEAM_HINT]:
+		menu_w = maxf(menu_w, 2.0 * PAD + _width(s, FONT_STATUS))
+	name_x = -0.5 * menu_w + PAD
+	value_half = 0.5 * val_w
+	value_x = 0.5 * menu_w - PAD - arrow_w - GAP - value_half
+	arrows[0].position.x = value_x - value_half - GAP - 0.5 * arrow_w
+	arrows[1].position.x = value_x + value_half + GAP + 0.5 * arrow_w
+	for k: String in keys:
+		rows.append({"key": k, "y": 0.0,
+				"name": _text(menu, _name_text(k), FONT_ROW, HORIZONTAL_ALIGNMENT_LEFT, VERTICAL_ALIGNMENT_CENTER),
+				"value": _text(menu, "", FONT_ROW, HORIZONTAL_ALIGNMENT_CENTER, VERTICAL_ALIGNMENT_CENTER)})
+	cursor = clampi(cursor, 0, maxi(rows.size() - 1, 0))
+	pending = -1
+	bench_label.width = (menu_w - 2.0 * PAD) / PIXEL
+	_place()
+
+
+## Where everything in the menu goes, top to bottom: the head's lines on their plate, the rows,
+## the speed check's result, the hint. Again when the head or the result grows.
+func _place() -> void:
+	if rows.is_empty():
+		return
+	var head_h := maxi(STATUS_LINES, status_label.text.count("\n") + 1) * _line(FONT_STATUS) + 2.0 * GAP
+	var bench_h := 0.0
+	bench_label.visible = bench_text != ""
+	if bench_label.visible:
+		bench_h = _font().get_multiline_string_size(bench_text, HORIZONTAL_ALIGNMENT_LEFT,
+				bench_label.width, FONT_SMALL).y * PIXEL + GAP
+	var hint_h := (HINT.count("\n") + 1) * _line(FONT_SMALL)
+	var h := head_h + GAP + rows.size() * ROW_H + bench_h + GAP + hint_h + PAD
+	var top := 0.5 * h
+	(panel.mesh as QuadMesh).size = Vector2(menu_w, h)
+	panel.position = Vector3(0.0, 0.0, -0.003)
+	(plate.mesh as QuadMesh).size = Vector2(menu_w, head_h)
+	plate.position = Vector3(0.0, top - 0.5 * head_h, -0.002)
+	status_label.position = Vector3(name_x, top - GAP, 0.0)
+	var y := top - head_h - GAP
+	for r in rows:
+		r.y = y - 0.5 * ROW_H
+		r.name.position = Vector3(name_x, r.y, 0.0)
+		r.value.position = Vector3(value_x, r.y, 0.0)
+		y -= ROW_H
+	bench_label.position = Vector3(name_x, y - 0.5 * GAP, 0.0)
+	y -= bench_h
+	hint_label.position = Vector3(name_x, y - GAP, 0.0)
+	(cursor_quad.mesh as QuadMesh).size = Vector2(menu_w - GAP, ROW_H * 0.96)
+	refresh()
+
+
+## The rows' values and colours, the picked row.
+func refresh() -> void:
+	if rows.is_empty():
+		return
+	for i in rows.size():
+		var r: Dictionary = rows[i]
+		var k: String = r.key
+		var here := i == cursor and pending >= 0
+		r.value.text = _value_text(k, pending if here else _current(k))
+		r.value.modulate = COLOR_OFF if not _enabled(k) else (COLOR_PENDING if here or _waiting(k) else COLOR_TEXT)
+		r.name.text = _name_text(k)
+		r.name.modulate = COLOR_TEXT if _enabled(k) else COLOR_OFF
+	var r: Dictionary = rows[cursor]
+	var k: String = r.key
+	cursor_quad.position = Vector3(0.0, r.y, -0.001)
+	var at := pending if pending >= 0 else _current(k)
+	var movable := _enabled(k) and _count(k) > 1
+	for a: MeshInstance3D in arrows:
+		a.position.y = r.y
+	arrows[0].visible = movable and at > 0
+	arrows[1].visible = movable and at < _count(k) - 1
+
+
+func _show() -> void:
+	menu.visible = open
+	strip.visible = strip_on and not open
+
+
+## The line below on or off; kept for the next start.
+func set_strip(on: bool) -> void:
+	strip_on = on
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS)
+	cfg.set_value("ui", "strip", strip_on)
+	cfg.save(SETTINGS)
+	print("menu: the line below %s" % ("on" if on else "off"))
+	_show()
+	refresh()
 
 
 ## Started from the Steam library (SteamAppId set) with SteamVR's vrcmd at hand: this app's rate
@@ -387,8 +621,11 @@ func find_app_setting() -> void:
 
 
 func _process(delta: float) -> void:
-	if not (on_plate[0] or on_plate[1]):
-		_follow(delta)
+	_follow(delta)
+	if pending >= 0:
+		pending_t += delta
+		if pending_t >= SETTLE:
+			_apply_pending()
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at
@@ -426,26 +663,27 @@ func _process(delta: float) -> void:
 		gpu_max = 0.0
 
 
-func _follow(delta: float) -> void:
+## The menu and the line hang in the room ahead of the head, turned to its bearing: they follow
+## its steps at once, and its turns once it has turned TURN away (or at once: snap).
+func _follow(delta: float, snap := false) -> void:
 	if head == null:
 		return
 	var h := head.transform
 	var f := -h.basis.z
 	var head_yaw := atan2(-f.x, -f.z) if Vector2(f.x, f.z).length() > 0.2 else yaw
 	var d := wrapf(head_yaw - yaw, -PI, PI)
-	if not placed:
+	if not placed or snap:
 		yaw = head_yaw
+		turning = false
 	elif turning or absf(d) > TURN:
 		turning = absf(d) > 0.05
 		yaw += d * minf(1.0, 5.0 * delta)
-	var want := h.origin + Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, -DIST) + Vector3(0.0, -DROP, 0.0)
-	position = want if not placed else position.lerp(want, minf(1.0, 10.0 * delta))
-	# text toward the head, tilted up to the eyes
-	basis = Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, -atan2(DROP, DIST))
+	position = h.origin if not placed or snap else position.lerp(h.origin, minf(1.0, 10.0 * delta))
+	basis = Basis(Vector3.UP, yaw)
 	placed = true
 
 
-## A rate button.
+## A rate choice.
 func choose_rate(r: float) -> void:
 	if xr == null:
 		return
@@ -473,7 +711,7 @@ func _write_rate() -> void:
 	WorkerThreadPool.add_task(_set_stored.bind(desired))
 
 
-## A render scale button; kept for the next start. Below 100% the foveation goes off.
+## A render scale choice; kept for the next start. Below 100% the foveation goes off.
 func choose_scale(v: float) -> void:
 	if xr == null:
 		return
@@ -485,7 +723,7 @@ func choose_scale(v: float) -> void:
 	_set_text(_compose())
 
 
-## A foveation button; kept for the next start. On, the render scale goes back to 100%.
+## A foveation choice; kept for the next start. On, the render scale goes back to 100%.
 func choose_foveation(level: int) -> void:
 	if xr == null:
 		return
@@ -497,7 +735,7 @@ func choose_foveation(level: int) -> void:
 	_set_text(_compose())
 
 
-## An order button: which way our own maps coarsen first; kept for the next start.
+## Which way our own maps coarsen first; kept for the next start.
 func choose_order(order: int) -> void:
 	if xr == null or viewer == null:
 		return
@@ -505,16 +743,16 @@ func choose_order(order: int) -> void:
 	_save_render()
 	print("refresh: own maps coarsen the %s first, foveation %d (%s)"
 			% ["width" if viewer.own_order == 0 else "height", foveation, FOV_LOG[foveation]])
-	_paint()
+	refresh()
 
 
-## A gravity button: how gravity is shown (main.set_gravity_view). Not during the speed check,
-## which times what it set up.
+## How gravity is shown (main.set_gravity_view). Not during the speed check, which times what it
+## set up.
 func choose_gravity(view: int) -> void:
 	if viewer == null or viewer.hold:
 		return
 	viewer.set_gravity_view(view)
-	_paint()
+	refresh()
 
 
 ## The gaze dot: where SteamVR's eye tracking says the eyes look (main.gaze_dot).
@@ -523,7 +761,7 @@ func show_gaze(on: bool) -> void:
 		return
 	viewer.gaze_dot.visible = on
 	print("refresh: gaze dot %s, gaze %s" % ["on" if on else "off", _gaze_text()])
-	_paint()
+	refresh()
 
 
 ## Where the eyes look against the head, for the log.
@@ -557,12 +795,12 @@ func _log_foveation() -> void:
 			ProjectSettings.get_setting("xr/openxr/foveation_eye_tracked", false), render_scale])
 
 
-## Where the foveation's density map comes from, for the row's title.
+## Where SteamVR's density map is: where the eyes look, the middle, or none (Godot's own then).
 func _foveation_source() -> String:
 	if xr == null:
 		return ""
 	if not xr.is_foveation_supported():
-		return "нет, своя карта Godot"
+		return "без SteamVR"
 	return "по взгляду" if xr.is_eye_gaze_interaction_supported() else "по центру"
 
 
@@ -607,9 +845,9 @@ func _set_stored(r: float) -> void:
 	_stored_set.call_deferred(r, code, "".join(out))
 
 
-func _stored_set(r: float, code: int, text: String) -> void:
+func _stored_set(r: float, code: int, text_out: String) -> void:
 	writing = false
-	print("refresh: vrcmd set %.0f: exit %d [%s]" % [r, code, text.strip_edges().replace("\n", " | ")])
+	print("refresh: vrcmd set %.0f: exit %d [%s]" % [r, code, text_out.strip_edges().replace("\n", " | ")])
 	if code == 0:
 		stored = r
 	elif absf(desired - r) < 0.5:
@@ -635,12 +873,13 @@ func _answer_request() -> void:
 	_set_text(_compose())
 
 
-## The speed check's line, the title of its row.
+## The speed check's line: under its row in the menu, and below while it runs or until the menu
+## is opened.
 func bench_status(s: String) -> void:
 	bench_text = s
-	if bench_title:
-		bench_title.text = s
-	_paint()
+	bench_unseen = not open
+	bench_label.text = s
+	_set_text(text)
 
 
 func _set_note(s: String, failed: bool) -> void:
@@ -707,6 +946,7 @@ func _second() -> void:
 	if xr:
 		var ok: Variant = keeps_up(seconds)
 		plate_mat.albedo_color = COLOR_WAIT if ok == null else (COLOR_OK if ok else COLOR_BAD)
+		strip_mat.albedo_color = plate_mat.albedo_color
 	_set_text(_compose())
 	if gpu_clock != "":
 		var mhz := _gpu_mhz()
@@ -718,43 +958,67 @@ func _second() -> void:
 		_log()
 
 
-func _compose() -> String:
+## The head's first lines: the rate and the verdict, the frames and the GPU time.
+func _status() -> Array:
 	var fps := frames / t if t > 0.0 else 0.0
 	var g := gpu / frames if frames > 0 else 0.0
-	var lines := []
 	if xr == null:
-		lines = ["%.0f кадр/с" % fps, "GPU %.1f мс" % g]
-	elif rate <= 0.0:
-		lines = ["%.0f кадр/с" % fps, "GPU %.1f мс" % g, "шлем не даёт время кадров"]
-	else:
-		var ok: Variant = keeps_up(seconds)
-		var last: Array = seconds.back() if not seconds.is_empty() else [0, 0]
-		lines = [
-			"%.0f Гц · %s" % [rate, "меряю..." if ok == null else ("успевает" if ok else "не успевает")],
-			"кадров %d из %d · GPU %.1f из %.1f мс" % [last[0], last[1], g, 1000.0 / rate],
-		]
-		if requested > 0.0:
-			lines.append("переключаю на %.0f Гц..." % requested)
-		elif note != "":
-			lines.append(note)
-		if steam_key != "":
-			if stored > 0.0 and absf(stored - rate) > 0.5 and requested == 0.0:
-				if stored != stored_at_start:
-					lines.append("задано %.0f Гц: выйди и запусти снова" % stored)
-				else:
-					lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
-			if note_failed and note != "":
-				lines.append(STEAM_HINT)
-		elif rate_options.size() < 2 or (note_failed and note != ""):
+		return ["%.0f кадр/с" % fps, "GPU %.1f мс" % g]
+	if rate <= 0.0:
+		return ["%.0f кадр/с" % fps, "GPU %.1f мс" % g, "шлем не даёт время кадров"]
+	var ok: Variant = keeps_up(seconds)
+	var last: Array = seconds.back() if not seconds.is_empty() else [0, 0]
+	return ["%.0f Гц · %s" % [rate, "меряю..." if ok == null else ("успевает" if ok else "не успевает")],
+			"кадров %d из %d · GPU %.1f из %.1f мс" % [last[0], last[1], g, 1000.0 / rate]]
+
+
+## What came of a rate choice, and what to do about it.
+func _notes() -> Array:
+	var lines := []
+	if xr == null or rate <= 0.0:
+		return lines
+	if requested > 0.0:
+		lines.append("переключаю на %.0f Гц..." % requested)
+	elif note != "":
+		lines.append(note)
+	if steam_key != "":
+		if stored > 0.0 and absf(stored - rate) > 0.5 and requested == 0.0:
+			if stored != stored_at_start:
+				lines.append("задано %.0f Гц: выйди и запусти снова" % stored)
+			else:
+				lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
+		if note_failed and note != "":
 			lines.append(STEAM_HINT)
-	var joined := "\n".join(lines)
+	elif rate_options.size() < 2 or (note_failed and note != ""):
+		lines.append(STEAM_HINT)
+	return lines
+
+
+## The menu's head, padded to STATUS_LINES lines.
+func _compose() -> String:
+	var joined := "\n".join(_status() + _notes())
 	while joined.count("\n") < STATUS_LINES - 1:
 		joined += "\n"
 	return joined
 
 
+## The line below the view: the head in one line, what came of a choice, the speed check.
+func _compose_line() -> String:
+	var s := _status()
+	var first: String = s[0]
+	if xr != null and rate > 0.0:
+		var g := gpu / frames if frames > 0 else 0.0
+		first += " · GPU %.1f из %.1f мс" % [g, 1000.0 / rate]
+	elif s.size() > 1:
+		first += " · " + s[1]
+	var lines := [first] + _notes()
+	if bench_text != "" and (bench_unseen or (viewer and viewer.get("bench") and viewer.bench.running)):
+		lines.append(bench_text)
+	return "\n".join(lines)
+
+
 ## The last second, in one line of the log: where the feet are and where the head looks, the
-## frames and refreshes, the GPU time, and the panel's verdict over the last few seconds.
+## frames and refreshes, the GPU time, and the verdict over the last few seconds.
 func _log() -> void:
 	if seconds.is_empty():
 		return
@@ -767,21 +1031,33 @@ func _log() -> void:
 		var look: Vector2 = viewer.look_angles()
 		where = "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 				"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d"
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
 			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds), foveation, "width" if viewer and viewer.own_order == 0 else "height", _gaze_text(),
-			viewer.gravity_view if viewer else 0])
+			viewer.gravity_view if viewer else 0, "open" if open else "closed"])
 	clock_min = 0
 	clock_max = 0
 
 
+## New head lines: into the menu's head and the line below; the rows again if the rate choices
+## changed, the menu's places again if its parts grew or shrank.
 func _set_text(s: String) -> void:
 	text = s
-	if _rate_options() != rate_options or buttons.is_empty():
+	var lines_before := status_label.text.count("\n")
+	status_label.text = s
+	_update_strip()
+	if _rate_options() != rate_options or rows.is_empty():
 		_layout()
-	if xr and titles.size() > 1:
-		titles[1].text = "разрешение · %d точек на глаз" % roundi(xr.get_render_target_size().x * render_scale)
-	if xr and fov_title:
-		fov_title.text = "фовеация SteamVR · " + _foveation_source()
-	_paint()
+	elif s.count("\n") != lines_before or bench_text != "" or bench_label.visible:
+		_place()
+	else:
+		refresh()
+
+
+func _update_strip() -> void:
+	strip_label.text = _compose_line()
+	var size := _font().get_multiline_string_size(strip_label.text, HORIZONTAL_ALIGNMENT_CENTER,
+			strip_label.width, FONT_STRIP) * PIXEL
+	(strip_plate.mesh as QuadMesh).size = size + Vector2(2.0 * GAP, GAP)
+	strip_plate.position = Vector3(0.0, 0.0, -0.002)
