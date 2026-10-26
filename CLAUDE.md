@@ -108,7 +108,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   (grab_test): a light ball follows within 3 mm, a flick of 38 rad/s spins a 0.7 kg cube to 8 rad/s
   and a 3 kg one to under 1, a ball held 25 cm off the hand leaves a flick at 2 m/s (9.5 before),
   a 4.5 kg ball held at its side sinks to ~30° in 3-4 s and stays, an arc throw leaves within
-  1.4°. CPU: ~0.1 ms a frame per held toy on the desktop. Not yet in the headset. Wish next to it:
+  1.4°. CPU: ~0.1 ms a frame per held toy on the desktop; the crate by the model (`--toys --split`):
+  4.50 -> 4.51 ms over the speed check's 13 poses, 2.61 -> 2.69 looking at it from the start.
+  `tools/test_stereo.sh` passes. Not yet in the headset. Wish next to it:
   «Хват по размеру» (one hand holds only what it can grip).
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
