@@ -36,14 +36,17 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   Gravity through the wormhole, its views and the balls-and-cubes demo (from `gravity`, merged,
   below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`. The cheaper
   demo (from `toys`, merged, below) is in it too: the toys sorted by region and searched in
-  windows, the frame split by the stencil, and the throat's "stripe" fixed.
+  windows, the frame split by the stencil, and the throat's "stripe" fixed. Grab and throw (from
+  `throw`, merged, below) are in it too: the hands as balls, grip takes a ball or a cube and lets
+  it fly, right B a new ball, left X a new cube.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
-  the avatar as balls (`tests/grab_test.gd`). The old core; `throw` redoes it on `main`.
-- `throw` — grab and throw on `main` (README «Руки: взять и бросить»): each hand a 4 cm
+  the avatar as balls (`tests/grab_test.gd`). The old core; `throw` (merged into `main`) redid it there.
+- `throw` — merged into `main` (the owner tried it in the headset twice and asked to merge): grab
+  and throw (README «Руки: взять и бросить»): each hand a 4 cm
   ray-traced ball at the grip pose (`main.grips`), placed by a geodesic from the head with the
   room's axes carried along (`main._update_hands`); it pushes the toys and turns green within
   12 cm of one; grip takes the nearest ball or cube, kept at its offset and turn in the hand's
@@ -154,8 +157,9 @@ Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
 - free flight in 3D with gravity on/off → `main` (the honest field, `WormholeSpace.potential_grad`,
   and bodies that move in it, `ball_world.gd`);
-- pick up and throw, pulling objects like in Half-Life: Alyx → `throw` (grip grab and throw of
-  balls and cubes on the fast core, the hands on the curved space; `grab` is the old sketch);
+- pick up and throw, the hand of finite strength, pulling objects like in Half-Life: Alyx → `main`
+  (grip grab and throw of balls and cubes on the fast core, the hands on the curved space, merged
+  from `throw`; `grab` is the old sketch);
 - cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
   the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
@@ -174,14 +178,14 @@ Where the README wishes start (wishes without a branch start from `main`):
   and the frame drops; it is off by default in `grab`.
 
 When branches are put together, these overlap:
-- `throw`'s grip and `throat`'s: there the right grip held makes the right stick's y the fillet,
-  here it grabs. `throw`'s right B and left X are taken (a new ball, a new cube).
-- `throw`'s hands take two of the shader's 12 ball slots (`BallWorld.MAX_BALLS` 8 + 2). Per frame
+- the grip (on `main`, from `throw`) and `throat`'s: there the right grip held makes the right
+  stick's y the fillet, on `main` it grabs. Right B and left X are taken (a new ball, a new cube).
+- the hands (on `main`, from `throw`) take two of the shader's 12 ball slots (`BallWorld.MAX_BALLS` 8 + 2). Per frame
   `main._process` steps the free toys first (the hands pushing from last frame's places), then
   places the hands and what they hold (`_update_hands`), then uploads: a toy let go starts from
   the hand, not a frame ahead. Teleports (`place`, `set_pose`, a snap turn) forget the hands'
   recent places (`_forget_motion`), or the jump would be a throw.
-- `grab` and `throw` both have a `tests/grab_test.gd`: keep `throw`'s.
+- `grab` and `main` (from `throw`) both have a `tests/grab_test.gd`: keep `main`'s.
 - the left trigger, on `main`: a trigger presses the panel's button its controller points at, and
   the left one runs, but not while the left ray is on the panel (`perf.on_plate[0]`).
 - the right stick: x turns on `main` (its click switches smooth/snap), y changes the throat in
