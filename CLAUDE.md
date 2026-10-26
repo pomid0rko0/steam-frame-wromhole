@@ -204,8 +204,10 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   `tests/geodesic_test.gd`), the head and hands in steps of `STEP_FRAME` 0.1 m, balls held by
   friction fall asleep (`BALL_SLEEP_STEPS`), pairs and hands' pushes by centres found once a step,
   the toys' uniforms only when changed (`_toy_param`): main's scripts 4.8 -> 1.2 ms a frame on
-  this x86 (`tests/cpu_test.gd`), logged as `main's scripts` in `refresh:` lines. Model, a ball
-  held at the chest, 13 poses: 6.05 -> 4.66 ms (at the edge 7.7 -> 5.1). Not yet in the headset.
+  this x86 (`tests/cpu_test.gd`), logged as `main's scripts` in `refresh:` lines. Model, 13
+  poses, the marks counted: a ball held at the chest 6.05 -> 5.01 ms (at the edge 7.66 -> 5.48),
+  the demo alone 4.50 -> 4.32 (the start and the throat sideways as before). The speed check times
+  this build an eighth way, "a ball in the hand" (bench.gd IN_HAND). Not yet in the headset.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 

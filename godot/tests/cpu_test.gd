@@ -79,7 +79,6 @@ func _run() -> void:
 	await _step(30)
 	var held: bool = main.hand_state[1].has("held")
 	var times := PackedInt64Array()
-	main.prof = {}
 	for k in FRAMES:
 		await _step()
 		times.append(main.get("cpu_us") if main.get("cpu_us") != null else 0)
@@ -98,10 +97,6 @@ func _run() -> void:
 			main.world.cubes.size(), held])
 	print("cpu: main's scripts a frame: mean %.0f us, median %d, 95%% %d, most %d" % [mean,
 			times[times.size() / 2], times[int(times.size() * 0.95)], times[-1]])
-	var keys: Array = main.prof.keys()
-	keys.sort()
-	for k in keys:
-		print("cpu:   in frames: %s %.0f us" % [k, float(main.prof[k]) / FRAMES])
 	_parts()
 	XRServer.remove_tracker(left)
 	XRServer.remove_tracker(right)

@@ -131,6 +131,7 @@ var marks: Array[MeshInstance3D] = []    # 2 and 3 over the whole view, 2 and 3 
 var whole_mark: MeshInstance3D      # 2 over the whole view (TOYS_WHOLE)
 var mark_materials: Array[ShaderMaterial] = []   # the marks' that read uniforms (_make_marks)
 var toy_params := {}                # the toys' uniforms as last set (_toy_param)
+var mark_sent := [[], []]           # the marks' toys as last set, far and near (_update_near)
 var shell_toys := []                # the shell's toys as the shader has them: [bit, R^4 centre, reach]
 var near_mask := 0                  # the bits of those near the head (_update_near)
 var warm_frames := 0                # frames left that draw every mark and ray tracer (_update_proxies)
@@ -1654,16 +1655,21 @@ func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	for t in shell_toys:
 		if not (near_mask >> int(t[0])) & 1:
 			others.append(t)
-	var far_groups := _mark_groups(others)
-	var near_groups := _mark_groups(near_toys)
-	for k in 4:
-		var g: Array = near_groups if k % 2 == 1 else far_groups
-		var m := mark_materials[k]
-		for j in _MARK_ARRAYS.size():
-			m.set_shader_parameter(_MARK_ARRAYS[j], g[j])
-		m.set_shader_parameter("wh_mkGroups", g[6])
-		if k % 2 == 1:
-			m.set_shader_parameter("wh_near", near)
+	var groups := [_mark_groups(others), _mark_groups(near_toys)]
+	groups[1].append(near)
+	# only what changed (the far ones lie still mostly; the near ones move with the hands)
+	for side in 2:
+		if mark_sent[side] == groups[side]:
+			continue
+		mark_sent[side] = groups[side]
+		var g: Array = groups[side]
+		for k in [side, side + 2]:
+			var m := mark_materials[k]
+			for j in _MARK_ARRAYS.size():
+				m.set_shader_parameter(_MARK_ARRAYS[j], g[j])
+			m.set_shader_parameter("wh_mkGroups", g[6])
+			if side == 1:
+				m.set_shader_parameter("wh_near", near)
 
 
 const _MARK_ARRAYS := [&"wh_mkX", &"wh_mkY", &"wh_mkZ", &"wh_mkR2", &"wh_mkLo", &"wh_mkHi"]
@@ -1674,24 +1680,36 @@ const _MARK_ARRAYS := [&"wh_mkX", &"wh_mkY", &"wh_mkZ", &"wh_mkR2", &"wh_mkLo", 
 ## how many groups]. An empty slot never passes: reach^2 -1, its l range at 1e9.
 static func _mark_groups(toys: Array) -> Array:
 	var n := mini(toys.size(), 20)
-	var out := []
-	for j in 6:
-		var a := PackedVector4Array()
-		for g in 5:
-			var v := Vector4.ZERO
-			for k in 4:
-				var i := 4 * g + k
-				if i >= n:
-					v[k] = -1.0 if j == 3 else (1e9 if j >= 4 else 0.0)
-					continue
-				var t: Array = toys[i]
-				var C: Vector4 = t[1]
-				var rr: float = t[2] + 0.01
-				v[k] = [C.x, C.y, C.z, rr * rr, t[3], t[4]][j]
-			a.append(v)
-		out.append(a)
-	out.append(ceili(n / 4.0))
-	return out
+	var ax := PackedVector4Array()
+	var ay := PackedVector4Array()
+	var az := PackedVector4Array()
+	var ar := PackedVector4Array()
+	var alo := PackedVector4Array()
+	var ahi := PackedVector4Array()
+	for g in 5:
+		var x := Vector4.ZERO
+		var y := Vector4.ZERO
+		var z := Vector4.ZERO
+		var r2 := Vector4(-1.0, -1.0, -1.0, -1.0)
+		var lo := Vector4(1e9, 1e9, 1e9, 1e9)
+		var hi := lo
+		for k in mini(4, n - 4 * g):
+			var t: Array = toys[4 * g + k]
+			var C: Vector4 = t[1]
+			var rr: float = t[2] + 0.01
+			x[k] = C.x
+			y[k] = C.y
+			z[k] = C.z
+			r2[k] = rr * rr
+			lo[k] = t[3]
+			hi[k] = t[4]
+		ax.append(x)
+		ay.append(y)
+		az.append(z)
+		ar.append(r2)
+		alo.append(lo)
+		ahi.append(hi)
+	return [ax, ay, az, ar, alo, ahi, ceili(n / 4.0)]
 
 
 static func _nearer(a: Array, b: Array) -> bool:
