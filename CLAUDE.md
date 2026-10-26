@@ -75,13 +75,41 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   hopped about (no energy gained, checked). The cause: a held toy is kinematic, so the hand is
   infinitely strong. A share of the hand's turn at the release was tried and called a crutch by the
   owner; the honest fix, a hand of finite strength (README wish «Рука конечной силы»: the held toy a
-  body pulled to its place by a limited force and torque), is for another chat. A ball set down half a metre outside the shell's edge rolled
+  body pulled to its place by a limited force and torque), is on `strength` (below). A ball set down half a metre outside the shell's edge rolled
   in: right (the field at its centre, 20-35 cm up, leans 0.3-0.5° toward the throat; the arrows
   and the floor's colours can't show that; README «Почему мяч скатывается и снаружи кривой зоны»).
   Its log: 72 Hz always holds; at 120 Hz frames in the shell cost 4.4-5 ms, but a ball held at the
   edge gives single frames up to 8 ms and the arrows 1.5-2 ms more, and one late frame traps
   SteamVR at 60 Hz until one leaves the shell. Not solved: that, the cubes' spin, the hands' ~8%
   (model), 144 Hz.
+- `strength` (from `main`) — a hand of finite strength and two hands on one toy (README «Руки:
+  взять и бросить», wish «Рука конечной силы»), asked for by the owner as the fix of the throw's
+  physics. A held toy is a body, not a copy of the hand: `BallWorld`'s holding section (`take`,
+  `aim`, `snap`, `let_go`, `_hold_toy`, `_muscle`). Per substep each hand that holds it gives an
+  impulse at its grip point (the toy's point where the hand's centre was, `g` in body
+  coordinates) and a twist about it, solved in closed form (isotropic inertia: the grip point moves
+  by P / m along g, by P (1 / m + |g|^2 / I) across it) so that the grip point's velocity and the
+  spin become the hand's plus what takes the place and turn left over out in `HOLD_TIME` (0.02 s,
+  no faster than half the spare strength can stop: `_closing`), then limited: the twist first
+  (`HAND_TORQUE` 15 N m; what speeds the spin up falls to 0 at `WRIST_SPEED` 10 rad/s, what slows
+  it may be `BRAKING` 1.5x), then the impulse found again for that twist and limited to
+  `HAND_FORCE` 150 N; the weight is in it (half a substep's fall counted in: the average velocity
+  is what moves the toy). Two hands: Gauss-Seidel over the grips, `HOLD_ITERATIONS` 4. Balls get
+  axes while held (`hF`, `hw`). `b["held"]` (a tracker) is now `b["holds"]` (tracker -> hold); a
+  held toy collides with its own mass, does not bounce off the floor or statics, is not pushed by
+  its own hand. `main`: per frame `_track_hands` (poses; velocity, spin and acceleration from the
+  60 ms parabola; `_aim`), then `_toys` (the step), then `_use_hands` (grip, B, X): a toy let go
+  flies on from this frame's pull, no frame late. The aims are at the frame's end; each substep
+  pulls toward the grip point's aim moved back along the hand's velocity and acceleration. A hand
+  that jumps more than `HAND_JUMP` 0.25 m in a frame or comes back after losing its tracking has no
+  motion before; `_forget_motion` snaps held toys with the hands. The release velocity hack and
+  `MAX_THROW_*` are gone. The demo has a crate (`CRATE_*`, 0.9 m, 18 kg at the same 25 kg/m³) to
+  the left of the start: one hand cannot lift it (it may tip it), two at its sides can. Measured
+  (grab_test): a light ball follows within 3 mm, a flick of 38 rad/s spins a 0.7 kg cube to 8 rad/s
+  and a 3 kg one to under 1, a ball held 25 cm off the hand leaves a flick at 2 m/s (9.5 before),
+  a 4.5 kg ball held at its side sinks to ~30° in 3-4 s and stays, an arc throw leaves within
+  1.4°. CPU: ~0.1 ms a frame per held toy on the desktop. Not yet in the headset. Wish next to it:
+  «Хват по размеру» (one hand holds only what it can grip).
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
@@ -184,9 +212,9 @@ Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
 - free flight in 3D with gravity on/off → `main` (the honest field, `WormholeSpace.potential_grad`,
   and bodies that move in it, `ball_world.gd`);
-- pick up and throw, the hand of finite strength, pulling objects like in Half-Life: Alyx → `main`
-  (grip grab and throw of balls and cubes on the fast core, the hands on the curved space, merged
-  from `throw`; `grab` is the old sketch);
+- pick up and throw, pulling objects like in Half-Life: Alyx → `main` (grip grab and throw of balls
+  and cubes on the fast core, the hands on the curved space, merged from `throw`; `grab` is the old
+  sketch); the hand of finite strength, two hands, the grip by size → `strength` until it is merged;
 - cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
   the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
@@ -213,7 +241,10 @@ When branches are put together, these overlap:
   `main._process` steps the free toys first (the hands pushing from last frame's places), then
   places the hands and what they hold (`_update_hands`), then uploads: a toy let go starts from
   the hand, not a frame ahead. Teleports (`place`, `set_pose`, a snap turn) forget the hands'
-  recent places (`_forget_motion`), or the jump would be a throw.
+  recent places (`_forget_motion`), or the jump would be a throw. On `strength` the order is
+  `_track_hands`, the step (held toys pulled to the hands' aims), `_use_hands`, and
+  `_update_hands`, `_carry` and the toy's own history (`thist`) are gone: a branch that touches
+  the hands goes on top of whichever of the two it needs.
 - `grab` and `main` (from `throw`) both have a `tests/grab_test.gd`: keep `main`'s.
 - the triggers, on `main`: the left one runs; nothing is pointed at any more (the panel became
   the menu, from `menu`). Branches made before it point at the panel with the triggers
@@ -473,6 +504,20 @@ they line up the same way.
 - **`tools/adreno_cost.py` took the first pose's uniforms for every pose:** right for the demo's
   toys at rest, wrong for toys that move with the viewer. With `--hands` / `--held` (emu_dump.gd
   `+hands` / `+held`) each pose has its own (`Shader.set_uniforms`).
+- **A held toy pulled at its grip point** (`strength`): the aim of the grip point must be moved
+  back in time as the grip point moves (the hand's centre: its velocity and acceleration), not the
+  centre and the turn each by their own velocity: those two linearised apart in a flick (0.6 rad a
+  frame), and the arm's impulse, fixing the grip point's place, spun a light cube about its centre
+  through the lever (21 rad/s from a flick the wrist alone gives 7). A limited twist at full
+  strength against a weight on a lever is a pendulum without friction (a 4.5 kg ball swung
+  0-68° for good): only a stretched muscle's braking (the twist that slows the spin may be more)
+  damps it; the arm's force has none, or a crate one hand cannot lift, once tipped, hangs in the air
+  on the braking. The muscles' speeds are the toy's before the substep's impulses, without the
+  half fall the impulses aim through (else every held toy looked like it was falling and got the
+  braking's extra force). Tests that set a hand's pose far from the last one make the hand's
+  60 ms velocity a spike that a held toy follows: wait 6 frames, or jump more than `HAND_JUMP`.
+- **`Vector3` is single precision in loops:** `while p.y > x: p.y = maxf(p.y - d, x)` never ends
+  when float32(x) > x (0.202); compare with a margin.
 - **Godot prints shader float constants with 14 decimals:** `1e-30` and `1e-20` become 0.0
   (`max(x, 1e-30)` compiles to `max(x, 0.0)`); `1e-12` survives. GPUs' `max`/`min` return the
   other operand for a NaN, which hides most of it (the emulator now does the same: `np.fmax`).
