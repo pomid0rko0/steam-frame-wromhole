@@ -68,7 +68,7 @@ func _process(_delta: float) -> bool:
 			cube_moved = maxf(cube_moved, (sp.embed(c["l"], c["n"]) - cubes_at_start[i]).length())
 			cube_tilt = maxf(cube_tilt, _tilt(c))
 			cube_floor = maxf(cube_floor, absf(_lowest(c)))
-		_check("cubes at rest stay at rest (one in the throat)", w.cubes.size() == 3 and cube_moved < 0.002 and cube_tilt < 0.01 and cube_floor < 0.003,
+		_check("cubes at rest stay at rest (one in the throat, the crate)", w.cubes.size() == 4 and cube_moved < 0.002 and cube_tilt < 0.01 and cube_floor < 0.003,
 				"%d cubes, moved %.5f m, tilt %.5f rad, lowest corner %.5f m from the floor" % [w.cubes.size(), cube_moved, cube_tilt, cube_floor])
 		w.balls.clear()
 		w.cubes.clear()
@@ -115,7 +115,10 @@ func _process(_delta: float) -> bool:
 		var tb := w.add(t[0], t[1], Vector4.ZERO, 0.3, Color(0.2, 0.9, 0.9))
 		tb["l"] = 1.0
 		tb["n"] = Vector3(1.0, 0.13, 0.1).normalized()
-		tb["held"] = &"test"
+		# held where it is by a hand at its centre (BallWorld.take), so it stays for the picture
+		var n: Vector3 = tb["n"]
+		w.take(tb, &"test", Vector3.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), WormholeSpace.tangent(n, Vector4(0.0, 0.0, 1.0, 0.0)),
+				WormholeSpace.tangent(n, Vector4(0.0, 0.0, 0.0, 1.0))])
 	if frames == 336:
 		if OS.get_cmdline_user_args().size() > 0:
 			root.get_texture().get_image().save_png(OS.get_cmdline_user_args()[0])

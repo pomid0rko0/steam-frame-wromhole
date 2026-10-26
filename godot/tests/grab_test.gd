@@ -9,13 +9,14 @@ extends SceneTree
 ##    down) on the profiles the Frame may use
 ## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
 ##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is
-## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
-## 3. let go while the hand moves, the ball flies off with the hand's velocity: along a line,
-##    and along an arc (no lag: the direction right)
+## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand (a light
+##    ball: within a few mm, the hand's strength is ample)
+## 3. let go while the hand moves, the ball flies off with the motion it has, the hand's: along a
+##    line, and along an arc (no lag: the direction right)
 ## 4. left X with the grip closed: a new cube in the left hand; it turns with the hand, and let go
-##    it spins as the hand turned and moves as the hand did (not with the wrist's turn times its
-##    lever to the cube's centre)
-## 5. right B with the grip closed: a new ball in the right hand; the left hand takes it over
+##    it spins as the hand turned and its centre moves round the hand as it did
+## 5. right B with the grip closed: a new ball in the right hand; the left hand takes it too, both
+##    hold it, then each lets go
 ## 6. the hand pushes a ball and a cube it meets, softly (a ball at most 1.3 times the hand's speed;
 ##    one pressed into the floor is not flung); a held ball pushes a ball
 ## 7. a half-open grip keeps holding, more open lets go; a hand that loses its tracking leaves its
@@ -30,6 +31,10 @@ extends SceneTree
 ## 11. a ball held with the hand inside it, lowered onto the floor at the shell's edge and let go
 ##     with the hand still: it is set down at rest, the hand that let it go does not push it, and
 ##     gravity rolls it toward the throat by itself
+## 12. the hand's finite strength: a flick of the wrist (38 rad/s) spins a light cube far slower
+##     than the hand turned, a heavy one hardly; a held ball is not pushed through the floor; a big
+##     heavy ball held at its side sags and stays there; the crate is too heavy for one hand, two at
+##     its sides lift it level
 
 const SIZE := 160                    # each eye's picture
 const FRUSTUM := Vector4(-1.0, 1.0, -1.1, 1.1)
@@ -153,6 +158,8 @@ func _ball_at(c: Vector3, radius: float) -> Dictionary:
 
 
 func _clear() -> void:
+	for st in main.hand_state:
+		st.erase("held")
 	main.world.balls.clear()
 	main.world.cubes.clear()
 
@@ -190,6 +197,7 @@ func _run() -> void:
 	await _throat()
 	await _into_b()
 	await _set_down()
+	await _strength()
 	print("FAILURES: ", fails)
 	_finish()
 
@@ -275,13 +283,13 @@ func _grab_and_throw() -> void:
 	var ball := _ball_at(Vector3(9.5, 0.3, 0.2), 0.2)
 	var p0 := _play(Vector3(9.5, 0.3, 0.45))       # 5 cm above its surface
 	_pose(right, p0)
-	await _step(3)
+	await _step(6)              # the jump there is over (it would be the hand's motion as it starts)
 	var cols := _hand_colors()
 	_check("near a ball the hand turns green", _hand(1)["ready"] and cols.has(main.HAND_COLOR_READY),
 			"ready %s, hand colours %s" % [_hand(1)["ready"], cols])
 	right.set_input(&"grip", 1.0)
 	await _step(1)
-	_check("the grip takes the ball", ball["held"] == &"right_hand" and _hand(1).has("held"), "held by '%s'" % ball["held"])
+	_check("the grip takes the ball", ball["holds"].has(&"right_hand") and _hand(1).has("held"), "held by %s" % [ball["holds"].keys()])
 	# up and away, 1 cm a frame: the ball keeps 25 cm below the hand
 	var worst := 0.0
 	var p := p0
@@ -292,7 +300,7 @@ func _grab_and_throw() -> void:
 		var h := _hand(1)
 		var hc: Vector3 = main.space.chart_position(h["l"], h["n"])
 		worst = maxf(worst, _at(ball).distance_to(hc + Vector3(0.0, 0.0, -0.25)))
-	_check("the held ball follows the hand", worst < 1e-3, "farthest from its place under the hand %.5f m" % worst)
+	_check("the held ball follows the hand", worst < 5e-3, "farthest from its place under the hand %.5f m" % worst)
 	# a straight throw: 4 m/s forward, 2 m/s up, let go on the 8th frame
 	var v := Vector3(0.0, 2.0, -4.0)
 	for k in 8:
@@ -303,7 +311,7 @@ func _grab_and_throw() -> void:
 		await _step(1)
 	var got := _vel(ball)
 	var want := _chart_dir(v)
-	_check("let go, the ball flies off with the hand's velocity", ball["held"] == &"" and got.distance_to(want) < 0.02,
+	_check("let go, the ball flies off with the hand's velocity", ball["holds"].is_empty() and got.distance_to(want) < 0.05,
 			"chart velocity %s, expected %s" % [got, want])
 	var before := _at(ball)
 	await _step(12)
@@ -317,7 +325,7 @@ func _grab_and_throw() -> void:
 	var w := 8.0
 	var th := -1.2
 	_pose(right, c + 0.5 * Vector3(0.0, sin(th), -cos(th)))
-	await _step(2)
+	await _step(6)
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
@@ -343,13 +351,13 @@ func _cube_and_spin() -> void:
 	var pl := Vector3(-0.3, 1.2, -0.4)
 	_pose(left, pl)
 	left.set_input(&"grip", 1.0)
-	await _step(2)
+	await _step(6)
 	left.set_input(&"ax_button", true)
 	await _step(1)
 	left.set_input(&"ax_button", false)
 	var cube: Dictionary = _hand(0).get("held", {})
 	var reach: float = main.NEW_CUBE_HALF + main.HAND_RADIUS + 0.01
-	var ok: bool = not cube.is_empty() and cube.has("F") and cube["held"] == &"left_hand"
+	var ok: bool = not cube.is_empty() and cube.has("F") and cube["holds"].has(&"left_hand")
 	_check("left X with the grip closed: a new cube in the left hand", ok and _at(cube).distance_to(_chart(pl + Vector3(0.0, 0.0, -reach))) < 1e-3,
 			"cube at %s, expected %s" % [_at(cube) if ok else Vector3.ZERO, _chart(pl + Vector3(0.0, 0.0, -reach))])
 	if not ok:
@@ -371,15 +379,16 @@ func _cube_and_spin() -> void:
 			for a in 3:
 				var A: Vector3 = WormholeSpace.vector_to_chart(1.0, cube["n"], cube["F"][a])
 				worst_ax = maxf(worst_ax, A.distance_to(_chart_dir(b[a])))
-	_check("the held cube turns with the hand", worst < 1e-3 and worst_ax < 1e-3,
+	# the hand starts turning at once: the cube lags while the hand's spin is learned (60 ms)
+	_check("the held cube turns with the hand", worst < 5e-3 and worst_ax < 0.01,
 			"centre off by %.5f m, axes by %.5f" % [worst, worst_ax])
 	var spin: Vector3 = cube["w"]
 	var got_v := _vel(cube)
-	# with the hand's velocity, not its own: the hand turned in place, so the cube only spins (its
-	# centre moved at 0.6 m/s round the hand: the wrist's turn times the lever, which no throw gets)
-	_check("let go, it spins as the hand turned and moves as the hand did (it stood)",
-			spin.distance_to(Vector3(0.0, w, 0.0)) < 0.03 * w and got_v.length() < 0.01,
-			"spin %s rad/s (body; (0, %.1f, 0)), velocity %s" % [spin, w, got_v])
+	# its centre went round the hand at the hand's spin: it leaves at the spin times the lever
+	var want_v := Vector3(0.0, 0.0, w).cross(_at(cube) - _chart(pl))
+	_check("let go, it spins as the hand turned, its centre moves round the hand as it did",
+			spin.distance_to(Vector3(0.0, w, 0.0)) < 0.05 * w and got_v.distance_to(want_v) < 0.05 * want_v.length(),
+			"spin %s rad/s (body; (0, %.1f, 0)), velocity %s (%s)" % [spin, w, got_v, want_v])
 
 
 # 5
@@ -388,7 +397,7 @@ func _hand_over() -> void:
 	var pr := Vector3(0.3, 1.2, -0.3)
 	_pose(right, pr)
 	right.set_input(&"grip", 1.0)
-	await _step(2)
+	await _step(6)
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
@@ -399,14 +408,15 @@ func _hand_over() -> void:
 	await _step(2)
 	left.set_input(&"grip", 1.0)
 	await _step(1)
-	_check("the left hand takes the ball over from the right", ball["held"] == &"left_hand"
-			and is_same(_hand(0).get("held"), ball) and not _hand(1).has("held"), "held by '%s'" % ball["held"])
+	_check("the left hand takes the ball too: both hold it", ball["holds"].size() == 2
+			and is_same(_hand(0).get("held"), ball) and is_same(_hand(1).get("held"), ball), "held by %s" % [ball["holds"].keys()])
 	right.set_input(&"grip", 0.0)
 	await _step(2)
-	_check("... and the right grip, let go, throws nothing", ball["held"] == &"left_hand", "held by '%s'" % ball["held"])
+	_check("... the right lets go, the left keeps it", ball["holds"].keys() == [&"left_hand"] and not _hand(1).has("held"),
+			"held by %s" % [ball["holds"].keys()])
 	left.set_input(&"grip", 0.0)
 	await _step(2)
-	_check("the left lets it go", ball["held"] == &"", "held by '%s'" % ball["held"])
+	_check("the left lets it go", ball["holds"].is_empty(), "held by %s" % [ball["holds"].keys()])
 
 
 # 6
@@ -479,10 +489,10 @@ func _grip_and_tracking() -> void:
 	await _step(1)
 	right.set_input(&"grip", 0.6)
 	await _step(3)
-	var kept: bool = ball["held"] == &"right_hand"
+	var kept: bool = ball["holds"].has(&"right_hand")
 	right.set_input(&"grip", 0.4)
 	await _step(1)
-	_check("a half-open grip keeps the ball, more open lets go", kept and ball["held"] == &"", "kept %s, then held by '%s'" % [kept, ball["held"]])
+	_check("a half-open grip keeps the ball, more open lets go", kept and ball["holds"].is_empty(), "kept %s, then held by %s" % [kept, ball["holds"].keys()])
 	right.set_input(&"grip", 1.0)
 	await _step(1)
 	for k in 10:
@@ -494,11 +504,12 @@ func _grip_and_tracking() -> void:
 	var at := _at(ball)
 	await _step(10)
 	var nb: int = main.material.get_shader_parameter("wh_nBall")
-	_check("a hand that loses its tracking leaves its ball where it was", ball["held"] == &"right_hand"
-			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
+	# it moved up at 1.8 m/s: the hand stops it where it last was
+	_check("a hand that loses its tracking keeps its ball where it was", ball["holds"].has(&"right_hand")
+			and _at(ball).distance_to(at) < 0.03 and nb == 2, "moved %.4f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
 	right.set_input(&"grip", 0.0)
 	await _step(1)
-	_check("... and let go then, it falls from rest", ball["held"] == &"" and _vel(ball).length() < 0.2, "chart velocity %s" % _vel(ball))
+	_check("... and let go then, it falls from rest", ball["holds"].is_empty() and _vel(ball).length() < 0.2, "chart velocity %s" % _vel(ball))
 	_pose(right, p)
 
 
@@ -519,8 +530,8 @@ func _hold_and_reset() -> void:
 	left.set_input(&"ax_button", false)
 	var nb: int = main.material.get_shader_parameter("wh_nBall")
 	_check("during the speed check: no hands drawn, no grab, B and X make nothing",
-			nb == 1 and ball["held"] == &"" and main.world.balls.size() == 1 and main.world.cubes.is_empty(),
-			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball["held"], main.world.balls.size(), main.world.cubes.size()])
+			nb == 1 and ball["holds"].is_empty() and main.world.balls.size() == 1 and main.world.cubes.is_empty(),
+			"shader balls %d, held by %s, %d balls, %d cubes" % [nb, ball["holds"].keys(), main.world.balls.size(), main.world.cubes.size()])
 	main.hold = false
 	# the menu open: B, X and the D-pad down are its, and A; B closes it and makes no ball
 	_pose(left, _play(Vector3(9.5, -0.6, 0.45)))
@@ -554,16 +565,16 @@ func _hold_and_reset() -> void:
 	await _step(2)
 	right.set_input(&"grip", 1.0)
 	await _step(2)
-	var took: bool = ball["held"] == &"right_hand"
+	var took: bool = ball["holds"].has(&"right_hand")
 	right.set_input(&"ax_button", true)
 	await _step(1)
 	right.set_input(&"ax_button", false)
 	await _step(1)
 	var free := true
 	for b in main.world.balls + main.world.cubes:
-		free = free and b["held"] == &""
+		free = free and b["holds"].is_empty()
 	_check("A puts everything back and empties the hands", took and free and not _hand(1).has("held")
-			and main.world.balls.size() == 5 and main.world.cubes.size() == 3,
+			and main.world.balls.size() == 5 and main.world.cubes.size() == 4,
 			"took %s, %d balls, %d cubes, all free %s" % [took, main.world.balls.size(), main.world.cubes.size(), free])
 	right.set_input(&"grip", 0.0)
 	await _step(1)
@@ -578,7 +589,7 @@ func _throat() -> void:
 	_pose(right, p)
 	_pose(left, Vector3(-2.0, 1.0, 0.5))
 	right.set_input(&"grip", 1.0)
-	await _step(2)
+	await _step(6)
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
@@ -606,7 +617,8 @@ func _throat() -> void:
 		h = _hand(1)
 		var D := sp.toward(h["l"], h["n"], ball["l"], ball["n"])
 		worst = maxf(worst, BallWorld.to_body(h["F"], D).distance_to(off))
-	_check("in the throat the held ball keeps its offset in the hand's axes", worst < 1e-3,
+	# the hand starts moving at once: the ball lags while the hand's motion is learned (60 ms)
+	_check("in the throat the held ball keeps its offset in the hand's axes", worst < 0.01,
 			"off by %.5f m at most (offset %.3f m)" % [worst, off.length()])
 	# a straight move at constant speed, let go: the ball leaves the hand smoothly
 	var v := Vector3(0.0, 0.5, -3.0)
@@ -620,7 +632,7 @@ func _throat() -> void:
 		E.append(sp.embed(ball["l"], ball["n"]))
 	var before: Vector4 = (E[7] - E[6]) * 60.0
 	var after: Vector4 = (E[8] - E[7]) * 60.0
-	_check("in the throat the ball leaves the hand smoothly", ball["held"] == &"" and (after - before).length() < 0.1,
+	_check("in the throat the ball leaves the hand smoothly", ball["holds"].is_empty() and (after - before).length() < 0.1,
 			"%.3f m/s in the hand, %.3f m/s just after, apart by %.3f" % [before.length(), after.length(), (after - before).length()])
 	main.place(1.0, main.START_POS, main.START_FORWARD)
 	await _step(1)
@@ -632,7 +644,7 @@ func _into_b() -> void:
 	var p := Vector3(0.25, 1.3, -0.3)
 	_pose(right, p)
 	right.set_input(&"grip", 1.0)
-	await _step(2)
+	await _step(6)
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
@@ -666,12 +678,12 @@ func _set_down() -> void:
 	var ball: Dictionary = main.world.add(c[0], c[1], Vector4.ZERO, rad, Color(0.95, 0.95, 0.97))
 	right.set_input(&"grip", 1.0)
 	await _step(1)
-	if ball["held"] != &"right_hand":
-		_check("a ball at the shell's edge taken", false, "held by '%s'" % ball["held"])
+	if not ball["holds"].has(&"right_hand"):
+		_check("a ball at the shell's edge taken", false, "held by %s" % [ball["holds"].keys()])
 		return
-	# down at 0.3 m/s until the ball is 1 cm above the floor, still for half a second, let go
-	while p.y > rad + 0.01:
-		p.y = maxf(p.y - 0.3 / 60.0, rad + 0.01)
+	# down at 0.3 m/s until the ball touches the floor, still for half a second, let go
+	while p.y > rad + 0.0025:          # (p is single precision)
+		p.y = maxf(p.y - 0.3 / 60.0, rad + 0.002)
 		_pose(right, p)
 		await _step(1)
 	await _step(30)
@@ -679,7 +691,7 @@ func _set_down() -> void:
 	await _step(1)
 	var E0: Vector4 = sp.embed(ball["l"], ball["n"])
 	var v0 := _vel(ball).length()
-	_check("let go with the hand still, the ball is set down at rest", ball["held"] == &"" and v0 < 1e-3,
+	_check("let go with the hand still, the ball is set down at rest", ball["holds"].is_empty() and v0 < 1e-3,
 			"%.4f m/s, at l = %.3f (the edge %.3f)" % [v0, ball["l"], sp.L])
 	await _step(20)
 	var moved: float = (sp.embed(ball["l"], ball["n"]) - E0).length()
@@ -690,6 +702,161 @@ func _set_down() -> void:
 	await _step(8 * 60)
 	_check("set down at the shell's edge, the ball rolls toward the throat by itself", l0 - ball["l"] > 0.2,
 			"l %.3f -> %.3f in 8 s, %.3f m/s" % [l0, ball["l"], _vel(ball).length()])
+
+
+# 12
+func _strength() -> void:
+	_clear()
+	main.place(1.0, main.START_POS, main.START_FORWARD)
+	_pose(right, Vector3(1.0, 1.5, 0.3))
+	_pose(left, Vector3(-2.0, 1.0, 0.5))
+	await _step(2)
+	# a flick of the wrist: 90 degrees up about the room's x at 38 rad/s (the headset's log), let go
+	# at its end; a light cube (0.7 kg) and a heavy one (3 kg), held at a face
+	var spins := []
+	for half in [0.15, 0.25]:
+		_clear()
+		var pl := Vector3(-0.3, 1.2, -0.4)
+		_pose(left, pl)
+		await _step(2)
+		var p: Array = main.space.point_from_chart(1.0, _chart(pl) + Vector3(-(half + 0.06), 0.0, 0.0))
+		var F := []
+		for ax in [Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1)]:
+			F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
+		var cube: Dictionary = main.world.add_cube(p[0], p[1], Vector4.ZERO, F, Vector3.ZERO, half, Color.WHITE)
+		left.set_input(&"grip", 1.0)
+		await _step(30)
+		var th := 0.0
+		for k in 3:
+			th = minf(th + 38.0 / 60.0, PI / 2.0)
+			_pose(left, pl, Basis(Vector3.RIGHT, th))
+			if k == 2:
+				left.set_input(&"grip", 0.0)
+			await _step(1)
+		spins.append(cube["w"].length())
+		_pose(left, Vector3(-2.0, 1.0, 0.5))
+	_check("a flick of the wrist at 38 rad/s spins a light cube far slower, a heavy one hardly",
+			spins[0] > 3.0 and spins[0] < 11.0 and spins[1] < 3.0,
+			"0.7 kg: %.1f rad/s, 3 kg: %.1f rad/s" % spins)
+	# a ball held off the hand (B: 0.25 m in front), thrown by a flick of the wrist alone: it leaves
+	# a little faster than the hand (which stands), not at the flick times the lever (9.5 m/s)
+	_clear()
+	var pr := Vector3(0.2, 1.2, -0.4)
+	_pose(right, pr)
+	right.set_input(&"grip", 1.0)
+	await _step(2)
+	right.set_input(&"by_button", true)
+	await _step(1)
+	right.set_input(&"by_button", false)
+	var ball: Dictionary = _hand(1).get("held", {})
+	await _step(20)
+	var th := 0.0
+	for k in 3:
+		th = minf(th + 38.0 / 60.0, PI / 2.0)
+		_pose(right, pr, Basis(Vector3.RIGHT, -th))
+		if k == 2:
+			right.set_input(&"grip", 0.0)
+		await _step(1)
+	_check("a ball held off the hand, flicked by the wrist alone, leaves slowly", not ball.is_empty()
+			and _vel(ball).length() < 4.0, "%.2f m/s (the flick times the lever: 9.5)" % _vel(ball).length())
+	# a held ball pressed 0.3 m into the floor: the floor holds it
+	_clear()
+	var p := Vector3(0.2, 0.6, -0.5)
+	_pose(right, p)
+	right.set_input(&"grip", 1.0)
+	await _step(2)
+	right.set_input(&"by_button", true)
+	await _step(1)
+	right.set_input(&"by_button", false)
+	ball = _hand(1).get("held", {})
+	var lowest := 9.0
+	for k in 60:
+		_pose(right, Vector3(0.2, 0.6 - 0.9 * minf(k / 30.0, 1.0), -0.5))
+		await _step(1)
+		lowest = minf(lowest, _at(ball).z)
+	_check("a held ball pressed into the floor stays on it", not ball.is_empty() and lowest > ball["radius"] - 0.01,
+			"its centre down to %.3f m (radius %.2f)" % [lowest, ball.get("radius", 0.0)])
+	right.set_input(&"grip", 0.0)
+	await _step(2)
+	# a big ball (4.5 kg) taken at its side: its weight's lever is more than the wrist holds, so it
+	# sinks below the hand (slowly: the stretched wrist brakes it) until the wrist holds it, and
+	# stays there (does not swing)
+	_clear()
+	pr = Vector3(0.3, 1.2, -0.4)
+	_pose(right, pr)
+	await _step(2)
+	var bc: Array = main.space.point_from_chart(1.0, _chart(pr) + Vector3(0.0, 0.35 + 0.06, 0.0))
+	var big: Dictionary = main.world.add(bc[0], bc[1], Vector4.ZERO, 0.35, Color.WHITE)
+	right.set_input(&"grip", 1.0)
+	var sags := []
+	for k in 240:
+		await _step(1)
+		var d := _at(big) - _chart(pr)
+		sags.append(rad_to_deg(atan2(-d.z, Vector2(d.x, d.y).length())))
+	var late: Array = sags.slice(210)
+	_check("a big heavy ball held at its side sags below the hand and stays there", big["holds"].has(&"right_hand")
+			and sags.back() > 3.0 and sags.back() < 45.0 and late.max() - late.min() < 3.0,
+			"%.0f degrees below after 4 s (%.1f-%.1f in the last 0.5 s; 1 s: %.0f, 2 s: %.0f)" % [sags.back(), late.min(), late.max(), sags[59], sags[119]])
+	right.set_input(&"grip", 0.0)
+	await _step(2)
+	# the crate (18 kg): one hand at its top's middle pulls up 0.5 m and cannot lift it off the
+	# floor (it may tip it: pulled up nearly as hard as it weighs, it is easy to tip); two at its
+	# sides lift it level
+	_clear()
+	main._cube_on_floor(Vector2(9.0, 0.0), main.CRATE_HALF, 0.0, main.CRATE_COLOR)
+	var crate: Dictionary = main.world.cubes.back()
+	_pose(right, Vector3(1.0, 1.5, 0.3))
+	await _step(30)
+	var top: float = 2.0 * main.CRATE_HALF + 0.05
+	_pose(right, _play(Vector3(9.0, 0.0, top)))
+	await _step(6)
+	right.set_input(&"grip", 1.0)
+	await _step(2)
+	var off_floor := 0.0
+	for k in 60:
+		_pose(right, _play(Vector3(9.0, 0.0, top + 0.5 * minf(k / 30.0, 1.0))))
+		await _step(1)
+		off_floor = maxf(off_floor, _lowest_corner(crate))
+	_check("the crate is too heavy for one hand: it stays on the floor", crate["holds"].has(&"right_hand") and off_floor < 0.03,
+			"%.0f kg, its lowest corner up to %.3f m above the floor" % [BallWorld.mass_kg(crate), off_floor])
+	right.set_input(&"grip", 0.0)
+	_pose(right, Vector3(1.0, 1.5, 0.3))
+	await _step(2)
+	_clear()
+	main._cube_on_floor(Vector2(9.0, 0.0), main.CRATE_HALF, 0.0, main.CRATE_COLOR)
+	crate = main.world.cubes.back()
+	await _step(30)
+	var side: float = main.CRATE_HALF + 0.05
+	_pose(right, _play(Vector3(9.0, side, main.CRATE_HALF)))
+	_pose(left, _play(Vector3(9.0, -side, main.CRATE_HALF)))
+	await _step(6)
+	right.set_input(&"grip", 1.0)
+	left.set_input(&"grip", 1.0)
+	await _step(2)
+	var z0 := _at(crate).z
+	for k in 60:
+		var up := 0.5 * minf(k / 30.0, 1.0)
+		_pose(right, _play(Vector3(9.0, side, main.CRATE_HALF + up)))
+		_pose(left, _play(Vector3(9.0, -side, main.CRATE_HALF + up)))
+		await _step(1)
+	var tilt := rad_to_deg(acos(clampf(WormholeSpace.vector_to_chart(1.0, crate["n"], crate["F"][2]).z, -1.0, 1.0)))
+	_check("two hands at its sides lift it level", crate["holds"].size() == 2 and _at(crate).z - z0 > 0.45 and tilt < 3.0,
+			"rose %.3f m of 0.5, tilted %.1f degrees" % [_at(crate).z - z0, tilt])
+	right.set_input(&"grip", 0.0)
+	left.set_input(&"grip", 0.0)
+	await _step(2)
+
+
+## The height of a cube's lowest corner above the floor (chart A).
+func _lowest_corner(c: Dictionary) -> float:
+	var x := _at(c)
+	var lowest := INF
+	for s: Vector3 in BallWorld.CORNERS:
+		var p := x
+		for k in 3:
+			p += c["half"] * s[k] * WormholeSpace.vector_to_chart(1.0, c["n"], c["F"][k])
+		lowest = minf(lowest, p.z)
+	return lowest
 
 
 ## Takes the simulated headset down before quitting: left up at exit, it aborts Godot, and the

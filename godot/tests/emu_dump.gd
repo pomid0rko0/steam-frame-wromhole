@@ -117,7 +117,7 @@ func _process(_d: float) -> bool:
 func _hold_ball() -> void:
 	var sp: WormholeSpace = main.space
 	var hp: Array = sp.geodesic(main.foot_l, main.foot_n, main.frame[1], main.DESKTOP_HEAD_HEIGHT, main.frame)
-	if main.world.balls.size() > 0 and main.world.balls.back()["held"] == &"right_hand":
+	if main.world.balls.size() > 0 and main.world.balls.back()["holds"].has(&"right_hand"):
 		main.world.balls.pop_back()
 	for k in 2:
 		var off := Vector3(0.22 if k == 1 else -0.22, -0.35, -0.3)
@@ -127,7 +127,7 @@ func _hold_ball() -> void:
 		if k == 1 and held:
 			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
 			var b: Dictionary = main.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97))
-			b["held"] = &"right_hand"
+			b["holds"][&"right_hand"] = {}
 	main._upload_toys()
 
 
