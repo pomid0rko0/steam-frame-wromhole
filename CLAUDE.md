@@ -15,7 +15,7 @@ the branches and the wishlist.
 - **Name the branch yourself.** The session hands you a `claude/<random-name>` branch: don't use it. Name the wish's branch with a short English word (`throat`, `grab`), start it from the branch listed below for the wish, and push there. The owner allows this; it is their standing permission to push to a branch other than the one the session gives you.
 - **Versions are git tags,** set on a commit once the owner has checked it in the headset. Don't put versions or a history of builds into docs or comments; git keeps them.
 - **Deliver a build** as `wormhole_vr_<label>_steam_frame.zip` holding one `.arm64`, and actually attach it to the chat.
-- **Long runs first, in the background; the build at once.** The owner checks builds in the headset while the tests run and does not want to wait for them. As soon as the code for a build is in place: start `tools/test_stereo.sh` in the background first (it gates the build: the hard rule below), export the build meanwhile, and attach it the moment `test_stereo.sh` passes on exactly that source. Every other check that takes minutes (`tools/test_openxr.sh` ~3 min, not together with `test_stereo.sh`: Monado; `gravity_test`, `physics_test`, `grab_test`, `bench_test`, ~1-2 min each; `ref/test_gpu.py` ~4 min) runs in the background too, after or beside it, and what it finds is reported and fixed afterwards. Never sit in the foreground on a run of minutes while the owner waits.
+- **Long runs first, in the background; the build at once.** The owner checks builds in the headset while the tests run and does not want to wait for them, not even for `test_stereo.sh`. As soon as the code for a build is in place: start `tools/test_stereo.sh` in the background first, export the build and attach it at once, saying the tests still run. Every other check that takes minutes (`tools/test_openxr.sh` ~3 min, not together with `test_stereo.sh`: Monado; `gravity_test`, `physics_test`, `grab_test`, `bench_test`, ~1-2 min each; `ref/test_gpu.py` ~4 min) runs in the background too, after or beside it, and what it finds is reported and fixed afterwards. Never sit in the foreground on a run of minutes while the owner waits.
 
 ## Branches
 
@@ -259,9 +259,11 @@ When branches are put together, these overlap:
 
 ## Hard rule: stereo before headset
 
-Broken stereo physically hurts in a headset. Before handing over any headset build, run
-`tools/test_stereo.sh` on exactly that source; it must pass (exit 0). If you add things Godot
-draws next to ray-traced ones, check they line up the same way.
+Broken stereo physically hurts in a headset. For every headset build, run `tools/test_stereo.sh`
+on exactly that source; it must pass (exit 0). The owner takes the build before it finishes
+(started first, in the background: above), so the moment it fails, tell the owner at once not
+to put that build on, then fix it. If you add things Godot draws next to ray-traced ones, check
+they line up the same way.
 
 ## Running things
 
