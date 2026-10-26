@@ -90,9 +90,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   «Кубы и шары», «Дешевле демонстрация с мячами и кубами», «Свет в горле смешивается»): 144 Hz no
   longer holds (start 4.0 ms against 2.4 for the check build, 120 Hz, our narrow map); inside the
   throat looking sideways 7.6-11 ms (the throat's ball and cube are every inner ray's candidates;
-  next: a window in psi on the cylinder); a "stripe" through the throat's ball and cube, standing
-  on the line l = 0 a little on A's side (not found against the reference yet; a screenshot will
-  come); the ball in the middle of the throat lit half by A's light, half by B's.
+  next: a window in psi on the cylinder); a "stripe" through the throat's ball and cube (found
+  from the owner's screenshots and fixed on `toys`: rays that go round the throat, below); the
+  ball in the middle of the throat lit half by A's light, half by B's.
 - `toys` — a cheaper demo (from `main`; README wish «Дешевле демонстрация с мячами и кубами»):
   `main.set_objects` sorts the toys by region (A's sheet, the shell, B's sheet: `wh_bIdx`,
   `wh_cIdx`, `main.region_order`) and gives the flat spheres (`wh_fball`); in the curved region
@@ -108,7 +108,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   shell; with our narrow map 3.0-5.2 ms at all 13 places; the 120 Hz tour 0 missed of 20634. In
   play 144 Hz still falls to SteamVR's half rate, and at 120 Hz near the throat single frames took
   8.5 ms where the tour took 3.5-4 (the tour holds the physics; in play the throat's ball may still
-  be falling slowly: not checked).
+  be falling slowly: not checked). The "stripe" in the throat is fixed here (below, «Rays that go
+  round the throat»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -277,7 +278,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; its display does 72/80/90/96/108/120/144. Other developers report that SteamVR there answers `XR_FB_display_refresh_rate` requests with success and ignores them. It follows the app's own setting `steam.app.<SteamAppId>.preferredRefreshRate`, set with `/opt/steamvr/bin/linuxarm64/vrcmd`; on our Frame (SteamVR 2.18.2) the running app switches within a second, and `xrGetDisplayRefreshRateFB` then reports the true rate. `refresh-rate`'s panel does that from its rate buttons and measures the rate and missed frames from xrWaitFrame's timing (`rate_meter.gd`); its `refresh:` log lines are the data. Measured at 1728×1728 per eye (README, «Что видно в шлеме»): 72 and 80 Hz keep up, 90 Hz falls to every 2nd refresh at times, 96–120 Hz mostly at every 2nd; the GPU stays at its top clock (903 MHz), and a frame costs 6.5–7.7 ms with the wormhole small in view, 11–12 ms with it large: the rays through the curved region are the cost. SteamVR there does not offer `XR_EXT_performance_settings`.
 - **Kernel files.** A sysfs file reports a size of 4096 bytes whatever it holds, and `FileAccess.get_file_as_string` reads that many: garbage after the value, and on the Frame a log full of Unicode errors. Read them with `get_line()` (`perf_panel.gd`, `read_line`).
-- **Logs on the Frame:** `~/.local/share/godot/app_userdata/Wormhole VR/logs/`; `tools/frame_logs.bat` fetches them. Screenshots: `tools/frame_screens.bat [days]` zips Steam's (`userdata/*/760/remote/<app>/screenshots`, not checked on the Frame yet) and `~/Pictures`' into Downloads as `wormhole_vr_screenshots.zip` with `where.txt`, the paths they had; finding none, it lists fresh images elsewhere in the home. `application/run/flush_stdout_on_print` is on, or the running app's log lost its last lines. The desktop window's V-Sync mode Disabled is not available there (Godot falls back to Enabled), and the app still reached 144 Hz.
+- **Logs on the Frame:** `~/.local/share/godot/app_userdata/Wormhole VR/logs/`; `tools/frame_logs.bat` fetches them. Screenshots: `tools/frame_screens.bat [days]` zips Steam's and `~/Pictures`' into Downloads as `wormhole_vr_screenshots.zip` with `where.txt`, the paths they had; finding none, it lists fresh images elsewhere in the home. On the Frame they are in `userdata/<id>/760/remote/<the 64-bit game id>/screenshots`: 1920×1080 JPEGs of one eye's view with the panel in it, a few hundred kB each. `application/run/flush_stdout_on_print` is on, or the running app's log lost its last lines. The desktop window's V-Sync mode Disabled is not available there (Godot falls back to Enabled), and the app still reached 144 Hz.
 - **Signals of the OpenXR interface.** A GDScript lambda connected to an `OpenXRInterface` signal by the panel corrupted the heap at exit (under Monado); a method callable did not. `tools/test_openxr.sh` fails on a crash at exit.
 - **SceneTree test scripts.** In them `main._ready` has not run during `_initialize`; touch main's nodes from `_process` (frame 2 or later). Settings applied too early silently do nothing.
 - **Software-Vulkan timings** are only good for ratios, and not for the shader's inner costs: halving the curved-region Simpson steps changed lavapipe's frame by 1%, while on the Frame the curved-region rays double the frame. `tests/perf.gd` `near` / `away` (6.5 m from the centre, facing it / away) separate them. For the Frame's own compiler use `tools/adreno_stats.sh`.
@@ -314,6 +315,18 @@ draws next to ray-traced ones, check they line up the same way.
   rate: SteamVR fills in frames on the same GPU, and it reads more than it costs, and so does the
   segment after it (first segments 3.4 ms dearer than the second ones). Compare at places where
   every variant fits.
+- **Rays that go round the throat** (|vl| below ~2e-4 on the cylinder, a column near where the
+  view crosses vl = 0, looking sideways inside the throat) were the owner's "stripe": white
+  dashes along the throat at the eye's own l, through the floor, the cube and the ball. Two float32
+  losses: 1 / sqrt(1 - wc^2) with 1 - wc^2 a difference of near-equal numbers (off by half: the
+  floor's l off by mm, and the grid drew a line at the jump); `rho0^2 - b^2 = (rho0 - b)(rho0 + b)`
+  with `rho0 - b = rs vl^2 / (1 + wn) - (rs - rho0)` has no cancellation. And the balls shader's hit
+  key 2 piece + fraction: the cylinder's fraction there is ~1e-5, and 2 + it kept a tenth of its
+  digits (the angle round the throat off by radians); piece B now goes without an offset (keys
+  A -2.., B 0.., C 2.., the edge 4). Dashed, because no pixel's ray has vl exactly 0: the column's
+  rays pass it closer or farther. The reference's and the emulator's cameras never had a pixel
+  that close (|vl| ~ 1e-3, where the error is small): a pose at an odd width (the middle column
+  at vl = 0 exactly) or the owner's own pose finds such things.
 - **SteamVR's camera view** (when it shows the outside cameras) takes ~3 ms of GPU a frame: our 4.8 ms frame then reads ~8 ms, and at 120 Hz the headset falls to every 2nd refresh for seconds. 120 Hz that survives it needs ~3.5 ms at the edge.
 - **`adreno_stats.sh --disasm`** dumps the biggest program, Godot's generic ubershader (with its decal loop and its own derivatives), not the specialised one that runs. `KEEP_LOG=file` keeps the whole log; `--shader res://...` compiles another ray tracer (set before the first draw, so only it is compiled).
 - **Where the edge frame goes (model, main):** curved-region setup ~44%, the flat trace after the

@@ -527,7 +527,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     float x0B = max(x, -Lc);
     float DB = hasB ? Lc - x0B : 0.0;
     float wc = b / rho0;
-    float ivlc = inversesqrt(max(1.0 - wc * wc, 1e-14));   // 1 / the radial velocity on the cylinder
+    // 1 / the radial velocity on the cylinder, 1 / sqrt(1 - wc^2), with rho0^2 - b^2 as
+    // (rho0 - b)(rho0 + b) and rho0 - b = rs vl^2 / (1 + wn) - (rs - rho0): 1 - wc^2 itself cancels
+    // for a ray that goes round the throat (vl ~ 1e-4: wrong by half), and it put the floor's point
+    // of such rays off. rs - rho0 is eye.y (rmin = rho0 when there is a cylinder), R from the edge.
+    float omb = rs * vl * vl / (1.0 + wn) - (fromEdge ? R : eye.y);
+    float ivlc = rho0 * inversesqrt(max(omb * (rho0 + b), 1e-14 * rho0 * rho0));
     float kc = wc / rho0 * ivlc;
     vec2 PA = hasA ? Ss : vec2(0.0);                       // (psi, path length) of each piece
     vec2 PB = vec2(kc, ivlc) * DB;
@@ -591,8 +596,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     // grazes one, or meets the floor right after entering it, still finds it, and a long chord of a
     // ray that winds round the throat cannot cut across an object the path passes by. Only entries
     // count: a ray that starts inside one does not see it from inside. Hits are ordered by where
-    // on the path they are, 2 piece + fraction (as keyEnd), and each search ends at the nearest
-    // one so far.
+    // on the path they are, 2 (piece - 1) + fraction (as keyEnd), and each search ends at the
+    // nearest one so far.
     int cand = 0;          // bit i: ball i is in reach; bit 16 + i: cube i
     for (int i = wh_bIdx.x; i < wh_bIdx.w; i++) {
         vec4 Cb = wh_ball[i];
@@ -609,15 +614,18 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) cand |= 1 << (16 + i);
     }
     if (cand != 0) {
-        // where on the path the ray ends: 2 piece + the fraction of it (piece 0 A, 1 B, 2 C; 6:
-        // the edge), as the hits are ordered. The floor's point itself is worked out after the
+        // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
+        // 1 B from 0, 2 C from 2; 4: the edge), as the hits are ordered. The cylinder's fraction
+        // goes without an offset: a ray that winds round the throat meets things at ~1e-5 of it,
+        // and 2 + that kept a tenth of its digits (the floor's point and an object's normal off:
+        // white dashes along the throat). The floor's point itself is worked out after the
         // search, from there, as an object's hit is: the search then holds fewer numbers.
-        float keyEnd = 6.0;
+        float keyEnd = 4.0;
         if (floorHit) {
             // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
             float psiF = wh_atan2(e1.z, -e2.z);
             if (psiF >= PA.x && psiF < PA.x + PB.x) {
-                keyEnd = 2.0 + (psiF - PA.x) / max(kc * DB, 1e-30);
+                keyEnd = (psiF - PA.x) / max(kc * DB, 1e-30);
             } else {
                 bool inA = psiF < PA.x;
                 // psi from the fillet's inner end: piece A runs toward it, piece C away from it
@@ -625,7 +633,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 float zF = wh_filSolve(f, clamp(T, 0.0, f.psi));
                 float z0 = inA || cFromStart ? zs : f.zlo;
                 float dz = (inA ? f.zlo : f.zhi) - z0;
-                keyEnd = (inA ? 0.0 : 4.0) + clamp((zF - z0) / (abs(dz) > 1e-12 ? dz : 1e-12), 0.0, 1.0);
+                keyEnd = (inA ? -2.0 : 2.0) + clamp((zF - z0) / (abs(dz) > 1e-12 ? dz : 1e-12), 0.0, 1.0);
             }
         }
         float hitK = keyEnd;   // where the nearest hit so far is, or the ray's end
@@ -654,7 +662,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 // the travel, or shrinks), or the cylinder (x0B .. x0B + DB)
                 bool cyl = p == 1;
                 if ((p == 0 && !hasA) || (cyl && !hasB)) continue;
-                float qEnd = hitK - 2.0 * float(p);      // the nearest hit so far, or the ray's end
+                float qEnd = hitK - 2.0 * float(p - 1);  // the nearest hit so far, or the ray's end
                 if (qEnd <= 0.0) break;
                 float psi0 = p == 0 ? 0.0 : (cyl ? PA.x : PA.x + PB.x);    // the piece's psi range
                 float psi1 = p == 0 ? PA.x : (cyl ? PA.x + PB.x : tot.x);
@@ -733,7 +741,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                                 }
                                 miss = (mx - 1.0) * size;
                             }
-                            float key = 2.0 * float(p) + q;
+                            float key = 2.0 * float(p - 1) + q;
                             if (miss <= sag && key < hitK) {
                                 hitK = key;
                                 hitI = isCube ? WH_MAXB + i : i;
@@ -760,15 +768,15 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         sag = dot(D, D) / (8.0 * min(R, rho0)) + 1e-4;
                     }
                     q0 = qb;
-                    if (2.0 * float(p) + qb > hitK) break;     // a hit before here (the later pieces end there too)
+                    if (2.0 * float(p - 1) + qb > hitK) break;     // a hit before here (the later pieces end there too)
                 }
                 carry = qw.y >= 1.0;
             }
         }
         if (hitI >= 0 || floorHit) {
             // the hit's point (an object's, or the floor's), from where on the path it is
-            int p = min(int(0.5 * hitK), 2);
-            float q = hitK - 2.0 * float(p);
+            int p = min(int(floor(0.5 * hitK)) + 1, 2);
+            float q = hitK - 2.0 * float(p - 1);
             vec2 cum;
             if (p == 1) {
                 float xh = DB * q;
