@@ -52,6 +52,14 @@ const ITERATIONS := 6                # velocity iterations of the contact solver
 # speed, and one pressed against the floor or another ball gained speed from nothing; this is a
 # soft hand's
 const RESTITUTION_KINEMATIC := 0.3
+# a hand's push: no bounce (a palm is soft), at most HAND_FORCE (a hand pushing a heavy toy moves it
+# no faster than its strength: it goes into it), with the palm's friction (a ball pressed under the
+# hand stays under it instead of squirting out); an overlap with a hand is undone no faster than
+# HAND_SLOP a substep (the rest is the push's velocity), along the hand's motion (away from its
+# centre, it pushed a ball pressed a little off its top out sideways)
+const RESTITUTION_HAND := 0.0
+const PALM_FRICTION := 0.8
+const HAND_SLOP := 0.002
 
 var space: WormholeSpace
 var scene: Dictionary
@@ -269,7 +277,8 @@ func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
 	_move(b, -Nb, pen * (1.0 - wa))
 
 
-## A hand (kinematic sphere) pushing a free ball.
+## A hand (kinematic sphere) pushing a ball it does not hold: along the contact at most HAND_FORCE,
+## across it the palm's friction.
 func _push(b: Dictionary, hand: Dictionary) -> void:
 	if _ghosted(b, hand):
 		return
@@ -282,11 +291,23 @@ func _push(b: Dictionary, hand: Dictionary) -> void:
 		return
 	var Nb := space.project(b["l"], b["n"], D).normalized()      # at the ball, away from the hand
 	var Nh := space.project(hand["l"], hand["n"], D).normalized()
+	var m := mass_kg(b)
 	var Ub: Vector4 = b["U"]
 	var rel: float = hand["U"].dot(Nh) - Ub.dot(Nb)
 	if rel > 0.0:
-		b["U"] = Ub + (1.0 + RESTITUTION_KINEMATIC) * rel * Nb
-	_move(b, Nb, pen)
+		var jn := minf(m * (1.0 + RESTITUTION_HAND) * rel, HAND_FORCE * DT)
+		Ub += (jn / m) * Nb
+		# the palm drags it along: its motion across the contact, against the hand's, goes
+		var Uh := space.project(b["l"], b["n"], space.embed_vector(hand["l"], hand["n"], hand["U"]))
+		var slide := Ub - Uh
+		slide -= slide.dot(Nb) * Nb
+		var sl := slide.length()
+		if sl > 1e-6:
+			Ub -= slide * (minf(PALM_FRICTION * jn / m, sl) / sl)
+	b["U"] = Ub
+	var Uh := space.project(b["l"], b["n"], space.embed_vector(hand["l"], hand["n"], hand["U"]))
+	var out := Uh.normalized() if Uh.length() > 0.05 and Uh.dot(Nb) > 0.0 else Nb
+	_move(b, out, minf(pen, HAND_SLOP))
 
 
 ## A toy just let go (ghost: the hand's tracker) is not pushed by the hand that let it go until
@@ -404,6 +425,7 @@ class Contact:
 	var target := 0.0
 	var jn := 0.0
 	var jt := Vector2.ZERO
+	var cap := INF                       # the most normal impulse (a hand's: HAND_FORCE over a substep)
 	var group := ""
 
 	func speed(i: int) -> float:
@@ -501,7 +523,7 @@ func _solve_cubes(hands: Array) -> void:
 			_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
 		for j in hands.size():
 			if not c["holds"].has(hands[j]["tracker"]) and not _ghosted(c, hands[j]):
-				_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
+				_ball_contacts(c, boxes[i], hands[j], RESTITUTION_HAND, "h%d_%d" % [i, j], contacts, PALM_FRICTION)
 		for j in range(i + 1, cubes.size()):
 			if (boxes[i][0] - boxes[j][0]).length() < 2.0 * (c["half"] + cubes[j]["half"]):
 				_points_in_box(c, boxes[i], cubes[j], boxes[j], "c%d_%d" % [i, j], contacts)
@@ -511,6 +533,7 @@ func _solve_cubes(hands: Array) -> void:
 			if ct.k[0] <= 0.0:
 				continue                     # asleep against the floor or a hand: nothing to push
 			var jn := maxf(ct.jn + (ct.target - ct.speed(0)) / ct.k[0], 0.0)
+			jn = minf(jn, ct.cap)              # a hand pushes with HAND_FORCE at most
 			ct.push(0, jn - ct.jn)
 			ct.jn = jn
 			if ct.mu <= 0.0 or (jn <= 0.0 and ct.jt == Vector2.ZERO):
@@ -529,6 +552,8 @@ func _solve_cubes(hands: Array) -> void:
 			deepest[ct.group] = ct
 	for ct: Contact in deepest.values():
 		var depth: float = ct.pen - SLOP
+		if ct.cap < INF:
+			depth = minf(depth, HAND_SLOP)   # a hand's overlap: its push moves the cube, not this
 		var mass_sum := ct.ima + ct.imb
 		if depth <= 0.0 or mass_sum <= 0.0:
 			continue
@@ -655,7 +680,7 @@ func _static_contacts(c: Dictionary, group: String, contacts: Array[Contact], e:
 
 
 ## A ball (or a hand) against the cube: the point of the box closest to the ball's centre, in R^4.
-func _ball_contacts(c: Dictionary, box: Array, b: Dictionary, e: float, group: String, contacts: Array[Contact]) -> void:
+func _ball_contacts(c: Dictionary, box: Array, b: Dictionary, e: float, group: String, contacts: Array[Contact], mu := 0.0) -> void:
 	var B := space.embed(b["l"], b["n"])
 	var C: Vector4 = box[0]
 	var d := B - C
@@ -670,8 +695,12 @@ func _ball_contacts(c: Dictionary, box: Array, b: Dictionary, e: float, group: S
 	if dist >= rad or dist < 1e-6:
 		return
 	_wake(c, b)
-	contacts.append(_contact(c, Vector3(q.x, q.y, q.z), space.project(c["l"], c["n"], -D).normalized(),
-			b, Vector3.ZERO, space.project(b["l"], b["n"], D).normalized(), rad - dist, 0.0, e, group))
+	var ct := _contact(c, Vector3(q.x, q.y, q.z), space.project(c["l"], c["n"], -D).normalized(),
+			b, Vector3.ZERO, space.project(b["l"], b["n"], D).normalized(), rad - dist, mu, e, group)
+	if b.has("tracker") and ct.ima > 0.0:
+		# the solver's impulses are in its mass units (cube_mass): HAND_FORCE over a substep in them
+		ct.cap = HAND_FORCE * DT / (mass_kg(c) * ct.ima)
+	contacts.append(ct)
 
 
 ## Corners and edge midpoints of cube P inside cube Q's box push P out through Q's nearest face.
@@ -706,11 +735,12 @@ func _points_in_box(P: Dictionary, bp: Array, Q: Dictionary, bq: Array, group: S
 
 const HAND_FORCE := 150.0        # N, per hand: an arm lifts about 15 kg
 const HAND_TORQUE := 30.0        # N m, per hand, about its grip: the wrist with the fingers
-const WRIST_SPEED := 10.0        # rad/s: the hand turns what it holds no faster (a hand turns a toy as
-								 # it turns, a flick does not spin it faster; a twist falling off
-								 # from 0 with the toy's spin, as a muscle's force with its speed,
-								 # made every turn sluggish in the headset, and a light toy outran it
-								 # within a substep)
+const WRIST_SPEED := 20.0        # rad/s: the hand turns what it holds no faster (a hand turns a toy as
+								 # it turns, a flick spins it no faster; a twist falling off from 0
+								 # with the toy's spin, as a muscle's force with its speed, made every
+								 # turn sluggish in the headset, and a light toy outran it within a
+								 # substep; a cap of 10 left the hand no room to catch up a toy
+								 # turning with it: still sluggish)
 const BRAKING := 1.5             # a wrist that is stretched holds this much more: what slows a
 const BRAKING_SPIN := 0.5        # toy's spin, from this spin (rad/s) on (less below: in proportion);
 								 # without it a toy too heavy to hold up swings in the hand for good
@@ -734,17 +764,25 @@ static func inertia_kg(b: Dictionary) -> float:
 
 ## Hand `tracker` takes toy b at its point g (body coordinates, from the centre). A ball gets axes
 ## while it is held, ball_axes (tangent at its centre), since a hand turns what it holds. The hold's
-## aim is where the toy is now, at rest, until aim says otherwise.
+## aim is where the toy is now, at rest, until aim says otherwise; its strength HAND_FORCE and
+## HAND_TORQUE until strength says otherwise.
 func take(b: Dictionary, tracker: StringName, g: Vector3, ball_axes: Array) -> void:
 	if not b.has("F") and not b.has("hF"):
 		b["hF"] = WormholeSpace.orthonormalize(ball_axes)
 		b["hw"] = Vector3.ZERO
+	var was: Dictionary = b["holds"].get(tracker, {})
 	b["holds"][tracker] = {"g": g, "l": b["l"], "n": b["n"],
 			"A": (b["F"] if b.has("F") else b["hF"]).duplicate(), "V": Vector4.ZERO, "W": Vector4.ZERO,
-			"acc": Vector4.ZERO}
+			"acc": Vector4.ZERO, "force": was.get("force", HAND_FORCE), "torque": was.get("torque", HAND_TORQUE)}
 	b.erase("ghost")
 	if b.has("F"):
 		b["still"] = 0.0
+
+
+## How strong hand `tracker`'s hold on b is: the most force (N) and twist (N m) it gives.
+func strength(b: Dictionary, tracker: StringName, force: float, torque: float) -> void:
+	b["holds"][tracker]["force"] = force
+	b["holds"][tracker]["torque"] = torque
 
 
 func let_go(b: Dictionary, tracker: StringName) -> void:
@@ -854,11 +892,13 @@ func _hold_toy(b: Dictionary, lag: float) -> void:
 		# how fast it closes the gap: a toy too heavy to hold up sags to where the wrist holds it and
 		# stops there (with the hand's whole strength the hand would swing it about there for good)
 		var Ig := I + m * g.length_squared()
-		var lift := maxf(HAND_FORCE - weight.length() / hands, 0.1 * HAND_FORCE) / m
-		var twist := HAND_TORQUE - (g.cross(weight).length() if hands == 1 else 0.0)
+		var force: float = h["force"]
+		var torque: float = h["torque"]
+		var lift := maxf(force - weight.length() / hands, 0.1 * force) / m
+		var twist := torque - (g.cross(weight).length() if hands == 1 else 0.0)
 		grips.append({"g": g, "vp": vp + _closing(place, lift),
-				"w": (W + _closing(turn, maxf(twist, 0.1 * HAND_TORQUE) / Ig)).limit_length(WRIST_SPEED),
-				"P": Vector3.ZERO, "L": Vector3.ZERO})
+				"w": (W + _closing(turn, maxf(twist, 0.1 * torque) / Ig)).limit_length(WRIST_SPEED),
+				"P": Vector3.ZERO, "L": Vector3.ZERO, "force": force, "torque": torque})
 	for _it in HOLD_ITERATIONS:
 		for gr: Dictionary in grips:
 			var g: Vector3 = gr["g"]
@@ -868,8 +908,8 @@ func _hold_toy(b: Dictionary, lag: float) -> void:
 			var arm := moving + w0.cross(g)
 			# the twist for the force the arm can give (for the force it would want, it would turn a toy
 			# pressed against the floor the other way)
-			var P0: Vector3 = _muscle(gr["P"] + m * (dv - dw.cross(g)), arm, HAND_FORCE, INF) - gr["P"]
-			var L: Vector3 = _muscle(gr["L"] + I * dw - g.cross(P0), w0, HAND_TORQUE, BRAKING_SPIN)
+			var P0: Vector3 = _muscle(gr["P"] + m * (dv - dw.cross(g)), arm, gr["force"], INF) - gr["P"]
+			var L: Vector3 = _muscle(gr["L"] + I * dw - g.cross(P0), w0, gr["torque"], BRAKING_SPIN)
 			var dL: Vector3 = L - gr["L"]
 			var rhs: Vector3 = dv - (dL / I).cross(g)
 			var g2 := g.length_squared()
@@ -877,7 +917,7 @@ func _hold_toy(b: Dictionary, lag: float) -> void:
 			if g2 > 1e-12:
 				var along := (rhs.dot(g) / g2) * g
 				dP = m * along + (rhs - along) / (1.0 / m + g2 / I)
-			var P: Vector3 = _muscle(gr["P"] + dP, arm, HAND_FORCE, INF)
+			var P: Vector3 = _muscle(gr["P"] + dP, arm, gr["force"], INF)
 			dP = P - gr["P"]
 			v += dP / m
 			w += (dL + g.cross(dP)) / I

@@ -30,6 +30,7 @@ var grav_a := 1.0
 var grav_k := 1.0
 var grav_beta := 0.0
 var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_NODES, interleaved
+var straight := true                    # geodesics in a flat universe as lines (tests compare the steps)
 
 
 func _init(throat_radius: float, half_length: float, fillet_radius: float) -> void:
@@ -88,10 +89,24 @@ func _shift(l: float, n: Vector3, vecs: Array, d: Array, h: float) -> Array:
 
 
 ## Follow the geodesic from (l, n) with unit initial direction dir for length dist,
-## transporting frame (Array of Vector4). Returns [l, n, frame].
+## transporting frame (Array of Vector4). Returns [l, n, frame]. In a flat universe, where the
+## segment stays out of the shell, it is a straight line of that universe's chart, and the frame
+## keeps its chart directions (exact, and some fifty times cheaper than the steps: the hands, the
+## head and what the hands hold are placed so every frame).
 func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> Array:
 	if dist <= 0.0:
 		return [l, n, frame.duplicate()]
+	if straight and absf(l) >= L:
+		var side := signf(l)
+		var x := chart_position(l, n)
+		var d := vector_to_chart(side, n, dir)
+		var near := clampf(-x.dot(d), 0.0, dist)          # the segment's point nearest the centre
+		if (x + near * d).length() > Rout + 1e-4:
+			var p := point_from_chart(side, x + dist * d)
+			var out := []
+			for A: Vector4 in frame:
+				out.append(vector_from_chart(side, p[1], vector_to_chart(side, n, A)))
+			return [p[0], p[1], out]
 	var vecs := [dir]
 	vecs.append_array(frame)
 	var steps := maxi(1, ceili(dist / STEP))
