@@ -1041,8 +1041,8 @@ func _log() -> void:
 				"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
 	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, main's scripts %.2f ms avg %.2f max, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
 			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
-			s[5] / 1000.0 / s[4] if s[4] > 0 else 0.0, s[6] / 1000.0,
-			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
+			1000.0 / rate if rate > 0.0 else 0.0,
+			s[5] / 1000.0 / s[4] if s[4] > 0 else 0.0, s[6] / 1000.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds), foveation, "width" if viewer and viewer.own_order == 0 else "height", _gaze_text(),
 			viewer.gravity_view if viewer else 0, "open" if open else "closed"])
 	clock_min = 0

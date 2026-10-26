@@ -208,6 +208,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   poses, the marks counted: a ball held at the chest 6.05 -> 5.01 ms (at the edge 7.66 -> 5.48),
   the demo alone 4.50 -> 4.32 (the start and the throat sideways as before). The speed check times
   this build an eighth way, "a ball in the hand" (bench.gd IN_HAND). Not yet in the headset.
+  The builds of 9f0d4f9 and d883b1a print the `refresh:` line's new numbers out of order: there
+  "max of X" is the scripts' mean and "main's scripts Y ms avg Z max" their most and the frame's
+  budget (fixed after).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
