@@ -475,6 +475,12 @@ def run_wave(prog, start, wave, stats, max_steps=200000):
         if op == 'jump':
             pc = np.where(at, ins.target, pc)
             continue
+        if op == 'kill':
+            # discard: the lanes whose predicate is set end here (the marks of the stencil)
+            k = wave.read(ins.srcs[0], 0, 'b').astype(bool) & at
+            done |= k
+            pc = nxt
+            continue
         if op in ('br', 'brao', 'braa', 'bany', 'ball'):
             c1 = wave.read(ins.srcs[0], 0, 'b')
             if op == 'br':

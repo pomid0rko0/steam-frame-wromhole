@@ -101,5 +101,13 @@ for s in "${srcs[@]}"; do
 		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole$view.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
 		KEEP_LOG=$flog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole_balls${view}_flat.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the flat toys' part: #"
 	fi
-	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} ${flog:+--flat $flog} | tail -n +2 | sed "s#^#$s: #"
+	# this tree's marks 2 and 3 (the stencil's passes that look for the shell's toys), compiled alone
+	mlogs=""
+	if [ -n "$flog" ] && [ "$s" = this ]; then
+		for mk in stencil_toys stencil_toys_near stencil_toys_shell stencil_toys_shell_near; do
+			KEEP_LOG=$WORK/$n.$mk.log "$ROOT/tools/adreno_stats.sh" --alone --shader res://shaders/$mk.gdshader >/dev/null
+			mlogs="$mlogs${mlogs:+,}$WORK/$n.$mk.log"
+		done
+	fi
+	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} ${flog:+--flat $flog} ${mlogs:+--marks $mlogs} | tail -n +2 | sed "s#^#$s: #"
 done

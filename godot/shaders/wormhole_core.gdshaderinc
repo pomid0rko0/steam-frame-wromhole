@@ -1074,7 +1074,8 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     bool nearB = bb.w > 0.0 && (cqb <= 0.0 || (bqb < 0.0 && dsb >= 0.0 && (eb < 0.0 || eb * eb < dsb)));
     // this universe's balls only (main.set_objects sorts them: A's first, B's last), each as the
     // sphere its sheet cuts from it in this chart (wh_fball: centre, radius squared)
-    for (int i = side > 0.0 ? 0 : wh_bIdx.z; i < (nearB ? (side > 0.0 ? wh_bIdx.y : wh_nBall) : 0); i++) {
+    int iEnd = nearB ? (side > 0.0 ? wh_bIdx.y : wh_nBall) : 0;
+    for (int i = side > 0.0 ? 0 : wh_bIdx.z; i < iEnd; i++) {
         vec4 S = wh_fball[i];
         vec3 oc = x - S.xyz;
         float bq = dot(oc, d);
@@ -1109,7 +1110,8 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     dsb = bqb * bqb - cqb;
     eb = -bqb - bt;
     bool nearC = bb.w > 0.0 && (cqb <= 0.0 || (bqb < 0.0 && dsb >= 0.0 && (eb < 0.0 || eb * eb < dsb)));
-    for (int i = side > 0.0 ? 0 : wh_cIdx.z; i < (nearC ? (side > 0.0 ? wh_cIdx.y : wh_nCube) : 0); i++) {
+    int cEnd = nearC ? (side > 0.0 ? wh_cIdx.y : wh_nCube) : 0;
+    for (int i = side > 0.0 ? 0 : wh_cIdx.z; i < cEnd; i++) {
         vec4 X = vec4(mx, sheet) - wh_cube[i];
         // first the box's bounding sphere in R^4 (radius: half diagonal, 2 half sizes)
         float rb = 2.0 * wh_cubeCol[i].w;

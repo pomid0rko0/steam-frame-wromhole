@@ -1336,20 +1336,15 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	# where each can be met (the marks): a path point within its reach has a profile point (r, w)
 	# within it, so an l within that along the profile, bent at most 1 / R: 2 asin(reach / 2R)
 	shell_toys = []
-	var toy_l := PackedVector4Array()
-	toy_l.resize(18)
 	for k in 2:
 		var lo: int = ob[1].x if k == 0 else oc[1].x
 		var hi: int = ob[1].w if k == 0 else oc[1].w
 		for i in range(lo, hi):
 			var C: Vector4 = p[i] if k == 0 else cp[i]
 			var reach: float = c[i].w if k == 0 else 2.0 * cc[i].w
-			shell_toys.append([i + 16 * k, C, reach])
 			var lc: float = space.unembed(C)[0]
 			var dl := 2.0 * space.fillet * asin(minf((reach + 0.01) / (2.0 * space.fillet), 1.0)) * 1.02 + 0.01
-			toy_l[i + 12 * k] = Vector4(lc - dl, lc + dl, 0.0, 0.0)
-	for m in mark_materials:
-		m.set_shader_parameter("wh_toyL", toy_l)
+			shell_toys.append([i + 16 * k, C, reach, lc - dl, lc + dl])
 	# each universe's toys as spheres in its chart (the stencil's proxies, _update_proxies)
 	toy_spheres = [PackedVector4Array(), PackedVector4Array()]
 	for k in 2:
@@ -1476,15 +1471,13 @@ func _param(name: StringName, value: Variant) -> void:
 		m.set_shader_parameter(name, value)
 
 
-## A uniform of the toys (set_objects): for the ray tracers with toys and the marks; only when it
-## changed (toys at rest: the same every frame).
+## A uniform of the toys (set_objects): for the ray tracers with toys; only when it changed (toys
+## at rest: the same every frame). The marks get theirs from _update_near.
 func _toy_param(name: StringName, value: Variant) -> void:
 	if toy_params.get(name) == value and material.get_shader_parameter(name) != null:
 		return
 	toy_params[name] = value
 	for m in [material, flat_material, near_material]:
-		m.set_shader_parameter(name, value)
-	for m in mark_materials:
 		m.set_shader_parameter(name, value)
 
 
@@ -1578,10 +1571,13 @@ func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void
 	proxies.visible = split and not inside
 	mark_all.visible = toys and (toy_mode == TOYS_BARE or (split and inside))
 	whole_mark.visible = toys and (toy_mode == TOYS_WHOLE or warm)
-	marks[0].visible = split and (inside or warm)
-	marks[1].visible = split and ((inside and near) or warm)
-	marks[2].visible = split and (not inside or warm)
-	marks[3].visible = split and ((not inside and near) or warm)
+	# the marks 2 and 3 over the shell's sphere only from outside it (its front faces then cover all
+	# of it once); from within it or the band of its margins, over the whole view
+	var by_quads := inside or space.r(l) < (space.Rout + PROXY_MARGIN) * PROXY_SLACK + 0.1
+	marks[0].visible = split and (by_quads or warm)
+	marks[1].visible = split and ((by_quads and near) or warm)
+	marks[2].visible = split and (not by_quads or warm)
+	marks[3].visible = split and ((not by_quads and near) or warm)
 	if plain_quad:
 		plain_quad.visible = split and (not inside or warm)
 		flat_quad.visible = split
@@ -1616,9 +1612,10 @@ func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void
 ## eye meets one only within a cone round where it is seen (wormhole_core.gdshaderinc, wh_nearCone).
 ## Where it is seen from the head: its geodesic from the head, unrolled into the room (a hand's is
 ## its offset in the room, as _update_hands places it; another's from WormholeSpace.toward_fast,
-## with how far that lands off added to its reach). The marks 3 cover their cones; the ray tracer of
-## stencil 2 leaves them out (wh_candMask), that of 3 looks for them. Without the split (the speed
-## check's TOYS_WHOLE) the one of stencil 2 looks for all.
+## with how far that lands off added to its reach). The marks 3 look for them in their cones, the
+## marks 2 for the others; the ray tracer of stencil 2 leaves them out (wh_candMask), that of 3
+## looks for them. Without the split (the speed check's TOYS_WHOLE) the one of stencil 2 looks for
+## all.
 func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	var E := space.embed(l, n)
 	var found := []
@@ -1628,7 +1625,7 @@ func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 			found.append([d, t])
 	found.sort_custom(_nearer)
 	var near := PackedVector4Array()
-	var bits := Vector4i(30, 30, 30, 30)       # no toy's bit
+	var near_toys := []
 	var mask := 0
 	for k in mini(found.size(), NEAR_MAX):
 		var t: Array = found[k][1]
@@ -1646,17 +1643,55 @@ func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 			play = head_pos + Vector3(U.dot(hf[0]), U.dot(hf[1]), U.dot(hf[2]))
 			miss = res[1]
 		near.append(Vector4(play.x, play.y, play.z, t[2] + miss + NEAR_SLACK))
-		bits[k] = t[0]
+		near_toys.append(t)
 		mask |= 1 << t[0]
 	while near.size() < 4:
 		near.append(Vector4.ZERO)              # reach 0: no cone
 	near_mask = mask if toy_mode == TOYS_SPLIT else 0
 	material.set_shader_parameter("wh_candMask", ~near_mask)
 	near_material.set_shader_parameter("wh_candMask", -1)
-	for m in mark_materials:
-		m.set_shader_parameter("wh_near", near)
-		m.set_shader_parameter("wh_nearBit", bits)
-		m.set_shader_parameter("wh_candMask", ~near_mask)
+	var others := []
+	for t in shell_toys:
+		if not (near_mask >> int(t[0])) & 1:
+			others.append(t)
+	var far_groups := _mark_groups(others)
+	var near_groups := _mark_groups(near_toys)
+	for k in 4:
+		var g: Array = near_groups if k % 2 == 1 else far_groups
+		var m := mark_materials[k]
+		for j in _MARK_ARRAYS.size():
+			m.set_shader_parameter(_MARK_ARRAYS[j], g[j])
+		m.set_shader_parameter("wh_mkGroups", g[6])
+		if k % 2 == 1:
+			m.set_shader_parameter("wh_near", near)
+
+
+const _MARK_ARRAYS := [&"wh_mkX", &"wh_mkY", &"wh_mkZ", &"wh_mkR2", &"wh_mkLo", &"wh_mkHi"]
+
+
+## The marks' toys, four to a vec4 (wormhole_view.gdshaderinc, WH_MARK): from shell_toys' entries
+## [bit, R^4 centre, reach, l from, l to]: [x, y, z, (reach + 1 cm)^2, l from, l to (each 5 vec4),
+## how many groups]. An empty slot never passes: reach^2 -1, its l range at 1e9.
+static func _mark_groups(toys: Array) -> Array:
+	var n := mini(toys.size(), 20)
+	var out := []
+	for j in 6:
+		var a := PackedVector4Array()
+		for g in 5:
+			var v := Vector4.ZERO
+			for k in 4:
+				var i := 4 * g + k
+				if i >= n:
+					v[k] = -1.0 if j == 3 else (1e9 if j >= 4 else 0.0)
+					continue
+				var t: Array = toys[i]
+				var C: Vector4 = t[1]
+				var rr: float = t[2] + 0.01
+				v[k] = [C.x, C.y, C.z, rr * rr, t[3], t[4]][j]
+			a.append(v)
+		out.append(a)
+	out.append(ceili(n / 4.0))
+	return out
 
 
 static func _nearer(a: Array, b: Array) -> bool:

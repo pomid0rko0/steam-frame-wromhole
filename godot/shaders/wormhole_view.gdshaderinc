@@ -70,18 +70,25 @@ uniform vec4 wh_fball[12];
 // cube i: 16 + i): all, or all but those near the eye (main._update_near)
 uniform int wh_candMask = -1;
 #define WH_CAND_MASK wh_candMask
+#endif
+#endif
 #ifdef WH_MARK
-// up to four of the shell's toys near the head (main._update_near): where the head's geodesic to
-// each centre ends when unrolled into the room (play space), and its reach (with the margins; 0:
-// none); their bits
+// The toys this mark looks for (main._update_near: the shell's but those near the eye, or with
+// WH_MARK_NEAR those near it), four to a vec4, wh_mkGroups of them: their centres' x, y, z in R^4,
+// (reach + 1 cm)^2, and the range of l where each can be met (lo, hi: a path point within its reach
+// has a profile point (r, w) within it, so an l within its reach along the profile, bent at most
+// 1 / R). An empty slot: reach^2 -1, the range at 1e9.
+uniform vec4 wh_mkX[5];
+uniform vec4 wh_mkY[5];
+uniform vec4 wh_mkZ[5];
+uniform vec4 wh_mkR2[5];
+uniform vec4 wh_mkLo[5];
+uniform vec4 wh_mkHi[5];
+uniform int wh_mkGroups = 0;
+// WH_MARK_NEAR: the same four slots' toys seen from the head (main._update_near): where the head's
+// geodesic to each centre ends when unrolled into the room (play space), and its reach (with the
+// margins; 0: none)
 uniform vec4 wh_near[4];
-uniform ivec4 wh_nearBit;
-// the range of l where each of the shell's toys can be met (ball i: i, cube i: 12 + i; xy): a path
-// point within its reach has a profile point (r, w) within it, so an l within its reach along the
-// profile (bent at most 1 / R)
-uniform vec4 wh_toyL[18];
-#endif
-#endif
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
@@ -103,9 +110,7 @@ varying flat vec4 v_nearCos;
 #endif
 
 void vertex() {
-#ifndef WH_MARK_MESH
-	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
-#endif
+	vec2 corner = VERTEX.xy;        // where this corner of the quad over the view goes, in NDC
 	float l = head_l;
 	vec3 n = head_n;
 	vec4 f0 = head_f[0];
@@ -120,40 +125,82 @@ void vertex() {
 	}
 	v_l = l; v_n = n; v_f0 = f0; v_f1 = f1; v_f2 = f2;
 	v_eye = wh_eye(l);
-#ifndef WH_MARK_MESH
-	// this corner's ray: the line from the eye, EYE_OFFSET, through the corner unprojected at two
-	// depths (the far point, whatever the depth convention). Unnormalised, it is affine in the
-	// screen position, so the interpolated value is each pixel's ray exactly.
-	vec4 pa = INV_PROJECTION_MATRIX * vec4(VERTEX.xy, 0.001, 1.0);
-	vec4 pb = INV_PROJECTION_MATRIX * vec4(VERTEX.xy, 0.999, 1.0);
-	vec3 qa = pa.xyz / pa.w;
-	vec3 qb = pb.xyz / pb.w;
-	vec3 pd = mat3(INV_VIEW_MATRIX) * ((dot(qa, qa) > dot(qb, qb) ? qa : qb) - EYE_OFFSET);   // play space
-	v_ray = pd.x * f0 + pd.y * f1 + pd.z * f2;
-#endif
 #ifdef WH_MARK
 	// the near toys' cones from this eye: each centre's direction in its frame, as v_ray
 	vec4 Q[4];
 	vec4 cs;
+#ifdef WH_MARK_NEAR
+#ifndef WH_MARK_MESH
+	// the quad over the cones only: the bounding box, in this eye's view, of an octagon round each
+	// cone's circle at a unit distance along its axis (it holds the circle, and projected from the
+	// eye the projected circle: the cone's pixels). The whole view if one is wide or reaches
+	// behind the eye.
+	vec2 lo = vec2(1.0);
+	vec2 hi = vec2(-1.0);
+	bool whole = false;
+#endif
+#endif
 	for (int k = 0; k < 4; k++) {
 		vec3 q = wh_near[k].xyz - eye;
-		cs[k] = wh_nearCone(q, wh_near[k].w);
+		cs[k] = wh_near[k].w > 0.0 ? wh_nearCone(q, wh_near[k].w) : 2.0;     // none: no direction
 		q = q / max(length(q), 1e-6);
 		Q[k] = q.x * f0 + q.y * f1 + q.z * f2;
+#ifdef WH_MARK_NEAR
+#ifndef WH_MARK_MESH
+		if (cs[k] > 1.5)
+			continue;
+		if (cs[k] < 0.2) {
+			whole = true;
+			continue;
+		}
+		vec3 qv = normalize(mat3(VIEW_MATRIX) * q);
+		float t = sqrt(1.0 - cs[k] * cs[k]) / cs[k] / 0.92387953;     // tan of the angle / cos(pi / 8)
+		vec3 a1 = normalize(cross(qv, abs(qv.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		vec3 a2 = cross(qv, a1);
+		for (int j = 0; j < 8; j++) {
+			float ang = float(j) * 0.78539816;
+			vec4 cp = PROJECTION_MATRIX * vec4(EYE_OFFSET + qv + t * (cos(ang) * a1 + sin(ang) * a2), 1.0);
+			if (cp.w < 1e-3) {
+				whole = true;
+				break;
+			}
+			lo = min(lo, cp.xy / cp.w);
+			hi = max(hi, cp.xy / cp.w);
+		}
+#endif
+#endif
 	}
 	v_near0 = Q[0]; v_near1 = Q[1]; v_near2 = Q[2]; v_near3 = Q[3];
 	v_nearCos = cs;
+#ifdef WH_MARK_NEAR
+#ifndef WH_MARK_MESH
+	if (!whole)      // none at all: every corner at one point off the view, nothing drawn
+		corner = lo.x > hi.x ? vec2(2.0) : mix(clamp(lo, -1.0, 1.0), clamp(hi, -1.0, 1.0), VERTEX.xy * 0.5 + 0.5);
+#endif
+#endif
+#endif
+#ifndef WH_MARK_MESH
+	POSITION = vec4(corner, 1.0, 1.0);
+	// this corner's ray: the line from the eye, EYE_OFFSET, through the corner unprojected at two
+	// depths (the far point, whatever the depth convention). Unnormalised, it is affine in the
+	// screen position, so the interpolated value is each pixel's ray exactly.
+	vec4 pa = INV_PROJECTION_MATRIX * vec4(corner, 0.001, 1.0);
+	vec4 pb = INV_PROJECTION_MATRIX * vec4(corner, 0.999, 1.0);
+	vec3 qa = pa.xyz / pa.w;
+	vec3 qb = pb.xyz / pb.w;
+	vec3 pd = mat3(INV_VIEW_MATRIX) * ((dot(qa, qa) > dot(qb, qb) ? qa : qb) - EYE_OFFSET);   // play space
+	v_ray = pd.x * f0 + pd.y * f1 + pd.z * f2;
 #endif
 }
 
 #ifdef WH_MARK
 // Where a ray tracer with the shell's toys must run (stencil 2, or with WH_MARK_NEAR 3): a ray can
 // meet one of them only if it is within reach of the ray's plane through the centre (the whole ray
-// lies in span(n, w) of R^4's xyz: the search's candidates, wh_curved), and one near the eye only
-// if the ray points into its cone (wh_nearCone). A centimetre more than the ray tracer's test, and
-// the cones a little wider: the marks must cover every pixel where it could find one. Without
-// WH_MARK_NEAR those near the eye are left out (the ray tracer of stencil 2 leaves them out), with
-// it only they are looked at.
+// lies in span(n, w) of R^4's xyz: the search's candidates, wh_curved), only within the range of l
+// its path can pass, and one near the eye only if the ray points into its cone (wh_nearCone). A
+// centimetre more than the ray tracer's test, and the cones a little wider: the marks must cover
+// every pixel where it could find one. Four toys at a time, from uniforms main packs for each mark
+// (no indexing per toy): over the whole view this runs on every pixel.
 void fragment() {
 #ifdef WH_MARK_MESH
 	// drawn over a mesh (the sphere round the shell, stencil_toys_shell.gdshader): the pixel's ray
@@ -163,7 +210,17 @@ void fragment() {
 #else
 	vec4 V = normalize(v_ray);
 #endif
+	float hit = 0.0;
+#ifdef WH_MARK_NEAR
+	// the near toys' cones first: most pixels are in none, and their waves skip the rest (a loop of
+	// at most one pass, its bound one the compiler cannot see: an if would become selects, and every
+	// pixel would pay for all of it)
+	vec4 inCone = vec4(greaterThanEqual(vec4(dot(V, v_near0), dot(V, v_near1), dot(V, v_near2), dot(V, v_near3)),
+			v_nearCos - 1e-4));
+	for (int once = 0; once < (dot(inCone, vec4(1.0)) > 0.5 ? 1 : 0) + min(wh_mkGroups, 0); once++) {
+#endif
 	vec3 e3 = cross(v_n, V.yzw);              // the plane's normal, |w| long
+	// along the radius (e3 = 0) the ray is in every plane through it: the 1e-12 lets it pass
 	float s2 = dot(e3, e3);
 	// the range of l the path passes in the shell, as x = side l (this side x > 0): inward, a ray
 	// that passes the throat goes on to the far edge, one that turns does so where r = b, at
@@ -181,30 +238,22 @@ void fragment() {
 	float lt = max(wh_Lc() + wh_fillet * (sqrt(max(2.0 * (b - wh_rho0) / wh_fillet, 0.0)) - th0), wh_Lc());
 	float xlo = inward ? (turn ? min(lt, x0) : -wh_Lsh()) : x0;
 	float xhi = inward && !turn ? x0 : wh_Lsh();
-	int near = 0;                             // the near toys this ray points at
-	if (dot(V, v_near0) >= v_nearCos.x - 1e-4) near |= 1 << wh_nearBit.x;
-	if (dot(V, v_near1) >= v_nearCos.y - 1e-4) near |= 1 << wh_nearBit.y;
-	if (dot(V, v_near2) >= v_nearCos.z - 1e-4) near |= 1 << wh_nearBit.z;
-	if (dot(V, v_near3) >= v_nearCos.w - 1e-4) near |= 1 << wh_nearBit.w;
+	// as l itself
+	float llo = sd > 0.0 ? xlo : -xhi;
+	float lhi = sd > 0.0 ? xhi : -xlo;
+	for (int g = 0; g < wh_mkGroups; g++) {
+		vec4 d = wh_mkX[g] * e3.x + wh_mkY[g] * e3.y + wh_mkZ[g] * e3.z;
+		vec4 m = vec4(lessThan(d * d, wh_mkR2[g] * s2 + 1e-12)) * vec4(lessThanEqual(wh_mkLo[g], vec4(lhi)))
+				* vec4(greaterThanEqual(wh_mkHi[g], vec4(llo)));
 #ifdef WH_MARK_NEAR
-	int want = near;                          // the near ones it points at
-#else
-	int want = wh_candMask;                   // the others (main sets the near ones' bits off)
+		m *= inCone;                          // one group: the four near slots
 #endif
-	bool any = s2 < 1e-12 && want != 0;       // along the radius: in every plane through it
-	for (int i = wh_bIdx.x; i < wh_bIdx.w; i++) {
-		float d = dot(wh_ball[i].xyz, e3);
-		float rr = wh_ballCol[i].w + 0.01;
-		vec2 wl = sd * wh_toyL[i].xy;
-		any = any || (d * d < rr * rr * s2 && (want & (1 << i)) != 0 && xhi >= min(wl.x, wl.y) && xlo <= max(wl.x, wl.y));
+		hit += dot(m, vec4(1.0));
 	}
-	for (int i = wh_cIdx.x; i < wh_cIdx.w; i++) {
-		float d = dot(wh_cube[i].xyz, e3);
-		float rr = 2.0 * wh_cubeCol[i].w + 0.01;
-		vec2 wl = sd * wh_toyL[12 + i].xy;
-		any = any || (d * d < rr * rr * s2 && (want & (1 << (16 + i))) != 0 && xhi >= min(wl.x, wl.y) && xlo <= max(wl.x, wl.y));
+#ifdef WH_MARK_NEAR
 	}
-	if (!any) discard;
+#endif
+	if (hit < 0.5) discard;
 	ALBEDO = vec3(0.0);
 }
 #else

@@ -15,9 +15,11 @@ extends Node
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## makes SteamVR step in, and the GPU time then grows by half for reasons of its own.
-## This build's ray tracer is timed six ways (FOVEATIONS), and with the demo's toys a seventh,
-## the ray tracer with toys over the whole view, not only where the stencil marks a toy may be seen
-## (main.set_toy_mode): as it always ran, with the 3D scene in
+## This build's ray tracer is timed six ways (FOVEATIONS), and with the demo's toys two more: the
+## ray tracer with toys over the whole view, not only where the stencil marks a toy may be seen
+## (main.set_toy_mode), and with a ball held at the chest and both hands' balls (IN_HAND, as
+## tests/emu_dump.gd +held: what holding a toy costs, the near ones' cones). The six: as it always
+## ran, with the 3D scene in
 ## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
 ## foveated rendering: SteamVR's map low and high, our own wide and narrow (main.set_foveation).
 ## The others run without foveation.
@@ -57,6 +59,9 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat: where 144 Hz fell to 72
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
 ]
+# a ball in the right hand and both hands' balls, from the head in the room's axes: [offset, radius]
+const IN_HAND := [[Vector3(0.22, -0.35, -0.6), 0.25], [Vector3(0.22, -0.35, -0.3), 0.04],
+	[Vector3(-0.22, -0.35, -0.3), 0.04]]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
 const PREPARE := 2.0            # s each ray tracer runs before the timing (its pipeline is compiled)
@@ -170,6 +175,7 @@ func start() -> void:
 		variants.append([f[0], own_shader, f[1], f[2], main.TOYS_SPLIT])
 	if main.balls > 0:
 		variants.append(["this build, toys over the whole view", own_shader, 0, false, main.TOYS_WHOLE])
+		variants.append(["this build, a ball in the hand", own_shader, 0, false, main.TOYS_SPLIT, true])
 	saved_pose = main.get_pose()
 	main.hold = true
 	saved_scale = panel.render_scale
@@ -274,10 +280,11 @@ func _prepare() -> void:
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's ray tracer and foveation.
+## A variant's ray tracer and foveation (and a ball in the hand: after place_on_axis, from there).
 func _use(v: Array) -> void:
 	main.material.shader = v[1]
 	main.set_toy_mode(v[4])
+	_in_hand(v.size() > 5 and v[5])
 	if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
 		main.set_foveation(v[2], v[3])
 
@@ -295,6 +302,31 @@ func _segment() -> void:
 			_begin(step + 1)
 		else:
 			_compared()
+
+
+## The ball in the hand and the hands' balls (IN_HAND) where the head is now, or none. Not held:
+## the hands are off while the speed check holds the viewer, and so is the physics, so they stay.
+func _in_hand(on: bool) -> void:
+	var w = main.world
+	if w == null:
+		return
+	var had := false
+	for b in w.balls:
+		had = had or b.has("bench")
+	if had:
+		w.balls = w.balls.filter(func(b: Dictionary) -> bool: return not b.has("bench"))
+	if on:
+		var sp: WormholeSpace = main.space
+		var head: Vector3 = main.camera.transform.origin
+		var hp: Array = sp.geodesic(main.foot_l, main.foot_n, main.frame[1], maxf(head.y, 0.05), main.frame,
+				WormholeSpace.STEP_FRAME)
+		for t in IN_HAND:
+			var dir := WormholeSpace.combine(hp[2], t[0])
+			var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2], WormholeSpace.STEP_FRAME)
+			var b: Dictionary = w.add(at[0], at[1], Vector4.ZERO, t[1], Color(0.95, 0.95, 0.97))
+			b["bench"] = true
+	if on or had:
+		main._upload_toys()
 
 
 ## The GPU's clock now (read twice a segment: a kernel file each frame is not free).
@@ -341,6 +373,7 @@ func _end_segment() -> void:
 func _compared() -> void:
 	main.material.shader = own_shader
 	main.set_toy_mode(main.TOYS_SPLIT)
+	_in_hand(false)
 	main.set_foveation(panel.foveation)     # the tour runs with the foveation chosen on the panel
 	if variants.size() > 1:
 		# each variant against the first, averaged over the places (geometric mean)
@@ -364,9 +397,12 @@ func _compared() -> void:
 		for v in range(own + 2, own + FOVEATIONS.size()):
 			pcts.append("%+d" % roundi(100.0 * (_ratio(v, own) - 1.0)))
 		parts.append("фовеация %s%%" % "/".join(pcts))
-		# and what the stencil saves: the toys' ray tracer over the whole view against split
+		# and what the stencil saves: the toys' ray tracer over the whole view against split; and
+		# what a ball in the hand costs
 		if variants.size() > own + FOVEATIONS.size():
 			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
+		if variants.size() > own + FOVEATIONS.size() + 1:
+			parts.append("мяч в руке %+d%%" % roundi(100.0 * (_ratio(own + FOVEATIONS.size() + 1, own) - 1.0)))
 		verdict = " · ".join(parts)
 	if with_tour and panel.xr != null:
 		_show("замер: теперь 120 Гц, глаза закрыты")
@@ -492,6 +528,7 @@ func _finish(tour_line: String) -> void:
 	phase = ""
 	main.material.shader = own_shader
 	main.set_toy_mode(main.TOYS_SPLIT)
+	_in_hand(false)
 	main.set_foveation(panel.foveation)
 	main.hold = false
 	main.set_pose(saved_pose)

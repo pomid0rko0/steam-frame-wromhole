@@ -56,6 +56,12 @@ func _process(_d: float) -> bool:
 			if main.toy_mode != v[4]:
 				check("the segment's stencil split", false, b.plan[b.step][1])
 				started = false
+			var held := 0
+			for t in main.world.balls:
+				held += 1 if t.has("bench") else 0
+			if held != (b.IN_HAND.size() if v.size() > 5 and v[5] else 0):
+				check("the segment's ball in the hand", false, "%d balls" % held)
+				started = false
 			if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
 				check("the segment's foveation", false, "%d %s" % [main.foveation, main.split_pass.enabled])
 				started = false
@@ -67,9 +73,13 @@ func _process(_d: float) -> bool:
 				for v in r:
 					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
-			# this build six ways, and with toys a seventh: over the whole view
-			check("all the others in it, this build six (seven) ways", b.variants.size() == b.others.size()
-					+ b.FOVEATIONS.size() + (1 if main.balls > 0 else 0))
+			# this build six ways, and with toys two more: over the whole view, a ball in the hand
+			check("all the others in it, this build six (eight) ways", b.variants.size() == b.others.size()
+					+ b.FOVEATIONS.size() + (2 if main.balls > 0 else 0))
+			var left := 0
+			for t in main.world.balls:
+				left += 1 if t.has("bench") else 0
+			check("no ball left in the hand", left == 0, left)
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])

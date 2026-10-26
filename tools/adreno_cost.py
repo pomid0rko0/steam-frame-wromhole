@@ -47,17 +47,24 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
 
 
-def ray_program(log):
+def ray_program(log, mark=False):
     """The specialised ray tracer from an ir3 log: of the two big fragment programs, the smaller.
     A shader with more than 100 vec4 of constants also gets a variant /2 that reads them from
     memory ("safe constlen"); Turnip runs it only when the pipeline's stages need more than 512 in
-    all (ir3_trim_constlen), and ours need ~200, so the /1 runs."""
+    all (ir3_trim_constlen), and ours need ~200, so the /1 runs. mark: a stencil mark compiled alone
+    (tools/adreno_stats.sh --alone): of the two programs that discard and read flat inputs (its
+    generic and its specialised one; Godot's own passes do neither), the smaller."""
     text = open(log, errors='replace').read().replace('MESA: info: ', '')
     progs = {}
     for m in re.finditer(r'; FRAG prog (\d+/1): (\d+) instr', text):
+        if mark:
+            end = m.start()
+            body = text[text.rfind('Native code for', 0, end):end]
+            if 'kill' not in body or body.count('flat.b') < 3:
+                continue
         progs[m.group(1)] = int(m.group(2))
     big = max(progs.values())
-    cands = sorted((n, p) for p, n in progs.items() if n >= 0.5 * big)
+    cands = sorted((n, p) for p, n in progs.items() if n >= 0.5 * big or mark)
     p = cands[0][1]
     end = text.index('; FRAG prog %s:' % p)
     start = text.rfind('Native code for', 0, end)
@@ -85,7 +92,10 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_pix', 'f', 0, 'WH_PIX'),
             ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
             ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS'), ('wh_bIdx', 'iv4', 0, 'BALLS'),
-            ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS'), ('wh_candMask', 'i', 0, 'CURVED')]
+            ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS'), ('wh_candMask', 'i', 0, 'CURVED'),
+            ('wh_mkX', 'v4', 5, 'WH_MARK'), ('wh_mkY', 'v4', 5, 'WH_MARK'), ('wh_mkZ', 'v4', 5, 'WH_MARK'),
+            ('wh_mkR2', 'v4', 5, 'WH_MARK'), ('wh_mkLo', 'v4', 5, 'WH_MARK'), ('wh_mkHi', 'v4', 5, 'WH_MARK'),
+            ('wh_mkGroups', 'i', 0, 'WH_MARK'), ('wh_near', 'v4', 4, 'WH_MARK')]
 
 
 def shader_defines(path):
@@ -119,7 +129,7 @@ def ubo_layout(defines):
 def material_ubo(defines, values):
     """Godot's material uniform block for a shader with these defines; values: name -> number or
     list (tests/emu_dump.gd's "uniforms"); the scene's static objects and the fillet table by default."""
-    u = np.zeros(4 * 160, np.float32)
+    u = np.zeros(4 * 256, np.float32)
     ui = u.view(np.uint32)
     tab, lo, inv, reg = fillet_table()
     vals = {'wh_rho0': 3.0, 'wh_h': 5.0, 'wh_fillet': 1.0, 'wh_candMask': -1, 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
@@ -146,14 +156,21 @@ def fillet_table():
     return Wormhole(3.0, 5.0, 1.0).fillet_table()
 
 
+class _Ubos(dict):
+    """Uniform blocks by binding: the material's, zeros for any other (the marks drawn over a mesh
+    read the scene's matrices too: their cost does not depend on them)."""
+    def __missing__(self, key):
+        return np.zeros(4096, np.uint32)
+
+
 class Shader:
     def set_uniforms(self, uniforms):
         """The material's uniforms (a pose's own, when they differ between poses: --held)."""
-        self.ubos = {3: material_ubo(self.defines, uniforms)}   # the main program loads from it too (ldc at a computed index)
+        self.ubos = _Ubos({3: material_ubo(self.defines, uniforms)})   # the main program loads from it too (ldc at a computed index)
         self.consts = E.run_preamble(self.instrs, self.ps, self.pe + 1, np.zeros(8192, np.uint32), self.ubos)
 
-    def __init__(self, log, defines, uniforms=None):
-        lines, self.hdr, self.name, self.ninstr = ray_program(log)
+    def __init__(self, log, defines, uniforms=None, mark=False):
+        lines, self.hdr, self.name, self.ninstr = ray_program(log, mark)
         self.instrs, self.labels = E.parse_program(lines)
         self.ps = next(i for i, x in enumerate(self.instrs) if x.op == 'shps')
         self.pe = next(i for i, x in enumerate(self.instrs) if x.op == 'shpe')
@@ -352,11 +369,136 @@ def near_cone(q, reach, rho0=3.0):
     return float(np.cos(np.arcsin(S) + 0.005)) if reach > 0.0 and D > rr and S < 1.0 else -2.0
 
 
+def mark_tests(e, V, n, mk, cone=None):
+    """Per lane, whether a mark (wormhole_view.gdshaderinc, WH_MARK) with these uniforms (the dump's
+    "marks" entry) passes: some packed toy's plane within reach and its l range met (and with cone,
+    per slot, inside that cone)."""
+    e3 = np.cross(n[:, None], V[1:], axis=0)
+    s2 = (e3 * e3).sum(0)
+    rho0, hh, R = 3.0, 5.0, 1.0
+    Lc, Ls = hh - R, hh - R + R * np.pi / 2.0
+    le = e['head_l']
+    sd = 1.0 if le >= 0.0 else -1.0
+    outside = abs(le) >= Ls
+    x0 = Ls if outside else abs(le)
+    b = (rho0 + R if outside else wh_eye(le)[0]) * np.linalg.norm(V[1:], axis=0)
+    inward = np.ones(V.shape[1], bool) if outside else V[0] * sd < 0.0
+    turn = (b > rho0) & (x0 > Lc)
+    lt = np.maximum(Lc + R * np.sqrt(np.maximum(2.0 * (b - rho0) / R, 0.0)), Lc)
+    xlo = np.where(inward, np.where(turn, np.minimum(lt, x0), -Ls), x0)
+    xhi = np.where(inward & ~turn, x0, Ls)
+    llo = xlo if sd > 0 else -xhi
+    lhi = xhi if sd > 0 else -xlo
+    hit = np.zeros(V.shape[1], bool)
+    for g in range(int(mk.get('wh_mkGroups', 0))):
+        for k in range(4):
+            X, Y, Z = mk['wh_mkX'][g][k], mk['wh_mkY'][g][k], mk['wh_mkZ'][g][k]
+            d = X * e3[0] + Y * e3[1] + Z * e3[2]
+            m = (d * d < mk['wh_mkR2'][g][k] * s2 + 1e-12) & (mk['wh_mkLo'][g][k] <= lhi) & (mk['wh_mkHi'][g][k] >= llo)
+            if cone is not None:
+                m &= cone[k]
+            hit |= m
+    return hit
+
+
+def mark_cost(marks, e, size, fov):
+    """ms of the stencil's marks 2 and 3 at a pose (main._update_proxies): over the whole view with
+    the head in the shell or the band of the shell sphere's margins, else over that sphere; the
+    mark 3 only with near toys, its full test only where a ray is in a cone (the rest of its waves
+    branch off early). marks: {'quad': (far, near), 'mesh': (far, near)} Shaders; each emulated on a
+    tile, its cost not depending on the pixel (but the cones' branch)."""
+    if not marks:
+        return 0.0
+    far_u, near_u = e.get('marks', [{}, {}])
+    l = e['head_l']
+    Ls = 4.0 + np.pi / 2.0
+    quads = abs(l) <= Ls or wh_eye(l)[0] < (4.0 + 0.08) * 1.02 + 0.1
+    tan = np.tan(np.radians(fov) / 2.0)
+    g = np.arange(8, size, 16)
+    gx, gy = np.meshgrid(g, g)
+    xs, ys = gx.ravel(), gy.ravel()
+    if quads:
+        cover = 1.0
+    else:
+        prox = np.array(e['proxies'], float).reshape(-1, 4)
+        cover = float(proxy_marked(dict(e, proxies=prox[:1].tolist()), xs, ys, size, tan, tan).mean())
+    far, near = marks['quad' if quads else 'mesh']
+    def run(sh, u, ray0, flat):
+        sh.set_uniforms(u)
+        txs, tys = tile_lanes(0, 0, sh.wave128)
+        v = np.zeros((max(sh.smooth + sh.flat) + 1, len(txs)), np.float32)
+        for k, loc in enumerate(sh.smooth):
+            v[loc] = ray0 if k == 0 else 0.0
+        for loc in sh.flat:
+            v[loc] = flat
+        _, st = sh.run(v)
+        a, n_, c4, c5 = per64(sh, st, 1)
+        return MS_ALU * a + MS_NOP * n_ + MS_CAT4 * c4 + MS_CAT5 * c5
+    ms = cover * run(far, far_u, 1.0, 0.0)
+    if any(w[3] > 0 for w in near_u.get('wh_near', [])):
+        # in no cone: dot(V, v_near) = -1 below v_nearCos 1; in all: 1 above -1
+        early = run(near, near_u, -1.0, 1.0)
+        full = run(near, near_u, -1.0, -1.0)
+        in_cone = near_cone_share(e, xs, ys, size, tan)
+        # over the whole view only the quad over the cones' bounding box is drawn
+        ncover = cone_rect_share(e, tan) if quads else cover
+        ms += ncover * early + cover * in_cone * (full - early)
+    return ms
+
+
+def cone_rect_share(e, tan):
+    """The share of the view the mark 3's quad covers (wormhole_view.gdshaderinc's vertex(): the
+    bounding box of an octagon round each near cone's circle), the eye at the head."""
+    B = np.array(e['cam_basis'], float)      # rows: the camera's axes in play space
+    hp = np.array(e['head_pos'], float)
+    lo, hi = np.array([1.0, 1.0]), np.array([-1.0, -1.0])
+    for P in e.get('marks', [{}, {}])[1].get('wh_near', []):
+        P = np.array(P, float)
+        if P[3] <= 0:
+            continue
+        q = P[:3] - hp
+        c = near_cone(q, P[3])
+        if c < 0.2:
+            return 1.0
+        qv = B @ (q / np.linalg.norm(q))
+        t = np.sqrt(1.0 - c * c) / c / np.cos(np.pi / 8)
+        a1 = np.cross(qv, [0.0, 1.0, 0.0] if abs(qv[1]) < 0.9 else [1.0, 0.0, 0.0])
+        a1 /= np.linalg.norm(a1)
+        a2 = np.cross(qv, a1)
+        for j in range(8):
+            d = qv + t * (np.cos(j * np.pi / 4) * a1 + np.sin(j * np.pi / 4) * a2)
+            if -d[2] < 1e-3:
+                return 1.0
+            ndc = d[:2] / (-d[2]) / tan
+            lo, hi = np.minimum(lo, ndc), np.maximum(hi, ndc)
+    if lo[0] > hi[0]:
+        return 0.0
+    lo, hi = np.clip(lo, -1, 1), np.clip(hi, -1, 1)
+    return float(np.prod(np.maximum(hi - lo, 0.0)) / 4.0)
+
+
+def near_cone_share(e, xs, ys, size, tan):
+    """The share of the view whose rays point into a near toy's cone (the mark 3's full test)."""
+    B = np.array(e['cam_basis'], float).T
+    vx = (2.0 * (xs + 0.5) / size - 1.0) * tan
+    vy = (1.0 - 2.0 * (ys + 0.5) / size) * tan
+    pd = B @ np.stack([vx, vy, -np.ones_like(vx)], 0)
+    pd /= np.linalg.norm(pd, axis=0)
+    hp = np.array(e['head_pos'], float)
+    hit = np.zeros(len(xs), bool)
+    for P in e.get('marks', [{}, {}])[1].get('wh_near', []):
+        P = np.array(P, float)
+        if P[3] <= 0:
+            continue
+        q = P[:3] - hp
+        hit |= (q / max(np.linalg.norm(q), 1e-6)) @ pd >= near_cone(q, P[3]) - 1e-4
+    return float(hit.mean())
+
+
 def toy_classes(e, xs, ys, size, tan_x, tan_y):
     """Per lane, which ray tracer main.gd's stencil gives its pixel (_update_proxies): 0 the plain
     one, 1 the flat universes' toys only, 2 the shell's too but those near the eye, 3 all; the
     marks' tests (wormhole_view.gdshaderinc, WH_MARK) on the dump's uniforms, the eye at the head."""
-    u = e['uniforms']
     B = np.array(e['cam_basis'], float).T
     f = np.array(e['head_f'], float)
     vx = (2.0 * (xs + 0.5) / size - 1.0) * tan_x
@@ -365,43 +507,16 @@ def toy_classes(e, xs, ys, size, tan_x, tan_y):
     pd /= np.linalg.norm(pd, axis=0)
     V = pd[0][None] * f[0][:, None] + pd[1][None] * f[1][:, None] + pd[2][None] * f[2][:, None]
     n = np.array(e['head_n'], float)
-    e3 = np.cross(n[:, None], V[1:], axis=0)
-    s2 = (e3 * e3).sum(0)
-    mask = int(u.get('wh_candMask', -1))
-    near = np.zeros(len(xs), np.int64)
+    far, nearu = e.get('marks', [{}, {}])
     hp = np.array(e['head_pos'], float)
+    cone = []
     for k in range(4):
-        P = np.array(u.get('wh_near', [[0, 0, 0, 0]] * 4)[k], float)
+        P = np.array(nearu.get('wh_near', [[0, 0, 0, 0]] * 4)[k], float)
         q = P[:3] - hp
-        c = near_cone(q, P[3])
-        near |= np.where((q / max(np.linalg.norm(q), 1e-6)) @ pd >= c - 1e-4, 1 << int(u.get('wh_nearBit', [30] * 4)[k]), 0)
-    c2 = np.zeros(len(xs), bool)
-    c3 = np.zeros(len(xs), bool)
-    # the range of l the path passes (as x = side l), as the marks work it out
-    rho0, hh, R = 3.0, 5.0, 1.0
-    Lc, Ls = hh - R, hh - R + R * np.pi / 2.0
-    le = e['head_l']
-    sd = 1.0 if le >= 0.0 else -1.0
-    outside = abs(le) >= Ls
-    x0 = Ls if outside else abs(le)
-    b = (rho0 + R if outside else wh_eye(le)[0]) * np.linalg.norm(V[1:], axis=0)
-    inward = np.ones(len(xs), bool) if outside else V[0] * sd < 0.0
-    turn = (b > rho0) & (x0 > Lc)
-    lt = np.maximum(Lc + R * np.sqrt(np.maximum(2.0 * (b - rho0) / R, 0.0)), Lc)
-    xlo = np.where(inward, np.where(turn, np.minimum(lt, x0), -Ls), x0)
-    xhi = np.where(inward & ~turn, x0, Ls)
-    toyL = u.get('wh_toyL', [[-99.0, 99.0, 0.0, 0.0]] * 18)
-    bI, cI = u['wh_bIdx'], u['wh_cIdx']
-    objs = [(i, u['wh_ball'][i], u['wh_ballCol'][i][3], toyL[i]) for i in range(bI[0], bI[3])]
-    objs += [(16 + i, u['wh_cube'][i], 2.0 * u['wh_cubeCol'][i][3], toyL[12 + i]) for i in range(cI[0], cI[3])]
-    for bit, C, reach, wl in objs:
-        d = np.array(C[:3], float) @ e3
-        rr = reach + 0.01
-        a, c = sorted((sd * wl[0], sd * wl[1]))
-        inplane = ((d * d < rr * rr * s2) | (s2 < 1e-12)) & (xhi >= a) & (xlo <= c)
-        if (mask >> bit) & 1:
-            c2 |= inplane
-        c3 |= inplane & (((near >> bit) & 1) == 1)
+        c = near_cone(q, P[3]) if P[3] > 0 else 2.0
+        cone.append((q / max(np.linalg.norm(q), 1e-6)) @ pd >= c - 1e-4)
+    c2 = mark_tests(e, V, n, far)
+    c3 = mark_tests(e, V, n, nearu, cone)
     if e.get('proxies'):
         prox = np.array(e['proxies'], float).reshape(-1, 4)
         c1 = proxy_marked(e, xs, ys, size, tan_x, tan_y)
@@ -450,7 +565,8 @@ def per64(sh, st, n):
 
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': '', '--flat': '', '--profile-class': 2}
+    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': '', '--flat': '', '--profile-class': 2,
+           '--marks': ''}
     flags = set()
     pos = []
     i = 0
@@ -516,6 +632,13 @@ def main():
         else:
             share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
             extra = [(plain, lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis)]
+    marks = None
+    if opt['--marks']:
+        # the marks 2 and 3 over the whole view and over the shell's sphere (their compiler logs, in
+        # that order: stencil_toys, _near, _shell, _shell_near)
+        names = ['stencil_toys', 'stencil_toys_near', 'stencil_toys_shell', 'stencil_toys_shell_near']
+        ms_ = [Shader(lg, shader_defines('res://shaders/%s.gdshader' % nm), mark=True) for lg, nm in zip(opt['--marks'].split(','), names)]
+        marks = {'quad': (ms_[0], ms_[1]), 'mesh': (ms_[2], ms_[3])}
     if opt['--split']:
         print('the split: the plain one\'s flat inputs %s%s' % (', '.join(plain.flat_order),
               (', the flat toys\' %s' % ', '.join(flat.flat_order)) if opt['--flat'] else ''))
@@ -536,7 +659,8 @@ def main():
             a2, n2, c42, c52 = per64(x, rx[k][1], n)
             parts.append(part(a2, n2, c42, c52))
             alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
-        ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
+        mk = mark_cost(marks, entries[k], size, opt['--fov']) if marks else 0.0
+        ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5 + mk
         tot.append(ms)
         note = ''
         if classes:
@@ -547,6 +671,8 @@ def main():
             sh_ = [(cl == c).mean() for c in range(4)]
             note = '; plain %.0f%% %.2f ms, flat toys %.0f%% %.2f, shell toys %.0f%% %.2f, near ones %.0f%% %.2f' % (
                 100 * sh_[0], parts[1], 100 * sh_[1], parts[2], 100 * sh_[2], parts[0], 100 * sh_[3], parts[3])
+            if marks:
+                note += ', the marks 2 and 3 %.2f' % mk
         elif plain:
             note = '; marked %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov']))
         print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%%s'

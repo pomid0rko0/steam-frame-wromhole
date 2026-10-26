@@ -30,8 +30,9 @@ var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
 		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d",
 		"wh_candMask"]
-# the marks' own (main._update_near: the shell's toys near the head), for adreno_cost.py's split
-const MARK_UNIFORMS := ["wh_near", "wh_nearBit", "wh_toyL"]
+# the marks' own (main._update_near: the toys each looks for, the near ones' cones), for
+# adreno_cost.py's split: the marks 2 (main.mark_materials[0]) and 3 ([1])
+const MARK_UNIFORMS := ["wh_mkX", "wh_mkY", "wh_mkZ", "wh_mkR2", "wh_mkLo", "wh_mkHi", "wh_mkGroups", "wh_near"]
 
 
 func _initialize() -> void:
@@ -117,7 +118,8 @@ func _process(_d: float) -> bool:
 			"proj": [_v4(proj.x), _v4(proj.y), _v4(proj.z), _v4(proj.w)],
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
-			"uniforms": _uniforms(m).merged(_uniforms(main.mark_materials[0], MARK_UNIFORMS)),
+			"uniforms": _uniforms(m),
+			"marks": [_uniforms(main.mark_materials[0], MARK_UNIFORMS), _uniforms(main.mark_materials[1], MARK_UNIFORMS)],
 			# the stencil's proxies (main._update_proxies), chart spheres of the head's universe, or
 			# none (the whole view marked, or no toys)
 			"proxies": _proxies(),

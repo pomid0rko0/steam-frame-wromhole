@@ -185,9 +185,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   (`wormhole_balls*`, `wh_candMask` clears their bits), 3 all of them (`wormhole_balls*_near`). Marks
   at priorities -3, -2, -1 (values 1, 2, 3; `main._make_marks`, `_update_proxies`): 1 the proxies or
   the whole view as before; 2 `stencil_toys*.gdshader`, passes that know each pixel's ray (as the
-  ray tracers make it): a shell toy within reach of the ray's 3D subspace and its l window
-  (`wh_toyL`, from `set_objects`) within the l range the path can pass; 3 the same for near toys
-  (the shell's within 1 m of the head, at most 4, `main._update_near`) inside their cones
+  ray tracers make it): a shell toy within reach of the ray's 3D subspace and its l window (from
+  `set_objects`) within the l range the path can pass, four toys at a time from vec4 uniforms
+  `main._update_near` packs per mark (`wh_mk*`, `_mark_groups`: a loop over toys with indexing
+  made the first version cost 0.5 ms a full-view pass by the model, now 0.28); over the shell's
+  sphere only its front faces (cull_back), from within it the whole-view quads; 3 the same for
+  near toys (the shell's within 1 m of the head, at most 4, `main._update_near`) inside their
+  cones, the cones tested first and the rest a branch (0.17 ms outside them)
   (`wh_nearCone`: the space is CAT(1/rho0^2), so a ray meeting a toy of reach rho at distance D is
   within asin(sin(1.02 rho / rho0) / sin(D / rho0)) of the direction to its centre; the direction
   from `WormholeSpace.toward_fast`, a hand's from its own geodesic; `ref/test_near.py` brute-forces
@@ -323,7 +327,10 @@ they line up the same way.
   world B outside the edge (-5.7 m, 20° from the throat) it says 3.8 ms where the headset takes 4.8.
   `--profile` gives cycles per stretch of code, `--poses "l,yaw,pitch;..."` other poses (the
   throat sideways is the demo's dearest), `--split` the toys as the app draws them (the plain ray
-  tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`); with
+  tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`; on `rim`
+  the four classes, and the marks 2 and 3 themselves, compiled alone by `adreno_stats.sh --alone`
+  (`tests/one_shader.gd`) and emulated with their own uniforms: the model left them out at first,
+  and they cost a millisecond inside the shell); with
   `--toys` other sources are timed with their own balls shader (`tools/ab_shaders.sh` copies it).
   The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
 - **Measuring in the headset without the owner walking:** the menu's last row, A (or, in a
