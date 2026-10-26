@@ -15,7 +15,9 @@ extends Node
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## makes SteamVR step in, and the GPU time then grows by half for reasons of its own.
-## This build's ray tracer is timed six ways (FOVEATIONS): as it always ran, with the 3D scene in
+## This build's ray tracer is timed six ways (FOVEATIONS), and with the demo's toys a seventh,
+## the ray tracer with toys over the whole view, not only where the stencil marks a toy may be seen
+## (main.set_toy_mode): as it always ran, with the 3D scene in
 ## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
 ## foveated rendering: SteamVR's map low and high, our own wide and narrow (main.set_foveation).
 ## The others run without foveation.
@@ -36,6 +38,7 @@ extends Node
 
 const RateMeter := preload("res://rate_meter.gd")
 const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
+const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
 const PLACES := [   # the comparison's poses: [l, degrees to the right of the throat, degrees up]
@@ -49,6 +52,7 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[5.0, 0.0, -35.0],  # down at the floor
 	[5.0, 0.0, 35.0],   # up
 	[0.0, 0.0, 0.0],    # in the throat
+	[0.0, 90.0, 0.0],   # in the throat, looking sideways round it: the demo's dearest
 	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat: its boxes cost more than A's pillars
 	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat: where 144 Hz fell to 72
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
@@ -77,9 +81,11 @@ var with_tour := true
 var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
-var others: Array = []          # [label, Shader] from res://shaders/ab/
-var variants: Array = []        # this run's [label, Shader, foveation, split]: others (if the scene
-                                # has no movable balls), then this build's (FOVEATIONS)
+var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
+var variants: Array = []        # this run's [label, Shader, foveation, split, main.toy_mode]:
+                                # others (of the kind
+                                # this build runs: with movable balls or without), then this
+                                # build's (FOVEATIONS)
 var own := 0                    # the variant that is this build as it always ran
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
@@ -112,7 +118,8 @@ func _ready() -> void:
 		if not ResourceLoader.exists(path):
 			break
 		var sh: Shader = load(path)
-		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh])
+		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
+		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls])
 	auto = FileAccess.file_exists(AUTO)
 
 
@@ -151,13 +158,18 @@ func start() -> void:
 	running = true
 	own_shader = main.material.shader
 	variants = []
-	# others are ray tracers without movable balls: compared only with the same kind
-	if own_shader == main.SHADER_PLAIN:
-		for o in others:
-			variants.append([o[0], o[1], 0, false])
+	# others compared with the same kind: without movable balls, or with them (the demo's toys)
+	# (theirs without the stencil: they have no stencil test)
+	for o in others:
+		if own_shader == main.SHADER_PLAIN:
+			variants.append([o[0], o[1], 0, false, main.TOYS_BARE])
+		elif own_shader == main.SHADER_BALLS and o[2] != null:
+			variants.append([o[0], o[2], 0, false, main.TOYS_BARE])
 	own = variants.size()
 	for f in FOVEATIONS:
-		variants.append([f[0], own_shader, f[1], f[2]])
+		variants.append([f[0], own_shader, f[1], f[2], main.TOYS_SPLIT])
+	if main.balls > 0:
+		variants.append(["this build, toys over the whole view", own_shader, 0, false, main.TOYS_WHOLE])
 	saved_pose = main.get_pose()
 	main.hold = true
 	saved_scale = panel.render_scale
@@ -265,6 +277,7 @@ func _prepare() -> void:
 ## A variant's ray tracer and foveation.
 func _use(v: Array) -> void:
 	main.material.shader = v[1]
+	main.set_toy_mode(v[4])
 	if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
 		main.set_foveation(v[2], v[3])
 
@@ -327,6 +340,7 @@ func _end_segment() -> void:
 
 func _compared() -> void:
 	main.material.shader = own_shader
+	main.set_toy_mode(main.TOYS_SPLIT)
 	main.set_foveation(panel.foveation)     # the tour runs with the foveation chosen on the panel
 	if variants.size() > 1:
 		# each variant against the first, averaged over the places (geometric mean)
@@ -344,12 +358,15 @@ func _compared() -> void:
 		summary.clear()
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
-		print("bench: foveation, on average over the places against this build as it ran: %s" % ", ".join(summary))
+		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
 		# on the panel, what each foveation saves: SteamVR low, high, own wide, narrow
 		var pcts := []
-		for v in range(own + 2, variants.size()):
+		for v in range(own + 2, own + FOVEATIONS.size()):
 			pcts.append("%+d" % roundi(100.0 * (_ratio(v, own) - 1.0)))
 		parts.append("фовеация %s%%" % "/".join(pcts))
+		# and what the stencil saves: the toys' ray tracer over the whole view against split
+		if variants.size() > own + FOVEATIONS.size():
+			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
 		verdict = " · ".join(parts)
 	if with_tour and panel.xr != null:
 		_show("замер: теперь 120 Гц, глаза закрыты")
@@ -474,6 +491,7 @@ func _finish(tour_line: String) -> void:
 	counting = false
 	phase = ""
 	main.material.shader = own_shader
+	main.set_toy_mode(main.TOYS_SPLIT)
 	main.set_foveation(panel.foveation)
 	main.hold = false
 	main.set_pose(saved_pose)

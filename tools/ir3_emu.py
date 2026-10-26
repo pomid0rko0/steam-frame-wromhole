@@ -723,8 +723,9 @@ def execute(ins, w, ex):
             c1 = _shift(c0, 1)
             src = [w.alias.get((c.half, c.num), c) for c in (c0, c1)]
             w.alias = {}
-            u = w.read(src[0], 0, 'f').astype(np.float64)
-            v = w.read(src[1], 0, 'f').astype(np.float64)
+            # lanes that do not run it can hold anything, NaN too (the GPU samples NaN somewhere)
+            u = np.nan_to_num(w.read(src[0], 0, 'f').astype(np.float64), nan=0.0, posinf=1e6, neginf=-1e6)
+            v = np.nan_to_num(w.read(src[1], 0, 'f').astype(np.float64), nan=0.0, posinf=1e6, neginf=-1e6)
             x = u * Wd - 0.5
             y = v * H - 0.5
             x0 = np.floor(x); y0 = np.floor(y)

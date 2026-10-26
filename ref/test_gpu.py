@@ -62,9 +62,26 @@ def test_cubes():
 
 # the cubes come with the movable balls (the shader with balls draws both)
 CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
-# the fillet polynomials from a table, as Godot's shader without balls does (WH_TABLE=0: worked out
-# per ray, as the shader with balls and the web preview do)
-TABLE = os.environ.get('WH_TABLE', '0' if BALLS else '1') == '1'
+
+
+def region_order(objs, reach):
+    """main.region_order: the objects sorted by where they can be met (universe A's sheet, the
+    shell, B's sheet) and the bounds (x, y, z, w): A 0 .. y, the shell x .. w, B z .. the end."""
+    groups = [[], [], [], [], []]
+    for o in objs:
+        C, r = np.asarray(o[0]), reach(o)
+        in_a, in_b, in_s = abs(C[3] - PROF[1]) < r, abs(C[3] + PROF[1]) < r, np.linalg.norm(C[:3]) - r < W.Rout
+        groups[(1 if in_s else 0) if in_a else ((3 if in_s else 4) if in_b else 2)].append(o)
+    ends = np.cumsum([len(g) for g in groups])
+    return sum(groups, []), tuple(int(e) for e in ends[:4])
+
+
+# the shader gets them sorted, as from main.set_objects; the reference uses the same order
+BALLS, BIDX = region_order(BALLS, lambda o: o[1])
+CUBES, CIDX = region_order(CUBES, lambda o: 2.0 * o[2])
+# the fillet polynomials from a table, as Godot's shaders do (WH_TABLE=0: worked out per ray, as the
+# web preview does)
+TABLE = os.environ.get('WH_TABLE', '1') == '1'
 
 FRAG = """#version 400
 """ + ("" if BALLS else "#define WH_NO_BALLS\n") + ("#define WH_TABLE\nuniform sampler2D wh_tab;\nuniform vec4 wh_tabLo;\n"
@@ -83,6 +100,9 @@ uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube;
 uniform vec4 wh_bound[4];
+uniform ivec4 wh_bIdx;
+uniform ivec4 wh_cIdx;
+uniform vec4 wh_fball[12];
 uniform float wh_pix;
 uniform float uL0;
 uniform vec3 uN0;
@@ -139,6 +159,13 @@ def render(ctx, state, size, tan, debug):
         cax += [tuple(a / half) for a in ax] + [tuple(float(np.dot(c, a / half)) for a in ax)]
     cax += [(0.0, 0.0, 0.0, 0.0)] * (5 * MAXC - len(cax))
     ccol = [tuple(col) + (half,) for _, _, half, col in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
+    # each ball's sphere in the sheet that cuts it, in that chart (main.set_objects)
+    fball = []
+    for c, rad, _ in BALLS:
+        side = 1.0 if c[3] > 0 else -1.0
+        r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
+        fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
+    fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
     # the bounding spheres of each universe's balls and of its cubes, as main.set_objects makes them
     bound = []
     for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
@@ -154,6 +181,7 @@ def render(ctx, state, size, tan, debug):
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
                      wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_bound=bound, wh_pix=0.002,
+                     wh_bIdx=BIDX, wh_cIdx=CIDX, wh_fball=fball,
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         if k in prog:      # the balls' and cubes' uniforms are gone from the shader without balls

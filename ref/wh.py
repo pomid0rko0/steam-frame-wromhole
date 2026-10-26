@@ -280,7 +280,9 @@ class Wormhole:
         x0B = max(x, -Lc)
         DB = Lc - x0B if hasB else 0.0
         wc = b / rho0
-        vlc = max(np.sqrt(max(1 - wc * wc, 0.0)), 1e-300)
+        # sqrt(1 - wc^2) as the shader takes it: (rho0 - b)(rho0 + b) / rho0^2, rho0 - b from vl^2
+        omb = rs * vl * vl / (1 + wn) - (R if from_edge else 2 * R * np.sin((ths + self.th0) / 2) * np.sin((ths - self.th0) / 2))
+        vlc = max(np.sqrt(max(omb * (rho0 + b), 0.0)) / rho0, 1e-300)
         kc = wc / (rho0 * vlc)
         PA = Ss if hasA else np.zeros(2)
         PB = np.array([kc, 1 / vlc]) * DB

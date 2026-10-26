@@ -7,12 +7,16 @@ keeps its log with KEEP_LOG); this runs the specialised program it made on waves
 a wave both sides, as on the GPU. It is a model: no timings, no waits on transcendental or
 texture-unit results (counted apart: cat4, cat5), no memory.
 
-  python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--check]
+  python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--check] [--split PLAINLOG]
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
 headset, S x S pixels (default 1728) and F degrees of vertical field of view (default 104),
 on N random tiles (default 300; the same tiles for every LOG with the same seed).
+--split: the frame split by the stencil (main.gd, _update_proxies): LOG's ray tracer (with the
+toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
+(the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
+GPU packs the passing pixels into waves). The proxies' own pass is not counted.
 """
 import json
 import os
@@ -76,7 +80,8 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('grav_cyl', 'v4', 0, 'WH_GRAVITY'), ('grav_g', 'v4', 2, 'WH_GRAVITY'), ('grav_d', 'v4', 2, 'WH_GRAVITY'),
             ('wh_pix', 'f', 0, 'WH_PIX'),
             ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
-            ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS')]
+            ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS'), ('wh_bIdx', 'iv4', 0, 'BALLS'),
+            ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS')]
 
 
 def shader_defines(path):
@@ -96,7 +101,7 @@ def ubo_layout(defines):
     for name, typ, n, need in UNIFORMS:
         if need and need not in defines:
             continue
-        size, align = {'f': (4, 4), 'i': (4, 4), 'v3': (12, 16), 'v4': (16, 16)}[typ]
+        size, align = {'f': (4, 4), 'i': (4, 4), 'v3': (12, 16), 'v4': (16, 16), 'iv4': (16, 16)}[typ]
         if n:
             size, align = 16 * n, 16
         off = (off + align - 1) // align * align
@@ -121,6 +126,8 @@ def material_ubo(defines, values):
         k = off // 4
         if typ == 'i':
             ui[k] = int(v[0])
+        elif typ == 'iv4':
+            ui[k:k + 4] = v.astype(np.int64)[:4]
         else:
             u[k:k + len(v)] = v
     return ui
@@ -256,6 +263,14 @@ def find_flat_order(sh, entries):
     return best[1]
 
 
+def share_of(e, size, fov, step=16):
+    """The share of the view the stencil marks (a grid of pixels)."""
+    tan = np.tan(np.radians(fov) / 2.0)
+    g = np.arange(step // 2, size, step)
+    xs, ys = np.meshgrid(g, g)
+    return float(proxy_marked(e, xs.ravel(), ys.ravel(), size, tan, tan).mean())
+
+
 def srgb(c):
     c = np.clip(c, 0.0, 1.0)
     return np.where(c <= 0.0031308, 12.92 * c, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
@@ -287,7 +302,36 @@ def check(sh, entries, ntiles, rng):
     return worst
 
 
-def cost(sh, entries, ntiles, size, fov, seed, profile=None):
+def proxy_marked(e, xs, ys, size, tan_x, tan_y):
+    """Per lane: whether the stencil marks its pixel (main.gd, _update_proxies): its straight ray
+    from the head, in the chart of the head's universe, meets a proxy sphere (or starts in one).
+    No proxies: the whole view is marked."""
+    P = np.array(e.get('proxies') or [], float).reshape(-1, 4)
+    if len(P) == 0:
+        return np.ones(len(xs), bool)
+    B = np.array(e['cam_basis'], float).T
+    f = np.array(e['head_f'], float)
+    vx = (2.0 * (xs + 0.5) / size - 1.0) * tan_x
+    vy = (1.0 - 2.0 * (ys + 0.5) / size) * tan_y
+    pd = B @ np.stack([vx, vy, -np.ones_like(vx)], 0)
+    V = pd[0][None] * f[0][:, None] + pd[1][None] * f[1][:, None] + pd[2][None] * f[2][:, None]
+    l, n = e['head_l'], np.array(e['head_n'], float)
+    side = 1.0 if l > 0 else -1.0
+    M = np.array([side, 1.0, 1.0])
+    x = M * wh_eye(l)[0] * n
+    d = M[:, None] * (side * V[0][None] * n[:, None] + V[1:])
+    d /= np.linalg.norm(d, axis=0)
+    hit = np.zeros(len(xs), bool)
+    for c in P:
+        oc = (x - c[:3])[:, None]
+        b = (oc * d).sum(0)
+        cq = float((oc * oc).sum()) - c[3] * c[3]
+        hit |= (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
+    return hit
+
+
+def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None):
+    """share(e, xs, ys, tan): the share of a tile's pixels this ray tracer runs (--split)."""
     tan_y = np.tan(np.radians(fov) / 2.0)
     tan_x = tan_y
     res = []
@@ -300,16 +344,27 @@ def cost(sh, entries, ntiles, size, fov, seed, profile=None):
             if sh.wave128:
                 x0 = 16 * (x0 // 16)
             xs, ys = tile_lanes(x0, y0, sh.wave128)
+            w = 1.0 if share is None else share(e, xs, ys, tan_x)
+            if w <= 0.0:
+                continue
             col, st = sh.run(varyings_for(e, xs, ys, size, size, tan_x, tan_y, sh), profile)
             for k in ('cycles', 'instr', 'cat4', 'cat5', 'lane_instr', 'nops', 'half'):
-                setattr(tot, k, getattr(tot, k) + getattr(st, k))
+                setattr(tot, k, getattr(tot, k) + w * getattr(st, k))
         res.append((e['pose'], tot))
     return res
 
 
+def per64(sh, st, n):
+    """A pose's totals over n tiles as (ALU cycles, nop slots, transcendentals, texture-unit
+    instructions) per 64 pixels."""
+    lanes = 128 if sh.wave128 else 64
+    alu = (st.cycles - st.nops - st.half) * (2 if sh.wave128 else 1) / n * 64 / lanes + st.half / n * 64 / lanes
+    return alu, st.nops / n * 64 / lanes, st.cat4 / n, st.cat5 / n
+
+
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1}
+    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': ''}
     flags = set()
     pos = []
     i = 0
@@ -338,18 +393,33 @@ def main():
     prof = np.zeros(len(sh.instrs)) if '--profile' in flags else None
     n = opt['--tiles']
     tot = []
-    tot = []
     lanes = 128 if sh.wave128 else 64
-    for pose, st in cost(sh, entries, n, opt['--size'], opt['--fov'], opt['--seed'], prof):
-        alu = (st.cycles - st.nops - st.half) * (2 if sh.wave128 else 1) / n * 64 / lanes + st.half / n * 64 / lanes
-        nop = st.nops / n * 64 / lanes
-        c4 = st.cat4 / n           # per pixel: each issue covers the wave's pixels
-        c5 = st.cat5 / n
+    size = opt['--size']
+    share = None
+    plain = None
+    if opt['--split']:
+        # the plain ray tracer: its own uniforms are the same material's
+        pdefs = {d for d in defines if d not in ('BALLS', 'WH_PIX')} | {'WH_NO_BALLS'}
+        if 'WH_ARROWS' in pdefs:
+            pdefs.add('WH_PIX')
+        plain = Shader(opt['--split'], pdefs, uniforms)
+        plain.flat_order = order
+        share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
+    res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share)
+    resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
+                lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan)) if plain else None
+    for k, (pose, st) in enumerate(res):
+        alu, nop, c4, c5 = per64(sh, st, n)
+        busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)
+        if plain:
+            a2, n2, c42, c52 = per64(plain, resp[k][1], n)
+            alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
         ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
         tot.append(ms)
-        print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%'
-              % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, 100.0 * st.lane_instr / max(st.instr * lanes, 1)))
-    print('mean %.2f ms (%s, waves of %d)' % (np.mean(tot), sh.name, lanes))
+        print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%%s'
+              % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, busy,
+                 '; marked %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov'])) if plain else ''))
+    print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
     if prof is not None:
         report(sh, prof)
 

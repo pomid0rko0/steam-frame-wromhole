@@ -1,6 +1,8 @@
 #!/bin/bash
 # Other ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of each
-# source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up. In the
+# source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the one
+# with movable balls where the source has it (the speed check times that one while the demo's
+# toys are on: the normal scene). In the
 # headset the panel's "замер" button then times this build's ray tracer and these at the same
 # places, one after the other; the panel compares this build's with the first.
 #   tools/ab_shaders.sh <source>...   a source: a commit, or a directory holding wormhole.gdshader,
@@ -111,6 +113,12 @@ PY
 		> "$out/wormhole.gdshader"
 	grep -q "res://shaders/ab/$n/" "$out/wormhole.gdshader" && grep -q "res://shaders/ab/$n/" "$out/wormhole_view.gdshaderinc" \
 		|| { echo "unexpected include paths in $src"; rm -rf "$DIR"; exit 1; }
+	# the one with movable balls too, where the source has it: the speed check times it when the
+	# scene has them (the demo's toys)
+	if get wormhole_balls.gdshader >/dev/null 2>&1; then
+		{ echo "// $label"; get wormhole_balls.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
+			> "$out/wormhole_balls.gdshader"
+	fi
 	echo "godot/shaders/ab/$n: $label"
 	[ -n "${tmp:-}" ] && rm -rf "$tmp" && tmp=""
 done

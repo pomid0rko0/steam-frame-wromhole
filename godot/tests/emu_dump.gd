@@ -20,7 +20,7 @@ var shader_path := ""
 var gravity := 0
 var toys := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
+		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
 
 
 func _initialize() -> void:
@@ -49,6 +49,8 @@ func _process(_d: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
 		main.material.shader = load(shader_path)
+		if not main.material.shader.code.contains("stencil_mode"):
+			main.set_toy_mode(main.TOYS_BARE)    # another source's: no stencil test, the whole view
 	if frames == 2:
 		if toys:
 			# the demo after the throw and the drop, all of it at rest, then held still
@@ -94,9 +96,24 @@ func _process(_d: float) -> bool:
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
+			# the stencil's proxies (main._update_proxies), chart spheres of the head's universe, or
+			# none (the whole view marked, or no toys)
+			"proxies": _proxies(),
 		})
 		i += 1
 	return false
+
+
+func _proxies() -> Array:
+	var out := []
+	if main.balls > 0:
+		for s in main.proxy_spheres(m_head_l()):
+			out.append(_v4(s))
+	return out
+
+
+func m_head_l() -> float:
+	return main.material.get_shader_parameter("head_l")
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.
@@ -113,6 +130,8 @@ static func _uniforms(m: ShaderMaterial) -> Dictionary:
 			out[name] = rows
 		elif v is Vector4:
 			out[name] = _v4(v)
+		elif v is Vector4i:
+			out[name] = [v.x, v.y, v.z, v.w]
 		else:
 			out[name] = v
 	return out

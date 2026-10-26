@@ -34,7 +34,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   edge frames of `edge-120hz` (merged, below) and the cost model are in it too. Foveated
   rendering (from `foveation`, merged, below) is on by default: our narrow map, the width first.
   Gravity through the wormhole, its views and the balls-and-cubes demo (from `gravity`, merged,
-  below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`.
+  below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`. The cheaper
+  demo (from `toys`, merged, below) is in it too: the toys sorted by region and searched in
+  windows, the frame split by the stencil, and the throat's "stripe" fixed.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
@@ -90,9 +92,27 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   «Кубы и шары», «Дешевле демонстрация с мячами и кубами», «Свет в горле смешивается»): 144 Hz no
   longer holds (start 4.0 ms against 2.4 for the check build, 120 Hz, our narrow map); inside the
   throat looking sideways 7.6-11 ms (the throat's ball and cube are every inner ray's candidates;
-  next: a window in psi on the cylinder); a "stripe" through the throat's ball and cube, standing
-  on the line l = 0 a little on A's side (not found against the reference yet; a screenshot will
-  come); the ball in the middle of the throat lit half by A's light, half by B's.
+  next: a window in psi on the cylinder); a "stripe" through the throat's ball and cube (found
+  from the owner's screenshots and fixed on `toys`, merged: rays that go round the throat, below); the
+  ball in the middle of the throat lit half by A's light, half by B's.
+- `toys` — merged into `main` (the owner tried it in the headset and asked to merge): a cheaper
+  demo (README wish «Дешевле демонстрация с мячами и кубами»):
+  `main.set_objects` sorts the toys by region (A's sheet, the shell, B's sheet: `wh_bIdx`,
+  `wh_cIdx`, `main.region_order`) and gives the flat spheres (`wh_fball`); in the curved region
+  each candidate is searched alone, in its r/w window and on the cylinder its psi window; hits are
+  ordered by place on the path (2 piece + fraction), so no exact path length and the fillet table
+  in the balls shaders too; 24 registers (8 waves) instead of 32; the frame split by the stencil
+  (`main._update_proxies`, `shaders/stencil_mark*.gdshader`): spheres around the shell and this
+  universe's toys mark where the toys' ray tracer runs, the plain one runs elsewhere (a second
+  quad, `plain_material`). Model: 5.8 -> 4.5 ms over the speed check's 13 poses, start 4.3 -> 2.9,
+  throat sideways 6.2 -> 4.0. The speed check in the headset (72 Hz, no foveation): against main's
+  balls shader 0.57 on average (0.64 at the seven places where main's fits in 72 Hz), start
+  7.4 -> 3.6 ms, throat sideways 16.6 -> 6.4; the stencil -39% at the start, 0..+2.6% inside the
+  shell; with our narrow map 3.0-5.2 ms at all 13 places; the 120 Hz tour 0 missed of 20634. In
+  play 144 Hz still falls to SteamVR's half rate, and at 120 Hz near the throat single frames took
+  8.5 ms where the tour took 3.5-4 (the tour holds the physics; in play the throat's ball may still
+  be falling slowly: not checked). The "stripe" in the throat is fixed here (below, «Rays that go
+  round the throat»).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -102,7 +122,8 @@ Where the README wishes start (wishes without a branch start from `main`):
   and bodies that move in it, `ball_world.gd`);
 - pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
   are there; `main` has the same balls, cubes and honest gravity on the fast core);
-- cubes next to balls, a cheaper demo, the light in the throat → `main` (cubes on the fast core);
+- cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
+  the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
 - refresh rate and render scale → `main` (the panel is there; the owner wants no automatic way
@@ -143,6 +164,14 @@ When branches are put together, these overlap:
   XR camera's compositor: an effect added there by another branch splits the pass as well. The
   action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`). Branches started
   before the merge start with foveation off; merged with `main`, they get it on by default.
+- the stencil split (on `main`, from `toys`) with anything that sets uniforms: there are two ray tracer materials
+  (`material` with the toys, `plain_material` where none can be seen): a uniform both read goes
+  through `main._param`; the toys' own (`wh_ball`...) only to `material` (`set_objects`). The
+  shader index of a ball is not its index in `world.balls` (`set_objects` sorts them). Godot
+  geometry drawn before the ray tracers must not set the stencil. A changed throat (`throat`):
+  `set_objects` again (the sorting and the proxies use `space.h`, `space.Rout`). Balls held in the
+  hand (`grab`) are fine: a ray that meets a toy leaves its proxy at least the margin (8 cm, more
+  than the near plane's 5 cm) beyond the hit, so the near plane never takes the mark away.
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).
@@ -164,7 +193,8 @@ draws next to ray-traced ones, check they line up the same way.
 - **Where the registers go:** `python3 tools/ir3_live.py LOG` (LOG from `KEEP_LOG=... tools/adreno_stats.sh`):
   live register components at every instruction of the program (backward liveness over its
   branches), the peak and the code around it; the uniform loads there (`c<a0.x + N>`) tell which
-  uniforms. 47 components is the plain shader's 12 registers; above 96 the compiler goes to 32.
+  uniforms. Half registers count, two to a full component (the register file is shared); shared
+  ones (r48-r55) do not. 47 components is the plain shader's 12 registers, 97 the balls shader's 24.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
 - **Cost without a headset:** `tools/adreno_cost.sh [--check] [--toys] [--gravity 1|2] [source]...` (sources as
   `ab_shaders.sh`, `this` = the tree; ~1 min each). Mesa's compiler for the Frame compiles the ray
@@ -179,7 +209,10 @@ draws next to ray-traced ones, check they line up the same way.
   costs ~16 ALU cycles, a screen derivative ~90. It does not know memory waits. Out of its fit it
   missed: 20% fewer transcendentals per pixel promised -7% and gave -0.7% in the headset, and in
   world B outside the edge (-5.7 m, 20° from the throat) it says 3.8 ms where the headset takes 4.8.
-  `--profile` (adreno_cost.py) gives cycles per stretch of code.
+  `--profile` gives cycles per stretch of code, `--poses "l,yaw,pitch;..."` other poses (the
+  throat sideways is the demo's dearest), `--split` the toys as the app draws them (the plain ray
+  tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`); with
+  `--toys` other sources are timed with their own balls shader (`tools/ab_shaders.sh` copies it).
   The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
 - **Measuring in the headset without the owner walking:** the panel's lowest button (or, in a
   build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
@@ -192,6 +225,9 @@ draws next to ray-traced ones, check they line up the same way.
   per second. The panel ends with whether 120 Hz held and the comparison. Frame times from
   walking around do not compare between builds: where one looks changes them several times.
   The panel also logs a `refresh:` line every second (with where one looks) and one per late frame.
+  Thirteen places (the 13th: in the throat looking sideways). With the demo's toys (the normal
+  scene) it times the balls shaders, other sources' with `main.toy_mode` TOYS_BARE (no stencil),
+  and this build's a seventh way, over the whole view (TOYS_WHOLE): the panel's "трафарет -N%".
 - **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
   (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; `edge-120hz`
   matched the main before it within 1/255 at every pose.
@@ -245,7 +281,7 @@ draws next to ray-traced ones, check they line up the same way.
 - **SteamVR on the Frame** shows a non-Steam app's desktop window on a virtual screen inside the headset. So XR renders into a SubViewport and the window only shows a notice.
 - **Refresh rate.** The Frame starts this app at 72 Hz; its display does 72/80/90/96/108/120/144. Other developers report that SteamVR there answers `XR_FB_display_refresh_rate` requests with success and ignores them. It follows the app's own setting `steam.app.<SteamAppId>.preferredRefreshRate`, set with `/opt/steamvr/bin/linuxarm64/vrcmd`; on our Frame (SteamVR 2.18.2) the running app switches within a second, and `xrGetDisplayRefreshRateFB` then reports the true rate. `refresh-rate`'s panel does that from its rate buttons and measures the rate and missed frames from xrWaitFrame's timing (`rate_meter.gd`); its `refresh:` log lines are the data. Measured at 1728×1728 per eye (README, «Что видно в шлеме»): 72 and 80 Hz keep up, 90 Hz falls to every 2nd refresh at times, 96–120 Hz mostly at every 2nd; the GPU stays at its top clock (903 MHz), and a frame costs 6.5–7.7 ms with the wormhole small in view, 11–12 ms with it large: the rays through the curved region are the cost. SteamVR there does not offer `XR_EXT_performance_settings`.
 - **Kernel files.** A sysfs file reports a size of 4096 bytes whatever it holds, and `FileAccess.get_file_as_string` reads that many: garbage after the value, and on the Frame a log full of Unicode errors. Read them with `get_line()` (`perf_panel.gd`, `read_line`).
-- **Logs on the Frame:** `~/.local/share/godot/app_userdata/Wormhole VR/logs/`; `tools/frame_logs.bat` fetches them. `application/run/flush_stdout_on_print` is on, or the running app's log lost its last lines. The desktop window's V-Sync mode Disabled is not available there (Godot falls back to Enabled), and the app still reached 144 Hz.
+- **Logs on the Frame:** `~/.local/share/godot/app_userdata/Wormhole VR/logs/`; `tools/frame_logs.bat` fetches them. Screenshots: `tools/frame_screens.bat [days]` zips Steam's and `~/Pictures`' into Downloads as `wormhole_vr_screenshots.zip` with `where.txt`, the paths they had; finding none, it lists fresh images elsewhere in the home. On the Frame they are in `userdata/<id>/760/remote/<the 64-bit game id>/screenshots`: 1920×1080 JPEGs of one eye's view with the panel in it, a few hundred kB each. `application/run/flush_stdout_on_print` is on, or the running app's log lost its last lines. The desktop window's V-Sync mode Disabled is not available there (Godot falls back to Enabled), and the app still reached 144 Hz.
 - **Signals of the OpenXR interface.** A GDScript lambda connected to an `OpenXRInterface` signal by the panel corrupted the heap at exit (under Monado); a method callable did not. `tools/test_openxr.sh` fails on a crash at exit.
 - **SceneTree test scripts.** In them `main._ready` has not run during `_initialize`; touch main's nodes from `_process` (frame 2 or later). Settings applied too early silently do nothing.
 - **Software-Vulkan timings** are only good for ratios, and not for the shader's inner costs: halving the curved-region Simpson steps changed lavapipe's frame by 1%, while on the Frame the curved-region rays double the frame. `tests/perf.gd` `near` / `away` (6.5 m from the centre, facing it / away) separate them. For the Frame's own compiler use `tools/adreno_stats.sh`.
@@ -274,6 +310,26 @@ draws next to ray-traced ones, check they line up the same way.
 - **`inversesqrt` rounding:** |w| from `inversesqrt(dot(w, w))` came out above 1 for rays along
   the throat's cylinder (b = rho0 = rmin), and they took the fillet's branch: cyan specks on the
   throat's circle. `min(dot(w, e2), 1.0)` fixes it; the image diff against main caught it.
+- **The cost model misses the balls shaders by ~1.8x** (toys: 4.5 ms over the speed check's poses,
+  8.0 in the headset; main's balls shader 5.8 against 13.8), while the plain shader is within 5%.
+  Its ratios are too modest as well (0.78 promised, 0.57-0.64 measured). Unknown why (memory waits,
+  waves, divergence, the safe-constlen program?): don't trust its absolute numbers for them.
+- **A variant over the frame's budget in the speed check** (above 13.9 ms at 72 Hz) halves the
+  rate: SteamVR fills in frames on the same GPU, and it reads more than it costs, and so does the
+  segment after it (first segments 3.4 ms dearer than the second ones). Compare at places where
+  every variant fits.
+- **Rays that go round the throat** (|vl| below ~2e-4 on the cylinder, a column near where the
+  view crosses vl = 0, looking sideways inside the throat) were the owner's "stripe": white
+  dashes along the throat at the eye's own l, through the floor, the cube and the ball. Two float32
+  losses: 1 / sqrt(1 - wc^2) with 1 - wc^2 a difference of near-equal numbers (off by half: the
+  floor's l off by mm, and the grid drew a line at the jump); `rho0^2 - b^2 = (rho0 - b)(rho0 + b)`
+  with `rho0 - b = rs vl^2 / (1 + wn) - (rs - rho0)` has no cancellation. And the balls shader's hit
+  key 2 piece + fraction: the cylinder's fraction there is ~1e-5, and 2 + it kept a tenth of its
+  digits (the angle round the throat off by radians); piece B now goes without an offset (keys
+  A -2.., B 0.., C 2.., the edge 4). Dashed, because no pixel's ray has vl exactly 0: the column's
+  rays pass it closer or farther. The reference's and the emulator's cameras never had a pixel
+  that close (|vl| ~ 1e-3, where the error is small): a pose at an odd width (the middle column
+  at vl = 0 exactly) or the owner's own pose finds such things.
 - **SteamVR's camera view** (when it shows the outside cameras) takes ~3 ms of GPU a frame: our 4.8 ms frame then reads ~8 ms, and at 120 Hz the headset falls to every 2nd refresh for seconds. 120 Hz that survives it needs ~3.5 ms at the edge.
 - **`adreno_stats.sh --disasm`** dumps the biggest program, Godot's generic ubershader (with its decal loop and its own derivatives), not the specialised one that runs. `KEEP_LOG=file` keeps the whole log; `--shader res://...` compiles another ray tracer (set before the first draw, so only it is compiled).
 - **Where the edge frame goes (model, main):** curved-region setup ~44%, the flat trace after the
@@ -331,4 +387,21 @@ draws next to ray-traced ones, check they line up the same way.
   view and the arrows, switched by a uniform, the floor view cost 3.94 ms by the model, as its own
   shader 3.68 (`main` 3.51).
 - **The fog's path length** only needs ~5%: r²/b × psi with r at the weight's mean tau is within
-  1.5% here; dropping the exact polynomial took the plain shader from 13 to 12 registers.
+  1.5% here; dropping the exact polynomial took the plain shader from 13 to 12 registers. The
+  balls shader orders its hits by place on the path (2 piece + fraction of it, monotone along the
+  ray) instead, so it needs no exact length either.
+- **ir3 turns an `if` into selects** (if-conversion) even around a square root and a dozen
+  instructions: every lane then pays for it. A loop of one pass with a bound the compiler cannot
+  see (`for (int k = 0; k < 1 + min(wh_nBall, 0); k++)`) stays a branch, and waves whose lanes all
+  fail skip it (the flat balls' root: -3% where they are in view).
+- **ir3 does not hoist loop-invariant code (no LICM), but merges equal expressions (CSE).** A value
+  computed before a loop and used in it is held through it; computed where used (from values held
+  anyway) it is not: that, not new math, took the balls shader from 32 to 24 registers. Computing
+  `cos(tot.x)` again after the search was merged with the one before it and held through; the
+  floor test from the half angle (a different expression) let it go.
+- **The stencil in Godot 4.7.2** (`stencil_mode read|write, compare_..., ref` in a spatial
+  shader) works on the Mobile renderer, multiview and lavapipe. Opaque draws follow
+  `render_priority`, lower first (the proxies at -1 mark before the quads at 0). A MeshInstance3D
+  whose ShaderMaterial has no shader yet is drawn and compiled with Godot's default lit material
+  (an 8700-instruction program: adreno_stats.sh then picked it): make such a node only once its
+  shader is known.
