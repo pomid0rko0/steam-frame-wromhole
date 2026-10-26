@@ -699,16 +699,18 @@ func _points_in_box(P: Dictionary, bp: Array, Q: Dictionary, bq: Array, group: S
 # toward the place and the turn it had against the hand then, as an arm and a wrist do: a force at
 # that point, at most HAND_FORCE, and a twist about it, at most HAND_TORQUE. Within them the toy
 # follows the hand exactly (each substep's impulses give it the hand's motion, and take out what is
-# left of its place and turn in HOLD_TIME); beyond them it lags. A heavy toy held off its centre
-# needs the twist to keep it from swinging down, and to swing it about the hand: the wrist turns
-# it, its weight times the lever works against that, so a big heavy toy held at its side sags, and
-# a flick of the wrist spins a toy only as fast as the twist and WRIST_SPEED let it. Two hands at
+# left of its place and turn in HOLD_TIME); beyond them it lags. A toy held off its centre needs
+# the twist to keep it from swinging about the hand: its weight and its inertia times the lever
+# work against the wrist. A flick of the wrist spins a toy only up to WRIST_SPEED. Two hands at
 # two points turn it with their forces apart instead. Let go, a toy flies with the motion it has.
 
 const HAND_FORCE := 150.0        # N, per hand: an arm lifts about 15 kg
-const HAND_TORQUE := 15.0        # N m, per hand, about its grip: the wrist with the fingers
-const WRIST_SPEED := 10.0        # rad/s: the twist that speeds a turn up falls to nothing at this
-								 # spin (a muscle is the weaker the faster it shortens)
+const HAND_TORQUE := 30.0        # N m, per hand, about its grip: the wrist with the fingers
+const WRIST_SPEED := 10.0        # rad/s: the hand turns what it holds no faster (a hand turns a toy as
+								 # it turns, a flick does not spin it faster; a twist falling off
+								 # from 0 with the toy's spin, as a muscle's force with its speed,
+								 # made every turn sluggish in the headset, and a light toy outran it
+								 # within a substep)
 const BRAKING := 1.5             # a wrist that is stretched holds this much more: what slows a
 const BRAKING_SPIN := 0.5        # toy's spin, from this spin (rad/s) on (less below: in proportion);
 								 # without it a toy too heavy to hold up swings in the hand for good
@@ -777,6 +779,15 @@ func snap(b: Dictionary, tracker: StringName) -> void:
 	b["w" if b.has("F") else "hw"] = to_body(A, h["W"])
 
 
+## Where the toy's grip point of hand `tracker` is: the geodesic from its centre along g in its axes.
+func grip_place(b: Dictionary, tracker: StringName) -> Array:
+	var G := from_body(b["F"] if b.has("F") else b["hF"], b["holds"][tracker]["g"])
+	if G.length() < 1e-6:
+		return [b["l"], b["n"]]
+	var at := space.geodesic(b["l"], b["n"], G / G.length(), G.length(), [])
+	return [at[0], at[1]]
+
+
 ## The hands' pull on the held toys for one substep: impulses on their velocity and spin, toward
 ## where the hands wanted them `lag` s before the aims (the end of this substep).
 func _hold(lag: float) -> void:
@@ -789,9 +800,9 @@ func _hold(lag: float) -> void:
 ## Each hand's grip is a point g of the toy (body coordinates) that the hand moves as its own centre
 ## moves, and a turn it gives the toy: per hand an impulse P at g (the arm) and a twist L (the
 ## wrist), found so that after them the grip point and the spin are as the hand wants (its motion,
-## plus what takes the place and turn left over out in HOLD_TIME), then limited: L to HAND_TORQUE
-## and WRIST_SPEED first, P then found again for the L there is, and limited to HAND_FORCE. The
-## impulses also hold the toy's weight (this substep's fall is counted in). Body coordinates, the
+## plus what takes the place and turn left over out in HOLD_TIME; the spin no more than
+## WRIST_SPEED), then limited: L to HAND_TORQUE first, P then found again for the L there is, and
+## limited to HAND_FORCE. The impulses also hold the toy's weight (this substep's fall is counted in). Body coordinates, the
 ## inertia a ball's or a cube's (the same about any axis): an impulse P at g changes the velocity by
 ## P / m and the spin by g x P / I, so the grip point moves by P / m along g and by P (1 / m +
 ## |g|^2 / I) across it.
@@ -846,15 +857,19 @@ func _hold_toy(b: Dictionary, lag: float) -> void:
 		var lift := maxf(HAND_FORCE - weight.length() / hands, 0.1 * HAND_FORCE) / m
 		var twist := HAND_TORQUE - (g.cross(weight).length() if hands == 1 else 0.0)
 		grips.append({"g": g, "vp": vp + _closing(place, lift),
-				"w": W + _closing(turn, maxf(twist, 0.1 * HAND_TORQUE) / Ig), "P": Vector3.ZERO, "L": Vector3.ZERO})
+				"w": (W + _closing(turn, maxf(twist, 0.1 * HAND_TORQUE) / Ig)).limit_length(WRIST_SPEED),
+				"P": Vector3.ZERO, "L": Vector3.ZERO})
 	for _it in HOLD_ITERATIONS:
 		for gr: Dictionary in grips:
 			var g: Vector3 = gr["g"]
 			var dw: Vector3 = gr["w"] - w
 			var dv: Vector3 = gr["vp"] - (v + w.cross(g))
-			var P0 := m * (dv - dw.cross(g))
 			# the muscles' speeds: the toy's motion as the substep starts (not as the impulses change it)
-			var L: Vector3 = _muscle(gr["L"] + I * dw - g.cross(P0), w0, HAND_TORQUE, WRIST_SPEED, BRAKING_SPIN)
+			var arm := moving + w0.cross(g)
+			# the twist for the force the arm can give (for the force it would want, it would turn a toy
+			# pressed against the floor the other way)
+			var P0: Vector3 = _muscle(gr["P"] + m * (dv - dw.cross(g)), arm, HAND_FORCE, INF) - gr["P"]
+			var L: Vector3 = _muscle(gr["L"] + I * dw - g.cross(P0), w0, HAND_TORQUE, BRAKING_SPIN)
 			var dL: Vector3 = L - gr["L"]
 			var rhs: Vector3 = dv - (dL / I).cross(g)
 			var g2 := g.length_squared()
@@ -862,7 +877,7 @@ func _hold_toy(b: Dictionary, lag: float) -> void:
 			if g2 > 1e-12:
 				var along := (rhs.dot(g) / g2) * g
 				dP = m * along + (rhs - along) / (1.0 / m + g2 / I)
-			var P: Vector3 = _muscle(gr["P"] + dP, moving + w0.cross(g), HAND_FORCE, INF, INF)
+			var P: Vector3 = _muscle(gr["P"] + dP, arm, HAND_FORCE, INF)
 			dP = P - gr["P"]
 			v += dP / m
 			w += (dL + g.cross(dP)) / I
@@ -883,23 +898,15 @@ static func _closing(e: Vector3, a: float) -> Vector3:
 
 
 ## An impulse J of a muscle (the arm's force at the grip, the wrist's twist) limited by its
-## strength `most` (N or N m, over a substep), as it moves (vel: the grip point's velocity, the
-## toy's spin): what speeds the motion up falls off in proportion to the speed, to nothing at `top`;
-## what slows it down may be BRAKING times as much (from the speed `brake` on; INF: never more);
-## across it, `most`.
-static func _muscle(J: Vector3, vel: Vector3, most: float, top: float, brake: float) -> Vector3:
+## strength `most` (N or N m, over a substep): what slows the motion vel (the grip point's velocity,
+## the toy's spin) may be BRAKING times as much, from the speed `brake` on (less below, in
+## proportion; INF: never more).
+static func _muscle(J: Vector3, vel: Vector3, most: float, brake: float) -> Vector3:
 	most *= DT
 	var s := vel.length()
-	if s < 1e-6:
+	if s < 1e-6 or J.dot(vel) >= 0.0:
 		return J.limit_length(most)
-	var d := vel / s
-	var slowing := J.dot(d) < 0.0
-	J = J.limit_length(most * ((1.0 + (BRAKING - 1.0) * minf(s / brake, 1.0)) if slowing else 1.0))
-	var along := J.dot(d)
-	var across := (J - along * d).limit_length(most)
-	if along > 0.0:
-		along = minf(along, most * maxf(1.0 - s / top, 0.0))
-	return across + along * d
+	return J.limit_length(most * (1.0 + (BRAKING - 1.0) * minf(s / brake, 1.0)))
 
 
 ## The rotation vector (axis times angle) of a unit quaternion.
