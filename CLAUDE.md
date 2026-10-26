@@ -65,8 +65,18 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   flight too, `BallWorld.TOY_DENSITY` 25 kg/m³; `air` off in physics_test's checks of the motion
   itself), a hand slower than 0.15 m/s sets its toy down at rest (`main.SET_DOWN_SPEED`), the hand
   that let go does not push it until 1 cm apart (`ghost`), and the demo's ball is thrown 1.8x
-  harder to climb out of the throat's well into B. Not solved: the hands cost ~8% (model), 144 Hz
-  falls to SteamVR's half rate more often.
+  harder to climb out of the throat's well into B. The second try in the headset: balls throw
+  "really well", toys feel heavy (good); cubes spun at 37-39 rad/s from a flick of the wrist and
+  hopped about (no energy gained, checked). The cause: a held toy is kinematic, so the hand is
+  infinitely strong. A share of the hand's turn at the release was tried and called a crutch by the
+  owner; the honest fix, a hand of finite strength (README wish «Рука конечной силы»: the held toy a
+  body pulled to its place by a limited force and torque), is for another chat. A ball set down half a metre outside the shell's edge rolled
+  in: right (the field at its centre, 20-35 cm up, leans 0.3-0.5° toward the throat; the arrows
+  and the floor's colours can't show that; README «Почему мяч скатывается и снаружи кривой зоны»).
+  Its log: 72 Hz always holds; at 120 Hz frames in the shell cost 4.4-5 ms, but a ball held at the
+  edge gives single frames up to 8 ms and the arrows 1.5-2 ms more, and one late frame traps
+  SteamVR at 60 Hz until one leaves the shell. Not solved: that, the cubes' spin, the hands' ~8%
+  (model), 144 Hz.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
