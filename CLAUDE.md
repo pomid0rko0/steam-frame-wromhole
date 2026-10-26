@@ -34,7 +34,9 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   edge frames of `edge-120hz` (merged, below) and the cost model are in it too. Foveated
   rendering (from `foveation`, merged, below) is on by default: our narrow map, the width first.
   Gravity through the wormhole, its views and the balls-and-cubes demo (from `gravity`, merged,
-  below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`.
+  below) are in it: the demo is always on, so the normal scene runs `wormhole_balls`. The cheaper
+  demo (from `toys`, merged, below) is in it too: the toys sorted by region and searched in
+  windows, the frame split by the stencil, and the throat's "stripe" fixed.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
@@ -91,9 +93,10 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   longer holds (start 4.0 ms against 2.4 for the check build, 120 Hz, our narrow map); inside the
   throat looking sideways 7.6-11 ms (the throat's ball and cube are every inner ray's candidates;
   next: a window in psi on the cylinder); a "stripe" through the throat's ball and cube (found
-  from the owner's screenshots and fixed on `toys`: rays that go round the throat, below); the
+  from the owner's screenshots and fixed on `toys`, merged: rays that go round the throat, below); the
   ball in the middle of the throat lit half by A's light, half by B's.
-- `toys` — a cheaper demo (from `main`; README wish «Дешевле демонстрация с мячами и кубами»):
+- `toys` — merged into `main` (the owner tried it in the headset and asked to merge): a cheaper
+  demo (README wish «Дешевле демонстрация с мячами и кубами»):
   `main.set_objects` sorts the toys by region (A's sheet, the shell, B's sheet: `wh_bIdx`,
   `wh_cIdx`, `main.region_order`) and gives the flat spheres (`wh_fball`); in the curved region
   each candidate is searched alone, in its r/w window and on the cylinder its psi window; hits are
@@ -119,8 +122,8 @@ Where the README wishes start (wishes without a branch start from `main`):
   and bodies that move in it, `ball_world.gd`);
 - pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
   are there; `main` has the same balls, cubes and honest gravity on the fast core);
-- cubes next to balls, the light in the throat → `main` (cubes on the fast core); a cheaper demo →
-  `toys` while it is not merged;
+- cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
+  the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
   stick);
 - refresh rate and render scale → `main` (the panel is there; the owner wants no automatic way
@@ -161,7 +164,7 @@ When branches are put together, these overlap:
   XR camera's compositor: an effect added there by another branch splits the pass as well. The
   action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`). Branches started
   before the merge start with foveation off; merged with `main`, they get it on by default.
-- `toys` with anything that sets uniforms: with toys there are two ray tracer materials
+- the stencil split (on `main`, from `toys`) with anything that sets uniforms: there are two ray tracer materials
   (`material` with the toys, `plain_material` where none can be seen): a uniform both read goes
   through `main._param`; the toys' own (`wh_ball`...) only to `material` (`set_objects`). The
   shader index of a ball is not its index in `world.balls` (`set_objects` sorts them). Godot
