@@ -450,7 +450,7 @@ def per64(sh, st, n):
 
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': '', '--flat': ''}
+    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': '', '--flat': '', '--profile-class': 2}
     flags = set()
     pos = []
     i = 0
@@ -519,8 +519,14 @@ def main():
     if opt['--split']:
         print('the split: the plain one\'s flat inputs %s%s' % (', '.join(plain.flat_order),
               (', the flat toys\' %s' % ', '.join(flat.flat_order)) if opt['--flat'] else ''))
-    res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
-    resx = [cost(x, entries, n, size, opt['--fov'], opt['--seed'], None, w, xu) for x, w, xu in extra]
+    # --profile-class C: the profile of the pixels of stencil C (with --flat; extra: 0, 1, 3)
+    pc = opt['--profile-class'] if classes else 2
+    psh = sh if pc == 2 else extra[{0: 0, 1: 1, 3: 2}[pc]][0]
+    if prof is not None:
+        prof = np.zeros(len(psh.instrs))
+    res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof if pc == 2 else None, share, unis)
+    resx = [cost(x, entries, n, size, opt['--fov'], opt['--seed'], prof if x is psh else None, w, xu)
+            for x, w, xu in extra]
     for k, (pose, st) in enumerate(res):
         alu, nop, c4, c5 = per64(sh, st, n)
         busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)
@@ -547,7 +553,7 @@ def main():
               % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, busy, note))
     print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
     if prof is not None:
-        report(sh, prof)
+        report(psh, prof)
 
 
 def report(sh, prof):

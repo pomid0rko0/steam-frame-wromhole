@@ -4,7 +4,7 @@
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
 # included. Calibrated on the headset's speed check (README, «Что видно в шлеме»); a model, not a
 # timing: compare variants with it, then measure the best in the headset (tools/ab_shaders.sh).
-#   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile] [--split] [source]...
+#   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile|--profile-near|--profile-flat] [--split] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks that the emulated colours are Godot's
 # (lavapipe) picture, pixel for pixel. --balls: the shader with movable balls (the stereo check's).
@@ -13,7 +13,10 @@
 # hands' balls where hands are at every pose; --held: and a ball held in the right one (emu_dump.gd).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
-# "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
+# "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py), of the
+# pixels that look for the shell's toys (with --split: stencil 2), --profile-near: of those that
+# look for all of them (stencil 3: the near toys' cones), --profile-flat: of those that look for the
+# flat universes' toys only (stencil 1).
 # --split: "this" with toys as the app draws it, split by the stencil: the plain ray tracer where
 # no toy can be met, the one with the flat universes' toys where only theirs, the one with all
 # where one of the shell's may be (adreno_cost.py --split --flat); other sources are timed over the
@@ -41,6 +44,8 @@ while [ $# -gt 0 ]; do
 		--gravity) GRAV=$2; shift 2 ;;
 		--poses) POSES=$2; shift 2 ;;
 		--profile) PROF=--profile; shift ;;
+		--profile-near) PROF="--profile --profile-class 3"; shift ;;
+		--profile-flat) PROF="--profile --profile-class 1"; shift ;;
 		--split) SPLIT=1; shift ;;
 		--held) HELD=+held; shift ;;
 		--hands) HELD=+hands; shift ;;
