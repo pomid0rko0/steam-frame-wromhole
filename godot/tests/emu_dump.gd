@@ -18,13 +18,20 @@ var poses: Array = []
 var fov := 90.0
 var entries: Array = []
 var i := 0
+var posed := 0             # frames since the poses began
+var done_at := -1.0          # when the last picture was written (_process: then it waits to quit)
+var compiled := -1.0         # pipelines compiled so far, and when that last changed
+var compiled_at := 0.0
 var shader_path := ""
 var gravity := 0
 var toys := false
 var held := false
 var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
+		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d",
+		"wh_candMask"]
+# the marks' own (main._update_near: the shell's toys near the head), for adreno_cost.py's split
+const MARK_UNIFORMS := ["wh_near", "wh_nearBit", "wh_toyL"]
 
 
 func _initialize() -> void:
@@ -71,15 +78,22 @@ func _process(_d: float) -> bool:
 		main.camera.fov = fov
 		if main.overlay:
 			main.overlay.visible = false
-	# a pose takes 3 frames: set, render, read back
-	if frames < 4:
+	# a pose takes 3 frames: set, render, read back; first the app's warm-up (main.WARM_FRAMES:
+	# it draws every ray tracer then, not the split)
+	if frames < 4 or main.warm_frames > 0:
 		return false
-	var k := (frames - 4) % 3
+	if done_at >= 0.0:
+		return _settled()
+	posed += 1
+	var k := (posed - 1) % 3
 	if k == 0:
 		if i >= poses.size():
-			var f := FileAccess.open(out, FileAccess.WRITE)
-			f.store_string(JSON.stringify(entries, " "))
-			return true
+			if done_at < 0.0:
+				var f := FileAccess.open(out, FileAccess.WRITE)
+				f.store_string(JSON.stringify(entries, " "))
+				f.close()
+				done_at = _now()
+			return _settled()
 		var p: Array = poses[i]
 		main.place_on_axis(p[0], p[1], p[2])
 		if hands:
@@ -103,13 +117,32 @@ func _process(_d: float) -> bool:
 			"proj": [_v4(proj.x), _v4(proj.y), _v4(proj.z), _v4(proj.w)],
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
-			"uniforms": _uniforms(m),
+			"uniforms": _uniforms(m).merged(_uniforms(main.mark_materials[0], MARK_UNIFORMS)),
 			# the stencil's proxies (main._update_proxies), chart spheres of the head's universe, or
 			# none (the whole view marked, or no toys)
 			"proxies": _proxies(),
 		})
 		i += 1
 	return false
+
+
+## Quit only once no pipeline has been compiled for a second: Godot 4.7.2 hangs at exit when a
+## pipeline is still being compiled (the toys' ray tracers are, a moment after they are first drawn).
+func _settled() -> bool:
+	var c := 0.0
+	for m in [Performance.PIPELINE_COMPILATIONS_CANVAS, Performance.PIPELINE_COMPILATIONS_MESH,
+			Performance.PIPELINE_COMPILATIONS_SURFACE, Performance.PIPELINE_COMPILATIONS_DRAW,
+			Performance.PIPELINE_COMPILATIONS_SPECIALIZATION]:
+		c += Performance.get_monitor(m)
+	var t := _now()
+	if c != compiled:
+		compiled = c
+		compiled_at = t
+	return t - compiled_at > 1.0 and t - done_at > 1.0
+
+
+static func _now() -> float:
+	return Time.get_ticks_msec() / 1000.0
 
 
 ## Both hands as the app has them (main.hand_state), and with +held a ball (radius 0.25) held by the
@@ -144,9 +177,9 @@ func m_head_l() -> float:
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.
-static func _uniforms(m: ShaderMaterial) -> Dictionary:
+static func _uniforms(m: ShaderMaterial, names: Array = UNIFORMS) -> Dictionary:
 	var out := {}
-	for name in UNIFORMS:
+	for name in names:
 		var v: Variant = m.get_shader_parameter(name)
 		if v == null:
 			continue

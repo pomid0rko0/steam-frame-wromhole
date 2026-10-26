@@ -177,6 +177,31 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   floor had in the middle of the throat (l = 0, `wh_renderE`) is gone; the white 1 m ring there
   stays. Not yet seen in the headset: whether SteamVR takes
   the Frame profile (the log's `interaction profile` lines) and lets View and Menu reach the app.
+- `rim` — performance with toys at the shell's edge and 144 Hz (the owner's log: a ball held at the
+  edge gave frames up to 8 ms, 144 Hz barely held anywhere, `process` 7.4-7.8 ms in late frames;
+  README «Мячи и кубы»). GPU: the stencil splits the frame in four classes, each pixel to the
+  cheapest ray tracer that sees what its ray may meet: 0 plain, 1 the flat universes' toys only
+  (`wormhole_balls*_flat`, `WH_FLAT_TOYS`, 12 registers), 2 the shell's toys but those near the eye
+  (`wormhole_balls*`, `wh_candMask` clears their bits), 3 all of them (`wormhole_balls*_near`). Marks
+  at priorities -3, -2, -1 (values 1, 2, 3; `main._make_marks`, `_update_proxies`): 1 the proxies or
+  the whole view as before; 2 `stencil_toys*.gdshader`, passes that know each pixel's ray (as the
+  ray tracers make it): a shell toy within reach of the ray's 3D subspace and its l window
+  (`wh_toyL`, from `set_objects`) within the l range the path can pass; 3 the same for near toys
+  (the shell's within 1 m of the head, at most 4, `main._update_near`) inside their cones
+  (`wh_nearCone`: the space is CAT(1/rho0^2), so a ray meeting a toy of reach rho at distance D is
+  within asin(sin(1.02 rho / rho0) / sin(D / rho0)) of the direction to its centre; the direction
+  from `WormholeSpace.toward_fast`, a hand's from its own geodesic; `ref/test_near.py` brute-forces
+  it). `tests/split_test.gd` (420 poses, ~20 s) compares the split with the whole view under
+  `WH_KIND_COLOUR` (what the ray ends on; green: which ray tracer) bit for bit where a toy shows;
+  it found a ray going round the cylinder (b = rho0, rounded up) taken for one turning on a
+  fillet. 30 frames after `_pick_shader` draw every ray tracer (`WARM_FRAMES`: pipelines compiled
+  before they are needed). CPU: `WormholeSpace.geodesic` steps only l, l' and phi in the totally
+  geodesic surface of the geodesic's great circle (Clairaut), the rest exact (`geodesic_rk4` kept;
+  `tests/geodesic_test.gd`), the head and hands in steps of `STEP_FRAME` 0.1 m, balls held by
+  friction fall asleep (`BALL_SLEEP_STEPS`), pairs and hands' pushes by centres found once a step,
+  the toys' uniforms only when changed (`_toy_param`): main's scripts 4.8 -> 1.2 ms a frame on
+  this x86 (`tests/cpu_test.gd`), logged as `main's scripts` in `refresh:` lines. Model, a ball
+  held at the chest, 13 poses: 6.05 -> 4.66 ms (at the edge 7.7 -> 5.1). Not yet in the headset.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -247,9 +272,11 @@ When branches are put together, these overlap:
   XR camera's compositor: an effect added there by another branch splits the pass as well. The
   action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`). Branches started
   before the merge start with foveation off; merged with `main`, they get it on by default.
-- the stencil split (on `main`, from `toys`) with anything that sets uniforms: there are two ray tracer materials
-  (`material` with the toys, `plain_material` where none can be seen): a uniform both read goes
-  through `main._param`; the toys' own (`wh_ball`...) only to `material` (`set_objects`). The
+- the stencil split (on `main`, from `toys`; on `rim` four classes) with anything that sets uniforms:
+  there are several ray tracer materials (`material` with the toys, `plain_material` where none can
+  be seen; on `rim` also `flat_material`, `near_material` and the marks' `mark_materials`, which
+  read the eye's uniforms and the toys'): a uniform all read goes through `main._param`; the toys'
+  own (`wh_ball`...) through `main._toy_param` (`set_objects`; on `rim` it skips unchanged values). The
   shader index of a ball is not its index in `world.balls` (`set_objects` sorts them). Godot
   geometry drawn before the ray tracers must not set the stencil. A changed throat (`throat`):
   `set_objects` again (the sorting and the proxies use `space.h`, `space.Rout`). Balls held in the
@@ -377,6 +404,10 @@ they line up the same way.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
 - **Controllers.** Before `menu` our action map had no profile of the Steam Frame's own (Godot 4.7.2 knows it, `/interaction_profiles/valve/frame_controller_valve`, extension `XR_VALVE_frame_controller_interaction`, which Godot asks for by itself). On our Frame (SteamVR 2.18.2) the log's `interaction profile` lines showed both controllers as `/interaction_profiles/khr/generic_controller`; its bindings (thumbstick, trigger, `primary/click` for A) were what the headset used. Valve's page «Steam Frame Input» (Steamworks docs) lists the Frame profile's paths: left `dpad_up/down/left/right`, `view`, `system`, `bumper`; right `a`, `b`, `x`, `y`, `menu`, `system`, `bumper`; both `squeeze` (value, click, touch), `trigger`, `thumbstick`, `grip/pose`, `aim/pose`, `output/haptic`. SteamVR, it says, always takes the Frame profile when the app suggests it, else the generic one, else Touch, remapped: Touch's menu is View, its upper button (B / Y) all three upper buttons (D-pad left, up, right / X, Y, B). Since `menu` (merged) the map has the Frame profile (paths from that page only); `walking_xr_test.gd` checks the bindings of each profile. Monado has no such extension: Godot leaves the profile out there, silently. The default font (Open Sans) has no arrows or triangles (‹ › « » it has): `perf_panel.gd` draws its arrows as meshes. One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
+- **GDScript in a frame runs 2-3x slower than in a loop:** the frame's rendering evicts the
+  interpreter's code and data from the caches (BallWorld.step: 170 us hot, 400 with the caches
+  flushed between calls, 440-500 in frames). Time scripts in frames (`tests/cpu_test.gd`'s first
+  line, `main.cpu_us`), not in a loop. `Performance.TIME_PROCESS` is the second's longest frame.
 - **Logs from a release build.** Without `application/run/flush_stdout_on_print` (on in `project.godot`) an export buffers `print()`, and an abort on quit loses every printed line from `godot.log`, the headset's too.
 - **Tests with `fake_hmd.gd` abort at exit** (status 134) unless the interface and trackers are taken down first; `walking_xr_test.gd` does it, so its exit status means something.
   With four Godots at once it sometimes hangs at exit after all its checks passed (`main` too: 2 of
@@ -504,7 +535,7 @@ they line up the same way.
   floor test from the half angle (a different expression) let it go.
 - **The stencil in Godot 4.7.2** (`stencil_mode read|write, compare_..., ref` in a spatial
   shader) works on the Mobile renderer, multiview and lavapipe. Opaque draws follow
-  `render_priority`, lower first (the proxies at -1 mark before the quads at 0). A MeshInstance3D
+  `render_priority`, lower first (the proxies at -1 mark before the quads at 0; on `rim` -3, -2, -1). A MeshInstance3D
   whose ShaderMaterial has no shader yet is drawn and compiled with Godot's default lit material
   (an 8700-instruction program: adreno_stats.sh then picked it): make such a node only once its
   shader is known.

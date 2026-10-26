@@ -27,7 +27,15 @@
 //                                           pixel's angle (the edge lines' width). ivec4 wh_cIdx:
 //                                           the cubes sorted as the balls.
 //                                           With WH_NO_BALLS defined first the balls' and cubes' code is
-//                                           left out.
+//                                           left out; with WH_FLAT_TOYS only their search in the curved
+//                                           region is (the flat universes' rays still meet them): the
+//                                           pixels whose rays can meet no toy of the shell (main.gd,
+//                                           _update_proxies) run that one, with the plain one's registers.
+//   with WH_KIND_COLOUR defined: the colour says only what the ray ends on (tests/split_test.gd)
+//   with WH_CAND_MASK defined (an int): the shell's toys looked for in the curved region, as bits
+//                                           of the candidates (ball i: i, cube i: 16 + i): the near
+//                                           ones are left out where the stencil says no ray can meet
+//                                           them (main.gd, _update_near)
 //   with WH_TABLE defined: sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
 //                                           the fillet polynomials by impact parameter
 //                                           (WormholeSpace.fillet_table), instead of per ray
@@ -53,6 +61,15 @@
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
 // The floor is the totally geodesic equatorial surface n.z = 0 (z = 0 in both charts).
+
+// the toys' search in the curved region: with toys, unless only the flat universes' are wanted
+#ifndef WH_NO_BALLS
+#ifndef WH_FLAT_TOYS
+#ifndef WH_CURVED_TOYS
+#define WH_CURVED_TOYS
+#endif
+#endif
+#endif
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;
@@ -576,7 +593,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     }
 #endif
 
-#ifndef WH_NO_BALLS
+#ifdef WH_CURVED_TOYS
     // Balls and cubes this ray can reach: the whole ray lies in span(e1, e2, w-axis) of R^4, so
     // one whose centre is farther than its reach (a ball's radius, a cube's half diagonal, two half
     // sizes) from that subspace is never hit. Only those within reach of the shell are looked at
@@ -616,6 +633,9 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         float c2 = dot(Cc.xyz, e2);
         if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) cand |= 1 << (16 + i);
     }
+#ifdef WH_CAND_MASK
+    cand &= WH_CAND_MASK;   // a uniform: a mask made per pixel here took the shader to 32 registers
+#endif
     if (cand != 0) {
         // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
         // 1 B from 0, 2 C from 2; 4: the edge), as the hits are ordered. The cylinder's fraction
@@ -920,6 +940,26 @@ void wh_geodesic(inout float l, inout vec3 n, vec4 dir, float len, inout vec4 f0
     }
 }
 
+// A toy near the eye (main._update_near): the directions from the eye in which a ray can meet it.
+// The space's sectional curvature is at most 1 / rho0^2 (the cylinder's round sections; the
+// fillets' are below it, the radial ones negative) and no geodesic loop is shorter than 2 pi rho0,
+// so the space is CAT(1 / rho0^2): a geodesic from the eye at angle a to the one that reaches the
+// toy's centre, D long, comes no nearer to it than on a sphere of radius rho0,
+// rho0 asin(sin(D / rho0) sin a), and for a > pi / 2 no nearer than D (within pi rho0 / 2 of the
+// eye). A ray meets the toy (intrinsic radius rr) only if sin a < sin(rr / rho0) / sin(D / rho0)
+// with a < pi / 2: a cone round the centre's direction. (A ray in the curved region turns by less
+// than pi before the floor, so none comes back to the eye's neighbourhood from farther:
+// ref/test_near.py.) q: the centre seen from the eye, as main places it (P - eye in play space:
+// the head's geodesic to it unrolled, P, off the eye's own by ~2 mm at a metre for the eye's 3 cm
+// from the head, within the reach main adds). Returns cos of the cone's half angle, or -2: none
+// (the eye within reach); a ray V with dot(V, q / |q|) below it cannot meet it.
+float wh_nearCone(vec3 q, float reach) {
+    float D = length(q);
+    float rr = 1.02 * reach;     // chord -> intrinsic (on curves bent at most 1 / m, below 0.6 m)
+    float S = sin(rr / wh_rho0) / sin(min(D, 1.5 * wh_rho0) / wh_rho0);
+    return reach > 0.0 && D > rr && S < 1.0 ? cos(asin(S) + 0.005) : -2.0;
+}
+
 // Flat chart point/direction on the shell boundary -> manifold state
 void wh_enter(float side, vec3 x, vec3 d, out float l, out vec3 n, out float vl, out vec3 w) {
     n = wh_M(side, x) / length(x);
@@ -1207,7 +1247,7 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
                 dbg = vec4(hl > 0.0 ? 3.0 : 2.0, hl, hn.xy);
                 break;
             }
-#ifndef WH_NO_BALLS
+#ifdef WH_CURVED_TOYS
             if (ev == 2) {
                 // ball: normal = R^4 offset from the centre projected onto the tangent space;
                 // cube: the normal of the face hit (largest slab coordinate), projected the same way
@@ -1278,6 +1318,12 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
         inShell = true;
     }
     if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;
+#ifdef WH_KIND_COLOUR
+    // tests/split_test.gd: only what the ray ends on (dbg.x: the kind and side, or which ball or
+    // cube), no shading and no screen derivatives: the stencil's split must not change it anywhere;
+    // green: which ray tracer (WH_KIND_COLOUR's value, as split_test.gd sets it)
+    return vec3(dbg.x / 255.0, WH_KIND_COLOUR, side > 0.0 ? 0.75 : 0.25);
+#endif
     // grid coordinates and their derivatives, for every pixel (d is a unit vector)
     vec3 dn = d;
     vec2 ga = kind == 1 ? fn.xy : dn.xy;

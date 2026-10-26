@@ -14,9 +14,10 @@
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
-# --split: "this" with toys as the app draws it, split by the stencil: the ray tracer with toys
-# where they may be seen, the plain one elsewhere (adreno_cost.py --split); other sources are
-# timed over the whole view, as the speed check times them.
+# --split: "this" with toys as the app draws it, split by the stencil: the plain ray tracer where
+# no toy can be met, the one with the flat universes' toys where only theirs, the one with all
+# where one of the shell's may be (adreno_cost.py --split --flat); other sources are timed over the
+# whole view, as the speed check times them.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 GODOT=${GODOT:-$ROOT/tools/.bin/Godot_v4.7.2-stable_linux.x86_64}
@@ -87,10 +88,13 @@ for s in "${srcs[@]}"; do
 		> "$WORK/dump.log" 2>&1) || { echo "emu_dump failed"; tail "$WORK/dump.log"; exit 1; }
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""
+	flog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS$BALLS" ]; then
 		plog=$WORK/$n.plain.log
-		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
-		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
+		flog=$WORK/$n.flat.log
+		view=$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity)
+		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole$view.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
+		KEEP_LOG=$flog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole_balls${view}_flat.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the flat toys' part: #"
 	fi
-	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
+	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} ${flog:+--flat $flog} | tail -n +2 | sed "s#^#$s: #"
 done

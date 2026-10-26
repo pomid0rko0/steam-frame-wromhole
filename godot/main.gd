@@ -48,9 +48,33 @@ const SHADER_GRAVITY := preload("res://shaders/wormhole_gravity.gdshader")    # 
 const SHADER_ARROWS := preload("res://shaders/wormhole_arrows.gdshader")      # set_gravity_view 2
 const SHADER_BALLS_GRAVITY := preload("res://shaders/wormhole_balls_gravity.gdshader")   # with balls
 const SHADER_BALLS_ARROWS := preload("res://shaders/wormhole_balls_arrows.gdshader")
-# the pixels whose rays may meet a toy (_update_proxies), and all of them
+# the same for the pixels where a ray may meet one of the shell's toys near the eye (stencil 3), and
+# where only the flat universes' toys (stencil 1): _update_proxies
+const SHADER_BALLS_NEAR := preload("res://shaders/wormhole_balls_near.gdshader")
+const SHADER_BALLS_GRAVITY_NEAR := preload("res://shaders/wormhole_balls_gravity_near.gdshader")
+const SHADER_BALLS_ARROWS_NEAR := preload("res://shaders/wormhole_balls_arrows_near.gdshader")
+const SHADER_BALLS_FLAT := preload("res://shaders/wormhole_balls_flat.gdshader")
+const SHADER_BALLS_GRAVITY_FLAT := preload("res://shaders/wormhole_balls_gravity_flat.gdshader")
+const SHADER_BALLS_ARROWS_FLAT := preload("res://shaders/wormhole_balls_arrows_flat.gdshader")
+# the stencil's marks (_update_proxies): 1 where a ray may meet a toy (spheres round them and the
+# shell, or the whole view), 2 where one of the shell's (by the ray's plane), 3 one near the eye
+# (by its cone), over the whole view or over the shell's sphere; 2 over the whole view
 const SHADER_MARK := preload("res://shaders/stencil_mark.gdshader")
 const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
+const SHADER_TOYS := preload("res://shaders/stencil_toys.gdshader")
+const SHADER_TOYS_NEAR := preload("res://shaders/stencil_toys_near.gdshader")
+const SHADER_TOYS_SHELL := preload("res://shaders/stencil_toys_shell.gdshader")
+const SHADER_TOYS_SHELL_NEAR := preload("res://shaders/stencil_toys_shell_near.gdshader")
+const SHADER_WHOLE := preload("res://shaders/stencil_whole.gdshader")
+# the shell's toys this near the head (chord, from its surface) get a cone of their own
+# (_update_near), at most NEAR_MAX of them, the nearest; NEAR_SLACK: added to the reach for what the
+# head's geodesic to one, unrolled into the room, is off by from the eye's (~2 mm at 1 m)
+const NEAR_REACH := 1.0
+const NEAR_MAX := 4
+const NEAR_SLACK := 0.01
+# frames after the toys' ray tracers are picked in which every mark and ray tracer is drawn
+# (_update_proxies): their pipelines are compiled then
+const WARM_FRAMES := 30
 # m around each sphere: more than the near plane (camera.near). A ray that meets a toy inside its
 # sphere leaves the sphere at least this far beyond the hit, so it is marked even where the near
 # plane clips the sphere's near side.
@@ -90,13 +114,27 @@ var xr_view: SubViewport       # XR renders here, so the desktop window gets no 
 var origin: XROrigin3D
 var camera: XRCamera3D
 var material: ShaderMaterial    # the ray tracer: with the toys where there are any, else the plain one
-# With toys, the plain ray tracer draws where no ray can meet one (a quad of its own, its stencil
-# test the other way): the one with toys holds more registers and costs more even where it finds
-# nothing (README, «Мячи и кубы»).
+# With toys, the frame is split by the stencil (_update_proxies) between ray tracers that each see
+# what can be met there: the one with all the toys holds more registers and costs more even where
+# it finds nothing (README, «Мячи и кубы»). material (stencil 2) leaves the shell's toys near the
+# eye out (wh_candMask), near_material (3) looks for them too, flat_material (1) looks for the flat
+# universes' only, plain_material (0) for none: each a quad of its own.
 var plain_material: ShaderMaterial
 var plain_quad: MeshInstance3D
-var proxies: MultiMeshInstance3D    # spheres around the shell and this universe's toys (play space)
-var mark_all: MeshInstance3D        # the whole view instead
+var flat_material: ShaderMaterial
+var flat_quad: MeshInstance3D
+var near_material: ShaderMaterial
+var near_quad: MeshInstance3D
+var proxies: MultiMeshInstance3D    # spheres around the shell and this universe's toys (play space): 1
+var mark_all: MeshInstance3D        # the whole view instead: 1
+var marks: Array[MeshInstance3D] = []    # 2 and 3 over the whole view, 2 and 3 over the shell's sphere
+var whole_mark: MeshInstance3D      # 2 over the whole view (TOYS_WHOLE)
+var mark_materials: Array[ShaderMaterial] = []   # the marks' that read uniforms (_make_marks)
+var toy_params := {}                # the toys' uniforms as last set (_toy_param)
+var shell_toys := []                # the shell's toys as the shader has them: [bit, R^4 centre, reach]
+var near_mask := 0                  # the bits of those near the head (_update_near)
+var warm_frames := 0                # frames left that draw every mark and ray tracer (_update_proxies)
+var cpu_us := 0                     # how long the last _process took: the scripts' own CPU time (perf_panel.gd logs it)
 # how the toys' ray tracer is given its pixels: TOYS_SPLIT by the stencil (the plain one elsewhere),
 # TOYS_WHOLE the whole view marked, TOYS_BARE no stencil at all (for a ray tracer without the
 # stencil test: other sources' in the speed check)
@@ -217,7 +255,10 @@ func _ready() -> void:
 
 	material = ShaderMaterial.new()
 	material.shader = SHADER_PLAIN
-	plain_material = ShaderMaterial.new()       # its shader only with toys (_pick_shader)
+	plain_material = ShaderMaterial.new()       # their shaders only with toys (_pick_shader)
+	flat_material = ShaderMaterial.new()
+	near_material = ShaderMaterial.new()
+	_make_marks()
 	_param("wh_rho0", space.rho0)
 	_param("wh_h", space.h)
 	_param("wh_fillet", space.fillet)
@@ -334,6 +375,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_step(delta)
+	cpu_us = Time.get_ticks_usec() - t0
+
+
+func _step(delta: float) -> void:
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
@@ -386,7 +433,7 @@ func _process(delta: float) -> void:
 		overlay.visible = foot_l > space.L
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
-	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
+	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame, WormholeSpace.STEP_FRAME)
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
 		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll))
@@ -750,10 +797,11 @@ func _update_hands(hp: Array, head: Transform3D) -> void:
 			var at := hp
 			if off.length() > 1e-6:
 				var dir := WormholeSpace.combine(hp[2], off)
-				at = space.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
+				at = space.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2], WormholeSpace.STEP_FRAME)
 			var b := xf.basis.orthonormalized()
 			st["l"] = at[0]
 			st["n"] = at[1]
+			st["play"] = xf.origin      # where its geodesic from the head ends, unrolled into the room
 			st["F"] = [WormholeSpace.combine(at[2], b.x), WormholeSpace.combine(at[2], b.y),
 					WormholeSpace.combine(at[2], b.z)]
 			_remember(st, "hist", [clock, at[0], at[1]])
@@ -840,7 +888,7 @@ func _hold_point(st: Dictionary) -> Array:
 	var D := WormholeSpace.combine(st["F"], st["off"])
 	if D.length() < 1e-7:
 		return [st["l"], st["n"], st["F"]]
-	return space.geodesic(st["l"], st["n"], D / D.length(), D.length(), st["F"])
+	return space.geodesic(st["l"], st["n"], D / D.length(), D.length(), st["F"], WormholeSpace.STEP_FRAME)
 
 
 ## The held toy follows hand i; its velocity (and a cube's spin) from its recent places: what it
@@ -1274,16 +1322,34 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	if (balls > 0) != (toys_drawn > 0):
 		_pick_shader()                 # only when it changes: a new shader is a hitch
 	toys_drawn = balls
-	material.set_shader_parameter("wh_ball", p)
-	material.set_shader_parameter("wh_ballCol", c)
-	material.set_shader_parameter("wh_nBall", n)
-	material.set_shader_parameter("wh_bIdx", ob[1])
-	material.set_shader_parameter("wh_fball", fb)
-	material.set_shader_parameter("wh_cube", cp)
-	material.set_shader_parameter("wh_cubeE", ax)
-	material.set_shader_parameter("wh_cubeCol", cc)
-	material.set_shader_parameter("wh_nCube", nc)
-	material.set_shader_parameter("wh_cIdx", oc[1])
+	_toy_param("wh_ball", p)
+	_toy_param("wh_ballCol", c)
+	_toy_param("wh_nBall", n)
+	_toy_param("wh_bIdx", ob[1])
+	_toy_param("wh_fball", fb)
+	_toy_param("wh_cube", cp)
+	_toy_param("wh_cubeE", ax)
+	_toy_param("wh_cubeCol", cc)
+	_toy_param("wh_nCube", nc)
+	_toy_param("wh_cIdx", oc[1])
+	# the shell's toys, as the curved region's search has them (_update_near), and the range of l
+	# where each can be met (the marks): a path point within its reach has a profile point (r, w)
+	# within it, so an l within that along the profile, bent at most 1 / R: 2 asin(reach / 2R)
+	shell_toys = []
+	var toy_l := PackedVector4Array()
+	toy_l.resize(18)
+	for k in 2:
+		var lo: int = ob[1].x if k == 0 else oc[1].x
+		var hi: int = ob[1].w if k == 0 else oc[1].w
+		for i in range(lo, hi):
+			var C: Vector4 = p[i] if k == 0 else cp[i]
+			var reach: float = c[i].w if k == 0 else 2.0 * cc[i].w
+			shell_toys.append([i + 16 * k, C, reach])
+			var lc: float = space.unembed(C)[0]
+			var dl := 2.0 * space.fillet * asin(minf((reach + 0.01) / (2.0 * space.fillet), 1.0)) * 1.02 + 0.01
+			toy_l[i + 12 * k] = Vector4(lc - dl, lc + dl, 0.0, 0.0)
+	for m in mark_materials:
+		m.set_shader_parameter("wh_toyL", toy_l)
 	# each universe's toys as spheres in its chart (the stencil's proxies, _update_proxies)
 	toy_spheres = [PackedVector4Array(), PackedVector4Array()]
 	for k in 2:
@@ -1323,7 +1389,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 				rad = maxf(rad, mid.distance_to(q[0]) + q[1])
 			bounds.append(Vector4(mid.x, mid.y, mid.z, rad))
 	# order: balls A, balls B, cubes A, cubes B
-	material.set_shader_parameter("wh_bound", bounds)
+	_toy_param("wh_bound", bounds)
 
 
 ## Where each object can be met: in universe A's flat sheet (its reach crosses w = h), in the
@@ -1375,39 +1441,82 @@ func _pick_shader() -> void:
 	var plain: Shader = [SHADER_PLAIN, SHADER_GRAVITY, SHADER_ARROWS][gravity_view]
 	if balls > 0:
 		material.shader = [SHADER_BALLS, SHADER_BALLS_GRAVITY, SHADER_BALLS_ARROWS][gravity_view]
+		near_material.shader = [SHADER_BALLS_NEAR, SHADER_BALLS_GRAVITY_NEAR, SHADER_BALLS_ARROWS_NEAR][gravity_view]
+		flat_material.shader = [SHADER_BALLS_FLAT, SHADER_BALLS_GRAVITY_FLAT, SHADER_BALLS_ARROWS_FLAT][gravity_view]
 		plain_material.shader = plain
+		warm_frames = WARM_FRAMES
 		if plain_quad == null:
 			# made once there are toys: an unused ray tracer would be compiled all the same
-			plain_quad = MeshInstance3D.new()
-			var q := QuadMesh.new()
-			q.size = Vector2(2.0, 2.0)
-			plain_quad.mesh = q
-			plain_quad.material_override = plain_material
-			plain_quad.extra_cull_margin = 16384.0
-			plain_quad.position = Vector3(0.0, 0.0, -1.0)
-			camera.add_child(plain_quad)
+			plain_quad = _view_quad(plain_material, 0)
+			flat_quad = _view_quad(flat_material, 0)
+			near_quad = _view_quad(near_material, 0)
 	else:
 		material.shader = plain
 
 
-## A uniform both ray tracers read.
+## A quad over the whole view with this material (a ray tracer, or a stencil mark drawn first).
+func _view_quad(m: ShaderMaterial, priority: int) -> MeshInstance3D:
+	m.render_priority = priority
+	var quad := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = Vector2(2.0, 2.0)
+	quad.mesh = q
+	quad.material_override = m
+	quad.extra_cull_margin = 16384.0
+	quad.position = Vector3(0.0, 0.0, -1.0)
+	camera.add_child(quad)
+	return quad
+
+
+## A uniform all ray tracers read (and the marks: they place the eyes as the ray tracers do).
 func _param(name: StringName, value: Variant) -> void:
-	material.set_shader_parameter(name, value)
-	plain_material.set_shader_parameter(name, value)
+	for m in [material, plain_material, flat_material, near_material]:
+		m.set_shader_parameter(name, value)
+	for m in mark_materials:
+		m.set_shader_parameter(name, value)
 
 
-## The stencil's proxies (stencil_mark.gdshader): drawn before the ray tracers (render priority
-## -1), they mark the pixels whose rays may meet a movable ball or cube. A ray from an eye in a
-## flat universe goes straight until it enters the shell or ends: it meets one of that universe's
-## toys only through the toy's bounding sphere, and anything else only through the shell. So
-## spheres around the shell and around this universe's toys, PROXY_MARGIN larger (an eye just
-## inside one, where the near plane clips its near side, still has its far side), drawn from both
-## sides (an eye inside a sphere sees its inside). With the head in the curved region there is no
-## chart to place them in: the whole view is marked.
+## A uniform of the toys (set_objects): for the ray tracers with toys and the marks; only when it
+## changed (toys at rest: the same every frame).
+func _toy_param(name: StringName, value: Variant) -> void:
+	if toy_params.get(name) == value and material.get_shader_parameter(name) != null:
+		return
+	toy_params[name] = value
+	for m in [material, flat_material, near_material]:
+		m.set_shader_parameter(name, value)
+	for m in mark_materials:
+		m.set_shader_parameter(name, value)
+
+
+## The stencil's marks, drawn before the ray tracers (render priority below theirs, 0), each
+## setting it where a cheaper ray tracer would miss something:
+##  1 (priority -3) where a ray may meet a movable ball or cube at all. A ray from an eye in a flat
+##    universe goes straight until it enters the shell or ends: it meets one of that universe's
+##    toys only through the toy's bounding sphere, and anything else only through the shell. So
+##    spheres around the shell and around this universe's toys (stencil_mark.gdshader),
+##    PROXY_MARGIN larger (an eye just inside one, where the near plane clips its near side, still
+##    has its far side), drawn from both sides (an eye inside a sphere sees its inside). With the
+##    head in the curved region there is no chart to place them in: the whole view.
+##  2 (priority -2) where it may meet one of the shell's toys (all but those near the eye): its
+##    plane through the centre passes within reach of one (stencil_toys.gdshader, over the whole
+##    view, or over the shell's sphere: stencil_toys_shell.gdshader).
+##  3 (priority -1) where it may meet one of the shell's toys near the eye: it points into one's
+##    cone (_update_near), and its plane passes within reach (stencil_toys_near.gdshader,
+##    stencil_toys_shell_near.gdshader).
+## The ray tracer of each value looks for what may be met there (_pick_shader): the stencil only
+## decides which runs, the picture is the same.
+func _make_marks() -> void:
+	for sh in [SHADER_TOYS, SHADER_TOYS_NEAR, SHADER_TOYS_SHELL, SHADER_TOYS_SHELL_NEAR]:
+		var m := ShaderMaterial.new()
+		m.shader = sh
+		m.render_priority = -1 if sh == SHADER_TOYS_NEAR or sh == SHADER_TOYS_SHELL_NEAR else -2
+		mark_materials.append(m)
+
+
 func _add_proxies() -> void:
 	var mark := ShaderMaterial.new()
 	mark.shader = SHADER_MARK
-	mark.render_priority = -1
+	mark.render_priority = -3
 	var sphere := SphereMesh.new()
 	sphere.radius = 1.0
 	sphere.height = 2.0
@@ -1426,28 +1535,58 @@ func _add_proxies() -> void:
 	origin.add_child(proxies)
 	var all := ShaderMaterial.new()
 	all.shader = SHADER_MARK_ALL
-	all.render_priority = -1
-	mark_all = MeshInstance3D.new()
-	var q := QuadMesh.new()
-	q.size = Vector2(2.0, 2.0)
-	mark_all.mesh = q
-	mark_all.material_override = all
-	mark_all.extra_cull_margin = 16384.0
-	mark_all.position = Vector3(0.0, 0.0, -1.0)
+	mark_all = _view_quad(all, -3)
 	mark_all.visible = false
-	camera.add_child(mark_all)
+	var whole := ShaderMaterial.new()
+	whole.shader = SHADER_WHOLE
+	whole_mark = _view_quad(whole, -2)
+	whole_mark.visible = false
+	# 2 and 3 over the whole view, then over the shell's sphere (placed as the proxies)
+	for k in 4:
+		var node: MeshInstance3D
+		if k < 2:
+			node = _view_quad(mark_materials[k], mark_materials[k].render_priority)
+		else:
+			node = MeshInstance3D.new()
+			node.mesh = sphere
+			node.material_override = mark_materials[k]
+			node.extra_cull_margin = 16384.0
+			origin.add_child(node)
+		node.visible = false
+		marks.append(node)
 
 
-## Each frame: the proxies placed in the room from where the head is (as the ray tracer places
-## the eyes: in a flat universe the play-space offset from the head along the head's frame), or
-## the whole view marked.
+## Each frame: which ray tracer runs where (the marks, as toy_mode says), the shell's toys near the
+## head (_update_near), and the spheres placed in the room from where the head is (as the ray
+## tracer places the eyes: in a flat universe the play-space offset from the head along the head's
+## frame).
 func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
-	var split := balls > 0 and toy_mode == TOYS_SPLIT and absf(l) > space.L
-	proxies.visible = split
+	var toys := balls > 0
+	var split := toys and toy_mode == TOYS_SPLIT
+	var inside := absf(l) <= space.L
+	if toys:
+		_update_near(l, n, hf, head_pos)
+	var near := near_mask != 0
+	# The first frames with toys draw every mark and every ray tracer, what this pose needs or not:
+	# their pipelines are compiled then, not in the middle of play (Godot draws a slow generic one
+	# meanwhile, and one late frame keeps SteamVR at half the rate), nor still in flight when the
+	# app quits (Godot 4.7.2 then hangs at exit). Stencil 2 everywhere then (the whole view's
+	# mark), 3 where a near toy's cone is: exact, if dear.
+	var warm := split and warm_frames > 0
+	if warm:
+		warm_frames -= 1
+	proxies.visible = split and not inside
+	mark_all.visible = toys and (toy_mode == TOYS_BARE or (split and inside))
+	whole_mark.visible = toys and (toy_mode == TOYS_WHOLE or warm)
+	marks[0].visible = split and (inside or warm)
+	marks[1].visible = split and ((inside and near) or warm)
+	marks[2].visible = split and (not inside or warm)
+	marks[3].visible = split and ((not inside and near) or warm)
 	if plain_quad:
-		plain_quad.visible = split
-	mark_all.visible = balls > 0 and not split and toy_mode != TOYS_BARE
-	if not split:
+		plain_quad.visible = split and (not inside or warm)
+		flat_quad.visible = split
+		near_quad.visible = split and (near or warm)
+	if not (split and not inside):
 		return
 	var side := 1.0 if l > 0.0 else -1.0
 	var ch := space.chart_position(l, n)
@@ -1468,6 +1607,60 @@ func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void
 		mm.set_instance_transform(count, to_play * Transform3D(Basis.from_scale(Vector3(s.w, s.w, s.w)), Vector3(s.x, s.y, s.z)))
 		count += 1
 	mm.visible_instance_count = count
+	# the shell's sphere for the marks 2 and 3: proxy 0
+	marks[2].transform = mm.get_instance_transform(0)
+	marks[3].transform = marks[2].transform
+
+
+## The shell's toys near the head (within NEAR_REACH, NEAR_MAX of them, the nearest): a ray from the
+## eye meets one only within a cone round where it is seen (wormhole_core.gdshaderinc, wh_nearCone).
+## Where it is seen from the head: its geodesic from the head, unrolled into the room (a hand's is
+## its offset in the room, as _update_hands places it; another's from WormholeSpace.toward_fast,
+## with how far that lands off added to its reach). The marks 3 cover their cones; the ray tracer of
+## stencil 2 leaves them out (wh_candMask), that of 3 looks for them. Without the split (the speed
+## check's TOYS_WHOLE) the one of stencil 2 looks for all.
+func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
+	var E := space.embed(l, n)
+	var found := []
+	for t in shell_toys:
+		var d: float = (t[1] - E).length() - t[2]
+		if d < NEAR_REACH:
+			found.append([d, t])
+	found.sort_custom(_nearer)
+	var near := PackedVector4Array()
+	var bits := Vector4i(30, 30, 30, 30)       # no toy's bit
+	var mask := 0
+	for k in mini(found.size(), NEAR_MAX):
+		var t: Array = found[k][1]
+		var C: Vector4 = t[1]
+		var play := Vector3.ZERO
+		var miss := -1.0
+		for st in hand_state:
+			if st.get("on", false) and st.has("play") and space.embed(st["l"], st["n"]) == C:
+				play = st["play"]
+				miss = 0.0
+		if miss < 0.0:
+			var at := space.unembed(C)
+			var res := space.toward_fast(l, n, at[0], at[1])
+			var U: Vector4 = res[0]
+			play = head_pos + Vector3(U.dot(hf[0]), U.dot(hf[1]), U.dot(hf[2]))
+			miss = res[1]
+		near.append(Vector4(play.x, play.y, play.z, t[2] + miss + NEAR_SLACK))
+		bits[k] = t[0]
+		mask |= 1 << t[0]
+	while near.size() < 4:
+		near.append(Vector4.ZERO)              # reach 0: no cone
+	near_mask = mask if toy_mode == TOYS_SPLIT else 0
+	material.set_shader_parameter("wh_candMask", ~near_mask)
+	near_material.set_shader_parameter("wh_candMask", -1)
+	for m in mark_materials:
+		m.set_shader_parameter("wh_near", near)
+		m.set_shader_parameter("wh_nearBit", bits)
+		m.set_shader_parameter("wh_candMask", ~near_mask)
+
+
+static func _nearer(a: Array, b: Array) -> bool:
+	return a[0] < b[0]
 
 
 ## The proxies as spheres in the chart of the universe at l (centre, the mesh's radius: with the

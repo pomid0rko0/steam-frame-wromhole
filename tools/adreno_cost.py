@@ -7,7 +7,7 @@ keeps its log with KEEP_LOG); this runs the specialised program it made on waves
 a wave both sides, as on the GPU. It is a model: no timings, no waits on transcendental or
 texture-unit results (counted apart: cat4, cat5), no memory.
 
-  python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--check] [--split PLAINLOG]
+  python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--check] [--split PLAINLOG [--flat FLATLOG]]
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
@@ -16,7 +16,11 @@ on N random tiles (default 300; the same tiles for every LOG with the same seed)
 --split: the frame split by the stencil (main.gd, _update_proxies): LOG's ray tracer (with the
 toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
 (the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
-GPU packs the passing pixels into waves). The proxies' own pass is not counted.
+GPU packs the passing pixels into waves). The marks' own passes are not counted. With --flat, the
+split as main.gd now makes it (toy_classes): PLAINLOG's where no toy can be met, FLATLOG's (the
+flat universes' toys only) where only theirs, LOG's where one of the shell's toys may be (with
+the dump's wh_candMask, which leaves those near the eye out), and LOG's looking for all of them
+(wh_candMask -1) where a ray points into a near one's cone.
 """
 import json
 import os
@@ -81,7 +85,7 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_pix', 'f', 0, 'WH_PIX'),
             ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
             ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS'), ('wh_bIdx', 'iv4', 0, 'BALLS'),
-            ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS')]
+            ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS'), ('wh_candMask', 'i', 0, 'CURVED')]
 
 
 def shader_defines(path):
@@ -90,6 +94,8 @@ def shader_defines(path):
     d = set(re.findall(r'^#define (WH_\w+)', open(f).read(), re.M))
     if 'WH_NO_BALLS' not in d:
         d.add('BALLS')
+        if 'WH_FLAT_TOYS' not in d:
+            d.add('CURVED')
     if 'BALLS' in d or 'WH_ARROWS' in d:
         d.add('WH_PIX')
     return d
@@ -116,7 +122,7 @@ def material_ubo(defines, values):
     u = np.zeros(4 * 160, np.float32)
     ui = u.view(np.uint32)
     tab, lo, inv, reg = fillet_table()
-    vals = {'wh_rho0': 3.0, 'wh_h': 5.0, 'wh_fillet': 1.0, 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
+    vals = {'wh_rho0': 3.0, 'wh_h': 5.0, 'wh_fillet': 1.0, 'wh_candMask': -1, 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
             'wh_pil': SCENE['pillars_A'], 'wh_box': SCENE['boxes_B'], 'wh_tabLo': lo, 'wh_tabInv': inv, 'wh_tabReg': reg}
     vals.update(values or {})
     for name, (off, typ, n) in ubo_layout(defines).items():
@@ -125,9 +131,9 @@ def material_ubo(defines, values):
         v = np.ravel(np.asarray(vals[name], np.float64))
         k = off // 4
         if typ == 'i':
-            ui[k] = int(v[0])
+            ui[k] = np.uint32(int(v[0]) & 0xffffffff)
         elif typ == 'iv4':
-            ui[k:k + 4] = v.astype(np.int64)[:4]
+            ui[k:k + 4] = (v.astype(np.int64)[:4] & 0xffffffff).astype(np.uint32)
         else:
             u[k:k + len(v)] = v
     return ui
@@ -238,9 +244,11 @@ def varyings_for(entry, xs, ys, W, H, tan_x, tan_y, sh=None):
     return v
 
 
-def find_flat_order(sh, entries):
+def find_flat_order(sh, entries, robust=False):
     """Which way Mesa packed the flat inputs (v_l, v_n, v_eye): the order whose emulated colours are
-    Godot's picture on a few tiles."""
+    Godot's picture on a few tiles. robust: for a ray tracer that is not the one the picture shows
+    everywhere (the split's others: the picture's toys are not theirs), the order whose tiles match
+    best in the median."""
     import itertools
     from PIL import Image
     names = ['l', 'n', 'eye'] if len(sh.flat) == 6 else ['l', 'n']
@@ -252,16 +260,17 @@ def find_flat_order(sh, entries):
     for order in itertools.permutations(names):
         sh.flat_order = list(order)
         rng = np.random.default_rng(7)
-        worst = 0.0
-        for t in range(6):
+        errs = []
+        for t in range(16 if robust else 6):
             xs, ys = tile_lanes(8 * rng.integers(0, W // 8), 8 * rng.integers(0, H // 8))
             col, _ = sh.run(varyings_for(e, xs, ys, W, H, 1.0 / P[0][0], 1.0 / P[1][1], sh))
-            err = np.nan_to_num(np.abs(srgb(2.0 * col) - img[ys, xs]), nan=1.0).max()
-            worst = max(worst, err)
+            err = np.nan_to_num(np.abs(srgb(2.0 * col) - img[ys, xs]), nan=1.0).max(1)
+            errs.append(np.median(err) if robust else err.max())
+        worst = np.median(errs) if robust else max(errs)
         if best is None or worst < best[0]:
             best = (worst, list(order))
     sh.flat_order = best[1]
-    if best[0] > 4.0 / 255:
+    if best[0] > 4.0 / 255 and not robust:
         print('warning: no packing of the flat inputs reproduces the picture (%.1f/255)' % (255 * best[0]))
     return best[1]
 
@@ -335,6 +344,75 @@ def proxy_marked(e, xs, ys, size, tan_x, tan_y):
     return hit
 
 
+def near_cone(q, reach, rho0=3.0):
+    """wormhole_core.gdshaderinc's wh_nearCone: cos of the cone's half angle, or -2 (none)."""
+    D = float(np.linalg.norm(q))
+    rr = 1.02 * reach
+    S = np.sin(rr / rho0) / np.sin(min(D, 1.5 * rho0) / rho0)
+    return float(np.cos(np.arcsin(S) + 0.005)) if reach > 0.0 and D > rr and S < 1.0 else -2.0
+
+
+def toy_classes(e, xs, ys, size, tan_x, tan_y):
+    """Per lane, which ray tracer main.gd's stencil gives its pixel (_update_proxies): 0 the plain
+    one, 1 the flat universes' toys only, 2 the shell's too but those near the eye, 3 all; the
+    marks' tests (wormhole_view.gdshaderinc, WH_MARK) on the dump's uniforms, the eye at the head."""
+    u = e['uniforms']
+    B = np.array(e['cam_basis'], float).T
+    f = np.array(e['head_f'], float)
+    vx = (2.0 * (xs + 0.5) / size - 1.0) * tan_x
+    vy = (1.0 - 2.0 * (ys + 0.5) / size) * tan_y
+    pd = B @ np.stack([vx, vy, -np.ones_like(vx)], 0)
+    pd /= np.linalg.norm(pd, axis=0)
+    V = pd[0][None] * f[0][:, None] + pd[1][None] * f[1][:, None] + pd[2][None] * f[2][:, None]
+    n = np.array(e['head_n'], float)
+    e3 = np.cross(n[:, None], V[1:], axis=0)
+    s2 = (e3 * e3).sum(0)
+    mask = int(u.get('wh_candMask', -1))
+    near = np.zeros(len(xs), np.int64)
+    hp = np.array(e['head_pos'], float)
+    for k in range(4):
+        P = np.array(u.get('wh_near', [[0, 0, 0, 0]] * 4)[k], float)
+        q = P[:3] - hp
+        c = near_cone(q, P[3])
+        near |= np.where((q / max(np.linalg.norm(q), 1e-6)) @ pd >= c - 1e-4, 1 << int(u.get('wh_nearBit', [30] * 4)[k]), 0)
+    c2 = np.zeros(len(xs), bool)
+    c3 = np.zeros(len(xs), bool)
+    # the range of l the path passes (as x = side l), as the marks work it out
+    rho0, hh, R = 3.0, 5.0, 1.0
+    Lc, Ls = hh - R, hh - R + R * np.pi / 2.0
+    le = e['head_l']
+    sd = 1.0 if le >= 0.0 else -1.0
+    outside = abs(le) >= Ls
+    x0 = Ls if outside else abs(le)
+    b = (rho0 + R if outside else wh_eye(le)[0]) * np.linalg.norm(V[1:], axis=0)
+    inward = np.ones(len(xs), bool) if outside else V[0] * sd < 0.0
+    turn = (b > rho0) & (x0 > Lc)
+    lt = np.maximum(Lc + R * np.sqrt(np.maximum(2.0 * (b - rho0) / R, 0.0)), Lc)
+    xlo = np.where(inward, np.where(turn, np.minimum(lt, x0), -Ls), x0)
+    xhi = np.where(inward & ~turn, x0, Ls)
+    toyL = u.get('wh_toyL', [[-99.0, 99.0, 0.0, 0.0]] * 18)
+    bI, cI = u['wh_bIdx'], u['wh_cIdx']
+    objs = [(i, u['wh_ball'][i], u['wh_ballCol'][i][3], toyL[i]) for i in range(bI[0], bI[3])]
+    objs += [(16 + i, u['wh_cube'][i], 2.0 * u['wh_cubeCol'][i][3], toyL[12 + i]) for i in range(cI[0], cI[3])]
+    for bit, C, reach, wl in objs:
+        d = np.array(C[:3], float) @ e3
+        rr = reach + 0.01
+        a, c = sorted((sd * wl[0], sd * wl[1]))
+        inplane = ((d * d < rr * rr * s2) | (s2 < 1e-12)) & (xhi >= a) & (xlo <= c)
+        if (mask >> bit) & 1:
+            c2 |= inplane
+        c3 |= inplane & (((near >> bit) & 1) == 1)
+    if e.get('proxies'):
+        prox = np.array(e['proxies'], float).reshape(-1, 4)
+        c1 = proxy_marked(e, xs, ys, size, tan_x, tan_y)
+        shell = proxy_marked(dict(e, proxies=prox[:1].tolist()), xs, ys, size, tan_x, tan_y)
+        c2 &= shell
+        c3 &= shell
+    else:
+        c1 = np.ones(len(xs), bool)
+    return np.where(c3, 3, np.where(c2, 2, np.where(c1, 1, 0)))
+
+
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
     """share(e, xs, ys, tan): the share of a tile's pixels this ray tracer runs (--split); unis:
     each pose's own uniforms (toys that move with the viewer: --held)."""
@@ -372,7 +450,7 @@ def per64(sh, st, n):
 
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': ''}
+    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': '', '--flat': ''}
     flags = set()
     pos = []
     i = 0
@@ -412,28 +490,61 @@ def main():
     size = opt['--size']
     share = None
     plain = None
+    extra = []        # (shader, its share of a tile, its uniforms per pose) of the split's other ray tracers
+    classes = bool(opt['--flat'])
     if opt['--split']:
         # the plain ray tracer: its own uniforms are the same material's
-        pdefs = {d for d in defines if d not in ('BALLS', 'WH_PIX')} | {'WH_NO_BALLS'}
+        pdefs = {d for d in defines if d not in ('BALLS', 'WH_PIX', 'CURVED')} | {'WH_NO_BALLS'}
         if 'WH_ARROWS' in pdefs:
             pdefs.add('WH_PIX')
         plain = Shader(opt['--split'], pdefs, uniforms)
-        plain.flat_order = order
-        share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
+        # its own packing of the flat inputs (another program: not necessarily LOG's)
+        find_flat_order(plain, entries, robust=True)
+        if classes:
+            fdefs = {d for d in defines if d != 'CURVED'} | {'WH_FLAT_TOYS'}
+            flat = Shader(opt['--flat'], fdefs, uniforms)
+            find_flat_order(flat, entries, robust=True)
+            # the same program as LOG with the material that looks for all the shell's toys
+            allu = None if unis is None else [dict(u, wh_candMask=-1) for u in unis]
+            nearsh = Shader(log, defines, dict(uniforms, wh_candMask=-1))
+            nearsh.flat_order = order
+            cls = lambda e, xs, ys, tan: toy_classes(e, xs, ys, size, tan, tan)
+            share = lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 2).mean())
+            extra = [(plain, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 0).mean()), unis),
+                     (flat, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 1).mean()), unis),
+                     (nearsh, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 3).mean()), allu or [dict(uniforms, wh_candMask=-1)] * len(entries))]
+        else:
+            share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
+            extra = [(plain, lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis)]
+    if opt['--split']:
+        print('the split: the plain one\'s flat inputs %s%s' % (', '.join(plain.flat_order),
+              (', the flat toys\' %s' % ', '.join(flat.flat_order)) if opt['--flat'] else ''))
     res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
-    resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
-                lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis) if plain else None
+    resx = [cost(x, entries, n, size, opt['--fov'], opt['--seed'], None, w, xu) for x, w, xu in extra]
     for k, (pose, st) in enumerate(res):
         alu, nop, c4, c5 = per64(sh, st, n)
         busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)
-        if plain:
-            a2, n2, c42, c52 = per64(plain, resp[k][1], n)
+        part = lambda a, b, c, d: MS_ALU * a + MS_NOP * b + MS_CAT4 * c + MS_CAT5 * d
+        parts = [part(alu, nop, c4, c5)]       # each ray tracer's ms: LOG's first, then the others'
+        for (x, w, xu), rx in zip(extra, resx):
+            a2, n2, c42, c52 = per64(x, rx[k][1], n)
+            parts.append(part(a2, n2, c42, c52))
             alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
         ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
         tot.append(ms)
+        note = ''
+        if classes:
+            g = np.arange(8, size, 16)
+            gx, gy = np.meshgrid(g, g)
+            tan = np.tan(np.radians(opt['--fov']) / 2.0)
+            cl = toy_classes(entries[k], gx.ravel(), gy.ravel(), size, tan, tan)
+            sh_ = [(cl == c).mean() for c in range(4)]
+            note = '; plain %.0f%% %.2f ms, flat toys %.0f%% %.2f, shell toys %.0f%% %.2f, near ones %.0f%% %.2f' % (
+                100 * sh_[0], parts[1], 100 * sh_[1], parts[2], 100 * sh_[2], parts[0], 100 * sh_[3], parts[3])
+        elif plain:
+            note = '; marked %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov']))
         print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%%s'
-              % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, busy,
-                 '; marked %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov'])) if plain else ''))
+              % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, busy, note))
     print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
     if prof is not None:
         report(sh, prof)

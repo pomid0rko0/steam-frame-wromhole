@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip_vertex_transform, fog_disabled;
-// where no movable ball or cube can be seen (stencil_mark.gdshader)
-stencil_mode read, compare_not_equal, 1;
+// where no movable ball or cube can be seen (stencil 0: main.gd, _update_proxies)
+stencil_mode read, compare_equal, 0;
 
 // The gravity view with arrows (main.set_gravity_view 2): wormhole_gravity.gdshader and arrows of
 // the field on the vertical surface through the wormhole that faces the start (x = 0).

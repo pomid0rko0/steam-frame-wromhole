@@ -125,6 +125,8 @@ var t := 0.0
 var frames := 0
 var gpu := 0.0
 var gpu_max := 0.0
+var cpu_sum := 0                  # main's scripts this second (main.cpu_us): us, summed and the most
+var cpu_max := 0
 var rate := 0.0                 # measured, Hz
 var reported := 0.0             # what the runtime says, Hz (read once a second)
 var vrcmd := VRCMD
@@ -636,15 +638,19 @@ func _process(delta: float) -> void:
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not (viewer and viewer.get("bench") and viewer.bench.running):
 			late_lines += 1
 			var look: Vector2 = viewer.look_angles() if viewer else Vector2.ZERO
-			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process"
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process (the second's most), main's scripts %.2f ms"
 					% [meter.missed() - missed_before, viewer.foot_l if viewer else 0.0, look.x, look.y,
 					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
 					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
-					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+					viewer.cpu_us / 1000.0 if viewer and viewer.get("cpu_us") != null else 0.0])
 		if viewer and viewer.get("bench"):
 			viewer.bench.frame_timing(now, period, reported)
 	t += delta
 	frames += 1
+	if viewer and viewer.get("cpu_us") != null:
+		cpu_sum += viewer.cpu_us
+		cpu_max = maxi(cpu_max, viewer.cpu_us)
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
 	gpu += g
 	gpu_max = maxf(gpu_max, g)
@@ -661,6 +667,8 @@ func _process(delta: float) -> void:
 		frames = 0
 		gpu = 0.0
 		gpu_max = 0.0
+		cpu_sum = 0
+		cpu_max = 0
 
 
 ## The menu and the line hang in the room ahead of the head, turned to its bearing: they follow
@@ -935,7 +943,7 @@ func _second() -> void:
 		rate = r
 		seconds.clear()
 	else:
-		seconds.append([meter.frames, meter.refreshes, gpu, gpu_max, frames])
+		seconds.append([meter.frames, meter.refreshes, gpu, gpu_max, frames, cpu_sum, cpu_max])
 		if seconds.size() > JUDGE_SECONDS:
 			seconds.pop_front()
 	meter.reset_window()
@@ -1031,8 +1039,9 @@ func _log() -> void:
 		var look: Vector2 = viewer.look_angles()
 		where = "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 				"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, main's scripts %.2f ms avg %.2f max, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
 			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
+			s[5] / 1000.0 / s[4] if s[4] > 0 else 0.0, s[6] / 1000.0,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), render_scale, keeps_up(seconds), foveation, "width" if viewer and viewer.own_order == 0 else "height", _gaze_text(),
 			viewer.gravity_view if viewer else 0, "open" if open else "closed"])
