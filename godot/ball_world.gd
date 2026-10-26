@@ -22,7 +22,7 @@ const GRAVITY := 9.81
 const DT := 1.0 / 180.0
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
-const ROLLING_RESISTANCE := 0.02     # rolling friction coefficient: deceleration 0.02 g on a flat floor
+const ROLLING_RESISTANCE := 0.04     # rolling friction coefficient: deceleration 0.04 g on a flat floor
 const MAX_BALLS := 8
 const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls nearby
 const MAX_CUBES := 6
@@ -31,6 +31,10 @@ const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelera
 const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
 const KINEMATIC := 1e9               # mass of held balls and hands
+# a hand or a held toy against a free ball: it moves on regardless, so with the balls' 0.85 a ball
+# it meets flew off at 1.85 times its speed, and one pressed against the floor or another ball
+# gained speed from nothing; this is a soft hand's
+const RESTITUTION_KINEMATIC := 0.3
 
 var space: WormholeSpace
 var scene: Dictionary
@@ -220,8 +224,10 @@ func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
 		return
 	var Na := space.project(a["l"], a["n"], D).normalized()      # at a, toward b
 	var Nb := space.project(b["l"], b["n"], -D).normalized()     # at b, toward a
-	var ma: float = pow(a["radius"], 3.0) if a["held"] == &"" else 1e9
-	var mb: float = pow(b["radius"], 3.0) if b["held"] == &"" else 1e9
+	var ma: float = pow(a["radius"], 3.0) if a["held"] == &"" else KINEMATIC
+	var mb: float = pow(b["radius"], 3.0) if b["held"] == &"" else KINEMATIC
+	if a["held"] != &"" or b["held"] != &"":
+		e = RESTITUTION_KINEMATIC
 	var Ua: Vector4 = a["U"]
 	var Ub: Vector4 = b["U"]
 	var approach := Ua.dot(Na) + Ub.dot(Nb)
@@ -250,7 +256,7 @@ func _push(b: Dictionary, hand: Dictionary) -> void:
 	var Ub: Vector4 = b["U"]
 	var rel: float = hand["U"].dot(Nh) - Ub.dot(Nb)
 	if rel > 0.0:
-		b["U"] = Ub + (1.0 + RESTITUTION_BALL) * rel * Nb
+		b["U"] = Ub + (1.0 + RESTITUTION_KINEMATIC) * rel * Nb
 	_move(b, Nb, pen)
 
 

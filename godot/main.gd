@@ -759,7 +759,10 @@ func _carry(i: int) -> void:
 		toy["w"] = v[1]
 
 
-## Hand i lets its toy go: it flies off as it moved in the hand.
+## Hand i lets its toy go: it flies off with the hand's velocity and turns as the hand turned. Not
+## with its own velocity in the hand: held off the hand (half a metre to a big ball's centre), it
+## also moved with the turn of the wrist times that lever, and a flick of the wrist threw it at
+## 15-20 m/s (the headset's log).
 func _release(i: int) -> void:
 	var st := hand_state[i]
 	if not st.has("held"):
@@ -768,7 +771,10 @@ func _release(i: int) -> void:
 	st.erase("held")
 	toy["held"] = &""
 	var v := _velocity(st.get("thist", []))
-	var U: Vector4 = v[0]
+	var U: Vector4 = _velocity(st.get("hist", []))[0]
+	var D := WormholeSpace.combine(st["F"], st["off"])
+	if D.length() > 1e-7 and U != Vector4.ZERO:
+		U = space.geodesic(st["l"], st["n"], D / D.length(), D.length(), [U])[2][0]    # carried to the toy
 	if U.length() > MAX_THROW_SPEED:
 		U *= MAX_THROW_SPEED / U.length()
 	toy["U"] = U

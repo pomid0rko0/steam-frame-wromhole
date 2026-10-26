@@ -12,9 +12,11 @@ extends SceneTree
 ## 3. let go while the hand moves, the ball flies off with the hand's velocity: along a line,
 ##    and along an arc (no lag: the direction right)
 ## 4. left X with the grip closed: a new cube in the left hand; it turns with the hand, and let go
-##    it spins as the hand turned and moves as its centre did
+##    it spins as the hand turned and moves as the hand did (not with the wrist's turn times its
+##    lever to the cube's centre)
 ## 5. right B with the grip closed: a new ball in the right hand; the left hand takes it over
-## 6. the hand pushes a ball and a cube it meets; a held ball pushes a ball
+## 6. the hand pushes a ball and a cube it meets, softly (a ball at most 1.3 times the hand's speed;
+##    one pressed into the floor is not flung); a held ball pushes a ball
 ## 7. a half-open grip keeps holding, more open lets go; a hand that loses its tracking leaves its
 ##    ball in the air, and let go then it falls from rest
 ## 8. while the speed check holds the viewer, the hands are not drawn and grab nothing, B and X
@@ -357,13 +359,13 @@ func _cube_and_spin() -> void:
 				worst_ax = maxf(worst_ax, A.distance_to(_chart_dir(b[a])))
 	_check("the held cube turns with the hand", worst < 1e-3 and worst_ax < 1e-3,
 			"centre off by %.5f m, axes by %.5f" % [worst, worst_ax])
-	var b := Basis(Vector3.UP, th)
 	var spin: Vector3 = cube["w"]
-	var want_v := _chart_dir(Vector3(0.0, w, 0.0).cross(b * Vector3(0.0, 0.0, -reach)))
 	var got_v := _vel(cube)
-	_check("let go, it spins as the hand turned and moves as its centre did",
-			spin.distance_to(Vector3(0.0, w, 0.0)) < 0.03 * w and got_v.distance_to(want_v) < 0.03 * want_v.length() + 0.01,
-			"spin %s rad/s (body; (0, %.1f, 0)), velocity %s (%s)" % [spin, w, got_v, want_v])
+	# with the hand's velocity, not its own: the hand turned in place, so the cube only spins (its
+	# centre moved at 0.6 m/s round the hand: the wrist's turn times the lever, which no throw gets)
+	_check("let go, it spins as the hand turned and moves as the hand did (it stood)",
+			spin.distance_to(Vector3(0.0, w, 0.0)) < 0.03 * w and got_v.length() < 0.01,
+			"spin %s rad/s (body; (0, %.1f, 0)), velocity %s" % [spin, w, got_v])
 
 
 # 5
@@ -406,7 +408,8 @@ func _pushes() -> void:
 		p += Vector3(2.0 / 60.0, 0.0, 0.0)
 		await _step(1)
 	var v := _vel(ball)
-	_check("the hand pushes a ball it meets", v.y > 1.5 and absf(v.x) < 0.3, "ball's chart velocity %s" % v)
+	_check("the hand pushes a ball it meets, softly", v.y > 1.5 and v.y < 1.35 * 2.0 and absf(v.x) < 0.3,
+			"ball's chart velocity %s (hand 2 m/s)" % v)
 	# the left hand through the cube at 1.5 m/s, 10 cm above the floor
 	var c0 := _at(cube)
 	p = Vector3(-1.6, 0.1, -1.0)
@@ -418,6 +421,19 @@ func _pushes() -> void:
 	await _step(30)
 	var moved := _at(cube) - c0
 	_check("the hand pushes a cube it meets", moved.y > 0.1, "the cube moved %s" % moved)
+	# the right hand, held still above a ball, then pressing it into the floor at 0.3 m/s
+	_clear()
+	_pose(right, Vector3(0.6, 0.5, -1.0))
+	await _step(5)
+	ball = _ball_at(Vector3(9.0, 0.6, 0.2), 0.2)
+	var fastest := 0.0
+	for k in 40:
+		_pose(right, Vector3(0.6, 0.5 - 0.3 * k / 60.0, -1.0))
+		await _step(1)
+		fastest = maxf(fastest, _vel(ball).length())
+	_check("a ball pressed into the floor by the hand is not flung", fastest < 0.5, "fastest %.2f m/s (hand 0.3 m/s)" % fastest)
+	_pose(right, Vector3(0.6, 1.0, -0.3))
+	await _step(5)
 	# a held ball against a ball at rest
 	_clear()
 	var target := _ball_at(Vector3(9.0, 0.0, 0.2), 0.2)

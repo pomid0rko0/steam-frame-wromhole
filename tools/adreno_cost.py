@@ -141,17 +141,20 @@ def fillet_table():
 
 
 class Shader:
+    def set_uniforms(self, uniforms):
+        """The material's uniforms (a pose's own, when they differ between poses: --held)."""
+        self.ubos = {3: material_ubo(self.defines, uniforms)}   # the main program loads from it too (ldc at a computed index)
+        self.consts = E.run_preamble(self.instrs, self.ps, self.pe + 1, np.zeros(8192, np.uint32), self.ubos)
+
     def __init__(self, log, defines, uniforms=None):
         lines, self.hdr, self.name, self.ninstr = ray_program(log)
         self.instrs, self.labels = E.parse_program(lines)
-        ps = next(i for i, x in enumerate(self.instrs) if x.op == 'shps')
-        pe = next(i for i, x in enumerate(self.instrs) if x.op == 'shpe')
-        self.start = self.instrs[ps].target
-        self.consts = np.zeros(8192, np.uint32)
+        self.ps = next(i for i, x in enumerate(self.instrs) if x.op == 'shps')
+        self.pe = next(i for i, x in enumerate(self.instrs) if x.op == 'shpe')
+        self.start = self.instrs[self.ps].target
+        self.defines = defines
         self.tex = fillet_table()[0]
-        ubo = material_ubo(defines, uniforms)
-        self.ubos = {3: ubo}            # the main program loads from it too (ldc at a computed index)
-        self.consts = E.run_preamble(self.instrs, ps, pe + 1, self.consts, self.ubos)
+        self.set_uniforms(uniforms)
         # the inputs: smooth (bary.f) and flat (flat.b) varying slots, in slot order
         self.smooth, self.flat = [], []
         for x in self.instrs:
@@ -276,10 +279,12 @@ def srgb(c):
     return np.where(c <= 0.0031308, 12.92 * c, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
 
 
-def check(sh, entries, ntiles, rng):
+def check(sh, entries, ntiles, rng, unis=None):
     from PIL import Image
     worst = 0.0
-    for e in entries:
+    for k, e in enumerate(entries):
+        if unis:
+            sh.set_uniforms(unis[k])
         img = np.asarray(Image.open(e['png']).convert('RGB'), np.float32) / 255.0
         H, W = img.shape[:2]
         P = np.array(e['proj'])          # columns
@@ -330,12 +335,15 @@ def proxy_marked(e, xs, ys, size, tan_x, tan_y):
     return hit
 
 
-def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None):
-    """share(e, xs, ys, tan): the share of a tile's pixels this ray tracer runs (--split)."""
+def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
+    """share(e, xs, ys, tan): the share of a tile's pixels this ray tracer runs (--split); unis:
+    each pose's own uniforms (toys that move with the viewer: --held)."""
     tan_y = np.tan(np.radians(fov) / 2.0)
     tan_x = tan_y
     res = []
-    for e in entries:
+    for k, e in enumerate(entries):
+        if unis:
+            sh.set_uniforms(unis[k])
         rng = np.random.default_rng(seed)
         tot = E.Stats()
         for t in range(ntiles):
@@ -378,17 +386,24 @@ def main():
     log, dump = pos
     entries = json.load(open(dump))
     defines = shader_defines(entries[0]['shader'])
-    uniforms = dict(entries[0].get('uniforms', {}))
-    if 'wh_pix' in uniforms and '--check' not in flags:
-        # soft edges: a pixel of the headset's eye, not of the dump's picture
-        uniforms['wh_pix'] = 2.0 * np.tan(np.radians(opt['--fov']) / 2.0) / opt['--size']
+    def eye_pix(u):
+        u = dict(u)
+        if 'wh_pix' in u and '--check' not in flags:
+            # soft edges: a pixel of the headset's eye, not of the dump's picture
+            u['wh_pix'] = 2.0 * np.tan(np.radians(opt['--fov']) / 2.0) / opt['--size']
+        return u
+    uniforms = eye_pix(entries[0].get('uniforms', {}))
+    # toys held in the hand move with the viewer: then each pose's own
+    unis = [eye_pix(e.get('uniforms', {})) for e in entries]
+    if all(u == unis[0] for u in unis):
+        unis = None
     # the packing of the flat inputs: found against Godot's picture, with its uniforms
     order = find_flat_order(Shader(log, defines, dict(entries[0].get('uniforms', {}))), entries)
     sh = Shader(log, defines, uniforms)
     sh.flat_order = order
     print('%s: prog %s, %d instr; flat inputs %s' % (os.path.basename(log), sh.name, sh.ninstr, ', '.join(order)))
     if '--check' in flags:
-        bad = check(sh, entries, opt['--tiles'], np.random.default_rng(opt['--seed']))
+        bad = check(sh, entries, opt['--tiles'], np.random.default_rng(opt['--seed']), unis)
         sys.exit(0 if bad < 0.002 else 1)
     prof = np.zeros(len(sh.instrs)) if '--profile' in flags else None
     n = opt['--tiles']
@@ -405,9 +420,9 @@ def main():
         plain = Shader(opt['--split'], pdefs, uniforms)
         plain.flat_order = order
         share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
-    res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share)
+    res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
     resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
-                lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan)) if plain else None
+                lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis) if plain else None
     for k, (pose, st) in enumerate(res):
         alu, nop, c4, c5 = per64(sh, st, n)
         busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)

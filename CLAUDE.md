@@ -53,6 +53,13 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   ball, left X a new cube in the hand; haptics; nothing during `main.hold`; A empties the hands.
   `tests/grab_test.gd` drives it through `fake_hmd.gd` and controller trackers (grip poses set,
   tracking lost with `invalidate_pose`, as Godot's OpenXR does) and looks at the left eye.
+  Tried in the headset: grabbing, throwing, bouncing, rolling work. Found there and fixed: a crack
+  through a toy at the shell's edge (`wh_filMom`'s 0 / 0, below), the frame at 25 ms with a toy
+  held at the shell's edge (the fillet's psi window, below), the hand and held toys pushing at
+  1.85x their speed and flinging what they press (`BallWorld.RESTITUTION_KINEMATIC` 0.3), throws
+  at 15-20 m/s from a flick of the wrist (a toy leaves with the hand's velocity, not its own: held
+  half a metre off, the wrist's turn times that lever), rolling friction 0.02 -> 0.04 g. Not
+  solved: the hands cost ~8% (model), 144 Hz falls to SteamVR's half rate more often.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
@@ -388,6 +395,22 @@ draws next to ray-traced ones, check they line up the same way.
   5.2 ms over four poses where `main`'s plain shader takes 3.3. Tried and dropped: ordering the
   hits by the fog's length estimate (monotonic along the path, so the order stays right) to take
   the fillet table: the estimate's division at every sample cost more than the table saved.
+- **A turning ray's turning point was 0 / 0** in `wh_filMom` (regime 1, `t / (z + zlo)` at t = 0,
+  z = zlo = 0: rays that turn in the fillet's outer half). The floor's Newton solve never lands
+  there exactly, but the toys' search samples at q = 0 and 1 of each fillet piece: NaN there made
+  every later chord NaN (`tc < 0 || tc > 1` is false for NaN), and a toy straddling the shell's
+  edge showed a crack where those rays passed it. Now `z - zlo`. `ref/test_gpu.py`'s poses never
+  had a toy near such a turning point; a scan of viewpoints around a ball at the edge did (82 of
+  516 ball pixels lost against RK4).
+- **The toys' search on a fillet** was bounded by the r and w windows only (psi only said whether
+  to search): a ray grazing the shell near its edge stays within them for metres, and a ball held
+  there (near the eye: a candidate for a third of the rays) cost the frame 3.5x by the model. The
+  psi window's ends are now solved for z (`wh_filSolve`, two Newton steps, one copy of the code by
+  a loop bound the compiler cannot see), 5e-3 rad of margin; 24 registers still, the demo's
+  frames as they were. Single silhouette pixels flip either way (the sampling's phase moved).
+- **`tools/adreno_cost.py` took the first pose's uniforms for every pose:** right for the demo's
+  toys at rest, wrong for toys that move with the viewer. With `--hands` / `--held` (emu_dump.gd
+  `+hands` / `+held`) each pose has its own (`Shader.set_uniforms`).
 - **Godot prints shader float constants with 14 decimals:** `1e-30` and `1e-20` become 0.0
   (`max(x, 1e-30)` compiles to `max(x, 0.0)`); `1e-12` survives. GPUs' `max`/`min` return the
   other operand for a NaN, which hides most of it (the emulator now does the same: `np.fmax`).
