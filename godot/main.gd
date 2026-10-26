@@ -542,7 +542,8 @@ func _throw() -> void:
 	world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
 			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
 	var q := space.point_from_chart(1.0, Vector3(9.0, 2.4, 1.4))
-	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-3.0, -0.2, 1.0)), 0.25, BALL_COLORS[5])
+	# fast enough to climb out of the throat's well into B against the rolling and the air's drag
+	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-5.4, -0.36, 1.8)), 0.25, BALL_COLORS[5])
 	print("toys: thrown")
 
 
@@ -621,6 +622,8 @@ const VELOCITY_WINDOW := 0.06    # s of recent places a velocity is taken from (
 const STALE := 0.1               # s: places older than this give no velocity (tracking lost)
 const MAX_THROW_SPEED := 25.0    # m/s: a tracking glitch at the release flings nothing farther
 const MAX_THROW_SPIN := 40.0     # rad/s
+const SET_DOWN_SPEED := 0.15     # m/s and rad/s: a hand slower than this, turning slower than
+const SET_DOWN_SPIN := 1.0       # this, sets its toy down at rest
 const NEW_BALL_RADIUS := 0.2     # right B: a new ball in the right hand
 const NEW_CUBE_HALF := 0.15      # left X: a new cube in the left hand
 
@@ -682,9 +685,11 @@ func _update_hands(hp: Array, head: Transform3D) -> void:
 ## The hands as kinematic balls for the physics: they push the toys.
 func _hand_balls() -> Array:
 	var out := []
-	for st in hand_state:
+	for i in grips.size():
+		var st := hand_state[i]
 		if st.get("on", false):
-			out.append({"l": st["l"], "n": st["n"], "U": st["U"], "radius": HAND_RADIUS})
+			out.append({"l": st["l"], "n": st["n"], "U": st["U"], "radius": HAND_RADIUS,
+					"tracker": grips[i].tracker})
 	return out
 
 
@@ -714,6 +719,7 @@ func _take(i: int, toy: Dictionary) -> void:
 		other.erase("held")
 	_release(i)
 	toy["held"] = grips[i].tracker
+	toy.erase("ghost")
 	var D := space.toward(st["l"], st["n"], toy["l"], toy["n"])
 	var F: Array = st["F"]
 	st["held"] = toy
@@ -777,12 +783,16 @@ func _release(i: int) -> void:
 		U = space.geodesic(st["l"], st["n"], D / D.length(), D.length(), [U])[2][0]    # carried to the toy
 	if U.length() > MAX_THROW_SPEED:
 		U *= MAX_THROW_SPEED / U.length()
-	toy["U"] = U
+	# a hand held still sets its toy down at rest: the tracking's tremble would push it
+	var gentle := U.length() < SET_DOWN_SPEED and (v[1] as Vector3).length() < SET_DOWN_SPIN
+	toy["U"] = Vector4.ZERO if gentle else U
 	if toy.has("F"):
-		toy["w"] = (v[1] as Vector3).limit_length(MAX_THROW_SPIN)
+		toy["w"] = Vector3.ZERO if gentle else (v[1] as Vector3).limit_length(MAX_THROW_SPIN)
 		toy["still"] = 0.0
-	print("throw: %s hand lets a %s go at %.2f m/s%s" % [_hand_name(i), "cube" if toy.has("F") else "ball",
-			U.length(), (", spin %.1f rad/s" % toy["w"].length()) if toy.has("F") else ""])
+	toy["ghost"] = grips[i].tracker      # this hand does not push it until they are apart
+	print("%s: %s hand lets a %s go at %.2f m/s%s" % ["set down" if gentle else "throw", _hand_name(i),
+			"cube" if toy.has("F") else "ball", toy["U"].length(),
+			(", spin %.1f rad/s" % toy["w"].length()) if toy.has("F") else ""])
 
 
 ## A new ball (right B) or cube (left X) just in front of hand i, moving with it: held if the grip

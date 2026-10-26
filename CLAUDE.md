@@ -58,8 +58,15 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   held at the shell's edge (the fillet's psi window, below), the hand and held toys pushing at
   1.85x their speed and flinging what they press (`BallWorld.RESTITUTION_KINEMATIC` 0.3), throws
   at 15-20 m/s from a flick of the wrist (a toy leaves with the hand's velocity, not its own: held
-  half a metre off, the wrist's turn times that lever), rolling friction 0.02 -> 0.04 g. Not
-  solved: the hands cost ~8% (model), 144 Hz falls to SteamVR's half rate more often.
+  half a metre off, the wrist's turn times that lever). Then the owner wanted to watch a ball set
+  down at the shell's edge roll into the throat by itself: gravity pulls along the floor there
+  only 0.01 g (0.06-0.1 g where the fillet meets the cylinder), and 0.04 g of rolling friction held
+  it still. Now rolling friction is 0.005 g + 0.1/s times the speed, with air drag (as v², in
+  flight too, `BallWorld.TOY_DENSITY` 25 kg/m³; `air` off in physics_test's checks of the motion
+  itself), a hand slower than 0.15 m/s sets its toy down at rest (`main.SET_DOWN_SPEED`), the hand
+  that let go does not push it until 1 cm apart (`ghost`), and the demo's ball is thrown 1.8x
+  harder to climb out of the throat's well into B. Not solved: the hands cost ~8% (model), 144 Hz
+  falls to SteamVR's half rate more often.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),

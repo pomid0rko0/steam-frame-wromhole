@@ -24,6 +24,9 @@ extends SceneTree
 ## 9. in the middle of the throat: the hand is a head-to-hand geodesic away, the held ball keeps
 ##    its offset in the hand's axes through the curved space, and leaves the hand smoothly
 ## 10. from the start, a ball thrown toward the wormhole ends up in universe B
+## 11. a ball held with the hand inside it, lowered onto the floor at the shell's edge and let go
+##     with the hand still: it is set down at rest, the hand that let it go does not push it, and
+##     gravity rolls it toward the throat by itself
 
 const SIZE := 160                    # each eye's picture
 const FRUSTUM := Vector4(-1.0, 1.0, -1.1, 1.1)
@@ -176,6 +179,7 @@ func _run() -> void:
 	await _hold_and_reset()
 	await _throat()
 	await _into_b()
+	await _set_down()
 	print("FAILURES: ", fails)
 	_finish()
 
@@ -607,6 +611,48 @@ func _into_b() -> void:
 	await _step(240)
 	_check("a ball thrown from the start toward the wormhole ends up in universe B",
 			not ball.is_empty() and ball["l"] < -main.space.L, "l = %.2f (universe B: below %.2f)" % [ball.get("l", 0.0), -main.space.L])
+
+
+# 11
+func _set_down() -> void:
+	_clear()
+	var sp: WormholeSpace = main.space
+	# feet 1.2 m outside the shell's edge (chart radius Rout), facing the throat
+	main.place(1.0, Vector3(sp.Rout + 1.2, 0.0, 0.0), Vector3(-1.0, 0.0, 0.0))
+	_pose(left, Vector3(-2.0, 1.0, 0.5))
+	var p := Vector3(0.0, 0.8, -1.1)
+	_pose(right, p)
+	await _step(3)
+	# a ball whose centre is 10 cm in front of the hand: the hand is inside it
+	var rad := 0.2
+	var c: Array = sp.point_from_chart(1.0, Vector3(sp.Rout, 0.0, 0.8))
+	var ball: Dictionary = main.world.add(c[0], c[1], Vector4.ZERO, rad, Color(0.95, 0.95, 0.97))
+	right.set_input(&"grip", 1.0)
+	await _step(1)
+	if ball["held"] != &"right_hand":
+		_check("a ball at the shell's edge taken", false, "held by '%s'" % ball["held"])
+		return
+	# down at 0.3 m/s until the ball is 1 cm above the floor, still for half a second, let go
+	while p.y > rad + 0.01:
+		p.y = maxf(p.y - 0.3 / 60.0, rad + 0.01)
+		_pose(right, p)
+		await _step(1)
+	await _step(30)
+	right.set_input(&"grip", 0.0)
+	await _step(1)
+	var E0: Vector4 = sp.embed(ball["l"], ball["n"])
+	var v0 := _vel(ball).length()
+	_check("let go with the hand still, the ball is set down at rest", ball["held"] == &"" and v0 < 1e-3,
+			"%.4f m/s, at l = %.3f (the edge %.3f)" % [v0, ball["l"], sp.L])
+	await _step(20)
+	var moved: float = (sp.embed(ball["l"], ball["n"]) - E0).length()
+	_check("the hand that let it go, still inside it, does not push it", moved < 0.01,
+			"moved %.4f m in 1/3 s, %.3f m/s" % [moved, _vel(ball).length()])
+	var l0: float = ball["l"]
+	_pose(right, Vector3(0.6, 1.2, -0.3))
+	await _step(8 * 60)
+	_check("set down at the shell's edge, the ball rolls toward the throat by itself", l0 - ball["l"] > 0.2,
+			"l %.3f -> %.3f in 8 s, %.3f m/s" % [l0, ball["l"], _vel(ball).length()])
 
 
 ## Takes the simulated headset down before quitting: left up at exit, it aborts Godot, and the

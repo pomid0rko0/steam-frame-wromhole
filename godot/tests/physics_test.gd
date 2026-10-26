@@ -13,7 +13,8 @@ extends SceneTree
 ## 6. gravity through the wormhole: the field matches ref/gravity.py and solves its equation; a
 ##    ball dropped in the middle of the throat falls as slowly as that field says, more than twice
 ##    as long as one dropped in front of the wormhole; above the throat's floor gravity pulls toward
-##    the middle, where a ball rests
+##    the middle, where a ball rests; a ball set down at the shell's edge rolls in by itself and
+##    rests in the middle (2-6 without air drag but that one: they check the motion itself)
 ## Then, with a screenshot path given, saves one with a ball and a cube inside the throat.
 
 var main: Node3D
@@ -71,6 +72,7 @@ func _process(_delta: float) -> bool:
 				"%d cubes, moved %.5f m, tilt %.5f rad, lowest corner %.5f m from the floor" % [w.cubes.size(), cube_moved, cube_tilt, cube_floor])
 		w.balls.clear()
 		w.cubes.clear()
+		w.air = false          # 2-6 check the motion itself: no air drag
 		# 2: a ball flying through the throat without touching anything (no floor contact: high up)
 		var p := sp.point_from_chart(1.0, Vector3(9.0, 0.3, 2.2))
 		var d := WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-1.0, 0.0, 0.45).normalized())
@@ -389,6 +391,20 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	_run(w, 1.5)
 	_check("throat floor: pulled toward the middle, at rest in it", l_half < 2.48 and ul_half < -0.05 and mid_ball["U"].length() < 0.01 and absf(mid_ball["l"]) < 0.01,
 			"ball from l = 2.5 at l = %.3f after 0.5 s (U_l %.3f m/s); ball in the middle at %.4f m/s, l = %.4f" % [l_half, ul_half, mid_ball["U"].length(), mid_ball["l"]])
+	w.balls.clear()
+
+	# 6e (with air, as in the headset): a ball set down at rest at the shell's edge rolls into the
+	# throat by itself (gravity pulls along the floor toward it, 0.01 g there) and comes to rest in
+	# its middle
+	w.air = true
+	var ze := 0.25 / sp.r(sp.L)
+	var edge_ball := w.add(sp.L, Vector3(sqrt(1.0 - ze * ze), 0.0, ze), Vector4.ZERO, 0.25, Color.WHITE)
+	_run(w, 10.0)
+	var l10: float = edge_ball["l"]
+	_run(w, 50.0)
+	_check("set down at the shell's edge, a ball rolls into the throat and rests in its middle",
+			l10 < sp.L - 1.0 and absf(edge_ball["l"]) < 0.3 and edge_ball["U"].length() < 0.02,
+			"l %.2f -> %.2f after 10 s -> %.3f after 60 s, %.3f m/s" % [sp.L, l10, edge_ball["l"], edge_ball["U"].length()])
 	w.balls.clear()
 
 	# 7: the scene as the headset shows it: the throw, then the drop; the thrown ball still rolls
