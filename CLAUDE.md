@@ -42,7 +42,17 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
 - `grab` (`walking` + `physics`) — grip grabs and throws balls, B makes a new one, hands and
-  the avatar as balls (`tests/grab_test.gd`).
+  the avatar as balls (`tests/grab_test.gd`). The old core; `throw` redoes it on `main`.
+- `throw` — grab and throw on `main` (README «Руки: взять и бросить»): each hand a 4 cm
+  ray-traced ball at the grip pose (`main.grips`), placed by a geodesic from the head with the
+  room's axes carried along (`main._update_hands`); it pushes the toys and turns green within
+  12 cm of one; grip takes the nearest ball or cube, kept at its offset and turn in the hand's
+  axes (`WormholeSpace.toward`, the inverse of `geodesic`); let go, it flies with the velocity and
+  spin of its last 60 ms in the hand (`main._velocity`: the derivative of the parabola through
+  three places, no lag on an arc); held toys are kinematic in `BallWorld` (`held`); right B a new
+  ball, left X a new cube in the hand; haptics; nothing during `main.hold`; A empties the hands.
+  `tests/grab_test.gd` drives it through `fake_hmd.gd` and controller trackers (grip poses set,
+  tracking lost with `invalidate_pose`, as Godot's OpenXR does) and looks at the left eye.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
@@ -120,8 +130,8 @@ Where the README wishes start (wishes without a branch start from `main`):
 - stick locomotion on the floor → `main` (smooth stick walking, smooth and snap turn are there);
 - free flight in 3D with gravity on/off → `main` (the honest field, `WormholeSpace.potential_grad`,
   and bodies that move in it, `ball_world.gd`);
-- pick up and throw, pulling objects like in Half-Life: Alyx → `grab` (grip grab and throw
-  are there; `main` has the same balls, cubes and honest gravity on the fast core);
+- pick up and throw, pulling objects like in Half-Life: Alyx → `throw` (grip grab and throw of
+  balls and cubes on the fast core, the hands on the curved space; `grab` is the old sketch);
 - cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
   the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
@@ -140,6 +150,14 @@ Where the README wishes start (wishes without a branch start from `main`):
   and the frame drops; it is off by default in `grab`.
 
 When branches are put together, these overlap:
+- `throw`'s grip and `throat`'s: there the right grip held makes the right stick's y the fillet,
+  here it grabs. `throw`'s right B and left X are taken (a new ball, a new cube).
+- `throw`'s hands take two of the shader's 12 ball slots (`BallWorld.MAX_BALLS` 8 + 2). Per frame
+  `main._process` steps the free toys first (the hands pushing from last frame's places), then
+  places the hands and what they hold (`_update_hands`), then uploads: a toy let go starts from
+  the hand, not a frame ahead. Teleports (`place`, `set_pose`, a snap turn) forget the hands'
+  recent places (`_forget_motion`), or the jump would be a throw.
+- `grab` and `throw` both have a `tests/grab_test.gd`: keep `throw`'s.
 - the left trigger, on `main`: a trigger presses the panel's button its controller points at, and
   the left one runs, but not while the left ray is on the panel (`perf.on_plate[0]`).
 - the right stick: x turns on `main` (its click switches smooth/snap), y changes the throat in
