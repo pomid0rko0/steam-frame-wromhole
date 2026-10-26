@@ -46,7 +46,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary) -> void:
 
 func add(l: float, n: Vector3, U: Vector4, radius: float, color: Color) -> Dictionary:
 	if balls.size() >= MAX_BALLS:
-		balls.pop_front()
+		_drop_oldest(balls)
 	var b := {"l": l, "n": n, "U": U, "radius": radius, "color": color, "held": &""}
 	balls.append(b)
 	return b
@@ -56,7 +56,7 @@ func add(l: float, n: Vector3, U: Vector4, radius: float, color: Color) -> Dicti
 ## w in body coordinates (rad/s), half the edge length.
 func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: float, color: Color) -> Dictionary:
 	if cubes.size() >= MAX_CUBES:
-		cubes.pop_front()
+		_drop_oldest(cubes)
 	var axes := []
 	for A: Vector4 in F:
 		axes.append(WormholeSpace.tangent(n, A))
@@ -66,7 +66,31 @@ func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: floa
 	return c
 
 
+## Makes room for a new ball or cube: the oldest one goes, unless a hand holds it.
+static func _drop_oldest(list: Array) -> void:
+	for i in list.size():
+		if list[i]["held"] == &"":
+			list.remove_at(i)
+			return
+	list.pop_front()
+
+
+## How far the point P of R^4 is from the surface of a ball or a cube (chord distance; a ball's
+## inside is negative, a cube's 0): what a hand reaches.
+func distance_to(b: Dictionary, P: Vector4) -> float:
+	if not b.has("F"):
+		return (P - space.embed(b["l"], b["n"])).length() - b["radius"]
+	var box := box4(b)
+	var d: Vector4 = P - box[0]
+	var a: float = b["half"]
+	var q := Vector4(clampf(d.dot(box[1]), -a, a), clampf(d.dot(box[2]), -a, a),
+			clampf(d.dot(box[3]), -a, a), clampf(d.dot(box[4]), -a, a))
+	return (d - q.x * box[1] - q.y * box[2] - q.z * box[3] - q.w * box[4]).length()
+
+
 ## Advance by delta seconds with fixed substeps. hands: Array of {l, n, U, radius} (kinematic).
+## A held ball or cube (held: the hand's tracker) is kinematic too: the hand places it and sets its
+## U (and w) before each step, and it pushes the others without being pushed back.
 func step(delta: float, hands: Array) -> void:
 	_acc = minf(_acc + delta, 0.1)
 	while _acc >= DT:
@@ -417,19 +441,24 @@ func _solve_cubes(hands: Array) -> void:
 		boxes.append(box4(c))
 	for i in cubes.size():
 		var c: Dictionary = cubes[i]
-		if c["still"] <= SLEEP_TIME:
+		var free: bool = c["held"] == &""
+		if free and c["still"] <= SLEEP_TIME:
 			_floor_contacts(c, "f%d" % i, contacts)
 			_static_contacts(c, "s%d" % i, contacts)
 		for j in balls.size():
-			_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
-		for j in hands.size():
-			_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
+			if free or balls[j]["held"] == &"":
+				_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
+		if free:
+			for j in hands.size():
+				_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
 		for j in range(i + 1, cubes.size()):
 			if (boxes[i][0] - boxes[j][0]).length() < 2.0 * (c["half"] + cubes[j]["half"]):
 				_points_in_box(c, boxes[i], cubes[j], boxes[j], "c%d_%d" % [i, j], contacts)
 				_points_in_box(cubes[j], boxes[j], c, boxes[i], "c%d_%d" % [i, j], contacts)
 	for _it in ITERATIONS:
 		for ct in contacts:
+			if ct.k[0] <= 0.0:
+				continue                     # both held (or asleep): nothing to push
 			var jn := maxf(ct.jn + (ct.target - ct.speed(0)) / ct.k[0], 0.0)
 			ct.push(0, jn - ct.jn)
 			ct.jn = jn
@@ -459,6 +488,9 @@ func _solve_cubes(hands: Array) -> void:
 	# sleep: a cube that has hardly moved for a while stops being simulated until something
 	# moving touches it
 	for c in cubes:
+		if c["held"] != &"":
+			c["still"] = 0.0                 # let go, it falls at once
+			continue
 		var U: Vector4 = c["U"]
 		var w: Vector3 = c["w"]
 		if U.length() < SLEEP_SPEED and w.length() < SLEEP_SPIN:
