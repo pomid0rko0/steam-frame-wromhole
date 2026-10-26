@@ -5,7 +5,8 @@ extends SceneTree
 ## --fixed-fps 60 under a display (xvfb-run: it looks at the left eye's picture); exit status 1
 ## on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/grab_test.gd
-## 0. the action map binds grip, haptic, right B and left X on the profiles the Frame may use
+## 0. the action map binds grip, haptic, right B and left X (the Frame's own profile: the D-pad
+##    down) on the profiles the Frame may use
 ## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
 ##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is
 ## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
@@ -20,7 +21,9 @@ extends SceneTree
 ## 7. a half-open grip keeps holding, more open lets go; a hand that loses its tracking leaves its
 ##    ball in the air, and let go then it falls from rest
 ## 8. while the speed check holds the viewer, the hands are not drawn and grab nothing, B and X
-##    make nothing; A puts everything back and empties the hands
+##    make nothing; while the menu is open, B, X and the D-pad down make nothing either (the B
+##    that closes it neither), A does not reset; the D-pad down makes a cube as X does; A puts
+##    everything back and empties the hands
 ## 9. in the middle of the throat: the hand is a head-to-hand geodesic away, the held ball keeps
 ##    its offset in the hand's axes through the curved space, and leaves the hand smoothly
 ## 10. from the start, a ball thrown toward the wormhole ends up in universe B
@@ -34,6 +37,13 @@ const IPD := 0.064
 const HEAD := Vector3(0.0, 1.6, 0.0)
 # action name -> binding paths the action map must have for it, per profile
 const BINDINGS := {
+	"/interaction_profiles/valve/frame_controller_valve": {
+		"grip": ["/user/hand/left/input/squeeze/value", "/user/hand/right/input/squeeze/value"],
+		"grip_pose": ["/user/hand/left/input/grip/pose", "/user/hand/right/input/grip/pose"],
+		"haptic": ["/user/hand/left/output/haptic", "/user/hand/right/output/haptic"],
+		"by_button": ["/user/hand/right/input/b/click"],
+		"dpad_down": ["/user/hand/left/input/dpad_down/click"],
+	},
 	"/interaction_profiles/khr/generic_controller": {
 		"grip": ["/user/hand/left/input/squeeze/value", "/user/hand/right/input/squeeze/value"],
 		"grip_pose": ["/user/hand/left/input/grip/pose", "/user/hand/right/input/grip/pose"],
@@ -82,7 +92,7 @@ func _controller(tracker_name: StringName) -> XRControllerTracker:
 	var t := XRControllerTracker.new()
 	t.name = tracker_name
 	t.profile = "/interaction_profiles/khr/generic_controller"   # as the Frame's come
-	for b in [&"primary_click", &"ax_button", &"by_button"]:
+	for b in [&"primary_click", &"ax_button", &"by_button", &"menu_button", &"dpad_down"]:
 		t.set_input(b, false)
 	t.set_input(&"primary", Vector2.ZERO)
 	t.set_input(&"trigger", 0.0)
@@ -512,6 +522,33 @@ func _hold_and_reset() -> void:
 			nb == 1 and ball["held"] == &"" and main.world.balls.size() == 1 and main.world.cubes.is_empty(),
 			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball["held"], main.world.balls.size(), main.world.cubes.size()])
 	main.hold = false
+	# the menu open: B, X and the D-pad down are its, and A; B closes it and makes no ball
+	_pose(left, _play(Vector3(9.5, -0.6, 0.45)))
+	left.set_input(&"menu_button", true)
+	await _step(2)
+	left.set_input(&"menu_button", false)
+	var opened: bool = main.perf.open
+	left.set_input(&"ax_button", true)
+	left.set_input(&"dpad_down", true)
+	right.set_input(&"ax_button", true)
+	await _step(2)
+	left.set_input(&"ax_button", false)
+	left.set_input(&"dpad_down", false)
+	right.set_input(&"ax_button", false)
+	await _step(2)
+	right.set_input(&"by_button", true)
+	await _step(2)
+	right.set_input(&"by_button", false)
+	await _step(2)
+	_check("menu open: X, the D-pad down and A make nothing, the B that closes it no ball",
+			opened and not main.perf.open and main.world.balls.size() == 1 and main.world.cubes.is_empty(),
+			"opened %s, open %s, %d balls, %d cubes" % [opened, main.perf.open, main.world.balls.size(), main.world.cubes.size()])
+	left.set_input(&"dpad_down", true)
+	await _step(1)
+	left.set_input(&"dpad_down", false)
+	await _step(1)
+	_check("menu closed: the D-pad down puts a new cube in the left hand", main.world.cubes.size() == 1
+			and _hand(0).has("held") and _hand(0)["held"].has("F"), "%d cubes" % main.world.cubes.size())
 	right.set_input(&"grip", 0.0)
 	left.set_input(&"grip", 0.0)
 	await _step(2)

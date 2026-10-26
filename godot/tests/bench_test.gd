@@ -2,7 +2,7 @@ extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place,
 ## with the other ray tracers if res://shaders/ab/ holds some (tools/ab_shaders.sh), logs a line
 ## per place, with this build's ray tracer also with the passes split and with each foveation level,
-## and gives back the shader, the foveation and where the viewer stood. The panel has its button.
+## and gives back the shader, the foveation and where the viewer stood. The menu has its row.
 ##   godot --path . -s res://tests/bench_test.gd
 
 var main: Node3D
@@ -28,11 +28,11 @@ func _process(_d: float) -> bool:
 	frames += 1
 	var b: Node = main.bench
 	if frames == 3:
-		var p: Label3D = main.perf
-		var has_button := false
-		for btn in p.buttons:
-			has_button = has_button or btn.kind == "bench"
-		check("the panel has the speed check's button", has_button)
+		var p: Node3D = main.perf
+		var has_row := false
+		for r: Dictionary in p.rows:
+			has_row = has_row or r.key == "bench"
+		check("the menu has the speed check's row", has_row)
 		main.place(1.0, Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
 		shader_before = main.material.shader

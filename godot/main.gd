@@ -1,14 +1,14 @@
 extends Node3D
 ## Real-time wormhole for VR: walking in the room, the left stick walks, the right stick
-## turns, smoothly or in 30-degree snaps (button map in the README); a panel shows the headset's
-## refresh rate and whether frames keep up, and its buttons, pressed by pointing a controller and
-## pulling the trigger, set the refresh rate, the render scale and foveated rendering
-## (perf_panel.gd, set_foveation). Gravity through the wormhole, from Laplace's equation on the
+## turns, smoothly or in 30-degree snaps (button map in the README); a line low in the view shows
+## the headset's refresh rate and whether frames keep up, and a menu, opened with the menu button
+## and worked with the D-pad and A / B (_menu_input), sets the refresh rate, the render scale,
+## foveated rendering and the rest (perf_panel.gd, set_foveation). Gravity through the wormhole, from Laplace's equation on the
 ## space itself (WormholeSpace.gravity_f): balls roll and bounce in it, cubes slide and stop
 ## (ball_world.gd). A moment after the start a cube and a ball are thrown, then two balls are
 ## dropped together: one beside the wormhole, one in the middle of the throat, where gravity is a
 ## fifth; A (R) puts everything back and does it again. The floor coloured by gravity's strength
-## and arrows of its field are shown on request (set_gravity_view; the panel, left Y, G). Every pixel is
+## and arrows of its field are shown on request (set_gravity_view; the menu, the D-pad up, G). Every pixel is
 ## ray traced along a geodesic of the wormhole space in the shader; this script tracks where the
 ## viewer is in that curved space.
 ##
@@ -126,8 +126,13 @@ var smooth_turn := true         # false: 30-degree snaps; a right stick click sw
 var snap_armed := true          # the right stick went back to the middle since the last turn
 var logged_profiles := {}
 var input_log_time := 0.0
-var perf: Label3D               # the frame rate panel
-var bench: Node                 # the speed check, started from the panel (bench.gd)
+var perf: Node3D                # the menu and the frame rate line (perf_panel.gd)
+var menu_active := false        # the menu was open this frame: A, B, the D-pad and the left stick are its
+var menu_dir := Vector2i.ZERO   # the direction held for it (_menu_direction)
+var menu_held := 0.0            # s it has been held: then it repeats
+var menu_armed := true          # nothing held since the menu opened (a stick out to walk does not act)
+var stick_dir := Vector2i.ZERO  # the left stick as a D-pad, with hysteresis
+var bench: Node                 # the speed check, started from the menu (bench.gd)
 var hold := false               # the speed check: the feet stay while the head moves, sticks do nothing
 var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
 var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
@@ -179,7 +184,7 @@ func _ready() -> void:
 		for t in [&"left_hand", &"right_hand"]:
 			var c := XRController3D.new()
 			c.tracker = t
-			c.pose = &"aim"            # the panel's buttons are pointed at
+			c.pose = &"aim"            # the buttons and sticks are read here
 			origin.add_child(c)
 			hands.append(c)
 			var g := XRController3D.new()
@@ -337,9 +342,15 @@ func _process(delta: float) -> void:
 		_log_input(delta)
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
+	menu_active = _menu_input(dt)
 	var moved := false if hold else _handle_turn_and_reset(dt)
-	# left Y / G: the next gravity view (not during the speed check: it times what it set up)
-	if _pressed_once("gravity", Input.is_key_pressed(KEY_G) or (in_xr and left_hand.is_button_pressed(&"by_button"))) and not hold:
+	# the D-pad up, left or right (left Y on other controllers) / G: the next gravity view (not
+	# during the speed check: it times what it set up)
+	var grav_down := Input.is_key_pressed(KEY_G)
+	if in_xr:
+		for b in [&"by_button", &"dpad_up", &"dpad_left", &"dpad_right"]:
+			grav_down = grav_down or left_hand.is_button_pressed(b)
+	if _pressed_once("gravity", grav_down) and not hold and not menu_active:
 		set_gravity_view((gravity_view + 1) % GRAVITY_VIEWS.size())
 
 	var head := camera.transform   # play space (the origin never moves)
@@ -350,7 +361,7 @@ func _process(delta: float) -> void:
 		moved = true
 	var step := hz - prev_head
 	prev_head = hz
-	var stick := Vector2.ZERO if hold else _move_input()
+	var stick := Vector2.ZERO if hold or menu_active else _move_input()
 	if stick.length() > STICK_DEAD_ZONE:
 		# along the stick, relative to where the head looks
 		var fwd := _head_forward_xz()
@@ -368,7 +379,6 @@ func _process(delta: float) -> void:
 	if moved:
 		# the controls moved the world against the room; physical walking does not
 		_update_chart_map()
-	_point_panel()
 	if gaze_dot and gaze_dot.visible:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
 	if overlay:
@@ -438,17 +448,105 @@ func _move_input() -> Vector2:
 	return v.limit_length(1.0)
 
 
-## Left trigger / Shift. Not while the left controller points at the panel: there the trigger
-## presses the panel's buttons.
+## Left trigger / Shift.
 func _run_pressed() -> bool:
 	if Input.is_key_pressed(KEY_SHIFT):
 		return true
-	return in_xr and left_hand.get_float(&"trigger") > 0.5 and not (perf and perf.on_plate[0])
+	return in_xr and left_hand.get_float(&"trigger") > 0.5
+
+
+# ---------------------------------------------------------------- the menu
+const MENU_REPEAT_AFTER := 0.4      # s a direction is held before it repeats
+const MENU_REPEAT := 0.12           # s between repeats
+
+
+## The menu (perf_panel.gd). Menu on the right controller or View on the left (the Steam Frame's
+## own profile; Touch: the left menu button), or a click of the left stick (every profile: the
+## KHR generic one, as the Frame's controllers came before this map had theirs, has no menu
+## button), M on the desktop, opens and closes it. While it is open: the D-pad or the left stick
+## (arrow keys) up and down picks a row, left and right change its value, held they repeat; A
+## (Enter) presses, B (Backspace) closes. True if the menu was open at any point of this frame:
+## then those buttons and the left stick do nothing else (a B that closes it makes no ball).
+func _menu_input(dt: float) -> bool:
+	if perf == null:
+		return false
+	var was_open: bool = perf.open
+	var toggle := Input.is_key_pressed(KEY_M)
+	var a := Input.is_key_pressed(KEY_ENTER)
+	var b := Input.is_key_pressed(KEY_BACKSPACE)
+	if in_xr:
+		toggle = toggle or left_hand.is_button_pressed(&"menu_button") or right_hand.is_button_pressed(&"menu_button") \
+				or left_hand.is_button_pressed(&"primary_click")
+		a = a or right_hand.is_button_pressed(&"ax_button")
+		b = b or right_hand.is_button_pressed(&"by_button")
+	var dir := _menu_direction()
+	if _pressed_once("menu", toggle):
+		perf.toggle()
+		menu_armed = false      # what is held now (the stick out to walk) waits to be let go
+	var pressed_a := _pressed_once("menu_a", a)
+	var pressed_b := _pressed_once("menu_b", b)
+	if perf.open and was_open:
+		if not menu_armed:
+			menu_armed = dir == Vector2i.ZERO
+		elif dir != Vector2i.ZERO:
+			var fire := dir != menu_dir
+			menu_held = 0.0 if fire else menu_held + dt
+			if menu_held >= MENU_REPEAT_AFTER:
+				menu_held -= MENU_REPEAT
+				fire = true
+			if fire:
+				if dir.y != 0:
+					perf.move(dir.y)
+				else:
+					perf.change(dir.x)
+				_tick(left_hand)
+		if pressed_a:
+			perf.press()
+			_tick(right_hand)
+		elif pressed_b:
+			perf.back()
+			_tick(right_hand)
+	menu_dir = dir
+	return was_open or perf.open
+
+
+## The direction held for the menu: the D-pad or arrow keys, else the left stick as a D-pad (out
+## past 0.6 along its main axis, let go under 0.3); y down is +1 (the next row).
+func _menu_direction() -> Vector2i:
+	var d := Vector2i(int(Input.is_key_pressed(KEY_RIGHT)) - int(Input.is_key_pressed(KEY_LEFT)),
+			int(Input.is_key_pressed(KEY_DOWN)) - int(Input.is_key_pressed(KEY_UP)))
+	if in_xr:
+		d += Vector2i(int(left_hand.is_button_pressed(&"dpad_right")) - int(left_hand.is_button_pressed(&"dpad_left")),
+				int(left_hand.is_button_pressed(&"dpad_down")) - int(left_hand.is_button_pressed(&"dpad_up")))
+		var s := left_hand.get_vector2(&"primary")
+		if s.length() > 0.6:
+			stick_dir = Vector2i(0, -int(signf(s.y))) if absf(s.y) >= absf(s.x) else Vector2i(int(signf(s.x)), 0)
+		elif s.length() < 0.3:
+			stick_dir = Vector2i.ZERO
+		if d == Vector2i.ZERO:
+			d = stick_dir
+	d = d.clamp(Vector2i(-1, -1), Vector2i(1, 1))
+	return Vector2i(0, d.y) if d.y != 0 else d
+
+
+## A light tick in the hand that pressed something in the menu.
+func _tick(hand: XRController3D) -> void:
+	if in_xr and hand:
+		hand.trigger_haptic_pulse(&"haptic", 0.0, 0.25, 0.015, 0.0)
+
+
+## Turns smoothly or in 30-degree snaps (the right stick's click switches, as does the menu).
+func set_smooth_turn(on: bool) -> void:
+	smooth_turn = on
+	print("right stick turns ", "smoothly" if smooth_turn else "in 30-degree snaps")
+	if perf:
+		perf.refresh()
 
 
 ## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
 ## in 30-degree snaps; a right stick click (Tab) switches between the two. Right A (R): back to
-## the start. True if any of it moved the viewer against the room.
+## the start (not while the menu is open: A is its). True if any of it moved the viewer against
+## the room.
 func _handle_turn_and_reset(delta: float) -> bool:
 	var turn := 0.0
 	var mode_down := Input.is_key_pressed(KEY_TAB)
@@ -457,8 +555,7 @@ func _handle_turn_and_reset(delta: float) -> bool:
 		mode_down = mode_down or right_hand.is_button_pressed(&"primary_click")
 	turn = clampf(turn + float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)), -1.0, 1.0)
 	if _pressed_once("turn_mode", mode_down):
-		smooth_turn = not smooth_turn
-		print("right stick turns ", "smoothly" if smooth_turn else "in 30-degree snaps")
+		set_smooth_turn(not smooth_turn)
 	var moved := false
 	if smooth_turn:
 		if absf(turn) > STICK_DEAD_ZONE:
@@ -475,7 +572,7 @@ func _handle_turn_and_reset(delta: float) -> bool:
 		moved = true
 	elif absf(turn) < 0.3:
 		snap_armed = true
-	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))):
+	if _pressed_once("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))) and not menu_active:
 		place(1.0, START_POS, START_FORWARD)    # also redoes the chart -> play map
 		if physics:
 			_spawn_toys()
@@ -632,13 +729,15 @@ const NEW_CUBE_HALF := 0.15      # left X: a new cube in the left hand
 ## (as the shader places each eye), with the room's axes carried along it, the hand's own axes
 ## from its pose there, its velocity from its recent places. The grip grabs the nearest toy within
 ## reach, carries it and lets it go with the hand's motion (_take, _carry, _release); right B and
-## left X put a new ball or cube in the hand. Nothing during the speed check (it times the same
-## scene at every pose; the hands are not drawn then).
+## the D-pad down (left X on other controllers) put a new ball or cube in the hand, not while the
+## menu is open (they are its). Nothing during the speed check (it times the same scene at every
+## pose; the hands are not drawn then).
 func _update_hands(hp: Array, head: Transform3D) -> void:
 	if not in_xr:
 		return
-	var new_ball := _pressed_once("new_ball", right_hand.is_button_pressed(&"by_button"))
-	var new_cube := _pressed_once("new_cube", left_hand.is_button_pressed(&"ax_button"))
+	var new_ball := _pressed_once("new_ball", right_hand.is_button_pressed(&"by_button")) and not menu_active
+	var new_cube := _pressed_once("new_cube", left_hand.is_button_pressed(&"ax_button")
+			or left_hand.is_button_pressed(&"dpad_down")) and not menu_active
 	for i in grips.size():
 		var c := grips[i]
 		var st := hand_state[i]
@@ -897,15 +996,6 @@ static func _rotation_vector(q: Quaternion) -> Vector3:
 	return v * (2.0 * atan2(s, q.w) / s)
 
 
-## Each controller points at the panel; its trigger presses the button it points at.
-func _point_panel() -> void:
-	if perf == null:
-		return
-	for i in hands.size():
-		var c := hands[i]
-		perf.point(i, c.transform.origin, -c.transform.basis.z, c.get_float(&"trigger"), c.get_has_tracking_data())
-
-
 ## Move the feet along the floor by a play-space displacement (x, z).
 func _walk(step: Vector2) -> void:
 	var T: Vector4 = step.x * frame[0] + step.y * frame[2]
@@ -949,7 +1039,8 @@ func _head_forward_xz() -> Vector2:
 
 
 ## The node for things Godot draws itself among the ray-traced ones, placed in chart A
-## coordinates (the stereo check), and the frame rate panel, which follows the head in the room.
+## coordinates (the stereo check), and the menu with the frame rate line, which follow the head in
+## the room.
 func _build_overlay() -> void:
 	overlay = Node3D.new()
 	origin.add_child(overlay)
@@ -1274,7 +1365,7 @@ func set_gravity_view(view: int) -> void:
 	_param("wh_pix", _pixel_angle())
 	_pick_shader()
 	if perf:
-		perf._paint()
+		perf.refresh()
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
