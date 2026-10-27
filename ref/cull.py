@@ -122,9 +122,9 @@ def cone(W, l, n, tl, tn, chord):
     k = 1.0 / min(W.R, W.rho0)
     delta = 2.0 / k * np.arcsin(min(k * chord / 2.0, 1.0))
     sk = 1.0 / W.rho0
-    if d <= delta:
+    if d <= delta or sk * d > 0.45 * np.pi:
         return D / max(d, 1e-12), -2.0
-    s = np.sin(sk * delta) / np.sin(sk * min(d, 0.5 * np.pi / sk))
+    s = np.sin(sk * delta) / np.sin(sk * d)
     return D / d, np.cos(min(np.arcsin(min(s, 1.0)) + 2e-3, np.pi))
 
 

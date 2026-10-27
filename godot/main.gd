@@ -54,8 +54,8 @@ const SHADER_TOYS_SHELL_ARROWS := preload("res://shaders/toys_shell_arrows.gdsha
 # leaves its sphere at least this far beyond the hit, so the sphere's back face, which the pass is
 # drawn on, is not clipped away before it.
 const PROXY_MARGIN := 0.08
-const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (by 0.4%): grown by this
-const CONE_NEAR := 2.0          # m from the head: a toy closer gets a cone of its own (_update_cones)
+const PROXY_SLACK := 1.02       # the proxy meshes' faces lie inside their sphere (by up to 1.7%): grown by this
+const CONE_NEAR := 4.0          # m from the head: a toy closer gets a cone of its own (_update_cones)
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
@@ -1319,10 +1319,26 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		cc.append(Vector4.ZERO)
 	while ax.size() < 30:
 		ax.append(Vector4.ZERO)
-	var nt := lt.size()
-	while lt.size() < 18:
-		lt.append(Vector4.ZERO)
-		lw.append(Vector4(1.0, -1.0, 0.0, 0.0))
+	# the list in groups of four (wht_near): each column a vec4 per group
+	var ng := (lt.size() + 3) / 4
+	var cols := []
+	for q in 7:
+		var column := PackedVector4Array()
+		column.resize(5)
+		cols.append(column)
+	var bits := PackedInt32Array()
+	bits.resize(20)
+	for k in 20:
+		var g := k / 4
+		var j := k % 4
+		var t := lt[k] if k < lt.size() else Vector4(0.0, 0.0, 0.0, -1.0)
+		var w := lw[k] if k < lw.size() else Vector4(1.0, -1.0, 0.0, 0.0)
+		var vals := [t.x, t.y, t.z, t.w * t.w if t.w > 0.0 else -1.0, w.x, w.y, w.z]
+		for q in 7:
+			var v: Vector4 = cols[q][g]
+			v[j] = vals[q]
+			cols[q][g] = v
+		bits[k] = int(w.w)
 	balls = n + nc
 	toy_mask = mask
 	for m in [toys_flat_mat, toys_shell_mat]:
@@ -1334,9 +1350,11 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		m.set_shader_parameter("wh_cubeE", ax)
 		m.set_shader_parameter("wh_cubeCol", cc)
 		m.set_shader_parameter("wh_nCube", nc)
-	toys_shell_mat.set_shader_parameter("wht_toy", lt)
-	toys_shell_mat.set_shader_parameter("wht_win", lw)
-	toys_shell_mat.set_shader_parameter("wht_nToy", nt)
+	var names := ["wht_cx", "wht_cy", "wht_cz", "wht_r2", "wht_lo", "wht_hi", "wht_fs"]
+	for q in 7:
+		toys_shell_mat.set_shader_parameter(names[q], cols[q])
+	toys_shell_mat.set_shader_parameter("wht_bit", bits)
+	toys_shell_mat.set_shader_parameter("wht_nGroup", ng)
 
 
 ## A toy of the shell's pass's list (set_objects), if a ray in or through the shell can meet it:
@@ -1404,8 +1422,10 @@ func _add_toy_draws() -> void:
 	shell_sphere = SphereMesh.new()
 	shell_sphere.radius = 1.0
 	shell_sphere.height = 2.0
-	shell_sphere.radial_segments = 48
-	shell_sphere.rings = 24
+	# coarse: every vertex of the shell's pass works out the near toys' cones (toys_view.gdshaderinc);
+	# its faces lie inside the sphere by up to 1.7%, within PROXY_SLACK
+	shell_sphere.radial_segments = 24
+	shell_sphere.rings = 12
 	full_view = QuadMesh.new()
 	full_view.size = Vector2(2.0, 2.0)
 	# put straight into clip space (POSITION = VERTEX.xy, toys_view.gdshaderinc), the quad is wound as a
@@ -1449,10 +1469,10 @@ func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> vo
 
 
 ## The toys near the head (at l, n), up to four, nearest first: the shell's pass's vertex stage
-## gives each the cone of directions from each eye that can meet it (wht_cone in
-## wormhole_toys.gdshaderinc, exact within CONE_NEAR: ref/cull.py), and a ray outside it skips it.
-## A held ball near the eye inside the shell is otherwise searched by every ray whose plane passes
-## near it, most of the view.
+## gives each the cone of directions from each eye that can meet it (wht_coneAt in
+## wormhole_toys.gdshaderinc, exact up to a geodesic distance of 0.45 pi rho0: ref/cull.py), and a
+## ray outside it skips it. A ball held near the eye inside the shell is otherwise searched by every
+## ray whose plane passes near it, most of the view.
 func _update_cones(l: float, n: Vector3) -> void:
 	var H := space.embed(l, n)
 	var near := []

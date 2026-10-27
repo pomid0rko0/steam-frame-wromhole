@@ -28,9 +28,9 @@
 //                                           size). A point P is inside when |dot(P, axis) -
 //                                           dot(centre, axis)| < 1 for all four axes.
 //   int wh_nBall                            balls in use (a loop bound the compiler cannot see)
-//   vec4 wht_toy[WHT_MAXT], wht_win[WHT_MAXT], int wht_nToy
-//                                           the shell's pass's toys, a list (wht_near; ball i is
-//                                           bit i, cube i bit 16 + i)
+//   vec4 wht_cx[5], ..., ivec4 wht_bit[5], int wht_nGroup
+//                                           the shell's pass's toys, a list in groups of four
+//                                           (wht_near; ball i is bit i, cube i bit 16 + i)
 //   float wh_pix                            a pixel's angle (the cubes' edge lines, the arrows)
 // and WH_TOYS defined before the core (toys_view.gdshaderinc).
 
@@ -51,9 +51,11 @@ float wht_size(int bit) {
 
 #ifndef WHT_FLAT
 // The toys a ray of the shell's pass can meet at all, before any search (ref/cull.py checks that
-// none it drops is ever met). The pass's toys are a list (main.set_objects): wht_toy[k] (centre
-// xyz, reach: a ball's radius, a cube's half diagonal), wht_win[k] (the l window of its points'
-// meridian (lo, hi; lo > hi: none), the flat universe whose sheet cuts it (+-1, 0: none), its bit).
+// none it drops is ever met). The pass's toys are a list (main.set_objects), four to a group of
+// vec4s, so that a pixel tests four in a few instructions and without a branch: wht_cx, wht_cy,
+// wht_cz their centres, wht_r2 their reach squared (a ball's radius, a cube's half diagonal; -1: an
+// empty place), wht_lo, wht_hi the l window of their points' meridian (lo > hi: none), wht_fs the
+// flat universe whose sheet cuts them (+-1, 0: none), wht_bit their bits.
 //  - the plane: a ray's whole path lies in span(e1, e2, the w axis), and a toy farther than its reach
 //    from that subspace is never met. N = n x w for a ray at (n, w), or the chart point x d for a
 //    straight one (as R^4 xyz); b = |N| r (the impact parameter);
@@ -63,7 +65,8 @@ float wht_size(int bit) {
 //    throat on the other: a flat universe's toy is met after the shell only by a ray that leaves
 //    into it;
 //  - skip: toys near the eye whose cone of directions (toys_view.gdshaderinc) the ray is outside.
-// Returns the toys to search in the shell (bits), flatNear: those to test after it.
+// Returns the list's toys to search in the shell (as bits of their places in the list), flatNear:
+// those to test after it.
 int wht_near(vec3 N, float b, float l0, float vl, int skip, out int flatNear) {
     float N2 = dot(N, N);
     float s = l0 > 0.0 ? 1.0 : -1.0;
@@ -74,21 +77,31 @@ int wht_near(vec3 N, float b, float l0, float vl, int skip, out int flatNear) {
     float sr = along ? sig : s;
     int out_mask = 0;
     flatNear = 0;
-    for (int k = 0; k < wht_nToy; k++) {
-        vec4 T = wht_toy[k];
-        vec4 Wn = wht_win[k];
-        float c = dot(T.xyz, N);
-        if (c * c > T.w * T.w * N2 || ((skip >> k) & 1) != 0) continue;
-        int bit = int(Wn.w);
-        if ((sr > 0.0 ? Wn.y >= lr : Wn.x <= -lr) && Wn.x <= Wn.y) out_mask |= 1 << bit;
-        if (Wn.z == sr) flatNear |= 1 << bit;
+    for (int g = 0; g < wht_nGroup; g++) {
+        vec4 c = N.x * wht_cx[g] + N.y * wht_cy[g] + N.z * wht_cz[g];
+        vec4 plane = step(c * c, wht_r2[g] * N2);
+        vec4 lw = (sr > 0.0 ? step(vec4(lr), wht_hi[g]) : step(wht_lo[g], vec4(-lr))) * step(wht_lo[g], wht_hi[g]);
+        vec4 fl = vec4(1.0) - step(vec4(0.5), abs(wht_fs[g] - sr));
+        out_mask |= int(dot(plane * lw, vec4(1.0, 2.0, 4.0, 8.0)) + 0.5) << (4 * g);
+        flatNear |= int(dot(plane * fl, vec4(1.0, 2.0, 4.0, 8.0)) + 0.5) << (4 * g);
+    }
+    flatNear &= ~skip;
+    return out_mask & ~skip;
+}
+
+// The toy bits of the list's places in m (wht_near)
+int wht_bits(int m) {
+    int out_mask = 0;
+    for (; m != 0; m &= m - 1) {
+        int k = findLSB(m);
+        out_mask |= 1 << wht_bit[k >> 2][k & 3];
     }
     return out_mask;
 }
 
-// The geodesic from (l, n) along the unit tangent V for len, in steps of at most 0.1 m: (l, n)
+// The geodesic from (l, n) along the unit tangent V for len, in RK4 steps of at most 0.2 m: (l, n)
 void wht_geo(inout float l, inout vec3 n, vec4 V, float len) {
-    int steps = clamp(int(ceil(len / 0.1)), 1, 40);
+    int steps = clamp(int(ceil(len / 0.2)), 1, 32);
     float h = len / float(steps);
     for (int it = 0; it < steps; it++) {
         vec4 p = wh_prof(l);
@@ -142,10 +155,11 @@ vec4 wht_coneAt(float l, vec3 n, float tl, vec3 tn, float c, out float cth) {
     float k = 1.0 / min(wh_fillet, wh_rho0);
     float delta = 2.0 / k * asin(min(0.5 * k * c, 1.0));
     float sk = 1.0 / wh_rho0;
-    if (d <= delta) {
+    if (d <= delta || sk * d > 0.45 * WH_PI) {
+        // the eye in it, or too far for the comparison (sin(sqrt(K) d) grows only up to pi / 2)
         cth = -2.0;
     } else {
-        float sn = sin(sk * delta) / sin(sk * min(d, 0.5 * WH_PI / sk));
+        float sn = sin(sk * delta) / sin(sk * d);
         cth = cos(min(asin(min(sn, 1.0)) + 2e-3, WH_PI));
     }
     return D / max(d, 1e-9);
@@ -566,7 +580,7 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, int skip, out vec4
     float psiEnd = Y.floorHit ? wh_floorPsi(Y) : Y.tot.x;
     float hitK = 4.0;
     int hitBit = -1;
-    for (int mm = near; mm != 0; mm &= mm - 1)
+    for (int mm = wht_bits(near); mm != 0; mm &= mm - 1)
         wht_search(Y, f, findLSB(mm), psiEnd, hitK, hitBit);
     vec3 c;
     float at;
@@ -588,7 +602,7 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, int skip, out vec4
         wh_exit(Y, X, D);
         float t = 1e9;
         int face;
-        int bitF = wht_flatNearest(flatNear, Y.sideC, X, D, t, face);
+        int bitF = wht_flatNearest(wht_bits(flatNear), Y.sideC, X, D, t, face);
         if (bitF < 0 || wh_traceFlat(Y.sideC, X, D, false).t < t) return vec4(-1.0);
         at = dist + Y.tot.y + t;
         vec3 p = X + t * D;

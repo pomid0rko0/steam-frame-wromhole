@@ -22,12 +22,18 @@ uniform mat4 wht_toChart;       // play space -> the chart of the head's univers
 uniform float wht_side = 1.0;   // that universe
 #else
 uniform bool wht_full = false;  // the whole view (the head in the curved region), not the shell's proxy
-uniform vec4 wht_toy[18];       // the pass's toys (wht_near, main.set_objects)
-uniform vec4 wht_win[18];
-uniform int wht_nToy = 0;
+uniform vec4 wht_cx[5];         // the pass's toys in groups of four (wht_near, main.set_objects)
+uniform vec4 wht_cy[5];
+uniform vec4 wht_cz[5];
+uniform vec4 wht_r2[5];
+uniform vec4 wht_lo[5];
+uniform vec4 wht_hi[5];
+uniform vec4 wht_fs[5];
+uniform ivec4 wht_bit[5];
+uniform int wht_nGroup = 0;
 uniform vec4 wht_cone[4];       // toys near the head (main._update_toy_draws): their centre's (n, l),
 uniform vec4 wht_coneR;         // chord radius,
-uniform ivec4 wht_coneIdx = ivec4(-1);   // index in wht_toy (-1: none)
+uniform ivec4 wht_coneIdx = ivec4(-1);   // the place in the list (-1: none)
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
