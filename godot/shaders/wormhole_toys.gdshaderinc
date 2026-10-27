@@ -38,7 +38,7 @@ const int WH_MAXB = 12;
 const int WH_MAXC = 6;
 const int WHT_MAXT = 18;       // WH_MAXB + WH_MAXC
 const int WHT_CONES = 4;       // toys near the head with a cone of their own
-const int WHT_ITER = 24;       // points of the march along a ray in the shell, at most
+const int WHT_ITER = 16;       // steps of a toy's search in the shell, at most
 
 // a toy's centre (R^4) and its reach: a ball's radius, a cube's half diagonal (2 half sizes)
 vec4 wht_centre(int bit) {
@@ -237,31 +237,13 @@ vec4 wht_flat(int bit, float side, vec3 x, vec3 d, out vec4 dbg) {
 
 #ifndef WHT_FLAT
 // ---------------------------------------------------------------- the curved region
-// The acceleration in R^4 of a geodesic of the space (the ray's subspace's coordinates), at radius r,
-// angle (cos, sin) = (c, s) in the ray's plane, on the side side of the throat, impact parameter b,
-// on the cylinder or a fillet: II(T, T) nu, the normal nu = (w' n, -r') of the profile (r, w)(l),
-// II = l'^2 (w' r'' - r' w'') - (w' / r) (b / r)^2, l'^2 = 1 - (b / r)^2: on a fillet (a circle of
-// radius R in the profile, th its angle) nu = (cos th n, -side sin th), w' r'' - r' w'' = 1 / R; on the
-// cylinder nu = (n, 0) and only the second term (ref/toys.py checks it against differences of
-// wht_point).
-vec3 wht_accel(float r, float c, float s, float side, float b, bool cyl) {
-    float br = b / r;
-    if (cyl) return -(br * br / r) * vec3(c, s, 0.0);
-    float X = r - wh_rho0;
-    float cth = 1.0 - X / wh_fillet;
-    float sth = sqrt(max(X * (2.0 * wh_fillet - X), 0.0)) / wh_fillet;
-    float II = (1.0 - br * br) / wh_fillet - cth / r * br * br;
-    return II * vec3(cth * c, cth * s, -side * sth);
-}
-
 // The path's point at the fraction sg of piece p (0 A, 1 B, 2 C: wh_ray), in the ray's subspace of
 // R^4, coordinates (u, v, w) along (e1, e2, the w axis): Q = (r cos psi, r sin psi, w), and dQ =
 // dQ / dsg exactly: the search steps by it. Fillets: sg runs z linearly (the
 // moments' variable, smooth through a turning point), and dw / dz is taken in a form without the
 // 0 / 0 where the fillet meets the cylinder (sin th = 0): dw/dz = side 2 (R - X) sqrt(span) H /
-// sqrt(2R - X), X = r - rho0, H = sqrt(t + ga) (regime 0) or z / sqrt(t + al) (1, 2). A: the path's
-// acceleration in path length (wht_accel).
-void wht_point(WhRay Y, WhFil f, int p, float sg, out vec3 Q, out vec3 dQ, out float psi, out vec3 A) {
+// sqrt(2R - X), X = r - rho0, H = sqrt(t + ga) (regime 0) or z / sqrt(t + al) (1, 2).
+void wht_point(WhRay Y, WhFil f, int p, float sg, out vec3 Q, out vec3 dQ, out float psi) {
     float rho0 = wh_rho0;
     float R = wh_fillet;
     float r;
@@ -324,173 +306,126 @@ void wht_point(WhRay Y, WhFil f, int p, float sg, out vec3 Q, out vec3 dQ, out f
     float s = sin(psi);
     Q.xy = r * vec2(c, s);
     dQ.xy = dr * vec2(c, s) + r * dpsi * vec2(-s, c);
-    A = wht_accel(r, c, s, p == 0 ? Y.sideA : Y.sideC, Y.b, p == 1);
 }
 
-
-// The first of the toys in mask (their bits) the ray meets in the shell before the floor (psiEnd):
-// hitK (2 (piece - 1) + sg) and hitBit (< 0: none). One march along the path for all of them, from the
-// start of the first piece any can be met on (st: the ray's start, (l, vl, |w|)). A toy's centre seen
-// in the ray's subspace, cb, its distance from it sqrt(perp2), its reach ball's shadow on the ray's
-// plane: a disc, seen from the centre within +-dps of psc. Along the path psi only grows, and the
-// whole path in the shell turns by less than pi (it meets the floor by then): so the toy can be met
-// only while psi is in [psc - dps, psc + dps], once; past it, it is dropped. At each point every toy
-// still in the march gives the longest step that cannot pass its entry, and the march takes the
-// shortest: it reaches the nearest entry without passing any. k, the path's largest curvature in R^4
-// on a piece: on a fillet 1 / min(R, rho0) (its profile's, or a parallel's at most), on the cylinder
-// its helix's b^2 / rho0^3.
-//  - a ball: F = |P - C|^2 - radius^2 along the path, F'' = 2 (1 + (P - C) . A) in path length, A the
-//    path's acceleration (wht_accel: exact for the path wht_point gives within 2% of k), whose change
-//    is at most j3 per metre; |P - C| <= |D| + s: so for s <= S F is at least F + F' s + m s^2 / 2,
-//    m = F'' - 2 (|D| + S) (j3 S / 3 + 0.02 k), and a step goes to the first root of that (S: three
-//    tangent steps, within |P - C| < 0.9 / k, where F is convex: past the closest approach (F' >= 0)
-//    there is no entry). Farther away a step goes to 0.8 of |P - C| - radius. Within 0.1 mm of the
-//    entry is the hit. Near the eye this takes 2-3 points of the path where the bound by k alone took
-//    4-6 (ref/toys.py);
+// The search for one toy near the ray's plane, in the shell: its first entry before the nearest hit
+// so far (hitK: 2 (piece - 1) + sg) and the floor (psiEnd). The toy's centre seen in the ray's
+// subspace, cb, its distance from it sqrt(perp2), its reach ball's shadow on the ray's plane: a
+// disc, seen from the centre within +-dps of psc. Along the path psi only grows, and the whole path
+// in the shell turns by less than pi (it meets the floor by then): so the toy can be met only while
+// psi is in [psc - dps, psc + dps], once. k, the path's largest curvature in R^4 on a piece: on a
+// fillet 1 / min(R, rho0) (its profile's, or a parallel's at most), on the cylinder its helix's
+// b^2 / rho0^3. From the start of the first piece the window reaches:
+//  - a ball: F = |P - C|^2 - radius^2 along the path. Its second derivative in path length is
+//    2 (1 + (P - C) . P''), |P''| <= k: so F is convex wherever |P - C| < 1 / k, bounded below by a
+//    parabola whose first root a step goes to (not past the entry; from far off a little farther
+//    than Newton's tangent would), or past the closest approach (F' >= 0): no entry. Farther away a
+//    step goes to 0.8 of |P - C| - radius along the path (it cannot be met sooner). Within 0.1 mm
+//    of the entry is the hit;
 //  - a cube: a slab's signed distance h along the path has |h''| <= k, so |h| cannot fall to the
 //    half size sooner than at the smallest D >= 0 with |h| - half - v D - k D^2 / 2 <= 0 (v: the
-//    speed toward it): its step goes to the latest of the four slabs' earliest; past it once outside
-//    its reach ball moving away.
-// The ray's start is a point of the path known without wht_point. Only entries count: a ray that
-// starts inside a toy does not see it from inside.
-void wht_march(WhRay Y, WhFil f, int mask, float psiEnd, vec3 st, out float hitK, out int hitBit) {
-    hitK = 4.0;
-    hitBit = -1;
-    // the toys whose shadow the path reaches before the floor, and the first piece any is on
-    float lo = 10.0;
-    for (int mm = mask; mm != 0; mm &= mm - 1) {
-        int bit = findLSB(mm);
-        vec4 C = wht_centre(bit);
-        float reach = (bit >= 16 ? 2.0 : 1.0) * wht_size(bit);
-        vec3 cb = vec3(dot(C.xyz, Y.e1), dot(C.xyz, Y.e2), C.w);
-        float rho2 = dot(cb.xy, cb.xy);
-        float re2 = reach * reach - max(dot(C.xyz, C.xyz) - rho2, 0.0);
-        float psc = wh_atan2(cb.y, cb.x);
-        psc = psc < -0.5 * WH_PI ? psc + 2.0 * WH_PI : psc;    // the copy that can meet [0, pi)
-        float dps = re2 < rho2 ? wh_asin(sqrt(re2 / rho2)) : 10.0;
-        if (re2 <= 0.0 || psc + dps < 0.0 || psc - dps > psiEnd)
-            mask &= ~(1 << bit);
-        else
-            lo = min(lo, psc - dps);
-    }
-    if (mask == 0) return;
-    int p0 = Y.hasA ? 0 : (Y.hasB ? 1 : 2);
-    int p = p0;
+//    speed toward it): each step goes to the latest of the four slabs' earliest, so it stops at the
+//    entry without passing it; past the toy once outside its reach ball moving away.
+// Each step takes one point of the path (wht_point), in one loop for all of them: its code exists
+// once. Only entries count: a ray that starts inside a toy does not see it from inside.
+void wht_search(WhRay Y, WhFil f, int bit, float psiEnd, inout float hitK, inout int hitBit) {
+    bool isCube = bit >= 16;
+    int ci = bit - 16;
+    vec4 C = wht_centre(bit);
+    float size = wht_size(bit);
+    float reach = isCube ? 2.0 * size : size;
+    vec3 cb = vec3(dot(C.xyz, Y.e1), dot(C.xyz, Y.e2), C.w);
+    float perp2 = max(dot(C.xyz, C.xyz) - cb.x * cb.x - cb.y * cb.y, 0.0);
+    float re2 = reach * reach - perp2;
+    float rho2 = dot(cb.xy, cb.xy);
+    if (re2 <= 0.0) return;
+    float psc = wh_atan2(cb.y, cb.x);
+    psc = psc < -0.5 * WH_PI ? psc + 2.0 * WH_PI : psc;    // the copy that can meet [0, pi)
+    float dps = re2 < rho2 ? wh_asin(sqrt(re2 / rho2)) : 10.0;
+    float lo = psc - dps;
+    float hi = psc + dps;
+    if (hi < 0.0 || lo > psiEnd) return;
+    // the first piece the window reaches
+    int p = Y.hasA ? 0 : (Y.hasB ? 1 : 2);
     if (p == 0 && lo > Y.PA.x) p = Y.hasB ? 1 : 2;
     if (p == 1 && lo > Y.PA.x + Y.PB.x) p = 2;
-    bool start = p == p0;       // sg = 0 is the ray's start
+    bool start = p == 0 || (p == 2 && Y.cFromStart);    // sg = 0 is the ray's start
     float sg = 0.0;
-    float sgo = -1.0;           // a point of this piece known outside them all, or < 0
-    // the point: Q, its unit tangent T and acceleration A, psi, and dpath / dsg (speed)
-    vec3 Q = vec3(0.0); vec3 T = vec3(0.0); vec3 A = vec3(0.0);
-    float psi = 0.0;
-    float speed = 1.0;
-    bool have = start;
-    if (start) {
-        vec4 pr = wh_prof(st.x);
-        Q = vec3(pr.x, 0.0, pr.y);
-        T = vec3(st.y * pr.z, st.z, st.y * pr.w);
-        A = wht_accel(pr.x, 1.0, 0.0, st.x > 0.0 ? 1.0 : -1.0, Y.b, p == 1);
-        // psi = (b / r^2) path on the way, and on a fillet dpsi / dsg is wht_point's
-        speed = p == 1 ? length(vec2(wh_rho0 * Y.PB.x, Y.DB))
-                       : pr.x * pr.x * f.ib * abs(wh_poly(f.e, Y.ts) * (f.reg == 2 ? Y.zs : 1.0)
-                                                  * ((p == 0 ? f.zlo : f.zhi) - Y.zs));
-    }
-    float kf = 1.0 / min(wh_fillet, wh_rho0);
+    float sgo = -1.0;       // a point of this piece known outside, or < 0
     for (int it = 0; it < WHT_ITER + min(wh_nBall, 0); it++) {
-        if (!have) {
-            vec3 dQ;
-            wht_point(Y, f, p, sg, Q, dQ, psi, A);
-            speed = max(length(dQ), 1e-30);
-            T = dQ / speed;
-        }
-        have = false;
+        if (2.0 * float(p - 1) + sg > hitK) return;
+        vec3 Q; vec3 dQ; float psi;
+        wht_point(Y, f, p, sg, Q, dQ, psi);
         if (psi > psiEnd) return;
-        float kp = p == 1 ? Y.b * Y.b / (wh_rho0 * wh_rho0 * wh_rho0) : kf;
-        float j3 = p == 1 ? kp * Y.b / (wh_rho0 * wh_rho0)
-                          : kf * kf + 1.155 * (1.0 / (wh_fillet * wh_rho0) + 1.0 / (wh_rho0 * wh_rho0));
-        float step = 1e9;
-        for (int mm = mask; mm != 0; mm &= mm - 1) {
-            int bit = findLSB(mm);
-            bool isCube = bit >= 16;
-            vec4 C = wht_centre(bit);
-            float size = wht_size(bit);
-            float reach = isCube ? 2.0 * size : size;
-            vec3 cb = vec3(dot(C.xyz, Y.e1), dot(C.xyz, Y.e2), C.w);
-            float rho2 = dot(cb.xy, cb.xy);
-            float perp2 = max(dot(C.xyz, C.xyz) - rho2, 0.0);
-            float re2 = reach * reach - perp2;
-            vec3 D = Q - cb;
-            float D2 = dot(D, D) + perp2;
-            // past its shadow: the angle from cb to Q in the plane beyond dps
-            float cr = cb.x * Q.y - cb.y * Q.x;
-            bool drop = re2 < rho2 && cr > 0.0 && cr * sqrt(rho2 - re2) > dot(cb.xy, Q.xy) * sqrt(re2);
-            float ds = 1e9;
-            if (!drop && !isCube) {
-                float F = D2 - reach * reach;
-                float Fs = 2.0 * dot(D, T);
-                if (F <= 0.0) {
-                    // the eye in it: not seen; else past its entry by rounding: Newton back
-                    drop = start;
-                    if (!drop) {
-                        float nx = Fs < 0.0 ? sg - F / (Fs * speed) : sg;
-                        hitK = 2.0 * float(p - 1) + (sgo < 0.0 ? nx : max(nx, sgo));
-                        hitBit = bit;
-                        return;
-                    }
-                } else {
-                    float Dn = sqrt(D2);
-                    if (Dn * kp < 0.9) {
-                        drop = Fs >= 0.0;              // past the closest approach: no entry
-                        float S = min(0.9 / kp - Dn, -3.0 * F / Fs);
-                        float m = 2.0 * (1.0 + dot(D, A)) - 2.0 * (Dn + S) * (j3 * S / 3.0 + 0.02 * kp);
-                        float disc = Fs * Fs - 2.0 * m * F;
-                        float r1 = 2.0 * F / (-Fs + sqrt(max(disc, 0.0)));
-                        bool root = disc >= 0.0 && r1 <= S;
-                        ds = root ? r1 : S;
-                        if (!drop && root && r1 < 1e-4) {
-                            hitK = 2.0 * float(p - 1) + sg + r1 / speed;
-                            hitBit = bit;
-                            return;
-                        }
-                    } else {
-                        ds = 0.8 * (Dn - reach);
-                    }
-                }
-            } else if (!drop) {
-                // the signed distances h (m) to the four mid-planes, and the speeds toward them; an
-                // axis seen in the ray's subspace (it is used at once: not held)
-                int ci = bit - 16;
-                bool inside = true;
-                float Ds = 0.0;
-                for (int j = 0; j < 4 + min(wh_nCube, 0); j++) {
-                    vec4 Ek = wh_cubeE[5 * ci + j];
-                    vec3 ek = vec3(dot(Ek.xyz, Y.e1), dot(Ek.xyz, Y.e2), Ek.w);
-                    float h = size * (dot(Q, ek) - wh_cubeE[5 * ci + 4][j]);
-                    float e = abs(h) - size;
-                    if (e > 0.0) {
-                        inside = false;
-                        float v = -sign(h) * size * dot(T, ek);
-                        Ds = max(Ds, 2.0 * e / (v + sqrt(v * v + 2.0 * kp * e)));
-                    }
-                }
-                drop = inside ? start : D2 > reach * reach && dot(D, T) > 0.0;
-                if (!drop && (inside || Ds < 1e-6)) {
-                    hitK = 2.0 * float(p - 1) + sg;
+        vec3 D = Q - cb;
+        float D2 = dot(D, D) + perp2;
+        float speed = max(length(dQ), 1e-30);
+        float k = p == 1 ? Y.b * Y.b / (wh_rho0 * wh_rho0 * wh_rho0) : 1.0 / min(wh_fillet, wh_rho0);
+        float nsg;
+        if (!isCube) {
+            float F = D2 - reach * reach;
+            float dF = 2.0 * dot(D, dQ);
+            if (F <= 0.0) {
+                if (start) return;                // the eye inside it: not seen from inside
+                // past the entry: Newton from inside lands on it or before it (F convex), back within
+                // [sgo, sg]; within 0.1 mm of it, that is the hit (in float32 a step can land a hair
+                // inside again and again)
+                float nx = dF < 0.0 ? max(sg - F / dF, sgo) : sgo;
+                if (sgo < 0.0 || (sg - nx) * speed < 1e-4) {
+                    hitK = 2.0 * float(p - 1) + (sgo < 0.0 ? sg : nx);
                     hitBit = bit;
                     return;
                 }
-                ds = Ds;
+                sg = nx > sgo ? nx : 0.5 * (sgo + sg);
+                continue;
             }
-            if (drop)
-                mask &= ~(1 << bit);
-            else
-                step = min(step, ds);
+            if (psi > hi) return;                 // past the toy's window
+            float Dn = sqrt(D2);
+            if (Dn * k < 0.9) {
+                if (dF >= 0.0) return;            // past the closest approach: no entry
+                // in path length s: F_s = 2 D.T, F_ss = 2 (1 + D.P'') >= 2 (1 - k |D|), |D| <= Dn + s,
+                // so F >= F + F_s s + m s^2 / 2 for s <= S (m from Dn + S): F has no root before this
+                // quadratic's first; S three times Newton's step
+                float Fs = dF / speed;
+                float S = min(0.9 / k - Dn, -3.0 * F / Fs);
+                float m = max(2.0 * (1.0 - k * (Dn + S)), 0.0);
+                float disc = Fs * Fs - 2.0 * m * F;
+                float ds = 2.0 * F / (-Fs + sqrt(max(disc, 0.0)));
+                bool root = disc >= 0.0 && ds <= S;
+                ds = root ? ds : S;
+                if (root && ds < 1e-4) { hitK = 2.0 * float(p - 1) + sg + ds / speed; hitBit = bit; return; }
+                nsg = sg + ds / speed;
+            } else {
+                nsg = sg + 0.8 * (Dn - reach) / speed;
+            }
+        } else {
+            // the signed distances h (m) to the four mid-planes, and the speeds toward them; an axis
+            // seen in the ray's subspace (it is used at once: not held)
+            bool inside = true;
+            float Ds = 0.0;
+            for (int j = 0; j < 4 + min(wh_nCube, 0); j++) {
+                vec4 Ek = wh_cubeE[5 * ci + j];
+                vec3 ek = vec3(dot(Ek.xyz, Y.e1), dot(Ek.xyz, Y.e2), Ek.w);
+                float h = size * (dot(Q, ek) - wh_cubeE[5 * ci + 4][j]);
+                float e = abs(h) - size;
+                if (e > 0.0) {
+                    inside = false;
+                    float v = -sign(h) * size * dot(dQ, ek) / speed;
+                    Ds = max(Ds, 2.0 * e / (v + sqrt(v * v + 2.0 * k * e)));
+                }
+            }
+            if (inside) {
+                if (start) return;                // the eye inside it
+                hitK = 2.0 * float(p - 1) + sg;
+                hitBit = bit;
+                return;
+            }
+            if (psi > hi || (D2 > reach * reach && dot(D, dQ) > 0.0)) return;    // past it
+            if (Ds < 1e-6) { hitK = 2.0 * float(p - 1) + sg; hitBit = bit; return; }
+            nsg = sg + Ds / speed;
         }
-        if (mask == 0) return;
         start = false;
         sgo = sg;
-        float nsg = sg + step / speed;
         if (nsg >= 1.0) {
             // on to the next piece, at its start
             if (p == 2) return;
@@ -587,9 +522,10 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, int skip, out vec4
     WhFil f;
     WhRay Y = wh_ray(l0, n0, vl, w, eye, f);
     float psiEnd = Y.floorHit ? wh_floorPsi(Y) : Y.tot.x;
-    float hitK;
-    int hitBit;
-    wht_march(Y, f, wht_bits(near), psiEnd, vec3(l0, vl, length(w)), hitK, hitBit);
+    float hitK = 4.0;
+    int hitBit = -1;
+    for (int mm = wht_bits(near); mm != 0; mm &= mm - 1)
+        wht_search(Y, f, findLSB(mm), psiEnd, hitK, hitBit);
     vec3 c;
     float at;
 #ifdef WH_ARROWS

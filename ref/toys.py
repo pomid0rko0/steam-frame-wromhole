@@ -1,17 +1,14 @@
 """
 The toys' search in the curved region, as the shader does it (godot/shaders/wormhole_toys.gdshaderinc,
-wht_point, wht_accel and wht_march), in float64: the reference for it, and its step counts.
+wht_point and wht_search), in float64: the reference for it, and its step counts.
 
 A ray in the shell (wh.py's fast(): pieces A, a fillet inward; B, the cylinder; C, a fillet outward)
 lies in the subspace span(e1, e2, e_w) of R^4. Its point at the fraction sg of a piece, Q = (r cos psi,
-r sin psi, w) in that subspace, and dQ/dsg are exact (the product integration's), and so is its
-acceleration A (II(T, T) nu). One march along the path for all the ray's toys: at each point every toy
-still in it gives the longest step that cannot pass its entry, and the march takes the shortest. A
-toy is met only in its angular window (psi grows along the path, by less than pi in the shell): the
-march starts at the first piece any window reaches, and a toy is dropped once past it. A ball's step:
-the first root of a lower bound of F = |P - C|^2 - radius^2 from its exact first and second derivatives
-and a bound on the change of A (j3); a cube's: certified steps on its four slabs (a slab's signed
-distance h has |h''| <= k along the path).
+r sin psi, w) in that subspace, and dQ/dsg are exact (the product integration's). A toy near the
+ray's plane is searched in its angular window only (psi grows along the path, by less than pi in the
+shell), from the start of the first piece that window reaches: a ball by Newton on F = |P - C|^2 -
+radius^2 (convex where |P - C| < 1 / k, k the path's largest curvature in R^4 on that piece), a cube
+by certified steps on its four slabs (a slab's signed distance h has |h''| <= k along the path).
 
   python3 ref/toys.py [N]     random rays near toys at the shell's edge, in the throat, grazing,
                               against wh.py's brute RK4: mismatches, hit errors, steps
@@ -20,7 +17,7 @@ import sys
 import numpy as np
 from wh import Wormhole, _any_perp
 
-ITER = 24        # the shader's WHT_ITER
+ITER = 40
 
 
 class Ray:
@@ -44,8 +41,6 @@ class Ray:
         eyey = 2 * R * np.sin((ths + W.th0) / 2) * np.sin((ths - W.th0) / 2)
         ts = rs * vl * vl / (1 + wn) if turn else eyey
         ts = 1.0 if from_edge else min(max(ts / f['span'], 0.0), 1.0)
-        self.ts = ts
-        self.start = (l_s, vl, wn)
         self.zs = W.fil_z(f, ts)
         Ss = np.array(W.fil_at(f, self.zs)[:2])
         d = 1.0 if vl >= 0 else -1.0
@@ -115,160 +110,100 @@ class Ray:
         return self.b * self.b / W.rho0 ** 3 if p == 1 else 1.0 / min(W.R, W.rho0)
 
 
-def accel(ray, p, Q, psi):
-    """wht_accel: the path's acceleration in R^4 (the ray's subspace) at its point Q on piece p, angle psi"""
-    W = ray.W
-    b = ray.b
-    r = np.hypot(Q[0], Q[1])
-    c, s = np.cos(psi), np.sin(psi)
-    br = b / r
-    if p == 1:
-        return -(br * br / r) * np.array([c, s, 0.0])
-    X = r - W.rho0
-    cth = 1.0 - X / W.R
-    sth = np.sqrt(max(X * (2 * W.R - X), 0.0)) / W.R
-    side = ray.sideA if p == 0 else ray.sideC
-    II = (1.0 - br * br) / W.R - cth / r * br * br
-    return II * np.array([cth * c, cth * s, -side * sth])
-
-
-def jmax(W, p, b):
-    """a bound on |A'| along piece p (the shader's j3)"""
-    k = 1.0 / min(W.R, W.rho0)
-    if p == 1:
-        return (b * b / W.rho0 ** 3) * b / W.rho0 ** 2
-    return k * k + 1.155 * (1.0 / (W.R * W.rho0) + 1.0 / W.rho0 ** 2)
-
-
-def _geom(ray, toy):
+def search(ray, toy, psiEnd, hitK, stats=None):
+    """wht_search for one toy: ('ball', C, radius) or ('cube', C, axes (4 x 4 rows), half).
+    Returns the new hitK if it is met before hitK, else None."""
     isCube = toy[0] == 'cube'
     C = np.asarray(toy[1], float)
     size = toy[3] if isCube else toy[2]
     reach = 2 * size if isCube else size
-    cb = np.array([C[:3] @ ray.e1, C[:3] @ ray.e2, C[3]])
+    e1, e2 = ray.e1, ray.e2
+    cb = np.array([C[:3] @ e1, C[:3] @ e2, C[3]])
+    perp2 = max(C[:3] @ C[:3] - cb[0] ** 2 - cb[1] ** 2, 0.0)
+    re2 = reach * reach - perp2
     rho2 = cb[0] ** 2 + cb[1] ** 2
-    perp2 = max(C[:3] @ C[:3] - rho2, 0.0)
-    return isCube, C, size, reach, cb, perp2, reach * reach - perp2, rho2
-
-
-def march(ray, toys, psiEnd, stats=None):
-    """wht_march: (hitK, the index of the toy met first) along the ray in the shell, or None"""
-    W = ray.W
-    st = stats if stats is not None else {}
-    live = []
-    lo = 10.0
-    for j, toy in enumerate(toys):
-        isCube, C, size, reach, cb, perp2, re2, rho2 = _geom(ray, toy)
-        psc = np.arctan2(cb[1], cb[0])
-        if psc < -0.5 * np.pi:
-            psc += 2 * np.pi
-        dps = np.arcsin(np.sqrt(re2 / rho2)) if 0 < re2 < rho2 else 10.0
-        if re2 <= 0 or psc + dps < 0 or psc - dps > psiEnd:
-            continue
-        live.append(j)
-        lo = min(lo, psc - dps)
-    if not live:
+    if re2 <= 0:
         return None
-    st['cand'] = st.get('cand', 0) + len(live)
-    p0 = 0 if ray.hasA else (1 if ray.hasB else 2)
-    p = p0
+    psc = np.arctan2(cb[1], cb[0])
+    if psc < -0.5 * np.pi:
+        psc += 2 * np.pi
+    dps = np.arcsin(np.sqrt(re2 / rho2)) if re2 < rho2 else 10.0
+    lo, hi = psc - dps, psc + dps
+    if hi < 0 or lo > psiEnd:
+        return None
+    st = stats if stats is not None else {}
+    st['cand'] = st.get('cand', 0) + 1
+    # from the start of the first piece the window reaches
+    p = 0 if ray.hasA else (1 if ray.hasB else 2)
     if p == 0 and lo > ray.PA[0]:
         p = 1 if ray.hasB else 2
     if p == 1 and lo > ray.PA[0] + ray.PB[0]:
         p = 2
-    start = p == p0
+    start = p == 0 or (p == 2 and ray.cFromStart)
     sg, sgo = 0.0, -1.0
-    f = ray.f
-    if start:
-        # the ray's start: no point of the path to work out
-        l_s, vl_s, wn = ray.start
-        r_s = float(W.r(np.array(l_s)))
-        w_s = float(W.w(np.array(l_s)))
-        als = abs(l_s)
-        ths = W.th0 + max(min(als, W.L) - W.Lc, 0.0) / W.R
-        sg_ = 1.0 if l_s > 0 else -1.0
-        dr, dw = (0.0, 1.0) if als <= W.Lc else (sg_ * np.sin(ths), np.cos(ths))
-        Q = np.array([r_s, 0.0, w_s])
-        T = np.array([vl_s * dr, wn, vl_s * dw])
-        A = accel(ray, p, Q, 0.0)
-        psi = 0.0
-        if p == 1:
-            speed = np.hypot(W.rho0 * ray.PB[0], ray.DB)
-        else:
-            poly = np.polyval(f['e'][::-1], ray.ts) * (ray.zs if f['reg'] == 2 else 1.0)
-            speed = r_s * r_s / ray.b * abs(poly * ((f['zlo'] if p == 0 else f['zhi']) - ray.zs))
-    have = start
-    kf = 1.0 / min(W.R, W.rho0)
     for it in range(ITER):
-        if not have:
-            Q, dQ, psi, dpsi = ray.point(p, sg)
-            st['ev'] = st.get('ev', 0) + 1
-            speed = max(np.sqrt(dQ @ dQ), 1e-30)
-            T = dQ / speed
-            A = accel(ray, p, Q, psi)
-        have = False
+        if 2 * (p - 1) + sg > hitK:
+            return None
+        Q, dQ, psi, dpsi = ray.point(p, sg)
+        st['ev'] = st.get('ev', 0) + 1
         st['it_max'] = max(st.get('it_max', 0), it + 1)
         if psi > psiEnd:
             return None
-        kp = ray.kmax(p)
-        j3 = jmax(W, p, ray.b)
-        step = 1e9
-        keep = []
-        for j in live:
-            isCube, C, size, reach, cb, perp2, re2, rho2 = _geom(ray, toys[j])
-            D = Q - cb
-            D2 = D @ D + perp2
-            cr = cb[0] * Q[1] - cb[1] * Q[0]
-            if re2 < rho2 and cr > 0 and cr * np.sqrt(rho2 - re2) > (cb[:2] @ Q[:2]) * np.sqrt(re2):
-                continue                          # past its shadow
-            if not isCube:
-                F = D2 - reach * reach
-                Fs = 2 * D @ T
-                if F <= 0:
-                    if start:
-                        continue                  # the eye in it: not seen from inside
-                    nx = sg - F / (Fs * speed) if Fs < 0 else sg
-                    return 2 * (p - 1) + (nx if sgo < 0 else max(nx, sgo)), j
-                Dn = np.sqrt(D2)
-                if Dn * kp < 0.9:
-                    if Fs >= 0:
-                        continue                  # past the closest approach
-                    S = min(0.9 / kp - Dn, -3.0 * F / Fs)
-                    m = 2.0 * (1.0 + D @ A) - 2.0 * (Dn + S) * (j3 * S / 3.0 + 0.02 * kp)
-                    disc = Fs * Fs - 2.0 * m * F
-                    r1 = 2.0 * F / (-Fs + np.sqrt(max(disc, 0.0)))
-                    root = disc >= 0 and r1 <= S
-                    ds = r1 if root else S
-                    if root and r1 < 1e-4:
-                        return 2 * (p - 1) + sg + r1 / speed, j
-                else:
-                    ds = 0.8 * (Dn - reach)
-                    st['far'] = st.get('far', 0) + 1
+        D = Q - cb
+        D2 = D @ D + perp2
+        speed = max(np.sqrt(dQ @ dQ), 1e-30)
+        k = ray.kmax(p)
+        if not isCube:
+            F = D2 - reach * reach
+            dF = 2 * D @ dQ
+            if F <= 0:
+                if start:
+                    return None
+                nx = max(sg - F / dF, sgo) if dF < 0 else sgo
+                if sgo < 0 or (sg - nx) * speed < 1e-4:
+                    return 2 * (p - 1) + (sg if sgo < 0 else nx)
+                sg = nx if nx > sgo else 0.5 * (sgo + sg)
+                st['back'] = st.get('back', 0) + 1
+                continue
+            if psi > hi:
+                return None
+            Dn = np.sqrt(D2)
+            if Dn * k < 0.9:
+                if dF >= 0:
+                    return None
+                # in path length s: F_s = 2 D.T, F_ss = 2 (1 + D.P'') >= 2 (1 - k |D|), |D| <= Dn + s, so
+                # F >= L(s) = F + F_s s + m s^2 / 2 for s <= S (m from Dn + S): F has no root before L's
+                # first; S three times the tangent's step (Newton's)
+                Fs = dF / speed
+                S = min(0.9 / k - Dn, -3.0 * F / Fs)
+                m = max(2.0 * (1.0 - k * (Dn + S)), 0.0)
+                disc = Fs * Fs - 2.0 * m * F
+                root = disc >= 0 and 2.0 * F / (-Fs + np.sqrt(max(disc, 0.0))) <= S
+                ds = 2.0 * F / (-Fs + np.sqrt(disc)) if root else S
+                if root and ds < 1e-4:
+                    return 2 * (p - 1) + sg + ds / speed
+                nsg = sg + ds / speed
             else:
-                ax = np.asarray(toys[j][2], float)
-                P4 = np.r_[Q[0] * ray.e1 + Q[1] * ray.e2, Q[2]]
-                dP4 = np.r_[T[0] * ray.e1 + T[1] * ray.e2, T[2]]
-                h = ax @ (P4 - C)
-                g = ax @ dP4
-                e = np.abs(h) - size
-                if np.all(e <= 0):
-                    if start:
-                        continue
-                    return 2 * (p - 1) + sg, j
-                if D2 > reach * reach and D @ T > 0:
-                    continue
-                v = -np.sign(h) * g
-                ds = max(2 * ek / (vk + np.sqrt(vk * vk + 2 * kp * ek)) for ek, vk in zip(e, v) if ek > 0)
-                if ds < 1e-6:
-                    return 2 * (p - 1) + sg, j
-            keep.append(j)
-            step = min(step, ds)
-        live = keep
-        if not live:
-            return None
+                nsg = sg + 0.8 * (Dn - reach) / speed
+                st['far'] = st.get('far', 0) + 1
+        else:
+            ax = np.asarray(toy[2], float)
+            P4 = np.r_[Q[0] * e1 + Q[1] * e2, Q[2]]
+            dP4 = np.r_[dQ[0] * e1 + dQ[1] * e2, dQ[2]]
+            h = ax @ (P4 - C)
+            g = (ax @ dP4) / speed
+            e = np.abs(h) - size
+            if np.all(e <= 0):
+                return None if start else 2 * (p - 1) + sg
+            if psi > hi or (D2 > reach * reach and D @ dQ > 0):
+                return None
+            v = -np.sign(h) * g
+            Ds = max(2 * ek / (vk + np.sqrt(vk * vk + 2 * k * ek)) for ek, vk in zip(e, v) if ek > 0)
+            if Ds < 1e-6:
+                return 2 * (p - 1) + sg
+            nsg = sg + Ds / speed
         start = False
         sgo = sg
-        nsg = sg + step / speed
         if nsg >= 1.0:
             if p == 2:
                 return None
@@ -288,13 +223,15 @@ def key_point(ray, key):
 def first_hit(W, ray_state, toys, stats=None):
     """index of the toy the ray meets first in the shell, and its hit (R^4), or (-1, None)"""
     ray = Ray(W, *ray_state)
+    hitK, hj = 4.0, -1
     ev0 = stats.get('ev', 0) if stats is not None else 0
-    r = march(ray, toys, ray.psiEnd, stats)
+    for j, toy in enumerate(toys):
+        k = search(ray, toy, ray.psiEnd, hitK, stats)
+        if k is not None and k < hitK:
+            hitK, hj = k, j
     if stats is not None:
         stats.setdefault('per_ray', []).append(stats.get('ev', 0) - ev0)
-    if r is None:
-        return -1, None, ray
-    return r[1], key_point(ray, r[0]), ray
+    return hj, (key_point(ray, hitK) if hj >= 0 else None), ray
 
 
 # ---------------------------------------------------------------- test scenes

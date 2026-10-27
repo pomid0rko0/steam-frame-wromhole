@@ -404,7 +404,6 @@ struct WhRay {
     vec3 e1; vec3 e2;
     float b;
     float zs;              // z of the start point, on its fillet
-    float ts;              // and its tau
     float d;               // a passing ray's direction of travel in l
     float x0B; float DB;   // the cylinder, oriented l: from x0B, DB long
     float kc; float ivlc;  // the cylinder: dpsi / dl, dlength / dl
@@ -442,11 +441,10 @@ WhRay wh_ray(float ls, vec3 ns, float vl, vec3 w, vec2 eye, out WhFil f) {
     float ts = turn ? rs * vl * vl / (1.0 + wn)     // r_s - b
                     : eye.y;                        // r_s - rmin
     Y.zs = f.zhi;
-    Y.ts = fromEdge ? 1.0 : clamp(ts / f.span, 0.0, 1.0);
     vec2 Ss = vec2(f.psi, f.arc);           // inner end -> start
     if (!fromEdge) {
         vec4 ms;
-        Y.zs = wh_filMomT(f, Y.ts, ms);
+        Y.zs = wh_filMomT(f, clamp(ts / f.span, 0.0, 1.0), ms);
         Ss = vec2(dot(f.e, ms), wh_filLen(f, ms));
     }
 

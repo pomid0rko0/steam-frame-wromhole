@@ -206,14 +206,15 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   |C| sin of the angle between the eye's radial axis and the head's), and a pixel tests exactly only
   the toys of its two bins (testing all 18 in every pixel was ~490 instructions where nothing is). A ball
   held at the edge was searched by 62% of the rays and met by 18%; with its cone 19% search it.
-  The rest are found by one march along the path for all of them (`wht_march`): at each point each
-  toy gives the longest step that cannot pass its entry (a ball: the first root of a lower bound of
-  F = |P - C|^2 - r^2 from its exact F' and F'' = 2 (1 + D.A), A the path's acceleration in R^4,
-  `wht_accel`, and a bound j3 on A's change; a cube: certified slab steps) and the march takes the
-  shortest; the ray's start needs no `wht_point`; then the flat toys of the universe it leaves into.
-  No stencil, no region sorting, no bounding spheres, no chords. `ref/toys.py` mirrors it and checks
-  it against RK4 (no mismatch in 6 scenes, errors below 0.2 mm; near the eye 2.8 points of the path
-  per ray where one search per toy took 5.5). Registers: the shell pass is 32 (6 waves; it was 24 at
+  The rest are searched by Newton steps on the curved path for a ball (its distance is convex
+  within 1/k of the path's curvature) and certified slab steps for a cube (`wht_search`,
+  `wht_point`: the path's point and its derivative, exact), then the flat toys of the universe it
+  leaves into. No stencil, no region sorting, no bounding spheres, no chords. `ref/toys.py` checks
+  the search against RK4 (no mismatch, errors below 0.2 mm, 2-6 points of the path per toy
+  searched). Tried and dropped: one march for all of a ray's toys with the exact F'' (the path's
+  acceleration in R^4) and a free first point: half the points (2.8 per ray near the eye where 5.5),
+  0 mismatches against RK4, but every point tests every toy of the ray, and by the model the frame
+  with a ball held is 2% dearer (the shell pass 8-20% inside the shell). Registers: the shell pass is 32 (6 waves; it was 24 at
   the edge: ~100 live values, ~70 of them the ray's description `WhRay`/`WhFil` held through the
   search, and a change of the constants' layout tipped it). An experiment, a shell pass that takes
   the path from a per-eye table (rows: the ray's angle to the radial axis; columns: path length),
