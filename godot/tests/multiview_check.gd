@@ -11,10 +11,10 @@ extends SceneTree
 ## 30 degrees right (key E), and after a switch to smooth turns (Tab) turns 15 degrees left
 ## while walking forward (Q, W): the overlay must follow the world. Run with --fixed-fps 60,
 ## so every mode walks and turns the same.
-## plain: without the ray-traced balls, i.e. with the shader the normal scene uses (no balls'
-## code); only the floor lines can be compared then. gravity, arrows: the gravity view
-## (main.set_gravity_view 1, 2: the floor coloured by gravity, also the field's arrows), its own ray
-## tracers with the balls and the cube (with plain, without them).
+## plain: without the ray-traced balls and cube, the world's ray tracer alone (the toys' passes not
+## drawn); only the floor lines can be compared then. gravity, arrows: the gravity view
+## (main.set_gravity_view 1, 2: the floor coloured by gravity, also the field's arrows), with the
+## balls and the cube (with plain, without them).
 ## fov: foveated rendering on (main.set_foveation: the runtime's strongest in even cases, our own
 ## map in odd ones): the 3D scene in a render pass of its own, the viewport asking for a density map. Software Vulkan has none, so what this tests
 ## is that the split pass draws everything where it was.

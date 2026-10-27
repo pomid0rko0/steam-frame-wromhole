@@ -5,8 +5,11 @@ extends SceneTree
 ## balls; check_nooverlay: without Godot's green overlay; plain_balls: normal scene + the balls;
 ## near: 6.5 m from the centre, the wormhole filling most of the view (the costly rays);
 ## away: the same spot looking away from it. A suffix _scale80 or _scale70 renders at 80% / 70%
-## 3D render scale (plain_scale80, near_scale70, ...). A second argument, a shader's path (such
-## as res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), replaces the ray tracer.
+## 3D render scale (plain_scale80, near_scale70, ...); toys: the demo's balls and cubes at rest
+## (main.settle_demo), the toys' passes drawn over them. A second argument, a shader's path (such
+## as res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), replaces the world's ray
+## tracer, or, named toys_flat* or toys_shell*, that toys' pass's shader (tools/adreno_stats.sh
+## compiles it so as it is drawn: the flat pass over its MultiMesh).
 
 var main: Node3D
 var frames := 0
@@ -22,7 +25,8 @@ func _initialize() -> void:
 	if OS.get_cmdline_user_args().size() > 1:
 		shader_path = OS.get_cmdline_user_args()[1]
 	main = load("res://main.tscn").instantiate()
-	main.physics = false            # the scenes set their own balls
+	main.physics = variant == "toys"    # the other scenes set their own balls
+	main.throw_toys = false
 	main.xr_name = "none"
 	main.show_check = variant.begins_with("check")
 	root.add_child(main)
@@ -31,9 +35,18 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
-		main.material.shader = load(shader_path)     # before anything is drawn: only it is compiled
+		# before anything is drawn
+		var m: ShaderMaterial = main.material
+		if shader_path.get_file().begins_with("toys_flat"):
+			m = main.toys_flat_mat
+		elif shader_path.get_file().begins_with("toys_shell"):
+			m = main.toys_shell_mat
+		m.shader = load(shader_path)
 	if frames == 2:
 		main.perf.visible = false        # the scene alone
+		if variant == "toys":
+			main.settle_demo()
+			main.hold = true
 		for sc in [80, 70]:
 			if variant.ends_with("_scale%d" % sc):
 				root.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR

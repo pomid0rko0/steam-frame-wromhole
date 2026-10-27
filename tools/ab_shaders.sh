@@ -1,12 +1,12 @@
 #!/bin/bash
-# Other ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of each
-# source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the one
-# with movable balls where the source has it (the speed check times that one while the demo's
-# toys are on: the normal scene). In the
-# headset the panel's "замер" button then times this build's ray tracer and these at the same
-# places, one after the other; the panel compares this build's with the first.
+# Other ray tracers for the speed check (godot/bench.gd): copies the world's ray tracer of each
+# source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up. In the
+# headset the menu's speed check then times this build's ray tracer and these at the same places,
+# one after the other (the others alone, without the toys' passes); it compares this build's with
+# the first.
 #   tools/ab_shaders.sh <source>...   a source: a commit, or a directory holding wormhole.gdshader,
 #                                     wormhole_view.gdshaderinc, wormhole_core.gdshaderinc
+#                                     and wormhole_uniforms.gdshaderinc where its view includes it
 #                                     (optionally a file "label" naming it), or one of the cost
 #                                     checks made from this tree's ray tracer:
 #                                       empty    one colour: what Godot costs without ray tracing
@@ -34,7 +34,7 @@ for src in "$@"; do
 	if [[ "$src" =~ ^(empty|flat|noshade|noderiv|nogrid|nosky)$ ]]; then
 		tmp=$(mktemp -d)
 		cp "$ROOT"/godot/shaders/wormhole.gdshader "$ROOT"/godot/shaders/wormhole_view.gdshaderinc \
-			"$ROOT"/godot/shaders/wormhole_core.gdshaderinc "$tmp/"
+			"$ROOT"/godot/shaders/wormhole_core.gdshaderinc "$ROOT"/godot/shaders/wormhole_uniforms.gdshaderinc "$tmp/"
 		python3 - "$tmp" "$src" <<'PY' || { rm -rf "$DIR" "$tmp"; exit 1; }
 import sys
 d, kind = sys.argv[1], sys.argv[2]
@@ -106,19 +106,16 @@ PY
 		label=$(git -C "$ROOT" log -1 --format='%h, %cs' "$src")
 	fi
 	get wormhole_core.gdshaderinc > "$out/wormhole_core.gdshaderinc"
-	get wormhole_view.gdshaderinc | sed "s#res://shaders/wormhole_core.gdshaderinc#res://shaders/ab/$n/wormhole_core.gdshaderinc#" \
+	# the world's uniforms in a file of their own, where the source has it
+	get wormhole_uniforms.gdshaderinc > "$out/wormhole_uniforms.gdshaderinc" 2>/dev/null || rm -f "$out/wormhole_uniforms.gdshaderinc"
+	get wormhole_view.gdshaderinc | sed -e "s#res://shaders/wormhole_core.gdshaderinc#res://shaders/ab/$n/wormhole_core.gdshaderinc#" \
+		-e "s#res://shaders/wormhole_uniforms.gdshaderinc#res://shaders/ab/$n/wormhole_uniforms.gdshaderinc#" \
 		> "$out/wormhole_view.gdshaderinc"
 	# the first line names it: the log shows it
 	{ echo "// $label"; get wormhole.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
 		> "$out/wormhole.gdshader"
 	grep -q "res://shaders/ab/$n/" "$out/wormhole.gdshader" && grep -q "res://shaders/ab/$n/" "$out/wormhole_view.gdshaderinc" \
 		|| { echo "unexpected include paths in $src"; rm -rf "$DIR"; exit 1; }
-	# the one with movable balls too, where the source has it: the speed check times it when the
-	# scene has them (the demo's toys)
-	if get wormhole_balls.gdshader >/dev/null 2>&1; then
-		{ echo "// $label"; get wormhole_balls.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
-			> "$out/wormhole_balls.gdshader"
-	fi
 	echo "godot/shaders/ab/$n: $label"
 	[ -n "${tmp:-}" ] && rm -rf "$tmp" && tmp=""
 done

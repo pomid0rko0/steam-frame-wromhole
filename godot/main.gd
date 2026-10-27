@@ -41,19 +41,18 @@ const CHECK_CUBE_YAW := 0.5
 const CHECK_CUBE_COLOR := Color(0.85, 0.1, 0.9)
 # present in a build: the stereo check is on (a build for the one-eye check; not in git)
 const CHECK_FLAG := "res://check"
-# the ray tracer without movable balls, and with them (set_balls)
+# the world's ray tracer, by gravity view (set_gravity_view)
 const SHADER_PLAIN := preload("res://shaders/wormhole.gdshader")
-const SHADER_BALLS := preload("res://shaders/wormhole_balls.gdshader")
 const SHADER_GRAVITY := preload("res://shaders/wormhole_gravity.gdshader")    # set_gravity_view 1
 const SHADER_ARROWS := preload("res://shaders/wormhole_arrows.gdshader")      # set_gravity_view 2
-const SHADER_BALLS_GRAVITY := preload("res://shaders/wormhole_balls_gravity.gdshader")   # with balls
-const SHADER_BALLS_ARROWS := preload("res://shaders/wormhole_balls_arrows.gdshader")
-# the pixels whose rays may meet a toy (_update_proxies), and all of them
-const SHADER_MARK := preload("res://shaders/stencil_mark.gdshader")
-const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
-# m around each sphere: more than the near plane (camera.near). A ray that meets a toy inside its
-# sphere leaves the sphere at least this far beyond the hit, so it is marked even where the near
-# plane clips the sphere's near side.
+# the toys' passes (wormhole_toys.gdshaderinc), without and with the arrows over them
+const SHADER_TOYS_FLAT := preload("res://shaders/toys_flat.gdshader")
+const SHADER_TOYS_FLAT_ARROWS := preload("res://shaders/toys_flat_arrows.gdshader")
+const SHADER_TOYS_SHELL := preload("res://shaders/toys_shell.gdshader")
+const SHADER_TOYS_SHELL_ARROWS := preload("res://shaders/toys_shell_arrows.gdshader")
+# m around a toy's proxy sphere: more than the near plane (camera.near). A ray that meets a toy
+# leaves its sphere at least this far beyond the hit, so the sphere's back face, which the pass is
+# drawn on, is not clipped away before it.
 const PROXY_MARGIN := 0.08
 const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (by 0.4%): grown by this
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
@@ -80,7 +79,6 @@ var physics := true             # simulate and draw the balls and cubes; the ste
 var throw_toys := true          # the throw and the drop after the start and each reset
 var launch_in := -1.0           # seconds until the throw; < 0: none pending
 var drop_in := -1.0             # seconds until the two balls are dropped; < 0: none pending
-var toys_drawn := -1            # balls and cubes the shader was last given (_upload_toys)
 var pixel_angle := 0.0          # wh_pix as last set (_pixel_angle)
 var xr: XRInterface
 var xr_name := "OpenXR"        # tests use "Native mobile": Godot's own stereo renderer, same multiview path
@@ -89,20 +87,17 @@ var in_xr := false
 var xr_view: SubViewport       # XR renders here, so the desktop window gets no mirror image
 var origin: XROrigin3D
 var camera: XRCamera3D
-var material: ShaderMaterial    # the ray tracer: with the toys where there are any, else the plain one
-# With toys, the plain ray tracer draws where no ray can meet one (a quad of its own, its stencil
-# test the other way): the one with toys holds more registers and costs more even where it finds
-# nothing (README, «Мячи и кубы»).
-var plain_material: ShaderMaterial
-var plain_quad: MeshInstance3D
-var proxies: MultiMeshInstance3D    # spheres around the shell and this universe's toys (play space)
-var mark_all: MeshInstance3D        # the whole view instead
-# how the toys' ray tracer is given its pixels: TOYS_SPLIT by the stencil (the plain one elsewhere),
-# TOYS_WHOLE the whole view marked, TOYS_BARE no stencil at all (for a ray tracer without the
-# stencil test: other sources' in the speed check)
-enum {TOYS_BARE, TOYS_WHOLE, TOYS_SPLIT}
-var toy_mode := TOYS_SPLIT
-var toy_spheres := [PackedVector4Array(), PackedVector4Array()]   # per universe A, B: the toys' chart spheres
+var material: ShaderMaterial    # the world's ray tracer
+# The toys (README, «Мячи и кубы»): passes of their own, drawn before the world's ray tracer, each
+# writing the depth of its hits (the GPU then skips the world's ray tracer under them):
+var toys_flat: MultiMeshInstance3D  # the head's flat universe's toys seen straight, over a sphere round each (play space)
+var toys_shell: MeshInstance3D      # what rays meet in and beyond the shell: over a sphere round it, or the whole view
+var toys_flat_mat: ShaderMaterial
+var toys_shell_mat: ShaderMaterial
+var toy_mask := Vector4i.ZERO       # wh_tMask: the toys' bits by universe A, B and the shell (set_objects)
+var toy_chart: Array = []           # per toy bit (or null): [universe, the chart sphere it is in] (set_objects)
+var shell_sphere: SphereMesh
+var full_view: QuadMesh
 
 # feet on the floor + transported play-space axes [x, y(up), z(back)]
 var foot_l: float
@@ -143,8 +138,12 @@ var own_maps := {}              # OWN_MAPS made into textures, by level * 2 + ow
 var own_order := 0              # our maps' steps: 0 the width first (2x1, 4x2), 1 the height (1x2, 2x4)
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
 var gaze_dot: MeshInstance3D    # drawn where they look, while the panel says so
-var balls := 0                  # movable balls and cubes in the ray tracer (set_balls, _upload_toys)
+var balls := 0                  # movable balls and cubes drawn (set_objects)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
+# the speed check's (bench.gd) and the cost model's (tests/emu_dump.gd) hands, at fixed places in
+# front of the chest: 0 none, 1 both hands' balls, 2 and a ball held in the right one (_bench_balls)
+var bench_hands := 0
+var toys_shown := true          # false: the toys' passes are not drawn (the speed check: the world alone)
 
 
 func _ready() -> void:
@@ -217,7 +216,12 @@ func _ready() -> void:
 
 	material = ShaderMaterial.new()
 	material.shader = SHADER_PLAIN
-	plain_material = ShaderMaterial.new()       # its shader only with toys (_pick_shader)
+	toys_flat_mat = ShaderMaterial.new()
+	toys_flat_mat.shader = SHADER_TOYS_FLAT
+	toys_flat_mat.render_priority = -2
+	toys_shell_mat = ShaderMaterial.new()
+	toys_shell_mat.shader = SHADER_TOYS_SHELL
+	toys_shell_mat.render_priority = -1
 	_param("wh_rho0", space.rho0)
 	_param("wh_h", space.h)
 	_param("wh_fillet", space.fillet)
@@ -232,7 +236,7 @@ func _ready() -> void:
 	quad.extra_cull_margin = 16384.0
 	quad.position = Vector3(0.0, 0.0, -1.0)
 	camera.add_child(quad)
-	_add_proxies()
+	_add_toy_draws()
 
 	if not in_xr:
 		camera.position = Vector3(0.0, DESKTOP_HEAD_HEIGHT, 0.0)
@@ -400,8 +404,8 @@ func _process(delta: float) -> void:
 	_toys(delta)
 	_update_hands(hp, head)
 	if physics:
-		_upload_toys()
-	_update_proxies(hp[0], hp[1], hf, head.origin)
+		_upload_toys(hp)
+	_update_toy_draws(hp[0], hp[1], hf, head.origin)
 
 
 func _on_recentered() -> void:
@@ -644,6 +648,18 @@ func _throw() -> void:
 	print("toys: thrown")
 
 
+## The demo as it comes to rest: everything back in place, the throw and the drop at once, and 12 s of
+## motion, all at once (the speed check and the cost model time the frame with the toys there).
+func settle_demo() -> void:
+	_spawn_toys()
+	launch_in = -1.0
+	drop_in = -1.0
+	_throw()
+	_drop()
+	for k in 12 * 60:
+		world.step(1.0 / 60.0, [])
+
+
 ## Two white balls let go at the same moment from the same height: one beside the wormhole,
 ## where gravity is ordinary, and one in the middle of the throat, where it is about a fifth of
 ## that. The second is straight ahead in the throat (azimuth 0): from the start it is seen in the
@@ -680,9 +696,9 @@ func _cube_in_throat(l: float, phi: float, half: float, color: Color) -> Diction
 
 
 ## The balls and cubes for the shader: a ball's centre as a point of R^4 and its radius (chord
-## distance in R^4), then the hands' balls; a cube's 4D box (centre, four axes over the half
-## size) and colour.
-func _upload_toys() -> void:
+## distance in R^4), then the hands' balls (and the speed check's, from the head's point and frame
+## hp); a cube's 4D box (centre, four axes over the half size) and colour.
+func _upload_toys(hp := []) -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
 	for b in world.balls:
@@ -694,6 +710,10 @@ func _upload_toys() -> void:
 			pos.append(space.embed(st["l"], st["n"]))
 			var c: Color = HAND_COLOR_READY if st["ready"] else HAND_COLOR
 			col.append(Vector4(c.r, c.g, c.b, HAND_RADIUS))
+	if bench_hands > 0 and not hp.is_empty():
+		for b in _bench_balls(hp):
+			pos.append(b[0])
+			col.append(b[1])
 	var cpos := PackedVector4Array()
 	var axes := PackedVector4Array()
 	var ccol := PackedVector4Array()
@@ -706,6 +726,23 @@ func _upload_toys() -> void:
 		var cc: Color = c["color"]
 		ccol.append(Vector4(cc.r, cc.g, cc.b, half))
 	set_objects(pos, col, cpos, axes, ccol)
+
+
+## The speed check's hands (bench_hands): both hands' balls 22 cm to either side of the chest, 35 cm
+## below the head and 30 cm ahead, and with bench_hands 2 a ball of 25 cm held 30 cm ahead of the
+## right one, placed from the head (hp: its point and frame) as _update_hands places the hands:
+## what a frame costs with a ball held in front, wherever the head is.
+func _bench_balls(hp: Array) -> Array:
+	var out := []
+	for k in 2:
+		var off := Vector3(0.22 if k == 1 else -0.22, -0.35, -0.3)
+		var dir := WormholeSpace.combine(hp[2], off)
+		var at: Array = space.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
+		out.append([space.embed(at[0], at[1]), Vector4(HAND_COLOR.r, HAND_COLOR.g, HAND_COLOR.b, HAND_RADIUS)])
+		if k == 1 and bench_hands == 2:
+			var g: Array = space.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
+			out.append([space.embed(g[0], g[1]), Vector4(0.95, 0.95, 0.97, 0.25)])
+	return out
 
 
 # ---------------------------------------------------------------- the hands
@@ -1211,11 +1248,7 @@ func set_own_order(order: int) -> void:
 		set_foveation(foveation)
 
 
-## Movable balls in the ray tracer: centres as points of R^4 (xyz, w), colours as (rgb, radius),
-## at most 12. Without balls the ray tracer is a separate shader that leaves their code out: it
-## needs registers even where no ray runs it, and the GPU then runs fewer pixels at once. The
-## shader is chosen here, so set the balls at the start: changing it later costs a hitch while the
-## GPU compiles the other one.
+## Movable balls: centres as points of R^4 (xyz, w), colours as (rgb, radius), at most 12.
 func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
 	set_objects(pos, col, PackedVector4Array(), PackedVector4Array(), PackedVector4Array())
 
@@ -1223,232 +1256,175 @@ func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
 ## Movable balls (as set_balls) and cubes, at most 6: a cube's 4D box of R^4, cut by the space as
 ## a box of a 4D SDF scene: centre as a point of R^4 (cpos), four orthonormal axes divided by the
 ## half size (axes: three body axes tangent to the space, then its normal; four per cube),
-## (rgb, half size) (ccol). The shader with balls draws both; it gets each cube's axes and then
-## dot(centre, axis) for the four, five vectors per cube (wormhole_core.gdshaderinc).
-## The shader gets them sorted by where they are (region_order): the flat universes' rays and the
-## shell's look only at their own.
+## (rgb, half size) (ccol). The toys' passes get each cube's axes and then dot(centre, axis) for
+## the four, five vectors per cube (wormhole_toys.gdshaderinc), and the toys by where they can be
+## met (wh_tMask: ball i is bit i, cube i bit 16 + i): those a flat universe's sheet cuts and those
+## within reach of the shell.
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedVector4Array,
 		axes: PackedVector4Array, ccol: PackedVector4Array) -> void:
 	var n := pos.size()
 	var nc := cpos.size()
-	var rb := PackedFloat64Array()
+	var fb := PackedVector4Array()     # the sphere a flat sheet cuts from a ball, in that chart
+	var mask := Vector4i.ZERO
+	toy_chart = []
+	toy_chart.resize(32)
 	for i in n:
-		rb.append(col[i].w)
-	var rc := PackedFloat64Array()
-	for i in nc:
-		rc.append(2.0 * ccol[i].w)       # a cube's reach: its half diagonal
-	var ob := region_order(pos, rb, space.h, space.Rout)
-	var oc := region_order(cpos, rc, space.h, space.Rout)
-	var p := PackedVector4Array()
-	var c := PackedVector4Array()
-	var fb := PackedVector4Array()     # the sphere a flat sheet cuts from it, in that chart
-	for i in ob[0]:
-		p.append(pos[i])
-		c.append(col[i])
 		var C := pos[i]
+		var rad := col[i].w
 		var side := 1.0 if C.w > 0.0 else -1.0
 		var dw := C.w - side * space.h
-		var r2 := col[i].w * col[i].w - dw * dw
+		var r2 := rad * rad - dw * dw
 		fb.append(Vector4(side * C.x, C.y, C.z, r2) if r2 > 0.0 else Vector4(0.0, 0.0, 0.0, -1.0))
-	var cp := PackedVector4Array()
-	var cc := PackedVector4Array()
+		if r2 > 0.0:
+			if side > 0.0:
+				mask.x |= 1 << i
+			else:
+				mask.y |= 1 << i
+			toy_chart[i] = [side, Vector4(side * C.x, C.y, C.z, sqrt(r2))]
+		if Vector3(C.x, C.y, C.z).length() - rad < space.Rout:
+			mask.z |= 1 << i
 	var ax := PackedVector4Array()
-	for i in oc[0]:
-		cp.append(cpos[i])
-		cc.append(ccol[i])
+	for i in nc:
+		var C := cpos[i]
+		var reach := 2.0 * ccol[i].w    # its half diagonal
 		var o := Vector4.ZERO
 		for k in 4:
 			ax.append(axes[4 * i + k])
-			o[k] = cpos[i].dot(axes[4 * i + k])
+			o[k] = C.dot(axes[4 * i + k])
 		ax.append(o)
+		var side := 1.0 if C.w > 0.0 else -1.0
+		if absf(C.w - side * space.h) < reach:
+			if side > 0.0:
+				mask.x |= 1 << (16 + i)
+			else:
+				mask.y |= 1 << (16 + i)
+			toy_chart[16 + i] = [side, Vector4(side * C.x, C.y, C.z, reach)]
+		if Vector3(C.x, C.y, C.z).length() - reach < space.Rout:
+			mask.z |= 1 << (16 + i)
+	var p := pos.duplicate()
+	var c := col.duplicate()
 	while p.size() < 12:
 		p.append(Vector4.ZERO)
 		c.append(Vector4.ZERO)
 		fb.append(Vector4(0.0, 0.0, 0.0, -1.0))
+	var cp := cpos.duplicate()
+	var cc := ccol.duplicate()
 	while cp.size() < 6:
 		cp.append(Vector4.ZERO)
 		cc.append(Vector4.ZERO)
 	while ax.size() < 30:
 		ax.append(Vector4.ZERO)
 	balls = n + nc
-	if (balls > 0) != (toys_drawn > 0):
-		_pick_shader()                 # only when it changes: a new shader is a hitch
-	toys_drawn = balls
-	material.set_shader_parameter("wh_ball", p)
-	material.set_shader_parameter("wh_ballCol", c)
-	material.set_shader_parameter("wh_nBall", n)
-	material.set_shader_parameter("wh_bIdx", ob[1])
-	material.set_shader_parameter("wh_fball", fb)
-	material.set_shader_parameter("wh_cube", cp)
-	material.set_shader_parameter("wh_cubeE", ax)
-	material.set_shader_parameter("wh_cubeCol", cc)
-	material.set_shader_parameter("wh_nCube", nc)
-	material.set_shader_parameter("wh_cIdx", oc[1])
-	# each universe's toys as spheres in its chart (the stencil's proxies, _update_proxies)
-	toy_spheres = [PackedVector4Array(), PackedVector4Array()]
-	for k in 2:
-		var lo: int = 0 if k == 0 else ob[1].z
-		var hi: int = ob[1].y if k == 0 else n
-		for i in range(lo, hi):
-			if fb[i].w > 0.0:
-				toy_spheres[k].append(Vector4(fb[i].x, fb[i].y, fb[i].z, sqrt(fb[i].w)))
-		lo = 0 if k == 0 else oc[1].z
-		hi = oc[1].y if k == 0 else nc
-		for i in range(lo, hi):
-			var C: Vector4 = cp[i]
-			toy_spheres[k].append(Vector4(C.x if k == 0 else -C.x, C.y, C.z, 2.0 * cc[i].w))
-	# the bounding spheres per flat universe: balls a sheet w = side h cuts, cubes the same (half
-	# diagonal 2 half)
-	var bounds := PackedVector4Array()
-	for group in 2:
-		for side in [1.0, -1.0]:
-			var lo := Vector3(INF, INF, INF)
-			var hi := -lo
-			var pts := []
-			var count := n if group == 0 else nc
-			for i in count:
-				var C: Vector4 = pos[i] if group == 0 else cpos[i]
-				var rr: float = col[i].w if group == 0 else 2.0 * ccol[i].w
-				if absf(C.w - side * space.h) < rr:
-					var c3 := Vector3(C.x, C.y, C.z)
-					lo = lo.min(c3)
-					hi = hi.max(c3)
-					pts.append([c3, rr])
-			if pts.is_empty():
-				bounds.append(Vector4(0.0, 0.0, 0.0, -1.0))
-				continue
-			var mid := 0.5 * (lo + hi)
-			var rad := 0.0
-			for q in pts:
-				rad = maxf(rad, mid.distance_to(q[0]) + q[1])
-			bounds.append(Vector4(mid.x, mid.y, mid.z, rad))
-	# order: balls A, balls B, cubes A, cubes B
-	material.set_shader_parameter("wh_bound", bounds)
-
-
-## Where each object can be met: in universe A's flat sheet (its reach crosses w = h), in the
-## shell (it comes within reach of |xyz| < Rout) or in B's sheet (w = -h); none is in both sheets.
-## Returns [the order, Vector4i(x, y, z, w)]: sorted A only, A and the shell, the shell only, the
-## shell and B, B only, A's are 0 .. y, the shell's x .. w, B's z .. the end (wh_bIdx, wh_cIdx).
-## pos: centres as points of R^4, reach: each one's radius of reach (a ball's radius, a cube's
-## half diagonal).
-static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: float, rout: float) -> Array:
-	var groups := [[], [], [], [], []]
-	for i in pos.size():
-		var C := pos[i]
-		var r := reach[i]
-		var in_a := absf(C.w - h) < r
-		var in_b := absf(C.w + h) < r
-		var in_s := Vector3(C.x, C.y, C.z).length() - r < rout
-		var g := 2
-		if in_a:
-			g = 1 if in_s else 0
-		elif in_b:
-			g = 3 if in_s else 4
-		groups[g].append(i)
-	var order := []
-	var ends := []
-	for g in groups:
-		order.append_array(g)
-		ends.append(order.size())
-	return [order, Vector4i(ends[0], ends[1], ends[2], ends[3])]
+	toy_mask = mask
+	for m in [toys_flat_mat, toys_shell_mat]:
+		m.set_shader_parameter("wh_ball", p)
+		m.set_shader_parameter("wh_ballCol", c)
+		m.set_shader_parameter("wh_nBall", n)
+		m.set_shader_parameter("wh_fball", fb)
+		m.set_shader_parameter("wh_cube", cp)
+		m.set_shader_parameter("wh_cubeE", ax)
+		m.set_shader_parameter("wh_cubeCol", cc)
+		m.set_shader_parameter("wh_nCube", nc)
+		m.set_shader_parameter("wh_tMask", mask)
 
 
 ## How gravity is shown (README, «Гравитация через червоточину»): 0 not at all, 1 the floor
 ## coloured by its strength (optozorax's palette: dark is none, yellow 1 g), 2 also arrows of the
 ## field on the vertical surface through the wormhole that faces the start (x = 0 in both
-## universes, through the throat). Ray tracers of their own (wormhole_gravity.gdshader,
-## wormhole_arrows.gdshader, and with movable balls and cubes wormhole_balls_gravity.gdshader,
-## wormhole_balls_arrows.gdshader).
+## universes, through the throat). The world's ray tracers of their own (wormhole_gravity.gdshader,
+## wormhole_arrows.gdshader); with the arrows the toys' passes draw them over the toys too.
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	_param("wh_pix", _pixel_angle())
-	_pick_shader()
+	material.shader = [SHADER_PLAIN, SHADER_GRAVITY, SHADER_ARROWS][gravity_view]
+	toys_flat_mat.shader = SHADER_TOYS_FLAT_ARROWS if gravity_view == 2 else SHADER_TOYS_FLAT
+	toys_shell_mat.shader = SHADER_TOYS_SHELL_ARROWS if gravity_view == 2 else SHADER_TOYS_SHELL
 	if perf:
 		perf.refresh()
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
-## The ray tracer for what is on: the gravity view, movable balls, or neither. With balls, the
-## plain one of the same view draws where none can be seen.
-func _pick_shader() -> void:
-	var plain: Shader = [SHADER_PLAIN, SHADER_GRAVITY, SHADER_ARROWS][gravity_view]
-	if balls > 0:
-		material.shader = [SHADER_BALLS, SHADER_BALLS_GRAVITY, SHADER_BALLS_ARROWS][gravity_view]
-		plain_material.shader = plain
-		if plain_quad == null:
-			# made once there are toys: an unused ray tracer would be compiled all the same
-			plain_quad = MeshInstance3D.new()
-			var q := QuadMesh.new()
-			q.size = Vector2(2.0, 2.0)
-			plain_quad.mesh = q
-			plain_quad.material_override = plain_material
-			plain_quad.extra_cull_margin = 16384.0
-			plain_quad.position = Vector3(0.0, 0.0, -1.0)
-			camera.add_child(plain_quad)
-	else:
-		material.shader = plain
-
-
-## A uniform both ray tracers read.
+## A uniform of the world, which the world's ray tracer and the toys' passes read.
 func _param(name: StringName, value: Variant) -> void:
 	material.set_shader_parameter(name, value)
-	plain_material.set_shader_parameter(name, value)
+	toys_flat_mat.set_shader_parameter(name, value)
+	toys_shell_mat.set_shader_parameter(name, value)
 
 
-## The stencil's proxies (stencil_mark.gdshader): drawn before the ray tracers (render priority
-## -1), they mark the pixels whose rays may meet a movable ball or cube. A ray from an eye in a
-## flat universe goes straight until it enters the shell or ends: it meets one of that universe's
-## toys only through the toy's bounding sphere, and anything else only through the shell. So
-## spheres around the shell and around this universe's toys, PROXY_MARGIN larger (an eye just
-## inside one, where the near plane clips its near side, still has its far side), drawn from both
-## sides (an eye inside a sphere sees its inside). With the head in the curved region there is no
-## chart to place them in: the whole view is marked.
-func _add_proxies() -> void:
-	var mark := ShaderMaterial.new()
-	mark.shader = SHADER_MARK
-	mark.render_priority = -1
+## The toys' draws (wormhole_toys.gdshaderinc), drawn before the world's ray tracer (render priority
+## -2, -1 against 0), each pixel's fragment on a back face. A ray from an eye in a flat universe goes
+## straight until it enters the shell or ends: it meets one of that universe's toys there only
+## through the toy's bounding sphere, and anything else only through the shell. So the flat pass is
+## drawn over a sphere round each of the head's universe's toys, PROXY_MARGIN larger, and the
+## shell's pass over a sphere round the shell; with the head in the curved region, where no chart
+## maps it to the room, the shell's pass covers the whole view.
+func _add_toy_draws() -> void:
 	var sphere := SphereMesh.new()
 	sphere.radius = 1.0
 	sphere.height = 2.0
-	sphere.radial_segments = 48
-	sphere.rings = 24
+	sphere.radial_segments = 32
+	sphere.rings = 16
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_custom_data = true          # the toy's bit
 	mm.mesh = sphere
-	mm.instance_count = 1 + 12 + 6
+	mm.instance_count = 12 + 6
 	mm.visible_instance_count = 0
-	proxies = MultiMeshInstance3D.new()
-	proxies.multimesh = mm
-	proxies.material_override = mark
-	proxies.extra_cull_margin = 16384.0
-	proxies.visible = false
-	origin.add_child(proxies)
-	var all := ShaderMaterial.new()
-	all.shader = SHADER_MARK_ALL
-	all.render_priority = -1
-	mark_all = MeshInstance3D.new()
-	var q := QuadMesh.new()
-	q.size = Vector2(2.0, 2.0)
-	mark_all.mesh = q
-	mark_all.material_override = all
-	mark_all.extra_cull_margin = 16384.0
-	mark_all.position = Vector3(0.0, 0.0, -1.0)
-	mark_all.visible = false
-	camera.add_child(mark_all)
+	toys_flat = MultiMeshInstance3D.new()
+	toys_flat.multimesh = mm
+	toys_flat.material_override = toys_flat_mat
+	toys_flat.extra_cull_margin = 16384.0
+	toys_flat.visible = false
+	origin.add_child(toys_flat)
+	shell_sphere = SphereMesh.new()
+	shell_sphere.radius = 1.0
+	shell_sphere.height = 2.0
+	shell_sphere.radial_segments = 48
+	shell_sphere.rings = 24
+	full_view = QuadMesh.new()
+	full_view.size = Vector2(2.0, 2.0)
+	# put straight into clip space (POSITION = VERTEX.xy, toys_view.gdshaderinc), the quad is wound as a
+	# back face, as the faces of the proxy sphere it stands in for are (the pass culls front faces)
+	toys_shell = MeshInstance3D.new()
+	toys_shell.mesh = shell_sphere
+	toys_shell.material_override = toys_shell_mat
+	toys_shell.extra_cull_margin = 16384.0
+	toys_shell.visible = false
+	origin.add_child(toys_shell)
 
 
 ## Each frame: the proxies placed in the room from where the head is (as the ray tracer places
 ## the eyes: in a flat universe the play-space offset from the head along the head's frame), or
-## the whole view marked.
-func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
-	var split := balls > 0 and toy_mode == TOYS_SPLIT and absf(l) > space.L
-	proxies.visible = split
-	if plain_quad:
-		plain_quad.visible = split
-	mark_all.visible = balls > 0 and not split and toy_mode != TOYS_BARE
-	if not split:
+## the whole view.
+func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
+	var on := balls > 0 and toys_shown
+	toys_shell.visible = on
+	var flat := on and absf(l) > space.L
+	toys_flat.visible = flat
+	toys_shell.mesh = shell_sphere if flat or not on else full_view
+	toys_shell_mat.set_shader_parameter("wht_full", not flat)
+	if not flat:
 		return
+	var side := 1.0 if l > 0.0 else -1.0
+	var to_play := chart_to_play(l, n, hf, head_pos)
+	toys_flat_mat.set_shader_parameter("wht_toChart", Projection(to_play.affine_inverse()))
+	toys_flat_mat.set_shader_parameter("wht_side", side)
+	var s := shell_proxy()
+	toys_shell.transform = Transform3D(Basis.from_scale(Vector3.ONE * s.w), to_play * Vector3(s.x, s.y, s.z))
+	var mm := toys_flat.multimesh
+	var count := 0
+	for bit in toy_proxies(side):
+		var c: Vector4 = toy_chart[bit][1]
+		var r := (c.w + PROXY_MARGIN) * PROXY_SLACK
+		mm.set_instance_transform(count, Transform3D(Basis.from_scale(Vector3(r, r, r)), to_play * Vector3(c.x, c.y, c.z)))
+		mm.set_instance_custom_data(count, Color(float(bit), 0.0, 0.0, 0.0))
+		count += 1
+	mm.visible_instance_count = count
+
+
+## With the head in a flat universe (at l, n, its play axes hf, at head_pos in the room): its chart ->
+## play space, a rigid motion (a mirror in universe B, whose chart is mirrored).
+func chart_to_play(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> Transform3D:
 	var side := 1.0 if l > 0.0 else -1.0
 	var ch := space.chart_position(l, n)
 	# the chart directions of the play axes (the head's frame, as (U_l, u))
@@ -1461,32 +1437,22 @@ func _update_proxies(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void
 		v.append(d)
 	# chart -> play: head_pos + (d . v_k)_k for d = X - ch
 	var B := Basis(v[0], v[1], v[2]).transposed()
-	var to_play := Transform3D(B, head_pos - B * ch)
-	var mm := proxies.multimesh
-	var count := 0
-	for s in proxy_spheres(l):
-		mm.set_instance_transform(count, to_play * Transform3D(Basis.from_scale(Vector3(s.w, s.w, s.w)), Vector3(s.x, s.y, s.z)))
-		count += 1
-	mm.visible_instance_count = count
+	return Transform3D(B, head_pos - B * ch)
 
 
-## The proxies as spheres in the chart of the universe at l (centre, the mesh's radius: with the
-## margin and the slack): the
-## shell and that universe's toys; none where the whole view is marked (tools/adreno_cost.py
-## --split models the split with them).
-func proxy_spheres(l: float) -> PackedVector4Array:
-	var out := PackedVector4Array()
-	if balls == 0 or toy_mode != TOYS_SPLIT or absf(l) <= space.L:
-		return out
-	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + PROXY_MARGIN) * PROXY_SLACK))
-	for s in toy_spheres[0 if l > 0.0 else 1]:
-		out.append(Vector4(s.x, s.y, s.z, (s.w + PROXY_MARGIN) * PROXY_SLACK))
+## The bits of the toys of universe side, which the flat pass draws with the head there.
+func toy_proxies(side: float) -> Array:
+	var out := []
+	var m := toy_mask.x if side > 0.0 else toy_mask.y
+	for bit in 32:
+		if m & (1 << bit):
+			out.append(bit)
 	return out
 
 
-## How the ray tracer with toys gets its pixels (toy_mode; the speed check times each).
-func set_toy_mode(mode: int) -> void:
-	toy_mode = mode
+## The shell's proxy sphere in a flat universe's chart (centre, the mesh's radius).
+func shell_proxy() -> Vector4:
+	return Vector4(0.0, 0.0, 0.0, space.Rout * PROXY_SLACK)
 
 
 ## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the

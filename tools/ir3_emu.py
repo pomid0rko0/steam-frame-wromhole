@@ -102,9 +102,9 @@ def parse_operand(s):
         o.kind = 'cmem_a1'
         o.num = int(m.group(1) or 0)
         return o
-    m = re.fullmatch(r'(h?)c<a0\.x \+ (\d+)>', s)
+    m = re.fullmatch(r'(h?)c<a0\.x(?: \+ (\d+))?>', s)
     if m:
-        o.kind = 'cr'; o.num = int(m.group(2))
+        o.kind = 'cr'; o.num = int(m.group(2) or 0)
         return o
     m = re.fullmatch(r't#(\d+)', s)
     if m:
@@ -255,6 +255,7 @@ class Wave:
         self.out = None
         self.tex = None            # the one texture the program samples (H, W, 4)
         self.alias = {}            # alias.tex: register -> operand, for the next texture instruction
+        self.killed = np.zeros(L, bool)    # discarded lanes (kill, demote)
 
     # ---- reading operands
     def read(self, o, k, kind, lanes_half=False):
@@ -507,7 +508,14 @@ def run_wave(prog, start, wave, stats, max_steps=200000):
             pc = np.where(at, ins.target, pc)
             continue
         if op in ('kill', 'demote'):
-            raise NotImplementedError(op)
+            # discard: the lanes whose predicate holds stop (kill) or go on as helpers (demote);
+            # either way nothing they write is the picture
+            cond = wave.read(ins.srcs[0], 0, 'b').astype(bool) & ex
+            wave.killed |= cond
+            if op == 'kill':
+                done |= cond
+            pc = nxt
+            continue
         execute(ins, wave, ex)
         pc = nxt
     return wave

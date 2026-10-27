@@ -9,6 +9,7 @@ from wh import Wormhole
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
+TOYS = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_toys.gdshaderinc')).read()
 PROF = tuple(float(v) for v in os.environ.get('WH_PROFILE', '3,5,1').split(','))   # rho0, h, fillet in metres
 W = Wormhole(*PROF)
 import json
@@ -60,31 +61,34 @@ def test_cubes():
     ]
 
 
-# the cubes come with the movable balls (the shader with balls draws both)
+# the cubes come with the movable balls
 CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 
-def region_order(objs, reach):
-    """main.region_order: the objects sorted by where they can be met (universe A's sheet, the
-    shell, B's sheet) and the bounds (x, y, z, w): A 0 .. y, the shell x .. w, B z .. the end."""
-    groups = [[], [], [], [], []]
-    for o in objs:
-        C, r = np.asarray(o[0]), reach(o)
-        in_a, in_b, in_s = abs(C[3] - PROF[1]) < r, abs(C[3] + PROF[1]) < r, np.linalg.norm(C[:3]) - r < W.Rout
-        groups[(1 if in_s else 0) if in_a else ((3 if in_s else 4) if in_b else 2)].append(o)
-    ends = np.cumsum([len(g) for g in groups])
-    return sum(groups, []), tuple(int(e) for e in ends[:4])
+def toy_mask():
+    """main.set_objects's wh_tMask: the toys by where they can be met (ball i bit i, cube i bit
+    16 + i): universe A's sheet, B's, within reach of the shell."""
+    m = [0, 0, 0, 0]
+    for bit, C, reach in ([(i, np.asarray(c), rad) for i, (c, rad, _) in enumerate(BALLS)]
+                          + [(16 + i, np.asarray(c), 2.0 * half) for i, (c, _, half, _) in enumerate(CUBES)]):
+        side = 1 if C[3] > 0 else -1
+        if abs(C[3] - side * PROF[1]) < reach:
+            m[0 if side > 0 else 1] |= 1 << bit
+        if np.linalg.norm(C[:3]) - reach < W.Rout:
+            m[2] |= 1 << bit
+    return tuple(m)
 
 
-# the shader gets them sorted, as from main.set_objects; the reference uses the same order
-BALLS, BIDX = region_order(BALLS, lambda o: o[1])
-CUBES, CIDX = region_order(CUBES, lambda o: 2.0 * o[2])
 # the fillet polynomials from a table, as Godot's shaders do (WH_TABLE=0: worked out per ray, as the
 # web preview does)
 TABLE = os.environ.get('WH_TABLE', '1') == '1'
 
+# One pass for the frame the app draws in three (main.gd): the toys' passes, the flat one's toys of
+# the eye's universe seen straight (wht_flat, each toy of its sheet: the app's proxies only bound
+# where it can hit) and the shell's (wht_shell), the nearest hit by path length (the app: by the
+# depth each writes); where neither hits, the world's ray tracer (wh_render).
 FRAG = """#version 400
-""" + ("" if BALLS else "#define WH_NO_BALLS\n") + ("#define WH_TABLE\nuniform sampler2D wh_tab;\nuniform vec4 wh_tabLo;\n"
+""" + ("#define WH_TOYS\n" if BALLS else "") + ("#define WH_TABLE\nuniform sampler2D wh_tab;\nuniform vec4 wh_tabLo;\n"
                                                     "uniform vec4 wh_tabInv;\nuniform vec4 wh_tabReg;\n" if TABLE else "") + """
 uniform float wh_rho0;
 uniform float wh_h;
@@ -99,11 +103,13 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube;
-uniform vec4 wh_bound[4];
-uniform ivec4 wh_bIdx;
-uniform ivec4 wh_cIdx;
+uniform ivec4 wh_tMask;
 uniform vec4 wh_fball[12];
 uniform float wh_pix;
+uniform float head_l;        // the eyes from the head (wh_eyeAt): unused here
+uniform vec3 head_n;
+uniform vec4 head_f[3];
+uniform vec3 head_pos;
 uniform float uL0;
 uniform vec3 uN0;
 uniform vec4 uF;
@@ -114,13 +120,31 @@ uniform int uDebug;
 uniform vec2 uSize;
 in vec2 vUV;
 out vec4 frag;
-""" + CORE + """
+""" + CORE + ("\n" + TOYS if BALLS else "") + """
 void main() {
     vec2 uv = gl_FragCoord.xy / uSize;
     vec3 dl = normalize(vec3(mix(-uTan.x, uTan.y, uv.x), mix(-uTan.z, uTan.w, uv.y), 1.0));
     vec4 V = dl.x * uRt + dl.y * uUp + dl.z * uF;
     vec4 dbg;
-    vec3 col = wh_render(uL0, uN0, V.x, V.yzw, dbg);
+    vec3 col = vec3(0.0);
+    float best = -1.0;
+#ifdef WH_TOYS
+    vec4 tdbg;
+    if (abs(uL0) >= wh_Lsh()) {
+        float side = uL0 > 0.0 ? 1.0 : -1.0;
+        vec3 x = wh_M(side, (abs(uL0) - wh_Lsh() + wh_Rout()) * uN0);
+        vec3 d = normalize(wh_M(side, side * V.x * uN0 + V.yzw));
+        int m = side > 0.0 ? wh_tMask.x : wh_tMask.y;
+        for (int bit = 0; bit < 32; bit++) {
+            if ((m & (1 << bit)) == 0) continue;
+            vec4 r = wht_flat(bit, side, x, d, tdbg);
+            if (r.w >= 0.0 && (best < 0.0 || r.w < best)) { best = r.w; col = r.rgb; dbg = tdbg; }
+        }
+    }
+    vec4 r = wht_shell(uL0, uN0, V.x, V.yzw, wh_eye(uL0), tdbg);
+    if (r.w >= 0.0 && (best < 0.0 || r.w < best)) { best = r.w; col = r.rgb; dbg = tdbg; }
+#endif
+    if (best < 0.0) col = wh_render(uL0, uN0, V.x, V.yzw, dbg);
     frag = uDebug == 1 ? dbg : vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
 }
 """
@@ -166,25 +190,14 @@ def render(ctx, state, size, tan, debug):
         r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
         fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
     fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
-    # the bounding spheres of each universe's balls and of its cubes, as main.set_objects makes them
-    bound = []
-    for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
-        for side in (1.0, -1.0):
-            pts = [(c[:3], rr) for c, rr in objs if abs(c[3] - side * PROF[1]) < rr]
-            if not pts:
-                bound.append((0.0, 0.0, 0.0, -1.0))
-                continue
-            P = np.array([p for p, _ in pts])
-            mid = 0.5 * (P.min(0) + P.max(0))
-            bound.append(tuple(mid) + (max(np.linalg.norm(p - mid) + rr for p, rr in pts),))
     for k, v in dict(wh_sph=[tuple(x) for x in SCENE['spheres_A'] + SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
-                     wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_bound=bound, wh_pix=0.002,
-                     wh_bIdx=BIDX, wh_cIdx=CIDX, wh_fball=fball,
+                     wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_pix=0.002,
+                     wh_tMask=toy_mask(), wh_fball=fball,
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
-        if k in prog:      # the balls' and cubes' uniforms are gone from the shader without balls
+        if k in prog:      # the toys' uniforms are gone from the shader without them
             prog[k].value = v
     if TABLE:
         tab, lo, inv, reg = W.fillet_table()

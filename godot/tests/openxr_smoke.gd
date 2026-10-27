@@ -160,7 +160,7 @@ func _process(_delta: float) -> bool:
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
 		check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
-				and main.material.shader == b.own_shader and b.own_shader == main.SHADER_BALLS)
+				and main.material.shader == b.own_shader and b.own_shader == main.SHADER_PLAIN and main.toys_shown)
 		check("speed check: the rate set back", p.desired == bench_stored)
 		check("speed check: the foveation set back (off)", main.foveation == 0 and not main.split_pass.enabled
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
@@ -248,10 +248,12 @@ func _gravity(p: Node3D) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.gravity_view, main.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_VIEWS[v]])
-	# the demo's balls and cubes are there: the ray tracers with them
-	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
-			[0, "wormhole_balls.gdshader", true]]
+		seen.append([main.gravity_view, main.material.shader.resource_path.get_file(),
+				main.toys_shell_mat.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_VIEWS[v]])
+	# the demo's balls and cubes are there: the toys' passes draw the arrows over them in view 2
+	var want := [[1, "wormhole_gravity.gdshader", "toys_shell.gdshader", true],
+			[2, "wormhole_arrows.gdshader", "toys_shell_arrows.gdshader", true],
+			[0, "wormhole.gdshader", "toys_shell.gdshader", true]]
 	check("гравитация: пол, стрелки, выкл", seen == want)
 	if seen != want:
 		print("  ", seen)

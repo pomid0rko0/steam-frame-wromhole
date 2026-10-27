@@ -15,12 +15,15 @@ extends Node
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## makes SteamVR step in, and the GPU time then grows by half for reasons of its own.
-## This build's ray tracer is timed six ways (FOVEATIONS), and with the demo's toys a seventh,
-## the ray tracer with toys over the whole view, not only where the stencil marks a toy may be seen
-## (main.set_toy_mode): as it always ran, with the 3D scene in
-## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
-## foveated rendering: SteamVR's map low and high, our own wide and narrow (main.set_foveation).
-## The others run without foveation.
+## This build is timed six ways (FOVEATIONS): as it always ran, with the 3D scene in a render pass
+## of its own (what foveation needs, split_pass.gd) but no density map, and with foveated
+## rendering: SteamVR's map low and high, our own wide and narrow (main.set_foveation). With toys
+## (the demo's: put at rest first, main.settle_demo) a seventh way, the world alone, the toys not
+## drawn: what the toys cost. The others are ray tracers of the world only (the toys' passes are
+## this build's own, README «Мячи и кубы»): they run without foveation and without the toys, and
+## they are compared with this build's world alone. The last places (HELD) are those where a held
+## ball cost the most: there both hands and a ball held in the right one are in front of the chest
+## (main.bench_hands), in every variant.
 ##
 ## 2. The tour, at 120 Hz with this build's ray tracer: at each of TOUR_L the view sweeps from
 ## the throat round to the other side, in rows from 60 degrees down to 60 up; then walks through
@@ -38,7 +41,6 @@ extends Node
 
 const RateMeter := preload("res://rate_meter.gd")
 const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
-const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
 const PLACES := [   # the comparison's poses: [l, degrees to the right of the throat, degrees up]
@@ -56,7 +58,11 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat: its boxes cost more than A's pillars
 	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat: where 144 Hz fell to 72
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
+	[6.2, 0.0, -20.0],  # with a ball held in front (HELD): outside the edge, at the throat
+	[5.0, 0.0, -20.0],  # at the edge inside, at the throat: where the frame was 8 ms at 120 Hz
+	[5.0, 90.0, -20.0], # at the edge, sideways
 ]
+const HELD := 13                # PLACES from here: with the hands and a held ball
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
 const PREPARE := 2.0            # s each ray tracer runs before the timing (its pipeline is compiled)
@@ -81,12 +87,11 @@ var with_tour := true
 var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
-var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
-var variants: Array = []        # this run's [label, Shader, foveation, split, main.toy_mode]:
-                                # others (of the kind
-                                # this build runs: with movable balls or without), then this
-                                # build's (FOVEATIONS)
+var others: Array = []          # [label, Shader] from res://shaders/ab/: ray tracers of the world
+var variants: Array = []        # this run's [label, Shader, foveation, split, toys drawn]: others,
+                                # then this build's (FOVEATIONS), then this build's world alone
 var own := 0                    # the variant that is this build as it always ran
+var alone := -1                 # this build's world alone (with toys), or -1
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
 var step := -1                  # the segment or tour step running
@@ -118,8 +123,7 @@ func _ready() -> void:
 		if not ResourceLoader.exists(path):
 			break
 		var sh: Shader = load(path)
-		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
-		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls])
+		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh])
 	auto = FileAccess.file_exists(AUTO)
 
 
@@ -157,19 +161,18 @@ func start() -> void:
 		return
 	running = true
 	own_shader = main.material.shader
+	if main.physics:
+		main.settle_demo()          # the same toys at the same places in every build
 	variants = []
-	# others compared with the same kind: without movable balls, or with them (the demo's toys)
-	# (theirs without the stencil: they have no stencil test)
 	for o in others:
-		if own_shader == main.SHADER_PLAIN:
-			variants.append([o[0], o[1], 0, false, main.TOYS_BARE])
-		elif own_shader == main.SHADER_BALLS and o[2] != null:
-			variants.append([o[0], o[2], 0, false, main.TOYS_BARE])
+		variants.append([o[0], o[1], 0, false, false])
 	own = variants.size()
 	for f in FOVEATIONS:
-		variants.append([f[0], own_shader, f[1], f[2], main.TOYS_SPLIT])
-	if main.balls > 0:
-		variants.append(["this build, toys over the whole view", own_shader, 0, false, main.TOYS_WHOLE])
+		variants.append([f[0], own_shader, f[1], f[2], true])
+	alone = -1
+	if main.balls > 0 or main.physics:
+		alone = variants.size()
+		variants.append(["this build, the world alone", own_shader, 0, false, false])
 	saved_pose = main.get_pose()
 	main.hold = true
 	saved_scale = panel.render_scale
@@ -274,10 +277,10 @@ func _prepare() -> void:
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's ray tracer and foveation.
+## A variant's ray tracer, foveation and toys.
 func _use(v: Array) -> void:
 	main.material.shader = v[1]
-	main.set_toy_mode(v[4])
+	main.toys_shown = v[4]
 	if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
 		main.set_foveation(v[2], v[3])
 
@@ -308,6 +311,7 @@ func _clock() -> void:
 func _begin(i: int) -> void:
 	step = i
 	var place: Array = PLACES[plan[i][0]]
+	main.bench_hands = 2 if plan[i][0] >= HELD else 0
 	main.place_on_axis(place[0], place[1], place[2])
 	_use(variants[plan[i][1]])
 	phase_t = 0.0
@@ -334,13 +338,15 @@ func _end_segment() -> void:
 			s += " (%.3f)" % (_mean(r[v]) / _mean(r[0]))
 		parts.append(s)
 		segs.append(_list(r[v]))
-	print("bench: l %.1f m, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [place[0], place[1], place[2], ", ".join(parts), panel.rate, clock_lo, clock_hi, " ".join(segs)])
+	print("bench: l %.1f m, %.0f deg right, %.0f deg up%s: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
+			% [place[0], place[1], place[2], ", a ball held" if plan[step][0] >= HELD else "", ", ".join(parts),
+			panel.rate, clock_lo, clock_hi, " ".join(segs)])
 
 
 func _compared() -> void:
 	main.material.shader = own_shader
-	main.set_toy_mode(main.TOYS_SPLIT)
+	main.toys_shown = true
+	main.bench_hands = 0
 	main.set_foveation(panel.foveation)     # the tour runs with the foveation chosen on the panel
 	if variants.size() > 1:
 		# each variant against the first, averaged over the places (geometric mean)
@@ -350,23 +356,25 @@ func _compared() -> void:
 		print("bench: compared, on average over the places %s (1 = %s)" % [", ".join(summary), variants[0][0]])
 		var parts := []
 		if own > 0:
-			var m := _ratio(own, 0)
+			# the others are worlds alone: against this build's world alone, if there are toys
+			var ref := alone if alone >= 0 else own
+			var m := _ratio(ref, 0)
 			var pct := roundi(absf(1.0 - m) * 100.0)
 			parts.append("новый и прежний одинаковы" if absf(1.0 - m) <= 0.02 else
 					("новый %s прежнего на %d%%" % ["быстрее" if m < 1.0 else "медленнее", pct]))
-		# the foveation against this build as it always ran
+		# the foveation, and the world alone, against this build as it always ran
 		summary.clear()
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
-		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
+		print("bench: foveation and the world alone, on average over the places against this build as it ran: %s" % ", ".join(summary))
 		# on the panel, what each foveation saves: SteamVR low, high, own wide, narrow
 		var pcts := []
 		for v in range(own + 2, own + FOVEATIONS.size()):
 			pcts.append("%+d" % roundi(100.0 * (_ratio(v, own) - 1.0)))
 		parts.append("фовеация %s%%" % "/".join(pcts))
-		# and what the stencil saves: the toys' ray tracer over the whole view against split
-		if variants.size() > own + FOVEATIONS.size():
-			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
+		# and what the toys cost: this build against its world alone
+		if alone >= 0:
+			parts.append("предметы %+d%%" % roundi(100.0 * (1.0 / _ratio(alone, own) - 1.0)))
 		verdict = " · ".join(parts)
 	if with_tour and panel.xr != null:
 		_show("замер: теперь 120 Гц, глаза закрыты")
@@ -491,7 +499,8 @@ func _finish(tour_line: String) -> void:
 	counting = false
 	phase = ""
 	main.material.shader = own_shader
-	main.set_toy_mode(main.TOYS_SPLIT)
+	main.toys_shown = true
+	main.bench_hands = 0
 	main.set_foveation(panel.foveation)
 	main.hold = false
 	main.set_pose(saved_pose)
