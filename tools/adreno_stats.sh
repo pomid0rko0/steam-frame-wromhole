@@ -10,7 +10,10 @@
 #   loops            loops left after unrolling
 #   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: as
 #   tests/perf.gd, default near; plain without the stereo check, check or plain_balls with movable
-#   balls; --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader)
+#   balls; a suffix _xr (plain_xr): through the scripted headset, multiview as in the headset;
+#   --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader; with --alone
+#   that shader alone on a quad over the view, nothing else of the app: tests/one_shader.gd, for
+#   the stencil's marks)
 # KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is
 # no GPU, and software Vulkan's timings don't follow the Frame's.
@@ -28,11 +31,13 @@ VARIANT=near
 DISASM=""
 FULL=""
 SHADER=""
+ALONE=""
 while [ $# -gt 0 ]; do
 	case $1 in
 		--disasm) DISASM=$2; shift 2 ;;
 		--full) FULL=1; shift ;;
 		--shader) SHADER=$2; shift 2 ;;
+		--alone) ALONE=1; shift ;;
 		*) VARIANT=$1; shift ;;
 	esac
 done
@@ -48,7 +53,8 @@ XDG_DATA_HOME=$DATA LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 
 VK_ICD_FILENAMES=$ICD \
 MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=fs,nocache \
 	timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . --rendering-method mobile \
-	--resolution 320x180 -s res://tests/perf.gd -- "$VARIANT" $SHADER > "$LOG" 2>&1
+	--resolution 320x180 -s res://tests/$([ -n "$ALONE" ] && echo one_shader.gd || echo perf.gd) -- \
+	$([ -n "$ALONE" ] && echo "$SHADER" || echo "$VARIANT $SHADER") > "$LOG" 2>&1
 if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; rm -rf "$LOG" "$DATA"; exit 1; fi
 grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -20 "$LOG"; rm -rf "$LOG" "$DATA"; exit 1; }
 # The ray tracer: the fragment programs of more than half the biggest one's size. Godot compiles

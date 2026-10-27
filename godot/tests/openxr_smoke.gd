@@ -138,7 +138,6 @@ func _process(_delta: float) -> bool:
 	if frames == 360:
 		b.warm = 0.1
 		b.time = 0.2
-		b.tour_scale = 0.15
 		bench_stored = p.stored
 		if bench_auto:
 			b.auto = true
@@ -155,9 +154,8 @@ func _process(_delta: float) -> bool:
 		check("speed check: started by itself, asks for 72 Hz", p.desired == 72.0)
 	if frames > 360 and not b.running and (bench_seen or not bench_auto):
 		var segs: int = 2 if b.variants.size() > 1 else 1
-		check("speed check: every place timed", b.results.size() == b.PLACES.size() and b.results.back().back().size() == segs)
-		check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
-				and b.tour_results.back().refreshes > 0)
+		check("speed check: every scene timed", b.results.size() == PlayScenes.SCENES.size() and b.results.back().back().size() == segs)
+		check("speed check: the scenes' toys taken away", main.world.balls.filter(func(t: Dictionary) -> bool: return t.has("scene")).is_empty())
 		var pose: Array = main.get_pose()
 		check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
 				and main.material.shader == b.own_shader and b.own_shader == main.SHADER_BALLS)

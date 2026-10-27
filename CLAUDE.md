@@ -177,6 +177,77 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   floor had in the middle of the throat (l = 0, `wh_renderE`) is gone; the white 1 m ring there
   stays. Not yet seen in the headset: whether SteamVR takes
   the Frame profile (the log's `interaction profile` lines) and lets View and Menu reach the app.
+- `rim` — performance with toys at the shell's edge and 144 Hz (the owner's log: a ball held at the
+  edge gave frames up to 8 ms, 144 Hz barely held anywhere, `process` 7.4-7.8 ms in late frames;
+  README «Мячи и кубы»). GPU: the stencil splits the frame in four classes, each pixel to the
+  cheapest ray tracer that sees what its ray may meet: 0 plain, 1 the flat universes' toys only
+  (`wormhole_balls*_flat`, `WH_FLAT_TOYS`, 12 registers), 2 the shell's toys but those near the eye
+  (`wormhole_balls*`, `wh_candMask` clears their bits), 3 all of them (`wormhole_balls*_near`). Marks
+  at priorities -3, -2, -1 (values 1, 2, 3; `main._make_marks`, `_update_proxies`): 1 the proxies or
+  the whole view as before; 2 `stencil_toys*.gdshader`, passes that know each pixel's ray (as the
+  ray tracers make it): a shell toy within reach of the ray's 3D subspace and its l window (from
+  `set_objects`) within the l range the path can pass, four toys at a time from vec4 uniforms
+  `main._update_near` packs per mark (`wh_mk*`, `_mark_groups`: a loop over toys with indexing
+  made the first version cost 0.5 ms a full-view pass by the model, now 0.28); over the shell's
+  sphere only its front faces (cull_back), from within it the whole-view quads; 3 the same for
+  near toys (the shell's within `NEAR_REACH` 3 m of the head, at most 4, `main._update_near`: a cone
+  is narrower than the plane test's band even at 2 m) inside their
+  cones, the cones tested first and the rest a branch (0.17 ms outside them)
+  (`wh_nearCone`: the space is CAT(1/rho0^2), so a ray meeting a toy of reach rho at distance D is
+  within asin(sin(1.02 rho / rho0) / sin(D / rho0)) of the direction to its centre; the direction
+  from `WormholeSpace.toward_fast`, a hand's from its own geodesic; `ref/test_near.py` brute-forces
+  it). `tests/split_test.gd` (420 poses, ~20 s) compares the split with the whole view under
+  `WH_KIND_COLOUR` (what the ray ends on; green: which ray tracer) bit for bit where a toy shows;
+  it found a ray going round the cylinder (b = rho0, rounded up) taken for one turning on a
+  fillet. 30 frames after `_pick_shader` draw every ray tracer (`WARM_FRAMES`: pipelines compiled
+  before they are needed). CPU: `WormholeSpace.geodesic` steps only l, l' and phi in the totally
+  geodesic surface of the geodesic's great circle (Clairaut), the rest exact (`geodesic_rk4` kept;
+  `tests/geodesic_test.gd`), the head and hands in steps of `STEP_FRAME` 0.1 m, balls held by
+  friction fall asleep (`BALL_SLEEP_STEPS`), pairs and hands' pushes by centres found once a step,
+  the toys' uniforms only when changed (`_toy_param`): main's scripts 4.8 -> 1.2 ms a frame on
+  this x86 (`tests/cpu_test.gd`), logged as `main's scripts` in `refresh:` lines. Model, 13
+  poses, the marks counted: a ball held at the chest 6.05 -> 5.01 ms (at the edge 7.66 -> 5.48),
+  the demo alone 4.50 -> 4.32 (the start and the throat sideways as before). Tried in the headset:
+  "still bad, cubes at the edge do not hold even 72 Hz" (the demo's big cubes set down on the
+  fillet at l 4.6, looked at along it: 9.5-10.5 ms with the narrow map; two held there: 15-16 ms),
+  and "some balls blink now and then, once, at random moments" (not found: below). Cubes since: the
+  curved search sampled all of a cube's bounding ball (2 half), half of it empty space before the
+  face. Now a cube is a candidate by its box's support across the subspace (`wh_cubeSup`), its psi
+  window from the box's shadow (atan(across / (distance - along))), its three body slabs only (the
+  normal's never cuts while half <= 0.4, `BallWorld.MAX_CUBE_HALF`), and its reach (marks, cones,
+  windows, the chord's pretest) the cut's radius sqrt(3 h^2 + bend^2) (0.55 at 0.3,
+  `BallWorld.cube_reach`, uploaded in `wh_cubeE[5i+4].w`: computed in the shader it took 32
+  registers); windows past the nearest hit skip their psi solves. Model, the speed check's scenes:
+  two cubes held at the edge 19.7 -> 15.4 ms, cubes on the floor there 7.0 -> 5.7, a ball held
+  6.6 -> 6.4, the throat sideways 4.1 -> 3.8; 24 registers. Tried and dropped (model): a skip
+  along the path by the box's distance (sphere tracing) and cubes in body coordinates per sample
+  (fewer samples, but 32 registers), candidates ranked by distance from the head with a per-ray
+  cull of those past the hit (+-1%). `tests/count_dump.gd` (the shader with `WH_COUNT`) counts a
+  pixel's samples, the hit object's and its candidates. The blink: `tests/blink_test.gd` (fake HMD,
+  both eyes, walking, hands, throws, 240 checks of split against whole) and `split_test.gd -- random
+  4000` find nothing, on the build the owner tried too; colours differ between the classes only in
+  a few grid pixels (helper lanes of another class's quad). Asked the owner what blinks.
+  Then two cubes held: a ray at one lies in the other's plane too (the rays' planes are a pencil
+  round the line throat axis - eye), so stencil 3 searched both. Now the mark 3 tests a near cube's
+  box as well (`main._near_box`, `wh_nearBox`: flat in the head's normal coordinates, the room's,
+  axes carried back along the head's geodesic, each slab grown by D (h + e)(0.07 + 0.017 D), e the
+  eyes' real offset + `NEAR_LAG`: `ref/test_nearbox.py`, RK4 against the flat box, the slabs' growth
+  at most 0.057 D (h + e) within 1.5 m, 0.081 at 3 m in 1352 cases; `BOX_GROW` is 1.4 times that),
+  and stencil 3's ray tracer drops per ray the near toys whose cone or box it misses
+  (`WH_NEAR_CULL` in `wh_curved`, from (vl, w) and uniforms per eye, `main._near_cull`, the eye
+  picked by the ray's start point by selects: an index, the view index or a mask from varyings took
+  32 registers). Model (one eye at the head): two cubes held 16.1 -> 12.4 ms; both eyes of the fake
+  HMD, samples a wave (two cubes held / cubes on the floor at the edge): from the head 7.3 / 2.0, per
+  eye 6.7 / 1.7, no margins at all (wrong, a bound) 4.9 / 1.1. Then near first: a cube's pixels
+  (47% of the view) took 8.1 samples, 4.4 its own: the candidates went by index, the held cubes
+  last; stencil 3 now takes the near ones first (`wh_nearAll`), the rest cut at their hit: 6.7 ->
+  5.2 a wave in both eyes, model 12.4 -> 11.6 ms; a ball held and cubes on the floor as before.
+  `count_dump.gd -- scene split [xr]`
+  counts the split frame (xr: both eyes of fake_hmd.gd), `class_share.gd -- scene` the classes'
+  shares.
+  The builds of 9f0d4f9 and d883b1a print the `refresh:` line's new numbers out of order: there
+  "max of X" is the scripts' mean and "main's scripts Y ms avg Z max" their most and the frame's
+  budget (fixed after).
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -247,9 +318,11 @@ When branches are put together, these overlap:
   XR camera's compositor: an effect added there by another branch splits the pass as well. The
   action map has the eye gaze profile (`eye_gaze_pose` on `/user/eyes_ext`). Branches started
   before the merge start with foveation off; merged with `main`, they get it on by default.
-- the stencil split (on `main`, from `toys`) with anything that sets uniforms: there are two ray tracer materials
-  (`material` with the toys, `plain_material` where none can be seen): a uniform both read goes
-  through `main._param`; the toys' own (`wh_ball`...) only to `material` (`set_objects`). The
+- the stencil split (on `main`, from `toys`; on `rim` four classes) with anything that sets uniforms:
+  there are several ray tracer materials (`material` with the toys, `plain_material` where none can
+  be seen; on `rim` also `flat_material`, `near_material` and the marks' `mark_materials`, which
+  read the eye's uniforms and the toys'): a uniform all read goes through `main._param`; the toys'
+  own (`wh_ball`...) through `main._toy_param` (`set_objects`; on `rim` it skips unchanged values). The
   shader index of a ball is not its index in `world.balls` (`set_objects` sorts them). Godot
   geometry drawn before the ray tracers must not set the stencil. A changed throat (`throat`):
   `set_objects` again (the sorting and the proxies use `space.h`, `space.Rout`). Balls held in the
@@ -296,29 +369,39 @@ they line up the same way.
   world B outside the edge (-5.7 m, 20° from the throat) it says 3.8 ms where the headset takes 4.8.
   `--profile` gives cycles per stretch of code, `--poses "l,yaw,pitch;..."` other poses (the
   throat sideways is the demo's dearest), `--split` the toys as the app draws them (the plain ray
-  tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`); with
+  tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`; on `rim`
+  the four classes, and the marks 2 and 3 themselves, compiled alone by `adreno_stats.sh --alone`
+  (`tests/one_shader.gd`) and emulated with their own uniforms: the model left them out at first,
+  and they cost a millisecond inside the shell); with
   `--toys` other sources are timed with their own balls shader (`tools/ab_shaders.sh` copies it).
   The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
 - **Measuring in the headset without the owner walking:** the menu's last row, A (or, in a
-  build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
-  cost depends only on the pose (l, yaw from the throat, pitch, roll), so it goes through poses:
-  (1) at 72 Hz, twelve fixed poses (three in world B), each timing every ray tracer in the build
+  build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd` (~1 min). A
+  frame's cost depends only on what is in view from where, so it goes through scenes of play where
+  the headset found frames dear (`godot/play_scenes.gd` `PlayScenes.SCENES`: the demo from the
+  start, the edge and outside it facing the throat, the throat sideways, world B at the edge, the
+  demo's cubes set down at the edge looked at down and along, two cubes held there, a ball held),
+  the viewer and the toys placed and held (`main.hold`), at 72 Hz: this build's ray tracer as in
+  play (the menu's foveation) and without foveation (what `tools/adreno_cost.sh` models: its
+  default poses are the same scenes, `--poses scenes[:i,j]`), and every ray tracer in the build
   (`godot/shaders/ab/`, not in git: earlier commits, directories, or cost checks empty/flat/
-  noshade/noderiv/nogrid/nosky made from the tree) in a palindrome order, `bench:` lines; (2) at 120 Hz, this build's
-  ray tracer on a tour (view sweeps at ten l, walks through the throat, yaw/pitch/roll on the
-  spot), a `tf` line per frame (time, pose, refreshes taken, GPU and CPU ms) and a `tour:` line
-  per second. Its result (under its row in the menu, and on the line below until the menu is opened) says whether 120 Hz held and the comparison. Frame times from
-  walking around do not compare between builds: where one looks changes them several times.
-  The menu's script also logs a `refresh:` line every second (with where one looks) and one per late frame.
-  Thirteen places (the 13th: in the throat looking sideways). With the demo's toys (the normal
-  scene) it times the balls shaders, other sources' with `main.toy_mode` TOYS_BARE (no stencil),
-  and this build's a seventh way, over the whole view (TOYS_WHOLE): the result's "трафарет -N%".
+  noshade/noderiv/nogrid/nosky made from the tree; theirs over the whole view, TOYS_BARE) in a
+  palindrome order, a `bench:` line per scene (with refreshes missed) and `bench: as in play`. Its
+  result (under its row in the menu, and on the line below until the menu is opened): the three
+  dearest scenes as in play and the highest rate each leaves room for (within 70% of its budget),
+  the comparison, what foveation saves. The toys, pose, rate, scale and foveation come back after.
+  Frame times from walking around do not compare between builds: where one looks changes them
+  several times. The menu's script also logs a `refresh:` line every second (with where one looks)
+  and one per late frame.
 - **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
   (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; `edge-120hz`
   matched the main before it within 1/255 at every pose.
+- **`split_test.gd` at its own size:** run it at `--resolution 192x192`; at the window's 1280x720
+  a few silhouette pixels of the flat universes' balls round differently between two ray tracers
+  compiled apart (4 of 21 million on 436 poses), not a split error.
 - **Tests:** on `gravity`, `--rendering-method mobile --fixed-fps 60 -s res://tests/gravity_test.gd`
   under xvfb (the field against `ref/test_gravity.py`, Laplace, the shader's polynomials, the views'
-  colours) and `python3 ref/test_slice.py` (the arrows' surface against RK4 rays, ~2 min); on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
+  colours) and `python3 ref/test_slice.py` (the arrows' surface against RK4 rays, ~2 min); on `rim`, `--rendering-method mobile -s res://tests/blink_test.gd` (the split in motion through the fake HMD) and `split_test.gd -- random N`; on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
 - **Export:** from `godot/`: `--export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64`.
 - **OpenXR without a headset:** `tools/test_openxr.sh`: `monado-service` with `XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1`, whose stdin must be a pipe or FIFO (it epolls stdin and quits at once on `/dev/null`). Its null compositor offers one rate, 20 Hz, 128×128 per eye, and paces a slow app at every 2nd refresh with a doubled `predictedDisplayPeriod`. Reading eye images back fails there; for images use `fake_hmd.gd` or Godot's "Native mobile" interface. While `monado-service` runs, any Godot started here connects to it as a headset: don't run `test_stereo.sh` at the same time (its desktop check then sees Monado's head pose and fails). Monado's simulated controllers (`SIMULATED_LEFT=wmr`) bind to none of our profiles; for controller input use `XRControllerTracker`s with inputs set by hand (`tests/walking_xr_test.gd`).
 - **GitHub from this environment:** branch pushes work through the session's git proxy, tag pushes are refused (403). The owner creates tags on GitHub.
@@ -377,6 +460,10 @@ they line up the same way.
 - **Balls in the shader.** A ball far from the throat must not be a candidate in the curved-region integrator (`wormhole_core`), or every ray through the throat samples it finely. A ball around the eye (the avatar's head) still does that inside the throat.
 - **The one-eye check in the headset** is what catches problems only the real device has. Run it after any change to rendering.
 - **Controllers.** Before `menu` our action map had no profile of the Steam Frame's own (Godot 4.7.2 knows it, `/interaction_profiles/valve/frame_controller_valve`, extension `XR_VALVE_frame_controller_interaction`, which Godot asks for by itself). On our Frame (SteamVR 2.18.2) the log's `interaction profile` lines showed both controllers as `/interaction_profiles/khr/generic_controller`; its bindings (thumbstick, trigger, `primary/click` for A) were what the headset used. Valve's page «Steam Frame Input» (Steamworks docs) lists the Frame profile's paths: left `dpad_up/down/left/right`, `view`, `system`, `bumper`; right `a`, `b`, `x`, `y`, `menu`, `system`, `bumper`; both `squeeze` (value, click, touch), `trigger`, `thumbstick`, `grip/pose`, `aim/pose`, `output/haptic`. SteamVR, it says, always takes the Frame profile when the app suggests it, else the generic one, else Touch, remapped: Touch's menu is View, its upper button (B / Y) all three upper buttons (D-pad left, up, right / X, Y, B). Since `menu` (merged) the map has the Frame profile (paths from that page only); `walking_xr_test.gd` checks the bindings of each profile. Monado has no such extension: Godot leaves the profile out there, silently. The default font (Open Sans) has no arrows or triangles (‹ › « » it has): `perf_panel.gd` draws its arrows as meshes. One path a runtime rejects drops that whole profile's bindings: Monado rejected `grip_surface/pose` (the palm pose) on Touch, and then no Touch input worked at all. The palm pose is unused here and out of the map.
+- **GDScript in a frame runs 2-3x slower than in a loop:** the frame's rendering evicts the
+  interpreter's code and data from the caches (BallWorld.step: 170 us hot, 400 with the caches
+  flushed between calls, 440-500 in frames). Time scripts in frames (`tests/cpu_test.gd`'s first
+  line, `main.cpu_us`), not in a loop. `Performance.TIME_PROCESS` is the second's longest frame.
 - **Logs from a release build.** Without `application/run/flush_stdout_on_print` (on in `project.godot`) an export buffers `print()`, and an abort on quit loses every printed line from `godot.log`, the headset's too.
 - **Tests with `fake_hmd.gd` abort at exit** (status 134) unless the interface and trackers are taken down first; `walking_xr_test.gd` does it, so its exit status means something.
   With four Godots at once it sometimes hangs at exit after all its checks passed (`main` too: 2 of
@@ -485,6 +572,26 @@ they line up the same way.
   already multiplied by 4 in the code (`shl.b ..., 2`): a0.x counts components. a7xx's `shlm`,
   `shrm`, `shlg`, `shrg` take the shift amount first (`(src2 << src1) & src3`, Mesa
   `isa/ir3-cat3.xml`). The emulator had both wrong until the ball shader used them.
+  `sad.s32 a, b, c` with no flags is Mesa's iadd3, a + b + c (`ir3_compiler_nir.c`), not
+  |a - b| + c: an ivec4 array read at a computed component had the emulator read the wrong toy
+  until fixed. `adreno_cost.py --check` emulates the material of stencil 2 with `wh_candMask` -1:
+  the picture is the split's, which draws the near toys that material leaves out.
+- **The near cull and the registers.** A mask of near toys made per pixel before `wh_curved` (from
+  flat varyings, even used at once) or the view index passed into it took stencil 3's ray tracer to
+  32 registers; the same tests inside `wh_curved`, from the ray's (vl, w) and uniforms only, kept
+  24. Custom functions can't read `VIEW_INDEX` in Godot. Check multiview programs with
+  `tools/adreno_stats.sh plain_xr` (`tests/perf.gd` through `fake_hmd.gd`): Godot compiles the
+  specialised program (the smallest `prog`) for each.
+- **A toy's samples must not depend on the search's order.** A window cut at the nearest hit so
+  far was divided into its N samples over the cut part: in another order of the candidates (stencil
+  3's near ones first) the samples moved and single pixels of a ball's edge flipped between ray
+  tracers (`split_test.gd -- random 2000`: 10 of 17 million). The samples are placed over the whole
+  window now and the search stops after the first one past the hit.
+- **The curved search's registers are on a knife's edge (24).** One sqrt per candidate (a cube's
+  reach from its half size) or one int carried through the sample loop (a skip's step) took it to
+  32: the compiler holds such values through the search. Work them out on the CPU and read them
+  from a uniform (`wh_cubeReach`: a free slot of `wh_cubeE`), and check `adreno_stats.sh plain
+  --shader res://shaders/wormhole_balls.gdshader` after every change there.
 - **A view's code costs its shader even when off.** The gravity arrows (a crossing carried through
   the trace) took the shader from 12 to 16 registers (waves of 64); with one shader for the floor
   view and the arrows, switched by a uniform, the floor view cost 3.94 ms by the model, as its own
@@ -504,7 +611,7 @@ they line up the same way.
   floor test from the half angle (a different expression) let it go.
 - **The stencil in Godot 4.7.2** (`stencil_mode read|write, compare_..., ref` in a spatial
   shader) works on the Mobile renderer, multiview and lavapipe. Opaque draws follow
-  `render_priority`, lower first (the proxies at -1 mark before the quads at 0). A MeshInstance3D
+  `render_priority`, lower first (the proxies at -1 mark before the quads at 0; on `rim` -3, -2, -1). A MeshInstance3D
   whose ShaderMaterial has no shader yet is drawn and compiled with Godot's default lit material
   (an 8700-instruction program: adreno_stats.sh then picked it): make such a node only once its
   shader is known.

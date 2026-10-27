@@ -1,7 +1,8 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip_vertex_transform, fog_disabled;
-// only where a movable ball or cube may be seen (stencil_mark.gdshader)
-stencil_mode read, compare_equal, 1;
+// where a ray may meet one of the shell's toys, but none near the eye (stencil 2: main.gd,
+// _update_proxies; its material leaves those out of wh_candMask), or the whole view (main.TOYS_WHOLE)
+stencil_mode read, compare_equal, 2;
 
 // The ray tracer with movable balls (wh_ball, wh_ballCol, wh_nBall) and cubes (wh_cube, wh_cubeE,
 // wh_cubeCol, wh_nCube).

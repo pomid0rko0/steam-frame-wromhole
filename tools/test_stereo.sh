@@ -33,7 +33,8 @@ render() {   # a Godot test script, in the background
 	# did) would fail this render: then 1000 further on, where no other render of this run is
 	local d=$((90 + i))
 	while [ -e /tmp/.X$d-lock ] || [ -e /tmp/.X11-unix/X$d ]; do d=$((d + 1000)); done
-	XDG_DATA_HOME=$LOGS/data$i xvfb-run -n $d -s "-screen 0 1280x720x24" \
+	# timeout: a Godot that hangs at exit (4.7.2, a pipeline still compiling) has saved its pictures
+	XDG_DATA_HOME=$LOGS/data$i timeout 900 xvfb-run -n $d -s "-screen 0 1280x720x24" \
 		"$GODOT" --path . --rendering-method mobile "$@" > "$LOGS/$i.log" 2>&1 &
 }
 verdict() {   # name, comparison command...

@@ -4,7 +4,7 @@
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
 # included. Calibrated on the headset's speed check (README, «Что видно в шлеме»); a model, not a
 # timing: compare variants with it, then measure the best in the headset (tools/ab_shaders.sh).
-#   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile] [--split] [source]...
+#   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile|--profile-near|--profile-flat] [--split] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks that the emulated colours are Godot's
 # (lavapipe) picture, pixel for pixel. --balls: the shader with movable balls (the stereo check's).
@@ -12,11 +12,17 @@
 # other sources' shader with balls too, as tools/ab_shaders.sh copies it). --hands: with them both
 # hands' balls where hands are at every pose; --held: and a ball held in the right one (emu_dump.gd).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
-# arrows); other sources stay as they are. --poses: other poses than the speed check's, as
-# "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
-# --split: "this" with toys as the app draws it, split by the stencil: the ray tracer with toys
-# where they may be seen, the plain one elsewhere (adreno_cost.py --split); other sources are
-# timed over the whole view, as the speed check times them.
+# arrows); other sources stay as they are. --poses: other poses than the speed check's scenes
+# (play_scenes.gd: "scenes", or "scenes:5,7" some of them, each with its toys), as
+# "l,yaw,pitch[,what];..." (place_on_axis; what: a scene's toys there, edge_cubes, held_cubes,
+# held_ball); --profile: cycles per stretch of code (adreno_cost.py), of the
+# pixels that look for the shell's toys (with --split: stencil 2), --profile-near: of those that
+# look for all of them (stencil 3: the near toys' cones), --profile-flat: of those that look for the
+# flat universes' toys only (stencil 1).
+# --split: "this" with toys as the app draws it, split by the stencil: the plain ray tracer where
+# no toy can be met, the one with the flat universes' toys where only theirs, the one with all
+# where one of the shell's may be (adreno_cost.py --split --flat); other sources are timed over the
+# whole view, as the speed check times them.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 GODOT=${GODOT:-$ROOT/tools/.bin/Godot_v4.7.2-stable_linux.x86_64}
@@ -40,6 +46,8 @@ while [ $# -gt 0 ]; do
 		--gravity) GRAV=$2; shift 2 ;;
 		--poses) POSES=$2; shift 2 ;;
 		--profile) PROF=--profile; shift ;;
+		--profile-near) PROF="--profile --profile-class 3"; shift ;;
+		--profile-flat) PROF="--profile --profile-class 1"; shift ;;
 		--split) SPLIT=1; shift ;;
 		--held) HELD=+held; shift ;;
 		--hands) HELD=+hands; shift ;;
@@ -56,7 +64,7 @@ trap restore EXIT
 others=()
 for s in "${srcs[@]}"; do [ "$s" = this ] || others+=("$s"); done
 if [ ${#others[@]} -gt 0 ]; then "$ROOT/tools/ab_shaders.sh" "${others[@]}" >/dev/null || exit 1; fi
-[ -n "$POSES" ] || POSES="11.6,0,0;6.2,0,0;6.2,60,0;5.0,0,0;5.0,90,0;5.0,180,0;5.0,0,-35;5.0,0,35;0,0,0;0,90,0;-5.0,180,0;-5.7,160,-5;-6.2,180,0"   # bench.gd PLACES
+[ -n "$POSES" ] || POSES=scenes   # the speed check's (play_scenes.gd SCENES, with their toys)
 scene=$([ -n "$BALLS" ] && echo balls || ([ -n "$TOYS" ] && echo toys$HELD || echo plain))
 n=0
 for s in "${srcs[@]}"; do
@@ -87,10 +95,27 @@ for s in "${srcs[@]}"; do
 		> "$WORK/dump.log" 2>&1) || { echo "emu_dump failed"; tail "$WORK/dump.log"; exit 1; }
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""
+	flog=""
+	nlog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS$BALLS" ]; then
 		plog=$WORK/$n.plain.log
-		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
-		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
+		flog=$WORK/$n.flat.log
+		view=$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity)
+		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole$view.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
+		KEEP_LOG=$flog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole_balls${view}_flat.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the flat toys' part: #"
+		# stencil 3's: its own program where the tree has one (WH_NEAR_CULL)
+		if grep -q '^#define WH_NEAR_CULL' "$ROOT/godot/shaders/wormhole_balls${view}_near.gdshader"; then
+			nlog=$WORK/$n.near.log
+			KEEP_LOG=$nlog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole_balls${view}_near.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the near ones' part: #"
+		fi
 	fi
-	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
+	# this tree's marks 2 and 3 (the stencil's passes that look for the shell's toys), compiled alone
+	mlogs=""
+	if [ -n "$flog" ] && [ "$s" = this ]; then
+		for mk in stencil_toys stencil_toys_near stencil_toys_shell stencil_toys_shell_near; do
+			KEEP_LOG=$WORK/$n.$mk.log "$ROOT/tools/adreno_stats.sh" --alone --shader res://shaders/$mk.gdshader >/dev/null
+			mlogs="$mlogs${mlogs:+,}$WORK/$n.$mk.log"
+		done
+	fi
+	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} ${flog:+--flat $flog} ${mlogs:+--marks $mlogs} ${nlog:+--near $nlog} | tail -n +2 | sed "s#^#$s: #"
 done

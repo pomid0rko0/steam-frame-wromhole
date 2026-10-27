@@ -2,13 +2,15 @@ extends SceneTree
 ## For tools/adreno_cost.py: puts the viewer at a speed check pose, renders a frame and writes what
 ## the ray tracer gets (the head's point and frame, the camera) and the picture, so the emulated
 ## shader can be fed the same inputs and checked against the picture.
-##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch;..." [fov] [scene] [shader]
+##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch[,what];..." [fov] [scene] [shader]
 ## Each pose gives out_<i>.png and an entry in out.json with the ray tracer's path and its
 ## uniforms. fov: vertical, degrees (default 90); scene: plain (default), balls (the stereo
 ## check's), toys (the demo after the throw and the drop, everything at rest: 8 balls, 4 cubes),
 ## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2; with
 ## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
 ## right one in front of the chest (what the hands and grabbing add to a frame);
+## a pose's what: a scene of play_scenes.gd placed there (edge_cubes, held_cubes, held_ball);
+## poses "scenes" (or "scenes:5,7") are PlayScenes.SCENES (those of them), each with its own;
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
@@ -18,21 +20,38 @@ var poses: Array = []
 var fov := 90.0
 var entries: Array = []
 var i := 0
+var posed := 0             # frames since the poses began
+var done_at := -1.0          # when the last picture was written (_process: then it waits to quit)
+var compiled := -1.0         # pipelines compiled so far, and when that last changed
+var compiled_at := 0.0
 var shader_path := ""
 var gravity := 0
 var toys := false
 var held := false
 var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
+		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d",
+		"wh_candMask"]
+# the marks' own (main._update_near: the toys each looks for, the near ones' cones), for
+# adreno_cost.py's split: the marks 2 (main.mark_materials[0]) and 3 ([1])
+# the ray tracer of stencil 3's own (main._near_cull)
+const NEAR_UNIFORMS := ["wh_nearA", "wh_nearQ", "wh_nearO", "wh_nearEye", "wh_nearH", "wh_nearBit", "wh_nearAll"]
+const MARK_UNIFORMS := ["wh_mkX", "wh_mkY", "wh_mkZ", "wh_mkR2", "wh_mkLo", "wh_mkHi", "wh_mkGroups", "wh_near", "wh_nearBox"]
 
 
 func _initialize() -> void:
 	var a := OS.get_cmdline_user_args()
 	out = a[0]
-	for p in a[1].split(";"):
-		var v := p.split(",")
-		poses.append([float(v[0]), float(v[1]), float(v[2])])
+	if a[1].begins_with("scenes"):
+		var pick: PackedStringArray = a[1].trim_prefix("scenes").trim_prefix(":").split(",", false)
+		for k in PlayScenes.SCENES.size():
+			if pick.is_empty() or pick.has(str(k)):
+				var s: Array = PlayScenes.SCENES[k]
+				poses.append([s[2], s[3], s[4], s[5]])
+	else:
+		for p in a[1].split(";"):
+			var v := p.split(",")
+			poses.append([float(v[0]), float(v[1]), float(v[2]), v[3] if v.size() > 3 else "none"])
 	if a.size() > 2:
 		fov = float(a[2])
 	main = load("res://main.tscn").instantiate()
@@ -71,17 +90,24 @@ func _process(_d: float) -> bool:
 		main.camera.fov = fov
 		if main.overlay:
 			main.overlay.visible = false
-	# a pose takes 3 frames: set, render, read back
-	if frames < 4:
+	# a pose takes 3 frames: set, render, read back; first the app's warm-up (main.WARM_FRAMES:
+	# it draws every ray tracer then, not the split)
+	if frames < 4 or main.warm_frames > 0:
 		return false
-	var k := (frames - 4) % 3
+	if done_at >= 0.0:
+		return _settled()
+	posed += 1
+	var k := (posed - 1) % 3
 	if k == 0:
 		if i >= poses.size():
-			var f := FileAccess.open(out, FileAccess.WRITE)
-			f.store_string(JSON.stringify(entries, " "))
-			return true
+			if done_at < 0.0:
+				var f := FileAccess.open(out, FileAccess.WRITE)
+				f.store_string(JSON.stringify(entries, " "))
+				f.close()
+				done_at = _now()
+			return _settled()
 		var p: Array = poses[i]
-		main.place_on_axis(p[0], p[1], p[2])
+		PlayScenes.place(main, p[3], p[0], p[1], p[2])
 		if hands:
 			_hold_ball()
 	elif k == 2:
@@ -104,12 +130,33 @@ func _process(_d: float) -> bool:
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
+			"marks": [_uniforms(main.mark_materials[0], MARK_UNIFORMS), _uniforms(main.mark_materials[1], MARK_UNIFORMS)],
+			"near_uniforms": _uniforms(main.near_material, NEAR_UNIFORMS),
 			# the stencil's proxies (main._update_proxies), chart spheres of the head's universe, or
 			# none (the whole view marked, or no toys)
 			"proxies": _proxies(),
 		})
 		i += 1
 	return false
+
+
+## Quit only once no pipeline has been compiled for a second: Godot 4.7.2 hangs at exit when a
+## pipeline is still being compiled (the toys' ray tracers are, a moment after they are first drawn).
+func _settled() -> bool:
+	var c := 0.0
+	for m in [Performance.PIPELINE_COMPILATIONS_CANVAS, Performance.PIPELINE_COMPILATIONS_MESH,
+			Performance.PIPELINE_COMPILATIONS_SURFACE, Performance.PIPELINE_COMPILATIONS_DRAW,
+			Performance.PIPELINE_COMPILATIONS_SPECIALIZATION]:
+		c += Performance.get_monitor(m)
+	var t := _now()
+	if c != compiled:
+		compiled = c
+		compiled_at = t
+	return t - compiled_at > 1.0 and t - done_at > 1.0
+
+
+static func _now() -> float:
+	return Time.get_ticks_msec() / 1000.0
 
 
 ## Both hands as the app has them (main.hand_state), and with +held a ball (radius 0.25) held by the
@@ -144,9 +191,9 @@ func m_head_l() -> float:
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.
-static func _uniforms(m: ShaderMaterial) -> Dictionary:
+static func _uniforms(m: ShaderMaterial, names: Array = UNIFORMS) -> Dictionary:
 	var out := {}
-	for name in UNIFORMS:
+	for name in names:
 		var v: Variant = m.get_shader_parameter(name)
 		if v == null:
 			continue
@@ -159,6 +206,8 @@ static func _uniforms(m: ShaderMaterial) -> Dictionary:
 			out[name] = _v4(v)
 		elif v is Vector4i:
 			out[name] = [v.x, v.y, v.z, v.w]
+		elif v is PackedInt32Array:
+			out[name] = Array(v)
 		else:
 			out[name] = v
 	return out

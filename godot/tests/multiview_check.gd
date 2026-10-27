@@ -53,7 +53,14 @@ func _initialize() -> void:
 	root.add_child(main)
 
 
+var saved_at := -1.0          # when the pictures were saved: then it waits to quit (_settled)
+var compiled := -1.0
+var compiled_at := 0.0
+
+
 func _process(_delta: float) -> bool:
+	if saved_at >= 0.0:
+		return _settled()
 	frames += 1
 	if frames == 3:
 		# then the head turns back to the start yaw: the view should face the throat
@@ -117,8 +124,24 @@ func _process(_delta: float) -> bool:
 			img.convert(Image.FORMAT_RGB8)
 			img.save_png(OS.get_cmdline_user_args()[0] + "_" + mode + ("_left.png" if i == 0 else "_right.png"))
 		print("saved ", mode)
-		return true
+		saved_at = Time.get_ticks_msec() / 1000.0
 	return false
+
+
+## Quit only once no pipeline has been compiled for a second: Godot 4.7.2 hangs at exit when a
+## pipeline is still being compiled (the toys' ray tracers and marks are, a moment after they are
+## first drawn; tests/emu_dump.gd does the same).
+func _settled() -> bool:
+	var c := 0.0
+	for m in [Performance.PIPELINE_COMPILATIONS_CANVAS, Performance.PIPELINE_COMPILATIONS_MESH,
+			Performance.PIPELINE_COMPILATIONS_SURFACE, Performance.PIPELINE_COMPILATIONS_DRAW,
+			Performance.PIPELINE_COMPILATIONS_SPECIALIZATION]:
+		c += Performance.get_monitor(m)
+	var t := Time.get_ticks_msec() / 1000.0
+	if c != compiled:
+		compiled = c
+		compiled_at = t
+	return t - compiled_at > 1.0 and t - saved_at > 1.0
 
 
 func _key(code: Key, down: bool) -> void:

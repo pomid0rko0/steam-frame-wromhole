@@ -12,7 +12,11 @@ extends RefCounted
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 
-const STEP := 0.02  # metres per RK4 step
+const STEP := 0.02  # metres per RK4 step (geodesic: places within 4 micrometres)
+# for what is placed anew every frame (the head, the hands, what they hold: main.gd): a fifth of
+# the steps, off by 0.1 mm at most (where the cylinder meets a fillet, the curvature jumps), the
+# frame's vectors by 4e-5 (tests/geodesic_test.gd)
+const STEP_FRAME := 0.1
 const GRAV_NODES := 256  # nodes of the gravity table on the fillet: 6 mm apart here
 const GRAV_SUB := 2      # RK4 steps between nodes
 const GRAV_DEG := 7      # the shader's polynomials on the fillet (gravity_shader)
@@ -88,13 +92,97 @@ func _shift(l: float, n: Vector3, vecs: Array, d: Array, h: float) -> Array:
 
 
 ## Follow the geodesic from (l, n) with unit initial direction dir for length dist,
-## transporting frame (Array of Vector4). Returns [l, n, frame].
-func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> Array:
+## transporting frame (Array of Vector4), in RK4 steps of about step. Returns [l, n, frame].
+## A geodesic stays in the surface of l and of n on the great circle along its direction (the
+## fixed points of a mirror: totally geodesic), ds^2 = dl^2 + r^2 dphi^2 there, with Clairaut's
+## b = r^2 phi' = r sin(angle to d/dl): only l, l' (l'' = b^2 r' / r^3) and phi (phi' = b / r^2)
+## are stepped, the rest is exact. A vector is carried as its parts along the velocity, across it
+## in the surface (both turn with the velocity) and across the surface (constant).
+func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array, step := STEP) -> Array:
+	if dist <= 0.0:
+		return [l, n, frame.duplicate()]
+	if absf(l) - dist > L:
+		# all of it in a flat universe: a straight line of the chart, the vectors constant there
+		var side := signf(l)
+		var p := point_from_chart(side, chart_position(l, n) + dist * vector_to_chart(side, n, dir))
+		var out := []
+		for U: Vector4 in frame:
+			out.append(vector_from_chart(side, p[1], vector_to_chart(side, n, U)))
+		return [p[0], p[1], out]
+	dir = dir / dir.length()
+	var u := Vector3(dir.y, dir.z, dir.w)
+	var a := u.length()
+	if a < 1e-9:
+		# along d/dl: n stays, and so does every vector's (U_l, u)
+		return [l + signf(dir.x) * dist, n, frame.duplicate()]
+	var uh := u / a
+	var b := r(l) * a
+	var b2 := b * b
+	var x := l
+	var v := dir.x
+	var phi := 0.0
+	var steps := maxi(1, ceili(dist / step))
+	var hs := dist / steps
+	for _s in steps:
+		var g1 := _geo_g(x)
+		var x2 := x + 0.5 * hs * v
+		var v2 := v + 0.5 * hs * b2 * g1.x
+		var g2 := _geo_g(x2)
+		var x3 := x + 0.5 * hs * v2
+		var v3 := v + 0.5 * hs * b2 * g2.x
+		var g3 := _geo_g(x3)
+		var x4 := x + hs * v3
+		var v4 := v + hs * b2 * g3.x
+		var g4 := _geo_g(x4)
+		x += hs / 6.0 * (v + 2.0 * v2 + 2.0 * v3 + v4)
+		v += hs / 6.0 * b2 * (g1.x + 2.0 * g2.x + 2.0 * g3.x + g4.x)
+		phi += hs / 6.0 * b * (g1.y + 2.0 * g2.y + 2.0 * g3.y + g4.y)
+	var c := cos(phi)
+	var sn := sin(phi)
+	var n1 := (c * n + sn * uh).normalized()
+	var t1 := -sn * n + c * uh
+	var w1 := b / r(x)
+	var nv := sqrt(v * v + w1 * w1)
+	v /= nv
+	w1 /= nv
+	var T1 := Vector4(v, w1 * t1.x, w1 * t1.y, w1 * t1.z)
+	var N1 := Vector4(w1, -v * t1.x, -v * t1.y, -v * t1.z)
+	var e := n.cross(uh)
+	var E := Vector4(0.0, e.x, e.y, e.z)
+	var out := []
+	for X: Vector4 in frame:
+		var xu := Vector3(X.y, X.z, X.w)
+		var xh := xu.dot(uh)
+		out.append((X.x * dir.x + a * xh) * T1 + (X.x * a - dir.x * xh) * N1 + xu.dot(e) * E)
+	return [x, n1, out]
+
+
+## (r' / r^3, 1 / r^2) at l: the geodesic's l'' / b^2 and phi' / b.
+func _geo_g(l: float) -> Vector2:
+	var al := absf(l)
+	var rr: float
+	var d: float
+	if al >= L:
+		rr = al - L + Rout
+		d = signf(l)
+	elif al <= Lc:
+		return Vector2(0.0, 1.0 / (rho0 * rho0))
+	else:
+		var th := th0 + (al - Lc) / fillet
+		rr = rho0 + fillet * (1.0 - cos(th))
+		d = signf(l) * sin(th)
+	var i2 := 1.0 / (rr * rr)
+	return Vector2(d * i2 / rr, i2)
+
+
+## The same in steps of the whole state (l, n and every vector: tests/geodesic_test.gd checks
+## geodesic against it).
+func geodesic_rk4(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array, step := STEP) -> Array:
 	if dist <= 0.0:
 		return [l, n, frame.duplicate()]
 	var vecs := [dir]
 	vecs.append_array(frame)
-	var steps := maxi(1, ceili(dist / STEP))
+	var steps := maxi(1, ceili(dist / step))
 	var h := dist / steps
 	for _s in steps:
 		var k1 := _deriv(l, n, vecs)
@@ -164,6 +252,54 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 		var res := geodesic(l, n, D.normalized(), D.length(), [])
 		D += project(l, n, T - embed(res[0], res[1]))
 	return D
+
+
+## toward for every frame (main._update_near): the same shooting with RK4 steps of about H_FAST
+## (plain vectors, no frame), corrected while it lands more than 2 mm off, at most twice.
+## Returns [the tangent vector, how far from (tl, tn) its geodesic lands (R^4)]: the caller adds
+## that miss to what it may be off by. Within ~1 m: 3-9 steps a geodesic.
+const H_FAST := 0.2
+
+func toward_fast(l: float, n: Vector3, tl: float, tn: Vector3) -> Array:
+	var E := embed(l, n)
+	var T := embed(tl, tn)
+	var D := project(l, n, T - E)
+	var d := (T - E).length()
+	if D.length() < 1e-7:
+		return [Vector4.ZERO, d]
+	D = D.normalized() * d
+	var miss := d
+	for it in 3:
+		var at := shoot(l, n, D.normalized(), D.length())
+		var dE := T - embed(at[0], at[1])
+		miss = dE.length()
+		if miss < 2e-3 or it == 2:
+			break
+		D += project(l, n, dE)
+	return [D, miss]
+
+
+## The geodesic from (l, n) with unit direction V followed for dist, in RK4 steps of about h, no
+## frame carried: [l, n] where it ends.
+func shoot(l: float, n: Vector3, V: Vector4, dist: float, h := H_FAST) -> Array:
+	var g := geodesic(l, n, V, dist, [], h)
+	return [g[0], g[1]]
+
+
+## The point of the space at the R^4 point E (the inverse of embed): [l, n].
+func unembed(E: Vector4) -> Array:
+	var x := Vector3(E.x, E.y, E.z)
+	var rr := x.length()
+	var n := x / rr if rr > 0.0 else Vector3(1.0, 0.0, 0.0)
+	var sg := 1.0 if E.w >= 0.0 else -1.0
+	var aw := absf(E.w)
+	if aw >= h - 1e-6 and rr >= Rout - 1e-6:
+		return [sg * maxf(rr - Rout + L, L), n]
+	if aw <= Lc:
+		return [E.w, n]                # the cylinder (r is rho0 there only to float precision)
+	# on a fillet, the circle round (Rout, h - R): r = Rout - R cos th, |w| = h - R + R sin th
+	var th := clampf(atan2(aw - (h - fillet), Rout - rr), th0, PI / 2.0)
+	return [sg * (Lc + fillet * (th - th0)), n]
 
 
 ## Chart of the flat region on one side: side A (l >= L) x = r n, side B x = P r n,

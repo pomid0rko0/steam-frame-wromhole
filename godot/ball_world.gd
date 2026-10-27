@@ -39,6 +39,9 @@ const DRAG_CUBE := 1.05
 const MAX_BALLS := 8
 const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls nearby
 const MAX_CUBES := 6
+# the biggest cube's half size: the ray tracer's search in the curved region tests three of a box's
+# four slabs, which holds up to this (wormhole_core.gdshaderinc, wh_cubeReach)
+const MAX_CUBE_HALF := 0.4
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates at 0.5 g
 const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless micro-bounces)
@@ -48,6 +51,10 @@ const KINEMATIC := 1e9               # mass of held balls and hands
 # it meets flew off at 1.85 times its speed, and one pressed against the floor or another ball
 # gained speed from nothing; this is a soft hand's
 const RESTITUTION_KINEMATIC := 0.3
+# a ball the floor's friction has held at rest for this many steps in a row (1/6 s) sleeps: its
+# state would not change (_floor undoes each step's motion), so it is not stepped until something
+# that moves or is held touches it. GDScript's steps of the balls at rest were most of the physics' time
+const BALL_SLEEP_STEPS := 30
 
 var space: WormholeSpace
 var scene: Dictionary
@@ -65,13 +72,13 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary) -> void:
 func add(l: float, n: Vector3, U: Vector4, radius: float, color: Color) -> Dictionary:
 	if balls.size() >= MAX_BALLS:
 		_drop_oldest(balls)
-	var b := {"l": l, "n": n, "U": U, "radius": radius, "color": color, "held": &""}
+	var b := {"l": l, "n": n, "U": U, "radius": radius, "color": color, "held": &"", "rest": 0}
 	balls.append(b)
 	return b
 
 
 ## A cube centred at (l, n): body axes F (tangent vectors, made orthonormal), angular velocity
-## w in body coordinates (rad/s), half the edge length.
+## w in body coordinates (rad/s), half the edge length (at most MAX_CUBE_HALF).
 func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: float, color: Color) -> Dictionary:
 	if cubes.size() >= MAX_CUBES:
 		_drop_oldest(cubes)
@@ -79,9 +86,17 @@ func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: floa
 	for A: Vector4 in F:
 		axes.append(WormholeSpace.tangent(n, A))
 	var c := {"l": l, "n": n, "U": U, "F": WormholeSpace.orthonormalize(axes), "w": w,
-			"half": half, "color": color, "held": &"", "still": 0.0}
+			"half": minf(half, MAX_CUBE_HALF), "color": color, "held": &"", "still": 0.0}
 	cubes.append(c)
 	return c
+
+
+## How far what the space cuts from a cube's box reaches from its centre (chord distance in R^4):
+## as wormhole_core.gdshaderinc's wh_cubeReach (R: min(fillet, rho0)).
+static func cube_reach(half: float, R: float) -> float:
+	var t2 := 3.0 * half * half
+	var hn := minf(half, 1.25 * t2 / (R + sqrt(R * R - t2))) if t2 < R * R else half
+	return sqrt(t2 + hn * hn)
 
 
 ## Makes room for a new ball or cube: the oldest one goes, unless a hand holds it.
@@ -115,7 +130,12 @@ func step(delta: float, hands: Array) -> void:
 		_acc -= DT
 		for b in balls:
 			if b["held"] != &"":
+				b["rest"] = 0
 				continue
+			if _asleep(b):
+				if b["U"] == Vector4.ZERO:
+					continue
+				b["rest"] = 0                  # something gave it a speed
 			var before: Array = [b["l"], b["n"], b["U"]]
 			var s := space.dynamics_step(b["l"], b["n"], b["U"], DT, GRAVITY)
 			b["l"] = s[0]
@@ -126,15 +146,42 @@ func step(delta: float, hands: Array) -> void:
 		for c in cubes:
 			if c["held"] == &"" and c["still"] <= SLEEP_TIME:
 				_integrate_cube(c)
+		# the balls' centres in R^4, kept up to date as the pairs and the hands move them: a pair
+		# farther apart than their radii is not looked at
+		var E := PackedVector4Array()
+		for b in balls:
+			E.append(space.embed(b["l"], b["n"]))
 		for i in balls.size():
 			for j in range(i + 1, balls.size()):
+				var rr: float = balls[i]["radius"] + balls[j]["radius"]
+				if (E[j] - E[i]).length_squared() >= rr * rr or (_asleep(balls[i]) and _asleep(balls[j])):
+					continue
 				_pair(balls[i], balls[j], RESTITUTION_BALL)
+				E[i] = space.embed(balls[i]["l"], balls[i]["n"])
+				E[j] = space.embed(balls[j]["l"], balls[j]["n"])
 		for hand in hands:
-			for b in balls:
-				if b["held"] == &"":
-					_push(b, hand)
+			var Eh := space.embed(hand["l"], hand["n"])
+			for i in balls.size():
+				var b: Dictionary = balls[i]
+				var rr: float = b["radius"] + hand["radius"]
+				if b["held"] != &"" or ((E[i] - Eh).length_squared() >= rr * rr and not b.has("ghost")):
+					continue
+				_push(b, hand)
+				E[i] = space.embed(b["l"], b["n"])
 		if not cubes.is_empty():
 			_solve_cubes(hands)
+
+
+## A ball held at rest by the floor's friction for BALL_SLEEP_STEPS steps (it is not stepped).
+static func _asleep(b: Dictionary) -> bool:
+	return b.get("rest", 0) >= BALL_SLEEP_STEPS
+
+
+## A sleeping ball that a cube touches wakes up if the cube is awake or held (asleep, the ball does
+## not move for the cubes' contacts). Balls and hands wake it by what they do to it: a speed.
+static func _wake_ball(ball: Dictionary, cube: Dictionary) -> void:
+	if _asleep(ball) and (cube["held"] != &"" or cube["still"] <= SLEEP_TIME):
+		ball["rest"] = 0
 
 
 ## A step of air drag, -k |U| U (k: drag / mass per metre), integrated implicitly: stable at any speed.
@@ -152,6 +199,7 @@ func _floor(b: Dictionary, before: Array) -> void:
 	var H := space.height(b["l"], b["n"])
 	var rad: float = b["radius"]
 	if H >= rad:
+		b["rest"] = 0
 		return
 	var g := space.height_grad(b["l"], b["n"])
 	var gl := g.length()
@@ -174,8 +222,10 @@ func _floor(b: Dictionary, before: Array) -> void:
 			b["l"] = before[0]
 			b["n"] = before[1]
 			b["U"] = Vector4.ZERO
+			b["rest"] = b.get("rest", 0) + 1
 			return
 		U -= Ut * (minf(stop, speed) / speed)
+	b["rest"] = 0
 	b["U"] = U
 	_move(b, N, (rad - H) / gl)
 
@@ -272,6 +322,7 @@ func _push(b: Dictionary, hand: Dictionary) -> void:
 	var pen: float = b["radius"] + hand["radius"] - dist
 	if pen <= 0.0 or dist < 1e-6:
 		return
+	b["rest"] = 0                            # a hand wakes it
 	var Nb := space.project(b["l"], b["n"], D).normalized()      # at the ball, away from the hand
 	var Nh := space.project(hand["l"], hand["n"], D).normalized()
 	var Ub: Vector4 = b["U"]
@@ -392,7 +443,7 @@ class Contact:
 	var target := 0.0
 	var jn := 0.0
 	var jt := Vector2.ZERO
-	var group := ""
+	var group := 0                       # the contacts of one pair of bodies (or one cube and the floor)
 
 	func speed(i: int) -> float:
 		var v: float = a["U"].dot(da[i]) + a["w"].dot(arm_a[i])
@@ -421,6 +472,8 @@ func _inverse_mass(b: Variant) -> Vector2:
 		if b["still"] > SLEEP_TIME:
 			return Vector2.ZERO
 		return Vector2(1.0 / cube_mass(b), 1.0 / cube_inertia(b))
+	if _asleep(b):
+		return Vector2.ZERO
 	return Vector2(1.0 / pow(b["radius"], 3.0), 0.0)
 
 
@@ -436,7 +489,7 @@ static func _directions(a: Dictionary, na: Vector4) -> Array:
 
 
 func _contact(a: Dictionary, ra: Vector3, na: Vector4, b: Variant, rb: Vector3, nb: Vector4,
-		pen: float, mu: float, e: float, group: String, dirs: Array = []) -> Contact:
+		pen: float, mu: float, e: float, group: int, dirs: Array = []) -> Contact:
 	var ct := Contact.new()
 	ct.a = a
 	ct.pen = pen
@@ -478,24 +531,40 @@ func _solve_cubes(hands: Array) -> void:
 	var contacts: Array[Contact] = []
 	var boxes := []
 	for c in cubes:
-		boxes.append(box4(c))
+		# a sleeping cube's box is where it fell asleep (its place does not change while it sleeps)
+		if c["held"] == &"" and c["still"] > SLEEP_TIME and c.has("box"):
+			boxes.append(c["box"])
+		else:
+			c["box"] = box4(c)
+			boxes.append(c["box"])
+	# the balls' and hands' centres in R^4 (nothing moves until the solver has run)
+	var EB := PackedVector4Array()
+	for b in balls:
+		EB.append(space.embed(b["l"], b["n"]))
+	var EH := PackedVector4Array()
+	for hb in hands:
+		EH.append(space.embed(hb["l"], hb["n"]))
 	for i in cubes.size():
 		var c: Dictionary = cubes[i]
 		var free: bool = c["held"] == &""
+		var asleep: bool = free and c["still"] > SLEEP_TIME
 		if free and c["still"] <= SLEEP_TIME:
-			_floor_contacts(c, "f%d" % i, contacts)
-			_static_contacts(c, "s%d" % i, contacts)
+			_floor_contacts(c, 1000 + i, contacts)
+			_static_contacts(c, 2000 + i, contacts)
 		for j in balls.size():
-			if free or balls[j]["held"] == &"":
-				_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
+			# a sleeping cube and a sleeping ball: neither can be pushed (_inverse_mass), nothing to do
+			if (free or balls[j]["held"] == &"") and not (asleep and _asleep(balls[j])):
+				_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, 3000 + 64 * i + j, contacts, EB[j])
 		if free:
 			for j in hands.size():
 				if not _ghosted(c, hands[j]):
-					_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
+					_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, 4000 + 64 * i + j, contacts, EH[j])
 		for j in range(i + 1, cubes.size()):
+			if asleep and cubes[j]["held"] == &"" and cubes[j]["still"] > SLEEP_TIME:
+				continue                     # both asleep
 			if (boxes[i][0] - boxes[j][0]).length() < 2.0 * (c["half"] + cubes[j]["half"]):
-				_points_in_box(c, boxes[i], cubes[j], boxes[j], "c%d_%d" % [i, j], contacts)
-				_points_in_box(cubes[j], boxes[j], c, boxes[i], "c%d_%d" % [i, j], contacts)
+				_points_in_box(c, boxes[i], cubes[j], boxes[j], 5000 + 64 * i + j, contacts)
+				_points_in_box(cubes[j], boxes[j], c, boxes[i], 5000 + 64 * i + j, contacts)
 	for _it in ITERATIONS:
 		for ct in contacts:
 			if ct.k[0] <= 0.0:
@@ -556,7 +625,7 @@ func _wake(c: Dictionary, b: Dictionary) -> void:
 
 ## Corners below the floor. Heights to first order at the centre: H + grad H . r, which is the
 ## z of the box corner in R^4 (exact in the flat universes).
-func _floor_contacts(c: Dictionary, group: String, contacts: Array[Contact]) -> void:
+func _floor_contacts(c: Dictionary, group: int, contacts: Array[Contact]) -> void:
 	var H := space.height(c["l"], c["n"])
 	var a: float = c["half"]
 	if H > 1.8 * a:
@@ -575,7 +644,7 @@ func _floor_contacts(c: Dictionary, group: String, contacts: Array[Contact]) -> 
 
 
 ## The static objects of the flat universes and the world's wall, in chart coordinates.
-func _static_contacts(c: Dictionary, group: String, contacts: Array[Contact]) -> void:
+func _static_contacts(c: Dictionary, group: int, contacts: Array[Contact]) -> void:
 	var l: float = c["l"]
 	if absf(l) < space.L:
 		return
@@ -645,8 +714,8 @@ func _static_contacts(c: Dictionary, group: String, contacts: Array[Contact]) ->
 
 
 ## A ball (or a hand) against the cube: the point of the box closest to the ball's centre, in R^4.
-func _ball_contacts(c: Dictionary, box: Array, b: Dictionary, e: float, group: String, contacts: Array[Contact]) -> void:
-	var B := space.embed(b["l"], b["n"])
+func _ball_contacts(c: Dictionary, box: Array, b: Dictionary, e: float, group: int, contacts: Array[Contact],
+		B: Vector4) -> void:
 	var C: Vector4 = box[0]
 	var d := B - C
 	var rad: float = b["radius"]
@@ -660,12 +729,14 @@ func _ball_contacts(c: Dictionary, box: Array, b: Dictionary, e: float, group: S
 	if dist >= rad or dist < 1e-6:
 		return
 	_wake(c, b)
+	if b.has("rest"):
+		_wake_ball(b, c)
 	contacts.append(_contact(c, Vector3(q.x, q.y, q.z), space.project(c["l"], c["n"], -D).normalized(),
 			b, Vector3.ZERO, space.project(b["l"], b["n"], D).normalized(), rad - dist, 0.0, e, group))
 
 
 ## Corners and edge midpoints of cube P inside cube Q's box push P out through Q's nearest face.
-func _points_in_box(P: Dictionary, bp: Array, Q: Dictionary, bq: Array, group: String, contacts: Array[Contact]) -> void:
+func _points_in_box(P: Dictionary, bp: Array, Q: Dictionary, bq: Array, group: int, contacts: Array[Contact]) -> void:
 	var ap: float = P["half"]
 	var aq: float = Q["half"]
 	for s: Vector3 in SAMPLES:

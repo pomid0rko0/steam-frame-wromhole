@@ -7,6 +7,8 @@ extends SceneTree
 ## away: the same spot looking away from it. A suffix _scale80 or _scale70 renders at 80% / 70%
 ## 3D render scale (plain_scale80, near_scale70, ...). A second argument, a shader's path (such
 ## as res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), replaces the ray tracer.
+## A suffix _xr: through the scripted headset (fake_hmd.gd), as in the headset: multiview, the
+## shaders compiled as the Frame runs them (tools/adreno_stats.sh plain_xr).
 
 var main: Node3D
 var frames := 0
@@ -24,6 +26,15 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.physics = false            # the scenes set their own balls
 	main.xr_name = "none"
+	if variant.ends_with("_xr"):
+		variant = variant.trim_suffix("_xr")
+		var hmd = preload("res://tests/fake_hmd.gd").new()
+		hmd.size = Vector2i(256, 256)
+		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.25, 0.95, -1.15, 1.05))
+		XRServer.add_interface(hmd)
+		hmd.initialize()
+		XRServer.primary_interface = hmd
+		main.xr_name = "FakeHMD"
 	main.show_check = variant.begins_with("check")
 	root.add_child(main)
 
