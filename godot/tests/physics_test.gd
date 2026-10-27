@@ -68,7 +68,7 @@ func _process(_delta: float) -> bool:
 			cube_moved = maxf(cube_moved, (sp.embed(c["l"], c["n"]) - cubes_at_start[i]).length())
 			cube_tilt = maxf(cube_tilt, _tilt(c))
 			cube_floor = maxf(cube_floor, absf(_lowest(c)))
-		_check("cubes at rest stay at rest (one in the throat)", w.cubes.size() == 3 and cube_moved < 0.002 and cube_tilt < 0.01 and cube_floor < 0.003,
+		_check("cubes at rest stay at rest (one in the throat, the crate)", w.cubes.size() == 4 and cube_moved < 0.002 and cube_tilt < 0.01 and cube_floor < 0.003,
 				"%d cubes, moved %.5f m, tilt %.5f rad, lowest corner %.5f m from the floor" % [w.cubes.size(), cube_moved, cube_tilt, cube_floor])
 		w.balls.clear()
 		w.cubes.clear()
@@ -107,6 +107,7 @@ func _process(_delta: float) -> bool:
 				"p %.4f (3.0), separation speed %.4f (%.4f)" % [va.x + vc.x, vc.x - va.x, 3.0 * e])
 		_cube_checks(sp, w)
 		_gravity_checks(sp, w)
+		_straight_checks(sp)
 		# a ball inside the throat for the screenshot
 		w.balls.clear()
 		main._spawn_toys()
@@ -115,7 +116,10 @@ func _process(_delta: float) -> bool:
 		var tb := w.add(t[0], t[1], Vector4.ZERO, 0.3, Color(0.2, 0.9, 0.9))
 		tb["l"] = 1.0
 		tb["n"] = Vector3(1.0, 0.13, 0.1).normalized()
-		tb["held"] = &"test"
+		# held where it is by a hand at its centre (BallWorld.take), so it stays for the picture
+		var n: Vector3 = tb["n"]
+		w.take(tb, &"test", Vector3.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), WormholeSpace.tangent(n, Vector4(0.0, 0.0, 1.0, 0.0)),
+				WormholeSpace.tangent(n, Vector4(0.0, 0.0, 0.0, 1.0))])
 	if frames == 336:
 		if OS.get_cmdline_user_args().size() > 0:
 			root.get_texture().get_image().save_png(OS.get_cmdline_user_args()[0])
@@ -129,6 +133,40 @@ func _chart_vel(b: Dictionary) -> Vector3:
 	var U: Vector4 = b["U"]
 	var n: Vector3 = b["n"]
 	return U.x * n + Vector3(U.y, U.z, U.w)   # flat A chart
+
+
+## Geodesics in a flat universe taken as straight lines (WormholeSpace.straight) against the steps:
+## random segments in both universes, some passing close by the shell, with a frame carried.
+func _straight_checks(sp: WormholeSpace) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	var worst_p := 0.0
+	var worst_v := 0.0
+	var lines := 0
+	for k in 400:
+		var side := 1.0 if k % 2 == 0 else -1.0
+		var x := Vector3(rng.randf_range(-9.0, 9.0), rng.randf_range(-9.0, 9.0), rng.randf_range(0.0, 3.0))
+		if x.length() < sp.Rout + 0.05:
+			continue
+		var p := sp.point_from_chart(side, x)
+		var d := Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-1, 1)).normalized()
+		var dir := WormholeSpace.vector_from_chart(side, p[1], d)
+		var frame := [WormholeSpace.vector_from_chart(side, p[1], Vector3(1, 0, 0)), WormholeSpace.vector_from_chart(side, p[1], Vector3(0, 0, 1))]
+		var dist := rng.randf_range(0.05, 1.5)
+		var near := clampf(-x.dot(d), 0.0, dist)
+		if (x + near * d).length() <= sp.Rout + 1e-4:
+			continue                     # through the shell: the steps either way
+		lines += 1
+		sp.straight = true
+		var a := sp.geodesic(p[0], p[1], dir, dist, frame)
+		sp.straight = false
+		var b := sp.geodesic(p[0], p[1], dir, dist, frame)
+		sp.straight = true
+		worst_p = maxf(worst_p, (sp.embed(a[0], a[1]) - sp.embed(b[0], b[1])).length())
+		for j in 2:
+			worst_v = maxf(worst_v, (a[2][j] - b[2][j]).length())
+	_check("geodesics in a flat universe as straight lines agree with the steps", lines > 200 and worst_p < 1e-4 and worst_v < 1e-4,
+			"%d segments: places within %.7f m, carried vectors within %.7f" % [lines, worst_p, worst_v])
 
 
 # ---------------------------------------------------------------- cubes
