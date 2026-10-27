@@ -600,9 +600,11 @@ def execute(ins, w, ex):
             a = w.read(ins.srcs[0], k, kind); b = w.read(ins.srcs[1], k, kind)
             w.write(d, k, np.minimum(a, b) if base == 'min' else np.maximum(a, b), kind, ex)
         elif op in ('sad.s32', 'sad.s16'):
-            # sum of absolute differences: |a - b| + c
+            # as Mesa emits it for an index of a uniform array, base + g * 16 + j * 4: a three-way add
+            # (taken as |a - b| + c, the picture of the toys' bins differed from Godot's; as a + b + c
+            # it is Godot's)
             a = w.read(ins.srcs[0], k, 's'); b = w.read(ins.srcs[1], k, 's'); c = w.read(ins.srcs[2], k, 's')
-            w.write(d, k, np.abs(a - b) + c, 's', ex)
+            w.write(d, k, a + b + c, 's', ex)
         elif op in ('shlm', 'shrm', 'shlg', 'shrg', 'andg'):
             # a7xx's shift-and-mask family (Mesa isa/ir3-cat3.xml), the shift amount first:
             # shlm s, a, c = (a << s) & c, shrm (a >> s) & c, shlg (a << s) | c, shrg (a >> s) | c;

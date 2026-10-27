@@ -197,10 +197,14 @@ class Shader:
             return
         self._ukey = key
         # the material's (base 3); Godot's scene data (base 7): its first member the projection
-        # matrix, the rest zeros
+        # matrix, the rest zeros. The camera's projection has OpenGL's depth (-1 near, 1 far); the
+        # shaders' has Godot's reversed one, z' = (w - z) / 2 (Projection.create_depth_correction):
+        # with the camera's, the farther of two toys won the depth test
         scene = np.zeros(4096, np.uint32)
         if proj is not None:
-            scene[:16] = np.asarray(proj, np.float32).ravel().view(np.uint32)
+            P = np.array(proj, np.float64)          # columns
+            P[:, 2] = 0.5 * (P[:, 3] - P[:, 2])
+            scene[:16] = P.astype(np.float32).ravel().view(np.uint32)
         self.ubos = Zeros({3: material_ubo(self.defines, uniforms), 7: scene})
         self.consts = E.run_preamble(self.instrs, self.ps, self.pe + 1, np.zeros(8192, np.uint32), self.ubos)
 
@@ -414,7 +418,7 @@ def frame(passes, e, W, H, tan_x, tan_y, tiles, profile=None, colours=False):
                     c, z, killed, st = sh.run(sub, len(lanes), profile if kind == 'shell' else None)
                     acc[kind].add(st, len(lanes))
                     # without Godot's projection the depths are NaN: then the first toy drawn stays
-                    win = ~killed & ((z > zbuf[lanes]) if np.isfinite(z).all() else ~drawn[lanes])
+                    win = ~killed & ((z > zbuf[lanes]) if np.isfinite(z[~killed]).all() else ~drawn[lanes])
                     zbuf[lanes[win]] = z[win]
                     col[lanes[win]] = c[win]
                     drawn[lanes[win]] = True
