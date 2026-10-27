@@ -96,12 +96,18 @@ for s in "${srcs[@]}"; do
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""
 	flog=""
+	nlog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS$BALLS" ]; then
 		plog=$WORK/$n.plain.log
 		flog=$WORK/$n.flat.log
 		view=$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity)
 		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole$view.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
 		KEEP_LOG=$flog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole_balls${view}_flat.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the flat toys' part: #"
+		# stencil 3's: its own program where the tree has one (WH_NEAR_CULL)
+		if grep -q '^#define WH_NEAR_CULL' "$ROOT/godot/shaders/wormhole_balls${view}_near.gdshader"; then
+			nlog=$WORK/$n.near.log
+			KEEP_LOG=$nlog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/wormhole_balls${view}_near.gdshader | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the near ones' part: #"
+		fi
 	fi
 	# this tree's marks 2 and 3 (the stencil's passes that look for the shell's toys), compiled alone
 	mlogs=""
@@ -111,5 +117,5 @@ for s in "${srcs[@]}"; do
 			mlogs="$mlogs${mlogs:+,}$WORK/$n.$mk.log"
 		done
 	fi
-	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} ${flog:+--flat $flog} ${mlogs:+--marks $mlogs} | tail -n +2 | sed "s#^#$s: #"
+	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} ${flog:+--flat $flog} ${mlogs:+--marks $mlogs} ${nlog:+--near $nlog} | tail -n +2 | sed "s#^#$s: #"
 done

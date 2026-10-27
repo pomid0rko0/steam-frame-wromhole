@@ -95,7 +95,9 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS'), ('wh_candMask', 'i', 0, 'CURVED'),
             ('wh_mkX', 'v4', 5, 'WH_MARK'), ('wh_mkY', 'v4', 5, 'WH_MARK'), ('wh_mkZ', 'v4', 5, 'WH_MARK'),
             ('wh_mkR2', 'v4', 5, 'WH_MARK'), ('wh_mkLo', 'v4', 5, 'WH_MARK'), ('wh_mkHi', 'v4', 5, 'WH_MARK'),
-            ('wh_mkGroups', 'i', 0, 'WH_MARK'), ('wh_near', 'v4', 4, 'WH_MARK')]
+            ('wh_mkGroups', 'i', 0, 'WH_MARK'), ('wh_near', 'v4', 4, 'WH_MARK'), ('wh_nearBox', 'v4', 12, 'WH_MARK_NEAR'),
+            ('wh_nearA', 'v4', 12, 'WH_NEAR_CULL'), ('wh_nearQ', 'v4', 4, 'WH_NEAR_CULL'), ('wh_nearO', 'v4', 4, 'WH_NEAR_CULL'),
+            ('wh_nearH', 'v4', 0, 'WH_NEAR_CULL'), ('wh_nearBit', 'iv4', 0, 'WH_NEAR_CULL')]
 
 
 def shader_defines(path):
@@ -373,7 +375,7 @@ def near_cone(q, reach, rho0=3.0):
 def mark_tests(e, V, n, mk, cone=None):
     """Per lane, whether a mark (wormhole_view.gdshaderinc, WH_MARK) with these uniforms (the dump's
     "marks" entry) passes: some packed toy's plane within reach and its l range met (and with cone,
-    per slot, inside that cone)."""
+    per slot, inside that cone, and its box)."""
     e3 = np.cross(n[:, None], V[1:], axis=0)
     s2 = (e3 * e3).sum(0)
     rho0, hh, R = 3.0, 5.0, 1.0
@@ -496,6 +498,19 @@ def near_cone_share(e, xs, ys, size, tan):
     return float(hit.mean())
 
 
+def near_box(o, axes, H, pd):
+    """wormhole_view.gdshaderinc's near cube box (main._near_box): per ray pd (3, m) from o (the eye
+    against the box's centre, in the room), whether it passes the box of these axes, half size H."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rd = axes @ pd
+        ro = (axes @ o)[:, None]
+        ta = (-H - ro) / rd
+        tb = (H - ro) / rd
+        t0 = np.maximum(np.fmax.reduce(np.fmin(ta, tb), 0), 0.0)
+        t1 = np.fmin.reduce(np.fmax(ta, tb), 0)
+    return t1 >= t0
+
+
 def toy_classes(e, xs, ys, size, tan_x, tan_y):
     """Per lane, which ray tracer main.gd's stencil gives its pixel (_update_proxies): 0 the plain
     one, 1 the flat universes' toys only, 2 the shell's too but those near the eye, 3 all; the
@@ -511,11 +526,16 @@ def toy_classes(e, xs, ys, size, tan_x, tan_y):
     far, nearu = e.get('marks', [{}, {}])
     hp = np.array(e['head_pos'], float)
     cone = []
+    boxes = np.array(nearu.get('wh_nearBox', [[0, 0, 0, 0]] * 12), float).reshape(4, 3, 4)
     for k in range(4):
         P = np.array(nearu.get('wh_near', [[0, 0, 0, 0]] * 4)[k], float)
         q = P[:3] - hp
         c = near_cone(q, P[3]) if P[3] > 0 else 2.0
-        cone.append((q / max(np.linalg.norm(q), 1e-6)) @ pd >= c - 1e-4)
+        m = (q / max(np.linalg.norm(q), 1e-6)) @ pd >= c - 1e-4
+        H = boxes[k, 0, 3]
+        if H > 0:
+            m &= near_box(hp - P[:3], boxes[k, :, :3], H, pd)
+        cone.append(m)
     c2 = mark_tests(e, V, n, far)
     c3 = mark_tests(e, V, n, nearu, cone)
     if e.get('proxies'):
@@ -567,7 +587,7 @@ def per64(sh, st, n):
 def main():
     args = sys.argv[1:]
     opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': '', '--flat': '', '--profile-class': 2,
-           '--marks': ''}
+           '--marks': '', '--near': ''}
     flags = set()
     pos = []
     i = 0
@@ -625,15 +645,21 @@ def main():
             fdefs = {d for d in defines if d != 'CURVED'} | {'WH_FLAT_TOYS'}
             flat = Shader(opt['--flat'], fdefs, uniforms)
             find_flat_order(flat, entries, robust=True)
-            # the same program as LOG with the material that looks for all the shell's toys
-            allu = None if unis is None else [dict(u, wh_candMask=-1) for u in unis]
-            nearsh = Shader(log, defines, dict(uniforms, wh_candMask=-1))
-            nearsh.flat_order = order
+            # stencil 3's: the material that looks for all the shell's toys, and with --near its own
+            # program (WH_NEAR_CULL: each ray leaves out the near toys it misses) and uniforms
+            base = unis or [uniforms] * len(entries)
+            allu = [dict(u, wh_candMask=-1, **e.get('near_uniforms', {})) for u, e in zip(base, entries)]
+            if opt['--near']:
+                nearsh = Shader(opt['--near'], shader_defines(entries[0]['shader'].replace('.gdshader', '_near.gdshader')), allu[0])
+                find_flat_order(nearsh, entries, robust=True)
+            else:
+                nearsh = Shader(log, defines, dict(uniforms, wh_candMask=-1))
+                nearsh.flat_order = order
             cls = lambda e, xs, ys, tan: toy_classes(e, xs, ys, size, tan, tan)
             share = lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 2).mean())
             extra = [(plain, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 0).mean()), unis),
                      (flat, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 1).mean()), unis),
-                     (nearsh, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 3).mean()), allu or [dict(uniforms, wh_candMask=-1)] * len(entries))]
+                     (nearsh, lambda e, xs, ys, tan: float((cls(e, xs, ys, tan) == 3).mean()), allu)]
         else:
             share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
             extra = [(plain, lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis)]
@@ -645,8 +671,9 @@ def main():
         ms_ = [Shader(lg, shader_defines('res://shaders/%s.gdshader' % nm), mark=True) for lg, nm in zip(opt['--marks'].split(','), names)]
         marks = {'quad': (ms_[0], ms_[1]), 'mesh': (ms_[2], ms_[3])}
     if opt['--split']:
-        print('the split: the plain one\'s flat inputs %s%s' % (', '.join(plain.flat_order),
-              (', the flat toys\' %s' % ', '.join(flat.flat_order)) if opt['--flat'] else ''))
+        print('the split: the plain one\'s flat inputs %s%s%s' % (', '.join(plain.flat_order),
+              (', the flat toys\' %s' % ', '.join(flat.flat_order)) if opt['--flat'] else '',
+              (', the near ones\' %s' % ', '.join(nearsh.flat_order)) if opt['--near'] and classes else ''))
     # --profile-class C: the profile of the pixels of stencil C (with --flat; extra: 0, 1, 3)
     pc = opt['--profile-class'] if classes else 2
     psh = sh if pc == 2 else extra[{0: 0, 1: 1, 3: 2}[pc]][0]

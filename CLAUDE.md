@@ -227,6 +227,16 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   both eyes, walking, hands, throws, 240 checks of split against whole) and `split_test.gd -- random
   4000` find nothing, on the build the owner tried too; colours differ between the classes only in
   a few grid pixels (helper lanes of another class's quad). Asked the owner what blinks.
+  Then two cubes held: a ray at one lies in the other's plane too (the rays' planes are a pencil
+  round the line throat axis - eye), so stencil 3 searched both. Now the mark 3 tests a near cube's
+  box as well (`main._near_box`, `wh_nearBox`: flat in the head's normal coordinates, the room's,
+  axes carried back along the head's geodesic, grown by `BOX_GROW` 0.14 x D x (half + 0.08):
+  `ref/test_nearbox.py`, RK4 against the flat box, worst 0.093 in about 1100 cases), and stencil 3's ray
+  tracer drops per ray the near toys whose cone or box it misses (`WH_NEAR_CULL` in `wh_curved`, from
+  (vl, w) and uniforms made from the head, `main._near_cull`: cones and boxes grown by the eye's
+  offset and the head-to-eye frame turn). Model: two cubes held 16.1 -> 12.4 ms, 9 -> 6.3 samples a
+  wave; the rest as before. `count_dump.gd -- scene split` counts the split frame,
+  `class_share.gd -- scene` the classes' shares.
   The builds of 9f0d4f9 and d883b1a print the `refresh:` line's new numbers out of order: there
   "max of X" is the scripts' mean and "main's scripts Y ms avg Z max" their most and the frame's
   budget (fixed after).
@@ -378,6 +388,9 @@ they line up the same way.
 - **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
   (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; `edge-120hz`
   matched the main before it within 1/255 at every pose.
+- **`split_test.gd` at its own size:** run it at `--resolution 192x192`; at the window's 1280x720
+  a few silhouette pixels of the flat universes' balls round differently between two ray tracers
+  compiled apart (4 of 21 million on 436 poses), not a split error.
 - **Tests:** on `gravity`, `--rendering-method mobile --fixed-fps 60 -s res://tests/gravity_test.gd`
   under xvfb (the field against `ref/test_gravity.py`, Laplace, the shader's polynomials, the views'
   colours) and `python3 ref/test_slice.py` (the arrows' surface against RK4 rays, ~2 min); on `rim`, `--rendering-method mobile -s res://tests/blink_test.gd` (the split in motion through the fake HMD) and `split_test.gd -- random N`; on `main`, `--xr-mode off -s res://tests/refresh_rate_test.gd` (the rate meter, the verdict, the GPU clock), `tools/test_openxr.sh` (the panel and its buttons) and `--fixed-fps 60 -s res://tests/walking_test.gd` / `walking_xr_test.gd` (the sticks, from keys and from controller trackers); each branch's own, `--fixed-fps 60 -s res://tests/<name>_test.gd` (`throat`, `physics`, `grab`).
@@ -555,6 +568,12 @@ they line up the same way.
   |a - b| + c: an ivec4 array read at a computed component had the emulator read the wrong toy
   until fixed. `adreno_cost.py --check` emulates the material of stencil 2 with `wh_candMask` -1:
   the picture is the split's, which draws the near toys that material leaves out.
+- **The near cull and the registers.** A mask of near toys made per pixel before `wh_curved` (from
+  flat varyings, even used at once) or the view index passed into it took stencil 3's ray tracer to
+  32 registers; the same tests inside `wh_curved`, from the ray's (vl, w) and uniforms only, kept
+  24. Custom functions can't read `VIEW_INDEX` in Godot. Check multiview programs with
+  `tools/adreno_stats.sh plain_xr` (`tests/perf.gd` through `fake_hmd.gd`): Godot compiles the
+  specialised program (the smallest `prog`) for each.
 - **The curved search's registers are on a knife's edge (24).** One sqrt per candidate (a cube's
   reach from its half size) or one int carried through the sample loop (a skip's step) took it to
   32: the compiler holds such values through the search. Work them out on the CPU and read them

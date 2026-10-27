@@ -10,7 +10,8 @@
 #   loops            loops left after unrolling
 #   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: as
 #   tests/perf.gd, default near; plain without the stereo check, check or plain_balls with movable
-#   balls; --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader; with --alone
+#   balls; a suffix _xr (plain_xr): through the scripted headset, multiview as in the headset;
+#   --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader; with --alone
 #   that shader alone on a quad over the view, nothing else of the app: tests/one_shader.gd, for
 #   the stencil's marks)
 # KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it).

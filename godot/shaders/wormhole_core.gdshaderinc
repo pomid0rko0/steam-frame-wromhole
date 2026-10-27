@@ -657,6 +657,29 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
 #ifdef WH_CAND_MASK
     cand &= WH_CAND_MASK;   // a uniform: a mask made per pixel here took the shader to 32 registers
 #endif
+#ifdef WH_NEAR_CULL
+    // the near toys (main._update_near) the eye's own ray cannot meet: outside the cone round where
+    // one's centre is seen, or outside a cube's box in the room (main._near_cull, from the head: the
+    // eye's ray (vl, w) taken as the head's, its direction in the head's frame, the cones and the
+    // boxes grown by how far that is off; one that entered from a flat universe keeps them all).
+    // Per eye (a view index here) or a mask made per pixel before this function took the shader to
+    // 32 registers.
+    if (abs(ls) < wh_Lsh()) {
+        vec4 V4 = vec4(vl, w);
+        for (int k = 0; k < 4; k++) {
+            vec4 O = wh_nearO[k];          // the head against the box along its axes; the cone's cos
+            float H = wh_nearH[k];
+            vec3 rd = vec3(dot(V4, wh_nearA[3 * k]), dot(V4, wh_nearA[3 * k + 1]), dot(V4, wh_nearA[3 * k + 2]));
+            vec3 ta = (-H - O.xyz) / rd;
+            vec3 tb = (H - O.xyz) / rd;
+            vec3 tn = min(ta, tb);
+            vec3 tf = max(ta, tb);
+            bool box = H <= 0.0 || min(min(tf.x, tf.y), tf.z) >= max(max(tn.x, tn.y), max(tn.z, 0.0));
+            if (wh_nearBit[k] >= 0 && !(box && dot(V4, wh_nearQ[k]) >= O.w))
+                cand &= ~(1 << wh_nearBit[k]);
+        }
+    }
+#endif
     if (cand != 0) {
         // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
         // 1 B from 0, 2 C from 2; 4: the edge), as the hits are ordered. The cylinder's fraction

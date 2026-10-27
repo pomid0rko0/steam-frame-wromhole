@@ -34,7 +34,9 @@ const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nB
 		"wh_candMask"]
 # the marks' own (main._update_near: the toys each looks for, the near ones' cones), for
 # adreno_cost.py's split: the marks 2 (main.mark_materials[0]) and 3 ([1])
-const MARK_UNIFORMS := ["wh_mkX", "wh_mkY", "wh_mkZ", "wh_mkR2", "wh_mkLo", "wh_mkHi", "wh_mkGroups", "wh_near"]
+# the ray tracer of stencil 3's own (main._near_cull)
+const NEAR_UNIFORMS := ["wh_nearA", "wh_nearQ", "wh_nearO", "wh_nearH", "wh_nearBit"]
+const MARK_UNIFORMS := ["wh_mkX", "wh_mkY", "wh_mkZ", "wh_mkR2", "wh_mkLo", "wh_mkHi", "wh_mkGroups", "wh_near", "wh_nearBox"]
 
 
 func _initialize() -> void:
@@ -129,6 +131,7 @@ func _process(_d: float) -> bool:
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
 			"marks": [_uniforms(main.mark_materials[0], MARK_UNIFORMS), _uniforms(main.mark_materials[1], MARK_UNIFORMS)],
+			"near_uniforms": _uniforms(main.near_material, NEAR_UNIFORMS),
 			# the stencil's proxies (main._update_proxies), chart spheres of the head's universe, or
 			# none (the whole view marked, or no toys)
 			"proxies": _proxies(),

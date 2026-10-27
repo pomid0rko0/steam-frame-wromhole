@@ -85,10 +85,29 @@ uniform vec4 wh_mkR2[5];
 uniform vec4 wh_mkLo[5];
 uniform vec4 wh_mkHi[5];
 uniform int wh_mkGroups = 0;
-// WH_MARK_NEAR: the same four slots' toys seen from the head (main._update_near): where the head's
-// geodesic to each centre ends when unrolled into the room (play space), and its reach (with the
-// margins; 0: none)
+#endif
+#ifdef WH_MARK
+// The near toys, four slots (WH_MARK_NEAR's packed toys are the same four), seen from the head
+// (main._update_near): where the head's geodesic to each centre ends when unrolled into the room
+// (play space), and its reach (with the margins; 0: none)
 uniform vec4 wh_near[4];
+#endif
+#ifdef WH_MARK_NEAR
+// and a near cube's box in the room (main._near_box): per slot its three body axes there, the first
+// with its half size grown by what the flat picture may be off by (0: not a cube, no box)
+uniform vec4 wh_nearBox[12];
+#endif
+#ifdef WH_NEAR_CULL
+// The ray tracer of stencil 3 leaves each near toy out of a ray that misses its cone or its box
+// (wormhole_core.gdshaderinc, wh_curved): the same four slots from the head (slot k; main._near_cull): a cube's three axes in the room as
+// vectors of the head's frame (wh_nearA[3 k + j]), the cone's axis the same way (wh_nearQ[k]), the
+// head against the box along those axes and the cone's cos (wh_nearO[k]); the boxes' grown half
+// sizes (0: none); each slot's candidate bit (wormhole_core.gdshaderinc, wh_curved; -1: none)
+uniform vec4 wh_nearA[12];
+uniform vec4 wh_nearQ[4];
+uniform vec4 wh_nearO[4];
+uniform vec4 wh_nearH;
+uniform ivec4 wh_nearBit = ivec4(-1);
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
@@ -107,6 +126,38 @@ varying flat vec4 v_near1;
 varying flat vec4 v_near2;
 varying flat vec4 v_near3;
 varying flat vec4 v_nearCos;
+#ifdef WH_MARK_NEAR
+// the eye against each near cube's box (slot k: component k), along its three axes; the ray in
+// the room
+varying flat vec4 v_box0;
+varying flat vec4 v_box1;
+varying flat vec4 v_box2;
+#ifndef WH_MARK_MESH
+varying vec3 v_pd;
+#endif
+#endif
+#endif
+
+#ifdef WH_MARK_NEAR
+// Per near slot, 1 if the ray from the eye along pd (the room's; unnormalised) passes its box
+// (main._near_box: the ray from the eye a straight line there, the box grown by what that is off
+// by), or the slot has none; slabs. b0, b1, b2: v_box0, v_box1, v_box2.
+vec4 wh_nearBoxes(vec3 pd, vec4 b0, vec4 b1, vec4 b2) {
+	vec4 ok;
+	for (int k = 0; k < 4; k++) {
+		float H = wh_nearBox[3 * k].w;
+		vec3 rd = vec3(dot(pd, wh_nearBox[3 * k].xyz), dot(pd, wh_nearBox[3 * k + 1].xyz), dot(pd, wh_nearBox[3 * k + 2].xyz));
+		vec3 ro = vec3(b0[k], b1[k], b2[k]);
+		vec3 ta = (-H - ro) / rd;
+		vec3 tb = (H - ro) / rd;
+		vec3 tn = min(ta, tb);
+		vec3 tf = max(ta, tb);
+		float t0 = max(max(tn.x, tn.y), max(tn.z, 0.0));
+		float t1 = min(min(tf.x, tf.y), tf.z);
+		ok[k] = H <= 0.0 || t1 >= t0 ? 1.0 : 0.0;
+	}
+	return ok;
+}
 #endif
 
 void vertex() {
@@ -173,6 +224,14 @@ void vertex() {
 	v_near0 = Q[0]; v_near1 = Q[1]; v_near2 = Q[2]; v_near3 = Q[3];
 	v_nearCos = cs;
 #ifdef WH_MARK_NEAR
+	for (int k = 0; k < 4; k++) {
+		vec3 o = eye - wh_near[k].xyz;
+		v_box0[k] = dot(o, wh_nearBox[3 * k].xyz);
+		v_box1[k] = dot(o, wh_nearBox[3 * k + 1].xyz);
+		v_box2[k] = dot(o, wh_nearBox[3 * k + 2].xyz);
+	}
+#endif
+#ifdef WH_MARK_NEAR
 #ifndef WH_MARK_MESH
 	if (!whole)      // none at all: every corner at one point off the view, nothing drawn
 		corner = lo.x > hi.x ? vec2(2.0) : mix(clamp(lo, -1.0, 1.0), clamp(hi, -1.0, 1.0), VERTEX.xy * 0.5 + 0.5);
@@ -190,6 +249,9 @@ void vertex() {
 	vec3 qb = pb.xyz / pb.w;
 	vec3 pd = mat3(INV_VIEW_MATRIX) * ((dot(qa, qa) > dot(qb, qb) ? qa : qb) - EYE_OFFSET);   // play space
 	v_ray = pd.x * f0 + pd.y * f1 + pd.z * f2;
+#ifdef WH_MARK_NEAR
+	v_pd = pd;
+#endif
 #endif
 }
 
@@ -209,6 +271,9 @@ void fragment() {
 	vec4 V = normalize(pd.x * v_f0 + pd.y * v_f1 + pd.z * v_f2);
 #else
 	vec4 V = normalize(v_ray);
+#ifdef WH_MARK_NEAR
+	vec3 pd = v_pd;
+#endif
 #endif
 	float hit = 0.0;
 #ifdef WH_MARK_NEAR
@@ -218,6 +283,8 @@ void fragment() {
 	vec4 inCone = vec4(greaterThanEqual(vec4(dot(V, v_near0), dot(V, v_near1), dot(V, v_near2), dot(V, v_near3)),
 			v_nearCos - 1e-4));
 	for (int once = 0; once < (dot(inCone, vec4(1.0)) > 0.5 ? 1 : 0) + min(wh_mkGroups, 0); once++) {
+	// a near cube's ray must also pass its box
+	inCone *= wh_nearBoxes(pd, v_box0, v_box1, v_box2);
 #endif
 	vec3 e3 = cross(v_n, V.yzw);              // the plane's normal, |w| long
 	// along the radius (e3 = 0) the ray is in every plane through it: the 1e-12 lets it pass

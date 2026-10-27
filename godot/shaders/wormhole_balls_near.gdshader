@@ -8,4 +8,6 @@ stencil_mode read, compare_equal, 3;
 // wh_cubeCol, wh_nCube).
 // The fillet polynomials from a table (main.gd sets it), as the plain ray tracer
 #define WH_TABLE
+// each ray leaves out the near toys whose cone or box it misses (main._update_near)
+#define WH_NEAR_CULL
 #include "res://shaders/wormhole_view.gdshaderinc"
