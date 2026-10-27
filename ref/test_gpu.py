@@ -91,7 +91,16 @@ def toy_list():
     cols.append([tuple(toy[4 * g + j][3] ** 2 if toy[4 * g + j][3] > 0 else -1.0 for j in range(4)) for g in range(5)])
     cols += [[tuple(win[4 * g + j][c] for j in range(4)) for g in range(5)] for c in range(3)]
     bits = [tuple(int(win[4 * g + j][3]) for j in range(4)) for g in range(5)]
-    return cols, bits, (n + 3) // 4
+    return cols, bits, [(np.asarray(t[:3]), t[3], w[0], w[1], w[2]) for t, w in zip(toy[:n], win[:n])]
+
+
+def toy_bins(state, listed):
+    """main._update_bins for the camera's point: (t1, t2, phi bins as ivec4s, b bins, b step)"""
+    from cull import bins
+    l0, n0 = state[0], np.asarray(state[1], float)
+    t1, t2, phi, bm, bstep = bins(W, l0, n0 / np.linalg.norm(n0), listed)
+    return (tuple(t1), tuple(t2), [tuple(phi[4 * g:4 * g + 4]) for g in range(8)],
+            [tuple(bm[4 * g:4 * g + 4]) for g in range(16)], bstep)
 
 
 def toy_mask():
@@ -138,7 +147,11 @@ uniform vec4 wht_lo[5];
 uniform vec4 wht_hi[5];
 uniform vec4 wht_fs[5];
 uniform ivec4 wht_bit[5];
-uniform int wht_nGroup;
+uniform vec3 wht_t1;
+uniform vec3 wht_t2;
+uniform ivec4 wht_phiBin[8];
+uniform ivec4 wht_bBin[16];
+uniform float wht_bStep;
 uniform ivec2 uMask;         // the toys the flat pass draws: A's, B's (main.toy_mask)
 uniform vec4 wh_fball[12];
 uniform float wh_pix;
@@ -227,12 +240,14 @@ def render(ctx, state, size, tan, debug):
         fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
     fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
     TL = toy_list()
+    TB = toy_bins(state, TL[2])
     for k, v in dict(wh_sph=[tuple(x) for x in SCENE['spheres_A'] + SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
                      wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_pix=0.002,
                      uMask=toy_mask(), wht_cx=TL[0][0], wht_cy=TL[0][1], wht_cz=TL[0][2], wht_r2=TL[0][3],
-                     wht_lo=TL[0][4], wht_hi=TL[0][5], wht_fs=TL[0][6], wht_bit=TL[1], wht_nGroup=TL[2], wh_fball=fball,
+                     wht_lo=TL[0][4], wht_hi=TL[0][5], wht_fs=TL[0][6], wht_bit=TL[1], wht_t1=TB[0], wht_t2=TB[1],
+                     wht_phiBin=TB[2], wht_bBin=TB[3], wht_bStep=TB[4], wh_fball=fball,
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         if k in prog:      # the toys' uniforms are gone from the shader without them

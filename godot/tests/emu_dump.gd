@@ -28,8 +28,8 @@ var held := false
 var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
 		"wh_cubeCol", "wh_nCube", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d", "wht_side", "wht_full",
-		"wht_cx", "wht_cy", "wht_cz", "wht_r2", "wht_lo", "wht_hi", "wht_fs", "wht_bit", "wht_nGroup", "wht_cone",
-		"wht_coneR", "wht_coneIdx"]
+		"wht_cx", "wht_cy", "wht_cz", "wht_r2", "wht_lo", "wht_hi", "wht_fs", "wht_bit", "wht_t1", "wht_t2",
+		"wht_phiBin", "wht_bBin", "wht_bStep", "wht_cone", "wht_coneR", "wht_coneIdx"]
 
 
 func _initialize() -> void:
@@ -141,6 +141,8 @@ static func _uniforms(m: ShaderMaterial) -> Dictionary:
 			out[name] = rows
 		elif v is Vector4:
 			out[name] = _v4(v)
+		elif v is Vector3:
+			out[name] = _v3(v)
 		elif v is Vector4i:
 			out[name] = [v.x, v.y, v.z, v.w]
 		else:

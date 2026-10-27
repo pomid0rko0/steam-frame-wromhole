@@ -189,10 +189,15 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   `ref/cull.py` against RK4): those farther than their reach from its plane; those whose meridian's
   l window (`WormholeSpace.meridian_window`, per toy in `set_objects`) it does not reach (away from
   or through the throat it reaches every l beyond the eye, turning only |l| beyond its turning
-  point); a flat universe's toys if it leaves into the other; and, for up to four toys within 2 m
-  of the head, those whose cone it is outside: the vertex stage finds, per eye, the geodesic's
+  point); a flat universe's toys if it leaves into the other; and, for the four nearest toys within
+  4 m of the head, those whose cone it is outside: the vertex stage finds, per eye, the geodesic's
   direction to the toy's centre (`wht_coneAt`) and the half angle by the hinge comparison (the
-  sectional curvature is at most 1/rho0^2: CAT(K)); `main._update_cones` picks the toys. A ball
+  sectional curvature is at most 1/rho0^2: CAT(K)); `main._update_cones` picks the toys. The
+  first two tests are, by the symmetry, an azimuth test of the ray plane's normal round the radial
+  axis and a test of b and the direction along l: `main._update_bins` marks each toy, per frame, in
+  32 azimuth and 2 x 32 b bins valid for an eye within 8 cm of the head point (the reach grown by
+  |C| sin of the angle between the eye's radial axis and the head's), and a pixel tests exactly only
+  the toys of its two bins (testing all 18 in every pixel was ~490 instructions where nothing is). A ball
   held at the edge was searched by 62% of the rays and met by 18%; with its cone 19% search it.
   The rest are searched by Newton steps on the curved path for a ball (its distance is convex
   within 1/k of the path's curvature) and certified slab steps for a cube (`wht_search`,

@@ -28,7 +28,7 @@
 //                                           size). A point P is inside when |dot(P, axis) -
 //                                           dot(centre, axis)| < 1 for all four axes.
 //   int wh_nBall                            balls in use (a loop bound the compiler cannot see)
-//   vec4 wht_cx[5], ..., ivec4 wht_bit[5], int wht_nGroup
+//   vec4 wht_cx[5], ..., ivec4 wht_bit[5], wht_t1, wht_t2, wht_phiBin, wht_bBin, wht_bStep
 //                                           the shell's pass's toys, a list in groups of four
 //                                           (wht_near; ball i is bit i, cube i bit 16 + i)
 //   float wh_pix                            a pixel's angle (the cubes' edge lines, the arrows)
@@ -51,11 +51,10 @@ float wht_size(int bit) {
 
 #ifndef WHT_FLAT
 // The toys a ray of the shell's pass can meet at all, before any search (ref/cull.py checks that
-// none it drops is ever met). The pass's toys are a list (main.set_objects), four to a group of
-// vec4s, so that a pixel tests four in a few instructions and without a branch: wht_cx, wht_cy,
-// wht_cz their centres, wht_r2 their reach squared (a ball's radius, a cube's half diagonal; -1: an
-// empty place), wht_lo, wht_hi the l window of their points' meridian (lo > hi: none), wht_fs the
-// flat universe whose sheet cuts them (+-1, 0: none), wht_bit their bits.
+// none it drops is ever met). The pass's toys are a list (main.set_objects) in groups of four vec4s:
+// wht_cx, wht_cy, wht_cz their centres, wht_r2 their reach squared (a ball's radius, a cube's half
+// diagonal; -1: an empty place), wht_lo, wht_hi the l window of their points' meridian (lo > hi:
+// none), wht_fs the flat universe whose sheet cuts them (+-1, 0: none), wht_bit their bits.
 //  - the plane: a ray's whole path lies in span(e1, e2, the w axis), and a toy farther than its reach
 //    from that subspace is never met. N = n x w for a ray at (n, w), or the chart point x d for a
 //    straight one (as R^4 xyz); b = |N| r (the impact parameter);
@@ -65,28 +64,39 @@ float wht_size(int bit) {
 //    throat on the other: a flat universe's toy is met after the shell only by a ray that leaves
 //    into it;
 //  - skip: toys near the eye whose cone of directions (toys_view.gdshaderinc) the ray is outside.
-// Returns the list's toys to search in the shell (as bits of their places in the list), flatNear:
-// those to test after it.
+// The space's symmetry makes the first two one test of the ray's plane's normal's azimuth round the
+// radial axis and one of its impact parameter and direction along l: main._update_bins marks, per
+// frame, each toy in the bins of those (wht_phiBin: 32 azimuths of N round the head's radial axis,
+// in the frame wht_t1, wht_t2; wht_bBin: 32 b of wht_bStep each, for rays moving toward +l, then
+// toward -l) a ray from either eye can meet it from, so a pixel tests only the few toys of its two
+// bins exactly. Returns the list's toys to search in the shell (as bits of their places in the
+// list), flatNear: those to test after it.
 int wht_near(vec3 N, float b, float l0, float vl, int skip, out int flatNear) {
     float N2 = dot(N, N);
     float s = l0 > 0.0 ? 1.0 : -1.0;
     float sig = vl > 0.0 ? 1.0 : -1.0;
+    int pb = clamp(int((wh_atan2(dot(N, wht_t2), dot(N, wht_t1)) + WH_PI) * (16.0 / WH_PI)), 0, 31);
+    int bb = clamp(int(b / wht_bStep), 0, 31) + (sig > 0.0 ? 0 : 32);
+    int cand = wht_phiBin[pb >> 2][pb & 3] & wht_bBin[bb >> 2][bb & 3] & ~skip;
+    flatNear = 0;
+    if (cand == 0) return 0;
     bool along = sig * l0 >= 0.0 || b <= wh_rho0;
     // the l it reaches: s' l >= lr (s' = sig along, s turning), and the side it leaves on
     float lr = along ? sig * l0 : wh_Lc() + wh_fillet * (acos(clamp(1.0 - (b - wh_rho0) / wh_fillet, -1.0, 1.0)) - wh_th0());
     float sr = along ? sig : s;
     int out_mask = 0;
-    flatNear = 0;
-    for (int g = 0; g < wht_nGroup; g++) {
-        vec4 c = N.x * wht_cx[g] + N.y * wht_cy[g] + N.z * wht_cz[g];
-        vec4 plane = step(c * c, wht_r2[g] * N2);
-        vec4 lw = (sr > 0.0 ? step(vec4(lr), wht_hi[g]) : step(wht_lo[g], vec4(-lr))) * step(wht_lo[g], wht_hi[g]);
-        vec4 fl = vec4(1.0) - step(vec4(0.5), abs(wht_fs[g] - sr));
-        out_mask |= int(dot(plane * lw, vec4(1.0, 2.0, 4.0, 8.0)) + 0.5) << (4 * g);
-        flatNear |= int(dot(plane * fl, vec4(1.0, 2.0, 4.0, 8.0)) + 0.5) << (4 * g);
+    for (int m = cand; m != 0; m &= m - 1) {
+        int k = findLSB(m);
+        int g = k >> 2;
+        int j = k & 3;
+        float c = N.x * wht_cx[g][j] + N.y * wht_cy[g][j] + N.z * wht_cz[g][j];
+        if (c * c > wht_r2[g][j] * N2) continue;
+        float lo = wht_lo[g][j];
+        float hi = wht_hi[g][j];
+        if (lo <= hi && (sr > 0.0 ? hi >= lr : lo <= -lr)) out_mask |= 1 << k;
+        if (wht_fs[g][j] == sr) flatNear |= 1 << k;
     }
-    flatNear &= ~skip;
-    return out_mask & ~skip;
+    return out_mask;
 }
 
 // The toy bits of the list's places in m (wht_near)
@@ -99,9 +109,10 @@ int wht_bits(int m) {
     return out_mask;
 }
 
-// The geodesic from (l, n) along the unit tangent V for len, in RK4 steps of at most 0.2 m: (l, n)
-void wht_geo(inout float l, inout vec3 n, vec4 V, float len) {
-    int steps = clamp(int(ceil(len / 0.2)), 1, 32);
+// The geodesic from (l, n) along the unit tangent V for len, in RK4 steps of at most h0: (l, n) and
+// its direction there (V)
+void wht_geo(inout float l, inout vec3 n, inout vec4 V, float len, float h0) {
+    int steps = clamp(int(ceil(abs(len) / h0)), 1, 48);
     float h = len / float(steps);
     for (int it = 0; it < steps; it++) {
         vec4 p = wh_prof(l);
@@ -128,15 +139,10 @@ vec4 wht_project(vec4 p, vec3 n, vec4 D) {
     return vec4(p.z * rad + p.w * D.w, D.xyz - rad * n);
 }
 
-// The cone of directions from (l, n) that can meet a toy near it, centred at (tl, tn), of chord
-// radius c (ref/cull.py): (its axis, the cos of its half angle). The axis: the geodesic's direction
-// to the centre (as WormholeSpace.toward: the chord seen from (l, n) first, then two corrections by
-// where its geodesic lands). The space's sectional curvature is at most K = 1 / rho0^2, so (the
-// hinge comparison, CAT(K)) a geodesic leaving at an angle theta from it stays at least
-// asin(sin(sqrt(K) d) sin(theta)) / sqrt(K) from the centre at geodesic distance d; the toy's
-// intrinsic radius is at most (2 / k) asin(k c / 2), k = 1 / min(R, rho0) the largest curvature of
-// the space's geodesics in R^4.
-vec4 wht_coneAt(float l, vec3 n, float tl, vec3 tn, float c, out float cth) {
+// The tangent at (l, n) whose geodesic, followed for its length, reaches (tl, tn) (as
+// WormholeSpace.toward: the chord seen from (l, n) first, then two corrections by where its geodesic
+// lands), the geodesic in RK4 steps of at most h0
+vec4 wht_toward(float l, vec3 n, float tl, vec3 tn, float h0) {
     vec4 pe = wh_prof(l);
     vec4 pt = wh_prof(tl);
     vec4 T = vec4(pt.x * tn, pt.y);
@@ -147,10 +153,23 @@ vec4 wht_coneAt(float l, vec3 n, float tl, vec3 tn, float c, out float cth) {
         float gl = l;
         vec3 gn = n;
         float len = length(D);
-        wht_geo(gl, gn, D / max(len, 1e-9), len);
+        vec4 V = D / max(len, 1e-9);
+        wht_geo(gl, gn, V, len, h0);
         vec4 pg = wh_prof(gl);
         D += wht_project(pe, n, T - vec4(pg.x * gn, pg.y));
     }
+    return D;
+}
+
+// The cone of directions from (l, n) that can meet a toy near it, centred at (tl, tn), of chord
+// radius c (ref/cull.py): (its axis, the cos of its half angle). The axis: the geodesic's direction
+// to the centre (wht_toward). The space's sectional curvature is at most K = 1 / rho0^2, so (the
+// hinge comparison, CAT(K)) a geodesic leaving at an angle theta from it stays at least
+// asin(sin(sqrt(K) d) sin(theta)) / sqrt(K) from the centre at geodesic distance d; the toy's
+// intrinsic radius is at most (2 / k) asin(k c / 2), k = 1 / min(R, rho0) the largest curvature of
+// the space's geodesics in R^4.
+vec4 wht_coneAt(float l, vec3 n, float tl, vec3 tn, float c, out float cth) {
+    vec4 D = wht_toward(l, n, tl, tn, 0.2);
     float d = length(D);
     float k = 1.0 / min(wh_fillet, wh_rho0);
     float delta = 2.0 / k * asin(min(0.5 * k * c, 1.0));
@@ -622,4 +641,5 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, int skip, out vec4
 #endif
     return vec4(c, at);
 }
+
 #endif

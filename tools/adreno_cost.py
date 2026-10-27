@@ -107,7 +107,9 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wht_toChart', 'm4', 0, 'WHT_FLAT'), ('wht_side', 'f', 0, 'WHT_FLAT'), ('wht_full', 'i', 0, 'WHT_SHELL'),
             ('wht_cx', 'v4', 5, 'WHT_SHELL'), ('wht_cy', 'v4', 5, 'WHT_SHELL'), ('wht_cz', 'v4', 5, 'WHT_SHELL'),
             ('wht_r2', 'v4', 5, 'WHT_SHELL'), ('wht_lo', 'v4', 5, 'WHT_SHELL'), ('wht_hi', 'v4', 5, 'WHT_SHELL'),
-            ('wht_fs', 'v4', 5, 'WHT_SHELL'), ('wht_bit', 'iv4', 5, 'WHT_SHELL'), ('wht_nGroup', 'i', 0, 'WHT_SHELL'),
+            ('wht_fs', 'v4', 5, 'WHT_SHELL'), ('wht_bit', 'iv4', 5, 'WHT_SHELL'),
+            ('wht_t1', 'v3', 0, 'WHT_SHELL'), ('wht_t2', 'v3', 0, 'WHT_SHELL'), ('wht_phiBin', 'iv4', 8, 'WHT_SHELL'),
+            ('wht_bBin', 'iv4', 16, 'WHT_SHELL'), ('wht_bStep', 'f', 0, 'WHT_SHELL'),
             ('wht_cone', 'v4', 4, 'WHT_SHELL'), ('wht_coneR', 'v4', 0, 'WHT_SHELL'), ('wht_coneIdx', 'iv4', 0, 'WHT_SHELL')]
 
 
@@ -385,7 +387,7 @@ def frame(passes, e, W, H, tan_x, tan_y, tiles, profile=None, colours=False):
     are drawn, then the world's ray tracer where no toy was. Returns the passes' Acc and, with colours,
     per tile (xs, ys, colour)."""
     acc = {k: Acc(sh) for k, sh in passes.items()}
-    toys = 'shell' in passes and e.get('toys_shell', {}).get('wht_nGroup', 0) > 0
+    toys = 'shell' in passes and any(e.get('toys_shell', {}).get('wht_phiBin', [0]))
     for k, sh in passes.items():
         sh.set_uniforms(e.get({'world': 'uniforms', 'shell': 'toys_shell', 'flat': 'toys_flat'}[k], {}), e.get('proj'))
     pics = []

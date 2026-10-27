@@ -30,7 +30,11 @@ uniform vec4 wht_lo[5];
 uniform vec4 wht_hi[5];
 uniform vec4 wht_fs[5];
 uniform ivec4 wht_bit[5];
-uniform int wht_nGroup = 0;
+uniform vec3 wht_t1;            // the bins of the list's toys (wht_near, main._update_bins)
+uniform vec3 wht_t2;
+uniform ivec4 wht_phiBin[8];
+uniform ivec4 wht_bBin[16];
+uniform float wht_bStep = 1.0;
 uniform vec4 wht_cone[4];       // toys near the head (main._update_toy_draws): their centre's (n, l),
 uniform vec4 wht_coneR;         // chord radius,
 uniform ivec4 wht_coneIdx = ivec4(-1);   // the place in the list (-1: none)

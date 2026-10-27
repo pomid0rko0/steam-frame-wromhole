@@ -128,6 +128,64 @@ def cone(W, l, n, tl, tn, chord):
     return D / d, np.cos(min(np.arcsin(min(s, 1.0)) + 2e-3, np.pi))
 
 
+def bins(W, l, n, toys, eye=0.08):
+    """main._update_bins: per toy, the azimuth bins of a ray plane's normal round the head's radial
+    axis n (frame t1, t2) and the (direction along l, b) bins a ray from an eye within eye of the
+    head (at l, n) can meet it from. toys: (C, reach, lo, hi, flat side). Returns (t1, t2, phi
+    masks [32], b masks [64], b step)."""
+    a = np.array([0, 0, 1.0]) if abs(n[2]) < 0.9 else np.array([1.0, 0, 0])
+    t1 = np.cross(a, n); t1 /= np.linalg.norm(t1)
+    t2 = np.cross(n, t1)
+    phi = [0] * 32
+    bm = [0] * 64
+    sd = np.arcsin(min(eye / W.rho0, 1.0))
+    ls_lo, ls_hi = np.clip(l - eye, -W.L, W.L), np.clip(l + eye, -W.L, W.L)
+    bstep = W.Rout / 32.0
+    b_rho = int(np.floor(W.rho0 / bstep))
+    for k, (C, reach, lo, hi, fside) in enumerate(toys):
+        c3 = np.asarray(C[:3], float)
+        cp = c3 - (c3 @ n) * n
+        rho = np.linalg.norm(cp)
+        rr = (reach + np.linalg.norm(c3) * np.sin(sd)) / np.cos(sd)
+        if rr >= rho:
+            for i in range(32):
+                phi[i] |= 1 << k
+        else:
+            pc = np.arctan2(cp @ t2, cp @ t1) + np.pi / 2
+            dp = np.arcsin(rr / rho) + 1e-3
+            for i in range(int(np.floor((pc - dp + np.pi) * 16 / np.pi)), int(np.floor((pc + dp + np.pi) * 16 / np.pi)) + 1):
+                phi[i % 32] |= 1 << k
+        curved = lo <= hi
+        for cls in range(2):
+            sig = 1.0 if cls == 0 else -1.0
+            along_ok = (curved and (hi >= ls_lo if sig > 0 else lo <= ls_hi)) or fside == sig
+            along_any = ls_hi >= 0 if sig > 0 else ls_lo <= 0
+            if along_ok:
+                for bi in range(32 if along_any else min(b_rho + 1, 32)):
+                    bm[cls * 32 + bi] |= 1 << k
+            turning = ls_lo < 0 if sig > 0 else ls_hi > 0
+            if turning:
+                top = 31
+                if fside != -sig:
+                    lim = hi if sig < 0 else -lo
+                    if not curved or lim < W.Lc:
+                        top = -1
+                    elif lim < W.L:
+                        top = min(int(np.floor(float(W.r(np.array(lim))) / bstep)), 31)
+                for bi in range(b_rho, top + 1):
+                    bm[cls * 32 + bi] |= 1 << k
+    return t1, t2, phi, bm, bstep
+
+
+def in_bins(B, k, N, b, vl):
+    """whether a ray with plane normal N, impact parameter b, moving along l as vl's sign, has toy k
+    among its bins (wht_near)"""
+    t1, t2, phi, bm, bstep = B
+    pb = min(max(int((np.arctan2(N @ t2, N @ t1) + np.pi) * 16 / np.pi), 0), 31)
+    bb = min(max(int(b / bstep), 0), 31) + (0 if vl > 0 else 32)
+    return bool(phi[pb] >> k & 1) and bool(bm[bb] >> k & 1)
+
+
 def frame_at(W, l, n):
     n = np.asarray(n, float); n /= np.linalg.norm(n)
     tz = np.array([0, 0, 1.0]) - n * n[2]; tz /= np.linalg.norm(tz)
@@ -142,8 +200,9 @@ def ln_of(W, C):
     return float(ls[np.argmin(err)]), n
 
 
-def scene(W, name, l0, nlook, fwd, toys, N, rng, near=()):
-    """toys: ('ball', C, radius) / ('cube', C, axes, half); near: indices given a cone"""
+def scene(W, name, l0, nlook, fwd, toys, N, rng, near=(), head=None):
+    """toys: ('ball', C, radius) / ('cube', C, axes, half); near: indices given a cone; head: (l, n)
+    of the head the bins are made from (the eye is near it), default the eye"""
     n0, ty, tz = frame_at(W, l0, nlook)
     F = np.asarray(fwd, float); F /= np.linalg.norm(F)
     # rays: directions within 60 degrees of fwd, in (U_l, u) at the eye
@@ -163,6 +222,15 @@ def scene(W, name, l0, nlook, fwd, toys, N, rng, near=()):
         tl, tn = ln_of(W, np.asarray(t[1], float))
         cones[j] = cone(W, l0, n0, tl, tn, t[2] if t[0] == 'ball' else 2 * t[3])
     bad = 0
+    tl = []
+    for t in toys:
+        C = np.asarray(t[1], float)
+        reach = t[2] if t[0] == 'ball' else 2 * t[3]
+        lo, hi = lwindow(W, C, reach)
+        side = 1.0 if C[3] > 0 else -1.0
+        tl.append((C, reach, lo, hi, side if abs(C[3] - side * W.h) < reach else 0.0))
+    hl, hn = head if head is not None else (l0, n0)
+    B = bins(W, hl, np.asarray(hn, float) / np.linalg.norm(hn), tl)
     for j, t in enumerate(toys):
         C = np.asarray(t[1], float)
         reach = t[2] if t[0] == 'ball' else 2 * t[3]
@@ -170,6 +238,7 @@ def scene(W, name, l0, nlook, fwd, toys, N, rng, near=()):
         lo, hi = lwindow(W, C, reach)
         side = 1.0 if C[3] > 0 else -1.0
         flat = abs(C[3] - side * W.h) < reach
+        binned = np.array([in_bins(B, j, Nrm[i], b[i], vl[i]) for i in range(N)])
         keep_l = np.zeros(N, bool)
         for i in range(N):
             ok, ex = reaches(W, l0, vl[i], b[i], lo, hi)
@@ -207,10 +276,11 @@ def scene(W, name, l0, nlook, fwd, toys, N, rng, near=()):
                         lo_t, hi_t = max(lo_t, t0), min(hi_t, t1)
                     hit[i] = lo_t <= hi_t
         lost = hit & ~keep
-        bad += int(lost.sum())
+        lost_b = hit & ~binned
+        bad += int(lost.sum()) + int(lost_b.sum())
         print(f"{name}: toy {j} ({t[0]}{', cone' if j in cones else ''}): met by {hit.mean():.0%} of the rays; kept by the plane "
-              f"{plane.mean():.0%}, + l and the exit side {(plane & keep_l).mean():.0%}, all {keep.mean():.0%}; dropped but met: {lost.sum()}",
-              flush=True)
+              f"{plane.mean():.0%}, + l and the exit side {(plane & keep_l).mean():.0%}, all {keep.mean():.0%}; in its bins "
+              f"{binned.mean():.0%}; dropped but met: {lost.sum()}, by the bins {lost_b.sum()}", flush=True)
     return bad
 
 
@@ -263,5 +333,13 @@ if __name__ == '__main__':
     n2 = np.array([1.0, 0.0, 0.45]); n2 /= np.linalg.norm(n2)
     nb += scene(W, 'cylinder, toward the throat\'s toys', l2, n2, [-1.0, 0.0, -0.3], [throat_ball, throat_cube, flat_a], N, rng, near=(0, 1))
     nb += scene(W, 'fillet, toward the throat\'s toys', 4.3, n2, [-1.0, 0.0, -0.3], [throat_ball, throat_cube], N, rng, near=(0, 1))
+    # the bins made from a head point 6 cm from the eye (an eye of a headset, and motion)
+    for name, lh, nh_off in (('edge, eye 6 cm off the head', l0 + 0.04, [0.0, 0.02, -0.01]),
+                             ('throat, eye 6 cm off the head', l1 - 0.03, [0.0, -0.015, 0.01])):
+        le = l0 if name.startswith('edge') else l1
+        ne = n0 if name.startswith('edge') else n1
+        nh = ne + np.asarray(nh_off); nh /= np.linalg.norm(nh)
+        tys = toys if name.startswith('edge') else [held1, throat_ball, throat_cube, flat_a]
+        nb += scene(W, name, le, ne, [-1.0, 0.0, -0.3], tys, N, rng, near=(0,), head=(lh, nh))
     print('met but dropped, in all:', nb)
     sys.exit(1 if nb else 0)

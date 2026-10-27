@@ -56,6 +56,7 @@ const SHADER_TOYS_SHELL_ARROWS := preload("res://shaders/toys_shell_arrows.gdsha
 const PROXY_MARGIN := 0.08
 const PROXY_SLACK := 1.02       # the proxy meshes' faces lie inside their sphere (by up to 1.7%): grown by this
 const CONE_NEAR := 4.0          # m from the head: a toy closer gets a cone of its own (_update_cones)
+const BIN_EYE := 0.08           # m: an eye is at most this far from the head point (_update_bins)
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
@@ -97,7 +98,7 @@ var toys_flat_mat: ShaderMaterial
 var toys_shell_mat: ShaderMaterial
 var toy_mask := Vector4i.ZERO       # the toys a flat universe's sheet cuts, as bits: x A, y B (set_objects)
 var toy_chart: Array = []           # per toy bit (or null): [universe, the chart sphere it is in] (set_objects)
-var toy_list: Array = []            # the shell's pass's toys, in its order: [bit, centre (R^4), reach]
+var toy_list: Array = []            # the shell's pass's toys, in its order: [bit, centre (R^4), reach, l window lo, hi, flat universe]
 var shell_sphere: SphereMesh
 var full_view: QuadMesh
 
@@ -1320,7 +1321,6 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	while ax.size() < 30:
 		ax.append(Vector4.ZERO)
 	# the list in groups of four (wht_near): each column a vec4 per group
-	var ng := (lt.size() + 3) / 4
 	var cols := []
 	for q in 7:
 		var column := PackedVector4Array()
@@ -1354,7 +1354,6 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	for q in 7:
 		toys_shell_mat.set_shader_parameter(names[q], cols[q])
 	toys_shell_mat.set_shader_parameter("wht_bit", bits)
-	toys_shell_mat.set_shader_parameter("wht_nGroup", ng)
 
 
 ## A toy of the shell's pass's list (set_objects), if a ray in or through the shell can meet it:
@@ -1368,7 +1367,7 @@ func _list_toy(bit: int, C: Vector4, reach: float, side: float, lt: PackedVector
 	var win := space.meridian_window(rr, C.w, reach) if curved else Vector2(1.0, -1.0)
 	lt.append(Vector4(C.x, C.y, C.z, reach))
 	lw.append(Vector4(win.x, win.y, side, float(bit)))
-	toy_list.append([bit, C, reach])
+	toy_list.append([bit, C, reach, win.x, win.y, side])
 
 
 ## How gravity is shown (README, «Гравитация через червоточину»): 0 not at all, 1 the floor
@@ -1443,6 +1442,7 @@ func _add_toy_draws() -> void:
 ## the whole view.
 func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	_update_cones(l, n)
+	_update_bins(l, n)
 	var on := balls > 0 and toys_shown
 	toys_shell.visible = on
 	var flat := on and absf(l) > space.L
@@ -1499,6 +1499,76 @@ func _update_cones(l: float, n: Vector3) -> void:
 	toys_shell_mat.set_shader_parameter("wht_cone", cones)
 	toys_shell_mat.set_shader_parameter("wht_coneR", cr)
 	toys_shell_mat.set_shader_parameter("wht_coneIdx", ci)
+
+
+## The bins of the shell's pass's toys (wht_near in wormhole_toys.gdshaderinc), from the head at
+## (l, n), valid for an eye within BIN_EYE of it. All the rays from a point of the space are one
+## family turned round its radial axis, so the two tests that sort out most toys are a test of the
+## ray's plane's normal's azimuth round that axis (the plane passes within the toy's reach) and one
+## of its impact parameter b and direction along l (it reaches the toy's l window, or leaves into
+## its flat universe). A toy is marked in every azimuth bin and every (direction, b) bin a ray from
+## such an eye can meet it from: the bound is the exact test's, the toy's reach grown by |C| sin d
+## for the angle d between an eye's radial axis and the head's, the eye's l anywhere within BIN_EYE.
+func _update_bins(l: float, n: Vector3) -> void:
+	var a := Vector3(0.0, 0.0, 1.0) if absf(n.z) < 0.9 else Vector3(1.0, 0.0, 0.0)
+	var t1 := a.cross(n).normalized()
+	var t2 := n.cross(t1)
+	var phi := PackedInt32Array()
+	phi.resize(32)
+	var bins := PackedInt32Array()
+	bins.resize(64)
+	var sd := asin(minf(BIN_EYE / space.rho0, 1.0))
+	var ls_lo := clampf(l - BIN_EYE, -space.L, space.L)
+	var ls_hi := clampf(l + BIN_EYE, -space.L, space.L)
+	var bstep := space.Rout / 32.0
+	var b_rho := floori(space.rho0 / bstep)     # the bin b = rho0 is in
+	for k in toy_list.size():
+		var t: Array = toy_list[k]
+		var C: Vector4 = t[1]
+		var c3 := Vector3(C.x, C.y, C.z)
+		var lo: float = t[3]
+		var hi: float = t[4]
+		var fside: float = t[5]
+		var bitk := 1 << k
+		# the azimuth of the plane's normal toward the toy, within the reach grown for the eyes
+		var cp := c3 - c3.dot(n) * n
+		var rho := cp.length()
+		var rr: float = (t[2] + c3.length() * sin(sd)) / cos(sd)
+		if rr >= rho:
+			for i in 32:
+				phi[i] |= bitk
+		else:
+			var pc := atan2(cp.dot(t2), cp.dot(t1)) + PI / 2.0
+			var dp := asin(rr / rho) + 1e-3
+			for i in range(floori((pc - dp + PI) * 16.0 / PI), floori((pc + dp + PI) * 16.0 / PI) + 1):
+				phi[posmod(i, 32)] |= bitk
+		# the impact parameter, for rays moving toward +l, then -l
+		var curved := lo <= hi
+		for cls in 2:
+			var sig := 1.0 if cls == 0 else -1.0
+			# away from the throat or through it: every l beyond the start
+			var along_ok := (curved and (hi >= ls_lo if sig > 0.0 else lo <= ls_hi)) or fside == sig
+			var along_any := ls_hi >= 0.0 if sig > 0.0 else ls_lo <= 0.0
+			if along_ok:
+				for bi in (32 if along_any else mini(b_rho + 1, 32)):
+					bins[cls * 32 + bi] |= bitk
+			# turning (b > rho0) on the other side, s = -sig: |l| >= its turning point's
+			var turning := ls_lo < 0.0 if sig > 0.0 else ls_hi > 0.0
+			if turning:
+				var top := 31
+				if fside != -sig:
+					var lim := hi if sig < 0.0 else -lo     # the turning point's |l| may be up to this
+					if not curved or lim < space.Lc:
+						top = -1
+					elif lim < space.L:
+						top = mini(floori(space.r(lim) / bstep), 31)
+				for bi in range(b_rho, top + 1):
+					bins[cls * 32 + bi] |= bitk
+	toys_shell_mat.set_shader_parameter("wht_t1", t1)
+	toys_shell_mat.set_shader_parameter("wht_t2", t2)
+	toys_shell_mat.set_shader_parameter("wht_phiBin", phi)
+	toys_shell_mat.set_shader_parameter("wht_bBin", bins)
+	toys_shell_mat.set_shader_parameter("wht_bStep", bstep)
 
 
 ## With the head in a flat universe (at l, n, its play axes hf, at head_pos in the room): its chart ->
