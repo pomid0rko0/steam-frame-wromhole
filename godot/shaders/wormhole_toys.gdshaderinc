@@ -28,14 +28,16 @@
 //                                           size). A point P is inside when |dot(P, axis) -
 //                                           dot(centre, axis)| < 1 for all four axes.
 //   int wh_nBall                            balls in use (a loop bound the compiler cannot see)
-//   ivec4 wh_tMask                          the toys by where they can be met, as bit masks (ball i:
-//                                           bit i, cube i: bit 16 + i): x universe A's sheet, y B's,
-//                                           z within reach of the shell (main.set_objects)
+//   vec4 wht_toy[WHT_MAXT], wht_win[WHT_MAXT], int wht_nToy
+//                                           the shell's pass's toys, a list (wht_near; ball i is
+//                                           bit i, cube i bit 16 + i)
 //   float wh_pix                            a pixel's angle (the cubes' edge lines, the arrows)
 // and WH_TOYS defined before the core (toys_view.gdshaderinc).
 
 const int WH_MAXB = 12;
 const int WH_MAXC = 6;
+const int WHT_MAXT = 18;       // WH_MAXB + WH_MAXC
+const int WHT_CONES = 4;       // toys near the head with a cone of their own
 const int WHT_ITER = 16;       // steps of a toy's search in the shell, at most
 
 // a toy's centre (R^4) and its reach: a ball's radius, a cube's half diagonal (2 half sizes)
@@ -47,21 +49,109 @@ float wht_size(int bit) {
     return bit >= 16 ? wh_cubeCol[bit - 16].w : wh_ballCol[bit].w;
 }
 
-// The toys whose centre is within reach of the plane through the centre of R^4's xyz with normal N
-// (not unit): a ray's whole path lies in span(e1, e2, the w axis), so a toy farther than its reach
-// from that subspace is never met. N = n x w for a ray at (n, w), or the chart point x d for a
-// straight one (as R^4 xyz).
-int wht_near(vec3 N, int mask) {
+#ifndef WHT_FLAT
+// The toys a ray of the shell's pass can meet at all, before any search (ref/cull.py checks that
+// none it drops is ever met). The pass's toys are a list (main.set_objects): wht_toy[k] (centre
+// xyz, reach: a ball's radius, a cube's half diagonal), wht_win[k] (the l window of its points'
+// meridian (lo, hi; lo > hi: none), the flat universe whose sheet cuts it (+-1, 0: none), its bit).
+//  - the plane: a ray's whole path lies in span(e1, e2, the w axis), and a toy farther than its reach
+//    from that subspace is never met. N = n x w for a ray at (n, w), or the chart point x d for a
+//    straight one (as R^4 xyz); b = |N| r (the impact parameter);
+//  - l: a ray reaches the l on its way on from l0 (the eye, or the shell's edge): away from the
+//    throat or through it (b <= rho0) every l beyond l0 in its direction, one that turns only |l| at
+//    least its turning point's, on its side; it leaves the shell on the eye's side, or through the
+//    throat on the other: a flat universe's toy is met after the shell only by a ray that leaves
+//    into it;
+//  - skip: toys near the eye whose cone of directions (toys_view.gdshaderinc) the ray is outside.
+// Returns the toys to search in the shell (bits), flatNear: those to test after it.
+int wht_near(vec3 N, float b, float l0, float vl, int skip, out int flatNear) {
     float N2 = dot(N, N);
+    float s = l0 > 0.0 ? 1.0 : -1.0;
+    float sig = vl > 0.0 ? 1.0 : -1.0;
+    bool along = sig * l0 >= 0.0 || b <= wh_rho0;
+    // the l it reaches: s' l >= lr (s' = sig along, s turning), and the side it leaves on
+    float lr = along ? sig * l0 : wh_Lc() + wh_fillet * (acos(clamp(1.0 - (b - wh_rho0) / wh_fillet, -1.0, 1.0)) - wh_th0());
+    float sr = along ? sig : s;
     int out_mask = 0;
-    for (int mm = mask; mm != 0; mm &= mm - 1) {
-        int bit = findLSB(mm);
-        float c = dot(wht_centre(bit).xyz, N);
-        float re = wht_size(bit) * (bit >= 16 ? 2.0 : 1.0);
-        if (c * c <= re * re * N2) out_mask |= 1 << bit;
+    flatNear = 0;
+    for (int k = 0; k < wht_nToy; k++) {
+        vec4 T = wht_toy[k];
+        vec4 Wn = wht_win[k];
+        float c = dot(T.xyz, N);
+        if (c * c > T.w * T.w * N2 || ((skip >> k) & 1) != 0) continue;
+        int bit = int(Wn.w);
+        if ((sr > 0.0 ? Wn.y >= lr : Wn.x <= -lr) && Wn.x <= Wn.y) out_mask |= 1 << bit;
+        if (Wn.z == sr) flatNear |= 1 << bit;
     }
     return out_mask;
 }
+
+// The geodesic from (l, n) along the unit tangent V for len, in steps of at most 0.1 m: (l, n)
+void wht_geo(inout float l, inout vec3 n, vec4 V, float len) {
+    int steps = clamp(int(ceil(len / 0.1)), 1, 40);
+    float h = len / float(steps);
+    for (int it = 0; it < steps; it++) {
+        vec4 p = wh_prof(l);
+        float dl1 = V.x; vec3 dn1 = V.yzw / p.x; vec4 dV1 = wh_dU(V, V.yzw, n, p.z / p.x, p.x);
+        float l2 = l + 0.5 * h * dl1; vec3 n2 = n + 0.5 * h * dn1; vec4 V2 = V + 0.5 * h * dV1;
+        p = wh_prof(l2);
+        float dl2 = V2.x; vec3 dn2 = V2.yzw / p.x; vec4 dV2 = wh_dU(V2, V2.yzw, n2, p.z / p.x, p.x);
+        float l3 = l + 0.5 * h * dl2; vec3 n3 = n + 0.5 * h * dn2; vec4 V3 = V + 0.5 * h * dV2;
+        p = wh_prof(l3);
+        float dl3 = V3.x; vec3 dn3 = V3.yzw / p.x; vec4 dV3 = wh_dU(V3, V3.yzw, n3, p.z / p.x, p.x);
+        float l4 = l + h * dl3; vec3 n4 = n + h * dn3; vec4 V4 = V + h * dV3;
+        p = wh_prof(l4);
+        float dl4 = V4.x; vec3 dn4 = V4.yzw / p.x; vec4 dV4 = wh_dU(V4, V4.yzw, n4, p.z / p.x, p.x);
+        l += h / 6.0 * (dl1 + 2.0 * dl2 + 2.0 * dl3 + dl4);
+        n = normalize(n + h / 6.0 * (dn1 + 2.0 * dn2 + 2.0 * dn3 + dn4));
+        V += h / 6.0 * (dV1 + 2.0 * dV2 + 2.0 * dV3 + dV4);
+        V.yzw -= dot(V.yzw, n) * n;
+    }
+}
+
+// A vector of R^4 at (l, n) projected onto the tangent space, as (U_l, u)
+vec4 wht_project(vec4 p, vec3 n, vec4 D) {
+    float rad = dot(D.xyz, n);
+    return vec4(p.z * rad + p.w * D.w, D.xyz - rad * n);
+}
+
+// The cone of directions from (l, n) that can meet a toy near it, centred at (tl, tn), of chord
+// radius c (ref/cull.py): (its axis, the cos of its half angle). The axis: the geodesic's direction
+// to the centre (as WormholeSpace.toward: the chord seen from (l, n) first, then two corrections by
+// where its geodesic lands). The space's sectional curvature is at most K = 1 / rho0^2, so (the
+// hinge comparison, CAT(K)) a geodesic leaving at an angle theta from it stays at least
+// asin(sin(sqrt(K) d) sin(theta)) / sqrt(K) from the centre at geodesic distance d; the toy's
+// intrinsic radius is at most (2 / k) asin(k c / 2), k = 1 / min(R, rho0) the largest curvature of
+// the space's geodesics in R^4.
+vec4 wht_coneAt(float l, vec3 n, float tl, vec3 tn, float c, out float cth) {
+    vec4 pe = wh_prof(l);
+    vec4 pt = wh_prof(tl);
+    vec4 T = vec4(pt.x * tn, pt.y);
+    vec4 dT = T - vec4(pe.x * n, pe.y);
+    vec4 D = wht_project(pe, n, dT);
+    D *= length(dT) / max(length(D), 1e-9);
+    for (int it = 0; it < 2; it++) {
+        float gl = l;
+        vec3 gn = n;
+        float len = length(D);
+        wht_geo(gl, gn, D / max(len, 1e-9), len);
+        vec4 pg = wh_prof(gl);
+        D += wht_project(pe, n, T - vec4(pg.x * gn, pg.y));
+    }
+    float d = length(D);
+    float k = 1.0 / min(wh_fillet, wh_rho0);
+    float delta = 2.0 / k * asin(min(0.5 * k * c, 1.0));
+    float sk = 1.0 / wh_rho0;
+    if (d <= delta) {
+        cth = -2.0;
+    } else {
+        float sn = sin(sk * delta) / sin(sk * min(d, 0.5 * WH_PI / sk));
+        cth = cos(min(asin(min(sn, 1.0)) + 2e-3, WH_PI));
+    }
+    return D / max(d, 1e-9);
+}
+
+#endif
 
 // ---------------------------------------------------------------- flat universes
 // Ball i along x + t d in a chart: where it enters the sphere its sheet cuts (wh_fball), or -1. Only
@@ -187,6 +277,7 @@ vec4 wht_flat(int bit, float side, vec3 x, vec3 d, out vec4 dbg) {
     return vec4(c, t);
 }
 
+#ifndef WHT_FLAT
 // ---------------------------------------------------------------- the curved region
 // The path's point at the fraction sg of piece p (0 A, 1 B, 2 C: wh_ray), in the ray's subspace of
 // R^4, coordinates (u, v, w) along (e1, e2, the w axis): Q = (r cos psi, r sin psi, w), and dQ =
@@ -267,11 +358,12 @@ void wht_point(WhRay Y, WhFil f, int p, float sg, out vec3 Q, out vec3 dQ, out f
 // psi is in [psc - dps, psc + dps], once. k, the path's largest curvature in R^4 on a piece: on a
 // fillet 1 / min(R, rho0) (its profile's, or a parallel's at most), on the cylinder its helix's
 // b^2 / rho0^3. From the start of the first piece the window reaches:
-//  - a ball: Newton on F = |P - C|^2 - radius^2 along the path. Its second derivative in path length
-//    is 2 (1 + (P - C) . P''), |P''| <= k: so F is convex wherever |P - C| < 1 / k, and Newton from
-//    outside steps to the entry without passing it, or past the closest approach (F' >= 0): no
-//    entry. Farther away a step goes to 0.8 of |P - C| - radius along the path (it cannot be met
-//    sooner);
+//  - a ball: F = |P - C|^2 - radius^2 along the path. Its second derivative in path length is
+//    2 (1 + (P - C) . P''), |P''| <= k: so F is convex wherever |P - C| < 1 / k, bounded below by a
+//    parabola whose first root a step goes to (not past the entry; from far off a little farther
+//    than Newton's tangent would), or past the closest approach (F' >= 0): no entry. Farther away a
+//    step goes to 0.8 of |P - C| - radius along the path (it cannot be met sooner). Within 0.1 mm
+//    of the entry is the hit;
 //  - a cube: a slab's signed distance h along the path has |h''| <= k, so |h| cannot fall to the
 //    half size sooner than at the smallest D >= 0 with |h| - half - v D - k D^2 / 2 <= 0 (v: the
 //    speed toward it): each step goes to the latest of the four slabs' earliest, so it stops at the
@@ -317,20 +409,34 @@ void wht_search(WhRay Y, WhFil f, int bit, float psiEnd, inout float hitK, inout
             float dF = 2.0 * dot(D, dQ);
             if (F <= 0.0) {
                 if (start) return;                // the eye inside it: not seen from inside
-                if (sgo < 0.0 || sg - sgo < 1e-7) { hitK = 2.0 * float(p - 1) + sg; hitBit = bit; return; }
-                // past the entry (from a step outside the convex part): back within [sgo, sg];
-                // Newton from inside lands before the entry
-                float nx = dF < 0.0 ? sg - F / dF : sgo;
-                sg = nx > sgo && nx < sg ? nx : 0.5 * (sgo + sg);
+                // past the entry: Newton from inside lands on it or before it (F convex), back within
+                // [sgo, sg]; within 0.1 mm of it, that is the hit (in float32 a step can land a hair
+                // inside again and again)
+                float nx = dF < 0.0 ? max(sg - F / dF, sgo) : sgo;
+                if (sgo < 0.0 || (sg - nx) * speed < 1e-4) {
+                    hitK = 2.0 * float(p - 1) + (sgo < 0.0 ? sg : nx);
+                    hitBit = bit;
+                    return;
+                }
+                sg = nx > sgo ? nx : 0.5 * (sgo + sg);
                 continue;
             }
             if (psi > hi) return;                 // past the toy's window
             float Dn = sqrt(D2);
             if (Dn * k < 0.9) {
                 if (dF >= 0.0) return;            // past the closest approach: no entry
-                float step = -F / dF;
-                if (step * speed < 1e-5) { hitK = 2.0 * float(p - 1) + sg + step; hitBit = bit; return; }
-                nsg = sg + step;
+                // in path length s: F_s = 2 D.T, F_ss = 2 (1 + D.P'') >= 2 (1 - k |D|), |D| <= Dn + s,
+                // so F >= F + F_s s + m s^2 / 2 for s <= S (m from Dn + S): F has no root before this
+                // quadratic's first; S three times Newton's step
+                float Fs = dF / speed;
+                float S = min(0.9 / k - Dn, -3.0 * F / Fs);
+                float m = max(2.0 * (1.0 - k * (Dn + S)), 0.0);
+                float disc = Fs * Fs - 2.0 * m * F;
+                float ds = 2.0 * F / (-Fs + sqrt(max(disc, 0.0)));
+                bool root = disc >= 0.0 && ds <= S;
+                ds = root ? ds : S;
+                if (root && ds < 1e-4) { hitK = 2.0 * float(p - 1) + sg + ds / speed; hitBit = bit; return; }
+                nsg = sg + ds / speed;
             } else {
                 nsg = sg + 0.8 * (Dn - reach) / speed;
             }
@@ -423,7 +529,7 @@ vec3 wht_curvedLook(int bit, float hl, vec3 hn, float dist) {
 // universe through the shell (the straight part before is the flat pass's). l0, n0, (vl, w): the
 // ray at the eye, as wh_renderE takes it; eye = wh_eye(l0). Returns (colour, the path length), w < 0:
 // none (no toy met, or the world before it).
-vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
+vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, int skip, out vec4 dbg) {
     dbg = vec4(-1.0);
     float side = l0 > 0.0 ? 1.0 : -1.0;
     bool outside = abs(l0) >= wh_Lsh();
@@ -431,6 +537,9 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     vec3 d = vec3(0.0);
     float dist = 0.0;
     vec3 N = cross(n0, w);
+    float b = eye.x * length(w);
+    float le = l0;
+    float ve = vl;
     if (outside) {
         // straight to the shell
         x = wh_M(side, (abs(l0) - wh_Lsh() + wh_Rout()) * n0);
@@ -440,10 +549,14 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
         if (disc <= 0.0 || bq >= 0.0) return vec4(-1.0);
         dist = -bq - sqrt(disc);
         N = cross(wh_M(side, x), wh_M(side, d));
+        b = length(N);
+        le = side * wh_Lsh();
+        ve = -side;
     }
-    // the toys near the ray's plane: most rays have none and stop here
-    int near = wht_near(N, wh_tMask.x | wh_tMask.y | wh_tMask.z);
-    if (near == 0) return vec4(-1.0);
+    // the toys the ray can meet: most rays have none and stop here
+    int flatNear;
+    int near = wht_near(N, b, le, ve, skip, flatNear);
+    if ((near | flatNear) == 0) return vec4(-1.0);
     if (outside) {
         wh_enter(side, x + dist * d, d, l0, n0, vl, w);
         eye = vec2(wh_Rout(), 0.0);
@@ -453,7 +566,7 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     float psiEnd = Y.floorHit ? wh_floorPsi(Y) : Y.tot.x;
     float hitK = 4.0;
     int hitBit = -1;
-    for (int mm = near & wh_tMask.z; mm != 0; mm &= mm - 1)
+    for (int mm = near; mm != 0; mm &= mm - 1)
         wht_search(Y, f, findLSB(mm), psiEnd, hitK, hitBit);
     vec3 c;
     float at;
@@ -475,7 +588,7 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
         wh_exit(Y, X, D);
         float t = 1e9;
         int face;
-        int bitF = wht_flatNearest(near & (Y.sideC > 0.0 ? wh_tMask.x : wh_tMask.y), Y.sideC, X, D, t, face);
+        int bitF = wht_flatNearest(flatNear, Y.sideC, X, D, t, face);
         if (bitF < 0 || wh_traceFlat(Y.sideC, X, D, false).t < t) return vec4(-1.0);
         at = dist + Y.tot.y + t;
         vec3 p = X + t * D;
@@ -495,3 +608,4 @@ vec4 wht_shell(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
 #endif
     return vec4(c, at);
 }
+#endif

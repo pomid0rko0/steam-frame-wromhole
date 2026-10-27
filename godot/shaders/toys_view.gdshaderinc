@@ -17,12 +17,17 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube = 0;
-uniform ivec4 wh_tMask;
 #ifdef WHT_FLAT
 uniform mat4 wht_toChart;       // play space -> the chart of the head's universe (main.gd)
 uniform float wht_side = 1.0;   // that universe
 #else
 uniform bool wht_full = false;  // the whole view (the head in the curved region), not the shell's proxy
+uniform vec4 wht_toy[18];       // the pass's toys (wht_near, main.set_objects)
+uniform vec4 wht_win[18];
+uniform int wht_nToy = 0;
+uniform vec4 wht_cone[4];       // toys near the head (main._update_toy_draws): their centre's (n, l),
+uniform vec4 wht_coneR;         // chord radius,
+uniform ivec4 wht_coneIdx = ivec4(-1);   // index in wht_toy (-1: none)
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"
@@ -41,6 +46,8 @@ varying flat vec4 v_f1;
 varying flat vec4 v_f2;
 varying flat vec2 v_eye;
 varying vec4 v_ray;
+varying flat vec4 v_cone[5];    // the near toys' cones (wht_coneAt) at this eye: 0-3 their axes, 4 the
+                                // cos of their half angles (-2: none)
 #endif
 
 void vertex() {
@@ -65,6 +72,18 @@ void vertex() {
 	wh_eyeAt((INV_VIEW_MATRIX * vec4(EYE_OFFSET, 1.0)).xyz, l, n, f0, f1, f2);
 	v_l = l; v_n = n; v_f0 = f0; v_f1 = f1; v_f2 = f2;
 	v_eye = wh_eye(l);
+	// the near toys' cones at this eye: the same at every vertex (the full view has four)
+	vec4 cc = vec4(-2.0);
+	for (int j = 0; j < 4; j++) {
+		vec4 cu = vec4(0.0);
+		if (wht_coneIdx[j] >= 0) {
+			float ct;
+			cu = wht_coneAt(l, n, wht_cone[j].w, wht_cone[j].xyz, wht_coneR[j], ct);
+			cc[j] = ct;
+		}
+		v_cone[j] = cu;
+	}
+	v_cone[4] = cc;
 	vec3 pd = mat3(INV_VIEW_MATRIX) * v_view;          // play space
 	v_ray = pd.x * f0 + pd.y * f1 + pd.z * f2;
 #endif
@@ -76,7 +95,12 @@ void fragment() {
 	vec4 r = wht_flat(v_toy, wht_side, v_x, normalize(v_d), dbg);
 #else
 	vec4 V = normalize(v_ray);
-	vec4 r = wht_shell(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+	// the near toys whose cone this ray is outside: not met
+	int skip = 0;
+	for (int j = 0; j < 4; j++) {
+		if (dot(V, v_cone[j]) < v_cone[4][j]) skip |= 1 << wht_coneIdx[j];
+	}
+	vec4 r = wht_shell(v_l, v_n, V.x, V.yzw, v_eye, skip, dbg);
 #endif
 	if (r.w < 0.0) discard;
 	ALBEDO = r.rgb;

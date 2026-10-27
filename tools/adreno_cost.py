@@ -103,8 +103,10 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_pix', 'f', 0, 'WH_PIX'),
             ('wh_ball', 'v4', 12, 'WH_TOYS'), ('wh_ballCol', 'v4', 12, 'WH_TOYS'), ('wh_nBall', 'i', 0, 'WH_TOYS'),
             ('wh_fball', 'v4', 12, 'WH_TOYS'), ('wh_cube', 'v4', 6, 'WH_TOYS'), ('wh_cubeE', 'v4', 30, 'WH_TOYS'),
-            ('wh_cubeCol', 'v4', 6, 'WH_TOYS'), ('wh_nCube', 'i', 0, 'WH_TOYS'), ('wh_tMask', 'iv4', 0, 'WH_TOYS'),
-            ('wht_toChart', 'm4', 0, 'WHT_FLAT'), ('wht_side', 'f', 0, 'WHT_FLAT'), ('wht_full', 'i', 0, 'WHT_SHELL')]
+            ('wh_cubeCol', 'v4', 6, 'WH_TOYS'), ('wh_nCube', 'i', 0, 'WH_TOYS'),
+            ('wht_toChart', 'm4', 0, 'WHT_FLAT'), ('wht_side', 'f', 0, 'WHT_FLAT'), ('wht_full', 'i', 0, 'WHT_SHELL'),
+            ('wht_toy', 'v4', 18, 'WHT_SHELL'), ('wht_win', 'v4', 18, 'WHT_SHELL'), ('wht_nToy', 'i', 0, 'WHT_SHELL'),
+            ('wht_cone', 'v4', 4, 'WHT_SHELL'), ('wht_coneR', 'v4', 0, 'WHT_SHELL'), ('wht_coneIdx', 'iv4', 0, 'WHT_SHELL')]
 
 
 def shader_defines(path):
@@ -139,11 +141,12 @@ def ubo_layout(defines):
 def material_ubo(defines, values):
     """Godot's material uniform block for a shader with these defines; values: name -> number or
     list (tests/emu_dump.gd's "uniforms"); the scene's static objects and the fillet table by default."""
-    u = np.zeros(4 * 192, np.float32)
+    u = np.zeros(4 * 256, np.float32)
     ui = u.view(np.uint32)
     tab, lo, inv, reg = fillet_table()
     vals = {'wh_rho0': 3.0, 'wh_h': 5.0, 'wh_fillet': 1.0, 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
-            'wh_pil': SCENE['pillars_A'], 'wh_box': SCENE['boxes_B'], 'wh_tabLo': lo, 'wh_tabInv': inv, 'wh_tabReg': reg}
+            'wh_pil': SCENE['pillars_A'], 'wh_box': SCENE['boxes_B'], 'wh_tabLo': lo, 'wh_tabInv': inv, 'wh_tabReg': reg,
+            'wht_coneIdx': [-1, -1, -1, -1]}
     vals.update(values or {})
     for name, (off, typ, n) in ubo_layout(defines).items():
         if name not in vals:
@@ -170,8 +173,8 @@ def fillet_table():
 # reads the pixel's ray (as (U_l, u)) and per eye l, n and wh_eye(l); the shell's pass also the ray in
 # view space; the flat pass the ray in view space and in the chart, the eye in the chart and the
 # toy's bit (toys_view.gdshaderinc).
-GROUP_SIZE = {'ray': 4, 'view': 3, 'd': 3, 'l': 1, 'n': 3, 'eye': 2, 'x': 3, 'toy': 1}
-PASSES = {'world': (['ray'], ['l', 'n', 'eye']), 'shell': (['view', 'ray'], ['l', 'n', 'eye']),
+GROUP_SIZE = {'ray': 4, 'view': 3, 'd': 3, 'l': 1, 'n': 3, 'eye': 2, 'x': 3, 'toy': 1, 'cone': 20}
+PASSES = {'world': (['ray'], ['l', 'n', 'eye']), 'shell': (['view', 'ray'], ['l', 'n', 'eye', 'cone']),
           'flat': (['view', 'd'], ['toy', 'x'])}
 
 
@@ -182,15 +185,19 @@ class Zeros(dict):
 
 
 class Shader:
-    def set_uniforms(self, uniforms):
-        """The material's uniforms (a pose's own, when they differ between poses: --held)."""
-        key = json.dumps(uniforms, sort_keys=True)
+    def set_uniforms(self, uniforms, proj=None):
+        """The material's uniforms (a pose's own, when they differ between poses: --held), and the
+        view's projection (columns), which the toys' passes read for their depth."""
+        key = json.dumps([uniforms, proj], sort_keys=True)
         if key == getattr(self, '_ukey', None):
             return
         self._ukey = key
-        # the material's (set 3); Godot's scene data (the projection, for the toys' depth) the model
-        # does not have: zeros
-        self.ubos = Zeros({3: material_ubo(self.defines, uniforms)})
+        # the material's (base 3); Godot's scene data (base 7): its first member the projection
+        # matrix, the rest zeros
+        scene = np.zeros(4096, np.uint32)
+        if proj is not None:
+            scene[:16] = np.asarray(proj, np.float32).ravel().view(np.uint32)
+        self.ubos = Zeros({3: material_ubo(self.defines, uniforms), 7: scene})
         self.consts = E.run_preamble(self.instrs, self.ps, self.pe + 1, np.zeros(8192, np.uint32), self.ubos)
 
     def __init__(self, log, defines, uniforms=None, kind='world'):
@@ -301,7 +308,33 @@ def inputs_for(e, xs, ys, W, H, tan_x, tan_y):
     x = M * (abs(l) - L_SHELL + R_OUT) * n
     d = M[:, None] * (side * ray[0][None] * n[:, None] + ray[1:])
     return {'ray': ray, 'view': dv, 'd': d, 'l': [l], 'n': n, 'eye': wh_eye(l), 'x': x,
-            'toy': None, 'chart': (x, d / np.linalg.norm(d, axis=0))}
+            'toy': None, 'chart': (x, d / np.linalg.norm(d, axis=0)), 'cone': cones(e)}
+
+
+_CONES = {}
+
+
+def cones(e):
+    """The shell pass's vertex stage's cones of the near toys (toys_view.gdshaderinc, wht_coneAt) at the
+    eye (the head: the dump has one view): four axes, then the cos of their half angles (-2: none)"""
+    u = e.get('toys_shell', {})
+    key = json.dumps([e['head_l'], e['head_n'], u.get('wht_cone'), u.get('wht_coneR'), u.get('wht_coneIdx')])
+    if key not in _CONES:
+        sys.path.insert(0, os.path.join(ROOT, 'ref'))
+        import cull
+        from wh import Wormhole
+        W = Wormhole(3.0, 5.0, 1.0)
+        out = np.zeros(20)
+        out[16:] = -2.0
+        idx = u.get('wht_coneIdx', [-1] * 4)
+        for j in range(4):
+            if idx[j] >= 0:
+                c = u['wht_cone'][j]
+                axis, cth = cull.cone(W, e['head_l'], np.array(e['head_n'], float), c[3], np.array(c[:3], float), u['wht_coneR'][j])
+                out[4 * j:4 * j + 4] = axis
+                out[16 + j] = cth
+        _CONES[key] = out
+    return _CONES[key]
 
 
 def sphere_cover(chart, c, r):
@@ -350,9 +383,9 @@ def frame(passes, e, W, H, tan_x, tan_y, tiles, profile=None, colours=False):
     are drawn, then the world's ray tracer where no toy was. Returns the passes' Acc and, with colours,
     per tile (xs, ys, colour)."""
     acc = {k: Acc(sh) for k, sh in passes.items()}
-    toys = 'shell' in passes and any(e.get('toys_shell', {}).get('wh_tMask', [0])[:3])
+    toys = 'shell' in passes and e.get('toys_shell', {}).get('wht_nToy', 0) > 0
     for k, sh in passes.items():
-        sh.set_uniforms(e.get({'world': 'uniforms', 'shell': 'toys_shell', 'flat': 'toys_flat'}[k], {}))
+        sh.set_uniforms(e.get({'world': 'uniforms', 'shell': 'toys_shell', 'flat': 'toys_flat'}[k], {}), e.get('proj'))
     pics = []
     for (x0, y0) in tiles:
         xs, ys = tile_lanes(x0, y0, True)

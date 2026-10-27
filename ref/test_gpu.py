@@ -65,17 +65,37 @@ def test_cubes():
 CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 
+def toy_list():
+    """main.set_objects's list for the shell's pass (wht_near): every toy within reach of the shell
+    or cut by a flat universe's sheet, (centre xyz, reach) and (its meridian's l window, that
+    universe, its bit: ball i bit i, cube i bit 16 + i)"""
+    from cull import lwindow
+    toy, win = [], []
+    for bit, C, reach in ([(i, np.asarray(c), rad) for i, (c, rad, _) in enumerate(BALLS)]
+                          + [(16 + i, np.asarray(c), 2.0 * half) for i, (c, _, half, _) in enumerate(CUBES)]):
+        side = 1.0 if C[3] > 0 else -1.0
+        cut = abs(C[3] - side * PROF[1]) < reach
+        curved = np.linalg.norm(C[:3]) - reach < W.Rout
+        if not (cut or curved):
+            continue
+        lo, hi = lwindow(W, C, reach) if curved else (1.0, -1.0)
+        if lo > hi:
+            lo, hi = 1.0, -1.0
+        toy.append(tuple(C[:3]) + (reach,))
+        win.append((lo, hi, side if cut else 0.0, float(bit)))
+    n = len(toy)
+    return toy + [(0.0,) * 4] * (18 - n), win + [(1.0, -1.0, 0.0, 0.0)] * (18 - n), n
+
+
 def toy_mask():
-    """main.set_objects's wh_tMask: the toys by where they can be met (ball i bit i, cube i bit
-    16 + i): universe A's sheet, B's, within reach of the shell."""
-    m = [0, 0, 0, 0]
+    """main.set_objects's toy_mask: the toys a flat universe's sheet cuts (ball i bit i, cube i bit
+    16 + i): universe A's, B's."""
+    m = [0, 0]
     for bit, C, reach in ([(i, np.asarray(c), rad) for i, (c, rad, _) in enumerate(BALLS)]
                           + [(16 + i, np.asarray(c), 2.0 * half) for i, (c, _, half, _) in enumerate(CUBES)]):
         side = 1 if C[3] > 0 else -1
         if abs(C[3] - side * PROF[1]) < reach:
             m[0 if side > 0 else 1] |= 1 << bit
-        if np.linalg.norm(C[:3]) - reach < W.Rout:
-            m[2] |= 1 << bit
     return tuple(m)
 
 
@@ -103,7 +123,10 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube;
-uniform ivec4 wh_tMask;
+uniform vec4 wht_toy[18];
+uniform vec4 wht_win[18];
+uniform int wht_nToy;
+uniform ivec2 uMask;         // the toys the flat pass draws: A's, B's (main.toy_mask)
 uniform vec4 wh_fball[12];
 uniform float wh_pix;
 uniform float head_l;        // the eyes from the head (wh_eyeAt): unused here
@@ -134,14 +157,14 @@ void main() {
         float side = uL0 > 0.0 ? 1.0 : -1.0;
         vec3 x = wh_M(side, (abs(uL0) - wh_Lsh() + wh_Rout()) * uN0);
         vec3 d = normalize(wh_M(side, side * V.x * uN0 + V.yzw));
-        int m = side > 0.0 ? wh_tMask.x : wh_tMask.y;
+        int m = side > 0.0 ? uMask.x : uMask.y;
         for (int bit = 0; bit < 32; bit++) {
             if ((m & (1 << bit)) == 0) continue;
             vec4 r = wht_flat(bit, side, x, d, tdbg);
             if (r.w >= 0.0 && (best < 0.0 || r.w < best)) { best = r.w; col = r.rgb; dbg = tdbg; }
         }
     }
-    vec4 r = wht_shell(uL0, uN0, V.x, V.yzw, wh_eye(uL0), tdbg);
+    vec4 r = wht_shell(uL0, uN0, V.x, V.yzw, wh_eye(uL0), 0, tdbg);
     if (r.w >= 0.0 && (best < 0.0 || r.w < best)) { best = r.w; col = r.rgb; dbg = tdbg; }
 #endif
     if (best < 0.0) col = wh_render(uL0, uN0, V.x, V.yzw, dbg);
@@ -190,11 +213,12 @@ def render(ctx, state, size, tan, debug):
         r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
         fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
     fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
+    TL = toy_list()
     for k, v in dict(wh_sph=[tuple(x) for x in SCENE['spheres_A'] + SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
                      wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_pix=0.002,
-                     wh_tMask=toy_mask(), wh_fball=fball,
+                     uMask=toy_mask(), wht_toy=TL[0], wht_win=TL[1], wht_nToy=TL[2], wh_fball=fball,
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         if k in prog:      # the toys' uniforms are gone from the shader without them

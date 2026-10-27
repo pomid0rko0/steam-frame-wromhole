@@ -159,10 +159,10 @@ def search(ray, toy, psiEnd, hitK, stats=None):
             if F <= 0:
                 if start:
                     return None
-                if sgo < 0 or sg - sgo < 1e-7:
-                    return 2 * (p - 1) + sg
-                nx = sg - F / dF if dF < 0 else sgo
-                sg = nx if sgo < nx < sg else 0.5 * (sgo + sg)
+                nx = max(sg - F / dF, sgo) if dF < 0 else sgo
+                if sgo < 0 or (sg - nx) * speed < 1e-4:
+                    return 2 * (p - 1) + (sg if sgo < 0 else nx)
+                sg = nx if nx > sgo else 0.5 * (sgo + sg)
                 st['back'] = st.get('back', 0) + 1
                 continue
             if psi > hi:
@@ -171,10 +171,18 @@ def search(ray, toy, psiEnd, hitK, stats=None):
             if Dn * k < 0.9:
                 if dF >= 0:
                     return None
-                step = -F / dF
-                if step * speed < 1e-5:
-                    return 2 * (p - 1) + sg + step
-                nsg = sg + step
+                # in path length s: F_s = 2 D.T, F_ss = 2 (1 + D.P'') >= 2 (1 - k |D|), |D| <= Dn + s, so
+                # F >= L(s) = F + F_s s + m s^2 / 2 for s <= S (m from Dn + S): F has no root before L's
+                # first; S three times the tangent's step (Newton's)
+                Fs = dF / speed
+                S = min(0.9 / k - Dn, -3.0 * F / Fs)
+                m = max(2.0 * (1.0 - k * (Dn + S)), 0.0)
+                disc = Fs * Fs - 2.0 * m * F
+                root = disc >= 0 and 2.0 * F / (-Fs + np.sqrt(max(disc, 0.0))) <= S
+                ds = 2.0 * F / (-Fs + np.sqrt(disc)) if root else S
+                if root and ds < 1e-4:
+                    return 2 * (p - 1) + sg + ds / speed
+                nsg = sg + ds / speed
             else:
                 nsg = sg + 0.8 * (Dn - reach) / speed
                 st['far'] = st.get('far', 0) + 1
@@ -216,10 +224,13 @@ def first_hit(W, ray_state, toys, stats=None):
     """index of the toy the ray meets first in the shell, and its hit (R^4), or (-1, None)"""
     ray = Ray(W, *ray_state)
     hitK, hj = 4.0, -1
+    ev0 = stats.get('ev', 0) if stats is not None else 0
     for j, toy in enumerate(toys):
         k = search(ray, toy, ray.psiEnd, hitK, stats)
         if k is not None and k < hitK:
             hitK, hj = k, j
+    if stats is not None:
+        stats.setdefault('per_ray', []).append(stats.get('ev', 0) - ev0)
     return hj, (key_point(ray, hitK) if hj >= 0 else None), ray
 
 
@@ -293,7 +304,8 @@ def check(W, name, rays, toys):
     print(f"{name}: {n} rays, {sum(1 for m in mine if m[0] >= 0)} hits, mismatch {len(bad)}, hit error max "
           f"{max(errs) if errs else 0:.1e} m | toys searched {st.get('cand', 0)}, points per searched toy "
           f"{st.get('ev', 0) / max(st.get('cand', 1), 1):.2f}, most points {st.get('it_max', 0)}, "
-          f"out of steps {st.get('maxit', 0)}", flush=True)
+          f"out of steps {st.get('maxit', 0)}; points per ray mean {np.mean(st['per_ray']):.2f}, 90% "
+          f"{np.percentile(st['per_ray'], 90):.0f}, 99% {np.percentile(st['per_ray'], 99):.0f}", flush=True)
     return bad
 
 

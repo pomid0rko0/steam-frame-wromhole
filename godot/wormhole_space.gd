@@ -206,6 +206,58 @@ func dw(l: float) -> float:
 	return cos(_theta(al))
 
 
+## A point of the space given in R^4 (as embed makes it): [l, n]. w is monotone in l within the
+## shell; beyond it r is.
+func point_of(P: Vector4) -> Array:
+	var x := Vector3(P.x, P.y, P.z)
+	var rr := x.length()
+	var n := x / rr if rr > 1e-12 else Vector3(1.0, 0.0, 0.0)
+	var aw := absf(P.w)
+	var sg := 1.0 if P.w >= 0.0 else -1.0
+	if aw >= h - 1e-9:
+		return [sg * (maxf(rr - Rout, 0.0) + L), n]
+	if aw <= Lc:
+		return [P.w, n]
+	var th := asin(clampf((aw - (h - fillet)) / fillet, -1.0, 1.0))
+	return [sg * (Lc + fillet * (th - th0)), n]
+
+
+## The l in [-L, L] whose meridian point (r(l), w(l)) lies within reach of the point (r, w) of the
+## (r, w) half-plane: (lo, hi), lo > hi for none; the hull of the cylinder's segment and the fillets'
+## quarter circles (ref/cull.py, lwindow). A toy's points lie within its reach (chord distance in
+## R^4) of its centre, and so within it of the meridian's points at these l only.
+func meridian_window(rr: float, ww: float, reach: float) -> Vector2:
+	var lo := INF
+	var hi := -INF
+	var q := reach * reach - (rr - rho0) * (rr - rho0)
+	if q >= 0.0 and Lc > 0.0:
+		var a := maxf(ww - sqrt(q), -Lc)
+		var b := minf(ww + sqrt(q), Lc)
+		if a <= b:
+			lo = minf(lo, a)
+			hi = maxf(hi, b)
+	for s in [1.0, -1.0]:
+		# the fillet: P(th) = O + R (-cos th, s sin th), th in [th0, pi / 2]
+		var v := Vector2(rr - (rho0 + fillet), ww - s * (h - fillet))
+		var rho := v.length()
+		if rho < 1e-12:
+			continue
+		var thc := atan2(s * v.y, -v.x)
+		var c := (fillet * fillet + rho * rho - reach * reach) / (2.0 * fillet * rho)
+		if c > 1.0:
+			continue
+		var dl := acos(maxf(c, -1.0))
+		var a := maxf(thc - dl, th0)
+		var b := minf(thc + dl, PI / 2.0)
+		if a > b:
+			continue
+		var la: float = s * (Lc + fillet * (a - th0))
+		var lb: float = s * (Lc + fillet * (b - th0))
+		lo = minf(lo, minf(la, lb))
+		hi = maxf(hi, maxf(la, lb))
+	return Vector2(lo, hi) if lo <= hi else Vector2(1.0, -1.0)
+
+
 ## The point (l, n) as a point of R^4.
 func embed(l: float, n: Vector3) -> Vector4:
 	var p := r(l) * n

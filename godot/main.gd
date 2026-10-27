@@ -55,6 +55,7 @@ const SHADER_TOYS_SHELL_ARROWS := preload("res://shaders/toys_shell_arrows.gdsha
 # drawn on, is not clipped away before it.
 const PROXY_MARGIN := 0.08
 const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (by 0.4%): grown by this
+const CONE_NEAR := 2.0          # m from the head: a toy closer gets a cone of its own (_update_cones)
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
@@ -94,8 +95,9 @@ var toys_flat: MultiMeshInstance3D  # the head's flat universe's toys seen strai
 var toys_shell: MeshInstance3D      # what rays meet in and beyond the shell: over a sphere round it, or the whole view
 var toys_flat_mat: ShaderMaterial
 var toys_shell_mat: ShaderMaterial
-var toy_mask := Vector4i.ZERO       # wh_tMask: the toys' bits by universe A, B and the shell (set_objects)
+var toy_mask := Vector4i.ZERO       # the toys a flat universe's sheet cuts, as bits: x A, y B (set_objects)
 var toy_chart: Array = []           # per toy bit (or null): [universe, the chart sphere it is in] (set_objects)
+var toy_list: Array = []            # the shell's pass's toys, in its order: [bit, centre (R^4), reach]
 var shell_sphere: SphereMesh
 var full_view: QuadMesh
 
@@ -1257,9 +1259,10 @@ func set_balls(pos: PackedVector4Array, col: PackedVector4Array) -> void:
 ## a box of a 4D SDF scene: centre as a point of R^4 (cpos), four orthonormal axes divided by the
 ## half size (axes: three body axes tangent to the space, then its normal; four per cube),
 ## (rgb, half size) (ccol). The toys' passes get each cube's axes and then dot(centre, axis) for
-## the four, five vectors per cube (wormhole_toys.gdshaderinc), and the toys by where they can be
-## met (wh_tMask: ball i is bit i, cube i bit 16 + i): those a flat universe's sheet cuts and those
-## within reach of the shell.
+## the four, five vectors per cube (wormhole_toys.gdshaderinc). Ball i is bit i, cube i bit 16 + i:
+## the flat pass draws the toys a flat universe's sheet cuts (toy_mask, toy_chart), the shell's
+## pass gets the list of every toy within reach of the shell or of a sheet, each with the l window
+## of its points' meridian and the flat universe it is in (wht_toy, wht_win: wht_near).
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedVector4Array,
 		axes: PackedVector4Array, ccol: PackedVector4Array) -> void:
 	var n := pos.size()
@@ -1268,6 +1271,9 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	var mask := Vector4i.ZERO
 	toy_chart = []
 	toy_chart.resize(32)
+	toy_list = []
+	var lt := PackedVector4Array()
+	var lw := PackedVector4Array()
 	for i in n:
 		var C := pos[i]
 		var rad := col[i].w
@@ -1281,8 +1287,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 			else:
 				mask.y |= 1 << i
 			toy_chart[i] = [side, Vector4(side * C.x, C.y, C.z, sqrt(r2))]
-		if Vector3(C.x, C.y, C.z).length() - rad < space.Rout:
-			mask.z |= 1 << i
+		_list_toy(i, C, rad, side if r2 > 0.0 else 0.0, lt, lw)
 	var ax := PackedVector4Array()
 	for i in nc:
 		var C := cpos[i]
@@ -1293,14 +1298,14 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 			o[k] = C.dot(axes[4 * i + k])
 		ax.append(o)
 		var side := 1.0 if C.w > 0.0 else -1.0
-		if absf(C.w - side * space.h) < reach:
+		var cut := absf(C.w - side * space.h) < reach
+		if cut:
 			if side > 0.0:
 				mask.x |= 1 << (16 + i)
 			else:
 				mask.y |= 1 << (16 + i)
 			toy_chart[16 + i] = [side, Vector4(side * C.x, C.y, C.z, reach)]
-		if Vector3(C.x, C.y, C.z).length() - reach < space.Rout:
-			mask.z |= 1 << (16 + i)
+		_list_toy(16 + i, C, reach, side if cut else 0.0, lt, lw)
 	var p := pos.duplicate()
 	var c := col.duplicate()
 	while p.size() < 12:
@@ -1314,6 +1319,10 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		cc.append(Vector4.ZERO)
 	while ax.size() < 30:
 		ax.append(Vector4.ZERO)
+	var nt := lt.size()
+	while lt.size() < 18:
+		lt.append(Vector4.ZERO)
+		lw.append(Vector4(1.0, -1.0, 0.0, 0.0))
 	balls = n + nc
 	toy_mask = mask
 	for m in [toys_flat_mat, toys_shell_mat]:
@@ -1325,7 +1334,23 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		m.set_shader_parameter("wh_cubeE", ax)
 		m.set_shader_parameter("wh_cubeCol", cc)
 		m.set_shader_parameter("wh_nCube", nc)
-		m.set_shader_parameter("wh_tMask", mask)
+	toys_shell_mat.set_shader_parameter("wht_toy", lt)
+	toys_shell_mat.set_shader_parameter("wht_win", lw)
+	toys_shell_mat.set_shader_parameter("wht_nToy", nt)
+
+
+## A toy of the shell's pass's list (set_objects), if a ray in or through the shell can meet it:
+## within reach of the shell (then its meridian's l window), or cut by a flat universe's sheet
+## (side: that universe, else 0). toy_list keeps [bit, centre, reach] for the cones.
+func _list_toy(bit: int, C: Vector4, reach: float, side: float, lt: PackedVector4Array, lw: PackedVector4Array) -> void:
+	var rr := Vector3(C.x, C.y, C.z).length()
+	var curved := rr - reach < space.Rout
+	if not curved and side == 0.0:
+		return
+	var win := space.meridian_window(rr, C.w, reach) if curved else Vector2(1.0, -1.0)
+	lt.append(Vector4(C.x, C.y, C.z, reach))
+	lw.append(Vector4(win.x, win.y, side, float(bit)))
+	toy_list.append([bit, C, reach])
 
 
 ## How gravity is shown (README, «Гравитация через червоточину»): 0 not at all, 1 the floor
@@ -1397,6 +1422,7 @@ func _add_toy_draws() -> void:
 ## the eyes: in a flat universe the play-space offset from the head along the head's frame), or
 ## the whole view.
 func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
+	_update_cones(l, n)
 	var on := balls > 0 and toys_shown
 	toys_shell.visible = on
 	var flat := on and absf(l) > space.L
@@ -1420,6 +1446,39 @@ func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> vo
 		mm.set_instance_custom_data(count, Color(float(bit), 0.0, 0.0, 0.0))
 		count += 1
 	mm.visible_instance_count = count
+
+
+## The toys near the head (at l, n), up to four, nearest first: the shell's pass's vertex stage
+## gives each the cone of directions from each eye that can meet it (wht_cone in
+## wormhole_toys.gdshaderinc, exact within CONE_NEAR: ref/cull.py), and a ray outside it skips it.
+## A held ball near the eye inside the shell is otherwise searched by every ray whose plane passes
+## near it, most of the view.
+func _update_cones(l: float, n: Vector3) -> void:
+	var H := space.embed(l, n)
+	var near := []
+	for k in toy_list.size():
+		var t: Array = toy_list[k]
+		var dd: float = (t[1] - H).length() - t[2]
+		if dd < CONE_NEAR:
+			near.append([dd, k])
+	near.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var cones := PackedVector4Array()
+	var cr := Vector4.ZERO
+	var ci := Vector4i(-1, -1, -1, -1)
+	for j in 4:
+		if j < near.size():
+			var k: int = near[j][1]
+			var t: Array = toy_list[k]
+			var pn := space.point_of(t[1])
+			var cn: Vector3 = pn[1]
+			cones.append(Vector4(cn.x, cn.y, cn.z, pn[0]))
+			cr[j] = t[2]
+			ci[j] = k
+		else:
+			cones.append(Vector4(1.0, 0.0, 0.0, 0.0))
+	toys_shell_mat.set_shader_parameter("wht_cone", cones)
+	toys_shell_mat.set_shader_parameter("wht_coneR", cr)
+	toys_shell_mat.set_shader_parameter("wht_coneIdx", ci)
 
 
 ## With the head in a flat universe (at l, n, its play axes hf, at head_pos in the room): its chart ->
