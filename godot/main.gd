@@ -57,6 +57,7 @@ const PROXY_MARGIN := 0.08
 const PROXY_SLACK := 1.02       # the proxy meshes' faces lie inside their sphere (by up to 1.7%): grown by this
 const CONE_NEAR := 4.0          # m from the head: a toy closer gets a cone of its own (_update_cones)
 const BIN_EYE := 0.08           # m: an eye is at most this far from the head point (_update_bins)
+const CELL_NA := 4              # the chords along a cell's azimuths (_cell_mesh; toys_view's WHT_CELL_NA)
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const FOVEATION_LEVELS := 3          # the runtime's levels: low, medium, high (set_foveation)
 # Our own density maps (set_foveation 4 and 5), each eye alike, centred: rings out from where the
@@ -93,14 +94,14 @@ var material: ShaderMaterial    # the world's ray tracer
 # The toys (README, «Мячи и кубы»): passes of their own, drawn before the world's ray tracer, each
 # writing the depth of its hits (the GPU then skips the world's ray tracer under them):
 var toys_flat: MultiMeshInstance3D  # the head's flat universe's toys seen straight, over a sphere round each (play space)
-var toys_shell: MeshInstance3D      # what rays meet in and beyond the shell: over a sphere round it, or the whole view
+var toys_shell: MeshInstance3D      # what rays meet in and beyond the shell: over the cells of the view where a toy can be (_cell_mesh)
 var toys_flat_mat: ShaderMaterial
 var toys_shell_mat: ShaderMaterial
 var toy_mask := Vector4i.ZERO       # the toys a flat universe's sheet cuts, as bits: x A, y B (set_objects)
 var toy_chart: Array = []           # per toy bit (or null): [universe, the chart sphere it is in] (set_objects)
 var toy_list: Array = []            # the shell's pass's toys, in its order: [bit, centre (R^4), reach, l window lo, hi, flat universe]
-var shell_sphere: SphereMesh
-var full_view: QuadMesh
+var eye_fx: CompositorEffect        # each eye's point, axes and the near toys' cones, per frame on the GPU (eye_data.gd)
+var eye_frame := PackedFloat32Array()  # what it was given for this frame (tests/emu_dump.gd reads it)
 
 # feet on the floor + transported play-space axes [x, y(up), z(back)]
 var foot_l: float
@@ -179,8 +180,9 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = 0.05
 	split_pass = preload("res://split_pass.gd").new()
+	eye_fx = preload("res://eye_data.gd").new()
 	camera.compositor = Compositor.new()
-	camera.compositor.compositor_effects = [split_pass]
+	camera.compositor.compositor_effects = [eye_fx, split_pass]
 	origin.add_child(camera)
 	if in_xr:
 		for t in [&"left_hand", &"right_hand"]:
@@ -228,6 +230,7 @@ func _ready() -> void:
 	_param("wh_rho0", space.rho0)
 	_param("wh_h", space.h)
 	_param("wh_fillet", space.fillet)
+	_param("wh_eyes", eye_fx.texture)
 	_upload_fillet_table()
 	_upload_gravity()
 	_upload_scene()
@@ -1394,12 +1397,12 @@ func _param(name: StringName, value: Variant) -> void:
 
 
 ## The toys' draws (wormhole_toys.gdshaderinc), drawn before the world's ray tracer (render priority
-## -2, -1 against 0), each pixel's fragment on a back face. A ray from an eye in a flat universe goes
-## straight until it enters the shell or ends: it meets one of that universe's toys there only
-## through the toy's bounding sphere, and anything else only through the shell. So the flat pass is
-## drawn over a sphere round each of the head's universe's toys, PROXY_MARGIN larger, and the
-## shell's pass over a sphere round the shell; with the head in the curved region, where no chart
-## maps it to the room, the shell's pass covers the whole view.
+## -2, -1 against 0). A ray from an eye in a flat universe goes straight until it enters the shell or
+## ends: it meets one of that universe's toys there only through the toy's bounding sphere, and
+## anything else only through the shell. So the flat pass is drawn over a sphere round each of the
+## head's universe's toys, PROXY_MARGIN larger (a back face: one fragment per pixel). The shell's
+## pass is drawn over the cells of each eye's view where a toy can be met at all (_cell_mesh): with
+## no toy near, it costs next to nothing.
 func _add_toy_draws() -> void:
 	var sphere := SphereMesh.new()
 	sphere.radius = 1.0
@@ -1418,19 +1421,8 @@ func _add_toy_draws() -> void:
 	toys_flat.extra_cull_margin = 16384.0
 	toys_flat.visible = false
 	origin.add_child(toys_flat)
-	shell_sphere = SphereMesh.new()
-	shell_sphere.radius = 1.0
-	shell_sphere.height = 2.0
-	# coarse: every vertex of the shell's pass works out the near toys' cones (toys_view.gdshaderinc);
-	# its faces lie inside the sphere by up to 1.7%, within PROXY_SLACK
-	shell_sphere.radial_segments = 24
-	shell_sphere.rings = 12
-	full_view = QuadMesh.new()
-	full_view.size = Vector2(2.0, 2.0)
-	# put straight into clip space (POSITION = VERTEX.xy, toys_view.gdshaderinc), the quad is wound as a
-	# back face, as the faces of the proxy sphere it stands in for are (the pass culls front faces)
 	toys_shell = MeshInstance3D.new()
-	toys_shell.mesh = shell_sphere
+	toys_shell.mesh = _cell_mesh()
 	toys_shell.material_override = toys_shell_mat
 	toys_shell.extra_cull_margin = 16384.0
 	toys_shell.visible = false
@@ -1441,22 +1433,32 @@ func _add_toy_draws() -> void:
 ## the eyes: in a flat universe the play-space offset from the head along the head's frame), or
 ## the whole view.
 func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
-	_update_cones(l, n)
+	var fd := _update_cones(l, n)
 	_update_bins(l, n)
+	# the eyes' data for this frame's render, in step with the materials' (eye_data.gd)
+	for k in 3:
+		var f: Vector4 = hf[k]
+		for c in 4:
+			fd[eye_fx.F_HEAD_F + 4 * k + c] = f[c]
+	for c in 3:
+		fd[eye_fx.F_HEAD_N + c] = n[c]
+		fd[eye_fx.F_HEAD_POS + c] = head_pos[c]
+	fd[eye_fx.F_HEAD_N + 3] = l
+	fd[eye_fx.F_HEAD_POS + 3] = space.rho0
+	fd[eye_fx.F_SHAPE] = space.h
+	fd[eye_fx.F_SHAPE + 1] = space.fillet
+	eye_frame = fd
+	RenderingServer.call_on_render_thread(eye_fx.set_frame.bind(fd))
 	var on := balls > 0 and toys_shown
 	toys_shell.visible = on
 	var flat := on and absf(l) > space.L
 	toys_flat.visible = flat
-	toys_shell.mesh = shell_sphere if flat or not on else full_view
-	toys_shell_mat.set_shader_parameter("wht_full", not flat)
 	if not flat:
 		return
 	var side := 1.0 if l > 0.0 else -1.0
 	var to_play := chart_to_play(l, n, hf, head_pos)
 	toys_flat_mat.set_shader_parameter("wht_toChart", Projection(to_play.affine_inverse()))
 	toys_flat_mat.set_shader_parameter("wht_side", side)
-	var s := shell_proxy()
-	toys_shell.transform = Transform3D(Basis.from_scale(Vector3.ONE * s.w), to_play * Vector3(s.x, s.y, s.z))
 	var mm := toys_flat.multimesh
 	var count := 0
 	for bit in toy_proxies(side):
@@ -1468,12 +1470,13 @@ func _update_toy_draws(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> vo
 	mm.visible_instance_count = count
 
 
-## The toys near the head (at l, n), up to four, nearest first: the shell's pass's vertex stage
-## gives each the cone of directions from each eye that can meet it (wht_coneAt in
-## wormhole_toys.gdshaderinc, exact up to a geodesic distance of 0.45 pi rho0: ref/cull.py), and a
-## ray outside it skips it. A ball held near the eye inside the shell is otherwise searched by every
-## ray whose plane passes near it, most of the view.
-func _update_cones(l: float, n: Vector3) -> void:
+## The toys near the head (at l, n), up to four, nearest first: eye_data.gd gives each the cone of
+## directions from each eye that can meet it (wh_coneAt in wormhole_core.gdshaderinc, exact up to a
+## geodesic distance of 0.45 pi rho0: ref/cull.py); a cell of the view outside it is not drawn for
+## it, and a ray outside it skips it. A ball held near the eye inside the shell is otherwise searched
+## by every ray whose plane passes near it, most of the view. Returns the eye data's frame with them
+## (eye_data.gd's layout), for the rest to be filled in.
+func _update_cones(l: float, n: Vector3) -> PackedFloat32Array:
 	var H := space.embed(l, n)
 	var near := []
 	for k in toy_list.size():
@@ -1482,8 +1485,8 @@ func _update_cones(l: float, n: Vector3) -> void:
 		if dd < CONE_NEAR:
 			near.append([dd, k])
 	near.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
-	var cones := PackedVector4Array()
-	var cr := Vector4.ZERO
+	var fd := PackedFloat32Array()
+	fd.resize(eye_fx.SIZE)
 	var ci := Vector4i(-1, -1, -1, -1)
 	for j in 4:
 		if j < near.size():
@@ -1491,14 +1494,14 @@ func _update_cones(l: float, n: Vector3) -> void:
 			var t: Array = toy_list[k]
 			var pn := space.point_of(t[1])
 			var cn: Vector3 = pn[1]
-			cones.append(Vector4(cn.x, cn.y, cn.z, pn[0]))
-			cr[j] = t[2]
+			for c in 3:
+				fd[eye_fx.F_CONE + 4 * j + c] = cn[c]
+			fd[eye_fx.F_CONE + 4 * j + 3] = pn[0]
+			fd[eye_fx.F_CONE_C + j] = t[2]
+			fd[eye_fx.F_CONE_ON + j] = 1.0
 			ci[j] = k
-		else:
-			cones.append(Vector4(1.0, 0.0, 0.0, 0.0))
-	toys_shell_mat.set_shader_parameter("wht_cone", cones)
-	toys_shell_mat.set_shader_parameter("wht_coneR", cr)
 	toys_shell_mat.set_shader_parameter("wht_coneIdx", ci)
+	return fd
 
 
 ## The bins of the shell's pass's toys (wht_near in wormhole_toys.gdshaderinc), from the head at
@@ -1599,9 +1602,37 @@ func toy_proxies(side: float) -> Array:
 	return out
 
 
-## The shell's proxy sphere in a flat universe's chart (centre, the mesh's radius).
-func shell_proxy() -> Vector4:
-	return Vector4(0.0, 0.0, 0.0, space.Rout * PROXY_SLACK)
+## The shell's pass's mesh: every cell of an eye's view by wht_near's bins (32 azimuths of the ray
+## plane's normal round the radial axis, 2 x 32 impact parameters, toys_view.gdshaderinc,
+## wht_cellDir), each a strip of CELL_NA quads along its azimuths. The vertex stage places a cell's
+## vertices for each eye, or puts them all at one point if no toy can be met in it; the mesh's own
+## positions are unused. UV: the cell's bins, UV2: the vertex's place along the azimuths and its ring.
+func _cell_mesh() -> ArrayMesh:
+	var verts := PackedVector3Array()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	var idx := PackedInt32Array()
+	for bb in 64:
+		for pb in 32:
+			var base := verts.size()
+			for k in CELL_NA + 1:
+				for ring in 2:
+					verts.append(Vector3.ZERO)
+					uv.append(Vector2(pb + 0.5, bb + 0.5))
+					uv2.append(Vector2(float(k) / CELL_NA, ring))
+			for k in CELL_NA:
+				var i0 := base + 2 * k
+				idx.append_array([i0, i0 + 2, i0 + 3, i0, i0 + 3, i0 + 1])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	m.custom_aabb = AABB(Vector3(-1e4, -1e4, -1e4), Vector3(2e4, 2e4, 2e4))
+	return m
 
 
 ## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the

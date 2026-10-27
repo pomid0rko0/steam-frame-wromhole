@@ -6,8 +6,8 @@
 // eyes for BOTH views. Each eye's position and rotation relative to it are folded into that
 // view's PROJECTION_MATRIX, and EYE_OFFSET is the eye's position in that shared view space.
 // So the eye sits at EYE_OFFSET, and the ray of a pixel is the line from EYE_OFFSET through
-// the pixel's unprojected point. The eye's manifold state is obtained by following the
-// geodesic from the head to the eye. Without multiview EYE_OFFSET is zero.
+// the pixel's unprojected point. The eye's manifold state (the geodesic from the head to the
+// eye) is worked out once per eye and frame (eye_data.gd). Without multiview EYE_OFFSET is zero.
 
 #include "res://shaders/wormhole_uniforms.gdshaderinc"
 #include "res://shaders/wormhole_core.gdshaderinc"
@@ -24,10 +24,10 @@ void vertex() {
 	// at the far plane: the movable objects' passes, drawn first, write their depth, and the GPU
 	// skips this ray tracer wherever one of them is seen (main.gd, the toys)
 	POSITION = vec4(VERTEX.xy, 1e-6, 1.0);
-	float l; vec3 n; vec4 f0; vec4 f1; vec4 f2;
-	wh_eyeAt((INV_VIEW_MATRIX * vec4(EYE_OFFSET, 1.0)).xyz, l, n, f0, f1, f2);
+	float l; vec3 n; vec4 f0; vec4 f1; vec4 f2; vec2 eye;
+	wh_eyeOf(int(VIEW_INDEX), l, n, f0, f1, f2, eye);
 	v_l = l; v_n = n; v_f0 = f0; v_f1 = f1; v_f2 = f2;
-	v_eye = wh_eye(l);
+	v_eye = eye;
 	vec3 pd = mat3(INV_VIEW_MATRIX) * wh_cornerRay(VERTEX.xy, INV_PROJECTION_MATRIX, EYE_OFFSET);   // play space
 	v_ray = pd.x * f0 + pd.y * f1 + pd.z * f2;
 }

@@ -184,14 +184,21 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   their own drawn before it, each writing its hit's depth or discarding: the flat one
   (`toys_flat*.gdshader`, `wht_flat`) the toys of the head's universe seen straight, each over a
   sphere around it (a MultiMesh, the toy's bit in the instance's custom data), exact; the shell's
-  (`toys_shell*.gdshader`, `wht_shell`) what rays meet once in the shell, over a sphere around it or
-  the whole view. Before any search a ray drops the toys it cannot meet (`wht_near`, exact bounds,
+  (`toys_shell*.gdshader`, `wht_shell`) what rays meet once in the shell, drawn only over the cells
+  of each eye's view where a toy can be met (`main._cell_mesh`, `wht_cellDir`: an azimuth sector
+  round the eye's radial axis times a ring of impact parameter, the bins below; not drawn if no toy
+  is in both its masks, or all such are near toys whose cone misses the whole cell; 9-65% of the
+  view where the sphere or the whole view was 74-100%). Each eye's point, play axes and the near
+  toys' cones are worked out once per frame on the GPU before the scene (`eye_data.gd`, a compute
+  shader on the XR camera's compositor, the render's own eyes; the shaders read the texture
+  `wh_eyes`; main hands it the head and the near toys through `call_on_render_thread`). Before any
+  search a ray drops the toys it cannot meet (`wht_near`, exact bounds,
   `ref/cull.py` against RK4): those farther than their reach from its plane; those whose meridian's
   l window (`WormholeSpace.meridian_window`, per toy in `set_objects`) it does not reach (away from
   or through the throat it reaches every l beyond the eye, turning only |l| beyond its turning
   point); a flat universe's toys if it leaves into the other; and, for the four nearest toys within
-  4 m of the head, those whose cone it is outside: the vertex stage finds, per eye, the geodesic's
-  direction to the toy's centre (`wht_coneAt`) and the half angle by the hinge comparison (the
+  4 m of the head, those whose cone it is outside: `eye_data.gd` finds, per eye, the geodesic's
+  direction to the toy's centre (`wh_coneAt`) and the half angle by the hinge comparison (the
   sectional curvature is at most 1/rho0^2: CAT(K)); `main._update_cones` picks the toys. The
   first two tests are, by the symmetry, an azimuth test of the ray plane's normal round the radial
   axis and a test of b and the direction along l: `main._update_bins` marks each toy, per frame, in
@@ -199,12 +206,20 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   |C| sin of the angle between the eye's radial axis and the head's), and a pixel tests exactly only
   the toys of its two bins (testing all 18 in every pixel was ~490 instructions where nothing is). A ball
   held at the edge was searched by 62% of the rays and met by 18%; with its cone 19% search it.
-  The rest are searched by Newton steps on the curved path for a ball (its distance is convex
-  within 1/k of the path's curvature) and certified slab steps for a cube (`wht_search`,
-  `wht_point`: the path's point and its derivative, exact), then the flat toys of the universe it
-  leaves into. No stencil, no region sorting, no bounding spheres, no chords. `ref/toys.py` checks
-  the search against RK4 (no mismatch, errors below 0.2 mm, 2-6 points of the path per toy
-  searched). The speed check has three more
+  The rest are found by one march along the path for all of them (`wht_march`): at each point each
+  toy gives the longest step that cannot pass its entry (a ball: the first root of a lower bound of
+  F = |P - C|^2 - r^2 from its exact F' and F'' = 2 (1 + D.A), A the path's acceleration in R^4,
+  `wht_accel`, and a bound j3 on A's change; a cube: certified slab steps) and the march takes the
+  shortest; the ray's start needs no `wht_point`; then the flat toys of the universe it leaves into.
+  No stencil, no region sorting, no bounding spheres, no chords. `ref/toys.py` mirrors it and checks
+  it against RK4 (no mismatch in 6 scenes, errors below 0.2 mm; near the eye 2.8 points of the path
+  per ray where one search per toy took 5.5). Registers: the shell pass is 32 (6 waves; it was 24 at
+  the edge: ~100 live values, ~70 of them the ray's description `WhRay`/`WhFil` held through the
+  search, and a change of the constants' layout tipped it). An experiment, a shell pass that takes
+  the path from a per-eye table (rows: the ray's angle to the radial axis; columns: path length),
+  compiled to 16 registers (12 waves), 3263 instructions against 4547: README wish «Таблица путей
+  лучей глаза». Not built: its precision at the critical rays, its length and its samples' cost are
+  unknown. The speed check has three more
   places (14-16) with both hands and a ball held in front (`main.bench_hands`) and times the world
   alone (the toys not drawn: `main.toys_shown`): "предметы +N%".
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on

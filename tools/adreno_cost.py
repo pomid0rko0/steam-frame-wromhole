@@ -104,13 +104,13 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_ball', 'v4', 12, 'WH_TOYS'), ('wh_ballCol', 'v4', 12, 'WH_TOYS'), ('wh_nBall', 'i', 0, 'WH_TOYS'),
             ('wh_fball', 'v4', 12, 'WH_TOYS'), ('wh_cube', 'v4', 6, 'WH_TOYS'), ('wh_cubeE', 'v4', 30, 'WH_TOYS'),
             ('wh_cubeCol', 'v4', 6, 'WH_TOYS'), ('wh_nCube', 'i', 0, 'WH_TOYS'),
-            ('wht_toChart', 'm4', 0, 'WHT_FLAT'), ('wht_side', 'f', 0, 'WHT_FLAT'), ('wht_full', 'i', 0, 'WHT_SHELL'),
+            ('wht_toChart', 'm4', 0, 'WHT_FLAT'), ('wht_side', 'f', 0, 'WHT_FLAT'),
             ('wht_cx', 'v4', 5, 'WHT_SHELL'), ('wht_cy', 'v4', 5, 'WHT_SHELL'), ('wht_cz', 'v4', 5, 'WHT_SHELL'),
             ('wht_r2', 'v4', 5, 'WHT_SHELL'), ('wht_lo', 'v4', 5, 'WHT_SHELL'), ('wht_hi', 'v4', 5, 'WHT_SHELL'),
             ('wht_fs', 'v4', 5, 'WHT_SHELL'), ('wht_bit', 'iv4', 5, 'WHT_SHELL'),
             ('wht_t1', 'v3', 0, 'WHT_SHELL'), ('wht_t2', 'v3', 0, 'WHT_SHELL'), ('wht_phiBin', 'iv4', 8, 'WHT_SHELL'),
             ('wht_bBin', 'iv4', 16, 'WHT_SHELL'), ('wht_bStep', 'f', 0, 'WHT_SHELL'),
-            ('wht_cone', 'v4', 4, 'WHT_SHELL'), ('wht_coneR', 'v4', 0, 'WHT_SHELL'), ('wht_coneIdx', 'iv4', 0, 'WHT_SHELL')]
+            ('wht_coneIdx', 'iv4', 0, 'WHT_SHELL')]
 
 
 def shader_defines(path):
@@ -323,8 +323,8 @@ _CONES = {}
 
 
 def cones(e):
-    """The shell pass's vertex stage's cones of the near toys (toys_view.gdshaderinc, wht_coneAt) at the
-    eye (the head: the dump has one view): four axes, then the cos of their half angles (-2: none)"""
+    """The near toys' cones (eye_data.gd, wh_coneAt) at the eye (the head: the dump has one view): four
+    axes, then the cos of their half angles (-2: none)"""
     u = e.get('toys_shell', {})
     key = json.dumps([e['head_l'], e['head_n'], u.get('wht_cone'), u.get('wht_coneR'), u.get('wht_coneIdx')])
     if key not in _CONES:
@@ -343,6 +343,74 @@ def cones(e):
                 out[16 + j] = cth
         _CONES[key] = out
     return _CONES[key]
+
+
+def _ivec(u, name, n):
+    return np.array(u.get(name, [[0, 0, 0, 0]] * (n // 4)), np.int64).reshape(-1)[:n]
+
+
+def cell_cover(e, inp):
+    """Per lane: whether the shell's pass is drawn there, over the cells of the view that can hold a
+    toy (toys_view.gdshaderinc, wht_cellDir, at the eye: the head here): the pixel's cell (its ray
+    plane's normal's azimuth bin and its b bin) has a toy in both bins, and not only near toys whose
+    cones miss the whole cell. The chords' slivers beyond a cell's outer circle are left out."""
+    u = e.get('toys_shell', {})
+    V = inp['ray'] / np.linalg.norm(inp['ray'], axis=0)
+    l = e['head_l']
+    n = np.array(e['head_n'], float)
+    rho = wh_eye(l)[0]
+    t1 = np.array(u.get('wht_t1', [1, 0, 0]), float)
+    t2 = np.array(u.get('wht_t2', [0, 1, 0]), float)
+    phi_bin = _ivec(u, 'wht_phiBin', 32)
+    b_bin = _ivec(u, 'wht_bBin', 64)
+    step = float(u.get('wht_bStep', 1.0))
+    idx = list(u.get('wht_coneIdx', [-1] * 4))
+    cone = inp['cone']
+    w = V[1:]
+    N = np.cross(n[:, None], w, axis=0)
+    pb = np.clip(((np.arctan2(t2 @ N, t1 @ N) + np.pi) * (16.0 / np.pi)).astype(np.int64), 0, 31)
+    outside = abs(l) >= L_SHELL
+    side = 1.0 if l > 0 else -1.0
+    sig = np.where(V[0] > 0.0, 1.0, -1.0)
+    b = rho * np.linalg.norm(w, axis=0)
+    q = np.clip((b / step).astype(np.int64), 0, 31)
+    bb = q + np.where(sig > 0.0, 0, 32)
+    cand = phi_bin[pb] & b_bin[bb]
+    if outside:
+        cand = np.where((sig != side) & (b < R_OUT), cand, 0)
+    # the cell's directions: th in [th0, th1], azimuths a of N in [a0, a1] (the eye's frame round n)
+    e1 = t1 - (t1 @ n) * n
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    Mi = np.linalg.inv(np.array([[e1 @ t1, e2 @ t1], [e1 @ t2, e2 @ t2]]))
+    p0 = pb * (np.pi / 16.0) - np.pi
+    q0 = Mi @ np.stack([np.cos(p0), np.sin(p0)])
+    q1 = Mi @ np.stack([np.cos(p0 + np.pi / 16.0), np.sin(p0 + np.pi / 16.0)])
+    a0 = np.arctan2(q0[1], q0[0])
+    a1 = np.arctan2(q1[1], q1[0])
+    a1 = np.where(a1 < a0, a1 + 2.0 * np.pi, a1)
+    w1 = np.minimum((q + 1.0) * step / rho, 1.0)
+    if outside:
+        w1 = np.minimum(w1, R_OUT / rho)
+    th0 = np.arcsin(np.minimum(q * step / rho, 1.0))
+    th1 = np.arcsin(w1)
+    for j in range(4):
+        k = idx[j]
+        ct = cone[16 + j]
+        if k < 0 or ct <= -1.5:
+            continue
+        U = cone[4 * j:4 * j + 4]
+        ut = np.array([U[1:] @ e1, U[1:] @ e2])
+        au = np.arctan2(ut[1], ut[0]) + 0.5 * np.pi
+        d0 = np.mod(au - a0, 2.0 * np.pi)
+        ca = np.where(d0 <= a1 - a0, 1.0, np.maximum(np.cos(d0), np.cos(d0 - (a1 - a0))))
+        A = sig * U[0]
+        B = np.linalg.norm(ut) * ca
+        ts = np.arctan2(B, A)
+        mx = np.where((ts >= th0) & (ts <= th1), np.sqrt(A * A + B * B),
+                      np.maximum(A * np.cos(th0) + B * np.sin(th0), A * np.cos(th1) + B * np.sin(th1)))
+        cand = np.where(((cand >> k) & 1 != 0) & (mx < ct - 1e-3), cand & ~(1 << k), cand)
+    return cand != 0
 
 
 def sphere_cover(chart, c, r):
@@ -405,8 +473,7 @@ def frame(passes, e, W, H, tan_x, tan_y, tiles, profile=None, colours=False):
         if toys:
             prox = e.get('proxies') or {}
             runs = [('flat', p[0], sphere_cover(inp['chart'], p[1], p[2])) for p in prox.get('toys', []) if 'flat' in passes]
-            runs.append(('shell', None, sphere_cover(inp['chart'], prox['shell'][:3], prox['shell'][3]) if prox
-                         else np.ones(n, bool)))
+            runs.append(('shell', None, cell_cover(e, inp)))
             for kind, bit, cover in runs:
                 sh = passes[kind]
                 idx = np.nonzero(cover)[0]

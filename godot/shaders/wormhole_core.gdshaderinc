@@ -404,6 +404,7 @@ struct WhRay {
     vec3 e1; vec3 e2;
     float b;
     float zs;              // z of the start point, on its fillet
+    float ts;              // and its tau
     float d;               // a passing ray's direction of travel in l
     float x0B; float DB;   // the cylinder, oriented l: from x0B, DB long
     float kc; float ivlc;  // the cylinder: dpsi / dl, dlength / dl
@@ -441,10 +442,11 @@ WhRay wh_ray(float ls, vec3 ns, float vl, vec3 w, vec2 eye, out WhFil f) {
     float ts = turn ? rs * vl * vl / (1.0 + wn)     // r_s - b
                     : eye.y;                        // r_s - rmin
     Y.zs = f.zhi;
+    Y.ts = fromEdge ? 1.0 : clamp(ts / f.span, 0.0, 1.0);
     vec2 Ss = vec2(f.psi, f.arc);           // inner end -> start
     if (!fromEdge) {
         vec4 ms;
-        Y.zs = wh_filMomT(f, clamp(ts / f.span, 0.0, 1.0), ms);
+        Y.zs = wh_filMomT(f, Y.ts, ms);
         Ss = vec2(dot(f.e, ms), wh_filLen(f, ms));
     }
 
@@ -631,6 +633,81 @@ void wh_eyeAt(vec3 eye, out float l, out vec3 n, out vec4 f0, out vec4 f1, out v
         vec4 dir = (off.x * f0 + off.y * f1 + off.z * f2) / len;
         wh_geodesic(l, n, dir, len, f0, f1, f2);
     }
+}
+
+// The geodesic from (l, n) along the unit tangent V for len, in RK4 steps of at most h0: (l, n) and
+// its direction there (V)
+void wh_geo(inout float l, inout vec3 n, inout vec4 V, float len, float h0) {
+    int steps = clamp(int(ceil(abs(len) / h0)), 1, 48);
+    float h = len / float(steps);
+    for (int it = 0; it < steps; it++) {
+        vec4 p = wh_prof(l);
+        float dl1 = V.x; vec3 dn1 = V.yzw / p.x; vec4 dV1 = wh_dU(V, V.yzw, n, p.z / p.x, p.x);
+        float l2 = l + 0.5 * h * dl1; vec3 n2 = n + 0.5 * h * dn1; vec4 V2 = V + 0.5 * h * dV1;
+        p = wh_prof(l2);
+        float dl2 = V2.x; vec3 dn2 = V2.yzw / p.x; vec4 dV2 = wh_dU(V2, V2.yzw, n2, p.z / p.x, p.x);
+        float l3 = l + 0.5 * h * dl2; vec3 n3 = n + 0.5 * h * dn2; vec4 V3 = V + 0.5 * h * dV2;
+        p = wh_prof(l3);
+        float dl3 = V3.x; vec3 dn3 = V3.yzw / p.x; vec4 dV3 = wh_dU(V3, V3.yzw, n3, p.z / p.x, p.x);
+        float l4 = l + h * dl3; vec3 n4 = n + h * dn3; vec4 V4 = V + h * dV3;
+        p = wh_prof(l4);
+        float dl4 = V4.x; vec3 dn4 = V4.yzw / p.x; vec4 dV4 = wh_dU(V4, V4.yzw, n4, p.z / p.x, p.x);
+        l += h / 6.0 * (dl1 + 2.0 * dl2 + 2.0 * dl3 + dl4);
+        n = normalize(n + h / 6.0 * (dn1 + 2.0 * dn2 + 2.0 * dn3 + dn4));
+        V += h / 6.0 * (dV1 + 2.0 * dV2 + 2.0 * dV3 + dV4);
+        V.yzw -= dot(V.yzw, n) * n;
+    }
+}
+
+// A vector of R^4 at (l, n) projected onto the tangent space, as (U_l, u)
+vec4 wh_project(vec4 p, vec3 n, vec4 D) {
+    float rad = dot(D.xyz, n);
+    return vec4(p.z * rad + p.w * D.w, D.xyz - rad * n);
+}
+
+// The tangent at (l, n) whose geodesic, followed for its length, reaches (tl, tn) (as
+// WormholeSpace.toward: the chord seen from (l, n) first, then two corrections by where its geodesic
+// lands), the geodesic in RK4 steps of at most h0
+vec4 wh_toward(float l, vec3 n, float tl, vec3 tn, float h0) {
+    vec4 pe = wh_prof(l);
+    vec4 pt = wh_prof(tl);
+    vec4 T = vec4(pt.x * tn, pt.y);
+    vec4 dT = T - vec4(pe.x * n, pe.y);
+    vec4 D = wh_project(pe, n, dT);
+    D *= length(dT) / max(length(D), 1e-9);
+    for (int it = 0; it < 2; it++) {
+        float gl = l;
+        vec3 gn = n;
+        float len = length(D);
+        vec4 V = D / max(len, 1e-9);
+        wh_geo(gl, gn, V, len, h0);
+        vec4 pg = wh_prof(gl);
+        D += wh_project(pe, n, T - vec4(pg.x * gn, pg.y));
+    }
+    return D;
+}
+
+// The cone of directions from (l, n) that can meet a toy near it, centred at (tl, tn), of chord
+// radius c (ref/cull.py): (its axis, the cos of its half angle). The axis: the geodesic's direction
+// to the centre (wh_toward). The space's sectional curvature is at most K = 1 / rho0^2, so (the
+// hinge comparison, CAT(K)) a geodesic leaving at an angle theta from it stays at least
+// asin(sin(sqrt(K) d) sin(theta)) / sqrt(K) from the centre at geodesic distance d; the toy's
+// intrinsic radius is at most (2 / k) asin(k c / 2), k = 1 / min(R, rho0) the largest curvature of
+// the space's geodesics in R^4.
+vec4 wh_coneAt(float l, vec3 n, float tl, vec3 tn, float c, out float cth) {
+    vec4 D = wh_toward(l, n, tl, tn, 0.2);
+    float d = length(D);
+    float k = 1.0 / min(wh_fillet, wh_rho0);
+    float delta = 2.0 / k * asin(min(0.5 * k * c, 1.0));
+    float sk = 1.0 / wh_rho0;
+    if (d <= delta || sk * d > 0.45 * WH_PI) {
+        // the eye in it, or too far for the comparison (sin(sqrt(K) d) grows only up to pi / 2)
+        cth = -2.0;
+    } else {
+        float sn = sin(sk * delta) / sin(sk * d);
+        cth = cos(min(asin(min(sn, 1.0)) + 2e-3, WH_PI));
+    }
+    return D / max(d, 1e-9);
 }
 
 // A screen corner's ray (clip xy), view space: the line from the eye through the corner unprojected

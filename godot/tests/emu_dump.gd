@@ -10,9 +10,9 @@ extends SceneTree
 ## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
 ## right one in front of the chest (main.bench_hands, as the speed check has them);
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
-## Each entry also has the toys' passes' uniforms (toys_flat, toys_shell) and their proxies: the
-## spheres they are drawn over, in the chart of the head's universe (none: the shell's pass covers
-## the whole view).
+## Each entry also has the toys' passes' uniforms (toys_flat, toys_shell; with the near toys of the
+## eyes' cones, which eye_data.gd gets from main, as wht_cone (n, l) and wht_coneR) and the flat
+## pass's proxies: the spheres it is drawn over, in the chart of the head's universe.
 
 var main: Node3D
 var frames := 0
@@ -27,9 +27,9 @@ var toys := false
 var held := false
 var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d", "wht_side", "wht_full",
+		"wh_cubeCol", "wh_nCube", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d", "wht_side",
 		"wht_cx", "wht_cy", "wht_cz", "wht_r2", "wht_lo", "wht_hi", "wht_fs", "wht_bit", "wht_t1", "wht_t2",
-		"wht_phiBin", "wht_bBin", "wht_bStep", "wht_cone", "wht_coneR", "wht_coneIdx"]
+		"wht_phiBin", "wht_bBin", "wht_bStep", "wht_coneIdx"]
 
 
 func _initialize() -> void:
@@ -105,7 +105,7 @@ func _process(_d: float) -> bool:
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
 			"toys_flat": _uniforms(main.toys_flat_mat),
-			"toys_shell": _uniforms(main.toys_shell_mat),
+			"toys_shell": _shell_uniforms(),
 			# the toys' passes' proxies (main._update_toy_draws): chart spheres of the head's
 			# universe, [bit, centre, radius] for the flat pass's, none with the head in the
 			# curved region or without toys
@@ -124,7 +124,22 @@ func _proxies() -> Dictionary:
 	for bit in main.toy_proxies(side):
 		var c: Vector4 = main.toy_chart[bit][1]
 		toys.append([bit, _v3(Vector3(c.x, c.y, c.z)), (c.w + main.PROXY_MARGIN) * main.PROXY_SLACK])
-	return {"shell": _v4(main.shell_proxy()), "toys": toys}
+	return {"toys": toys}
+
+
+## The shell pass's uniforms, and the near toys whose cones eye_data.gd works out (main.eye_frame)
+func _shell_uniforms() -> Dictionary:
+	var u := _uniforms(main.toys_shell_mat)
+	var fd: PackedFloat32Array = main.eye_frame
+	var cones := []
+	var cr := []
+	for j in 4:
+		var o: int = main.eye_fx.F_CONE + 4 * j
+		cones.append([fd[o], fd[o + 1], fd[o + 2], fd[o + 3]])
+		cr.append(fd[main.eye_fx.F_CONE_C + j])
+	u["wht_cone"] = cones
+	u["wht_coneR"] = cr
+	return u
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.
