@@ -4,9 +4,10 @@ extends SceneTree
 ## by its search's counts (wormhole_core.gdshaderinc: samples of the path, window solves,
 ## candidates searched). Prints their means over the view and over its waves (an 8x8 tile runs as
 ## long as its dearest pixel), and where the dearest are.
-##   godot --path . --rendering-method mobile --resolution 256x256 -s res://tests/count_dump.gd -- scene [fov] [split]
+##   godot --path . --rendering-method mobile --resolution 256x256 -s res://tests/count_dump.gd -- scene [fov] [split] [xr]
 ## (under xvfb-run; scene: an index into PlayScenes.SCENES; split: the frame split by the stencil as
-## in play, every ray tracer counting, the counts kept only where stencil 2 or 3 is)
+## in play, every ray tracer counting, the counts kept only where stencil 2 or 3 is; xr: both eyes
+## of the scripted headset, fake_hmd.gd, 256x256 each, side by side)
 
 var main: Node3D
 var frames := 0
@@ -15,6 +16,7 @@ var fov := 100.0
 var shot := -1
 var split := false          # split: the frame as the app splits it; counts only where the shell's toys are looked for
 var counts: Image
+var hmd = null               # xr: the scripted headset
 
 
 func _initialize() -> void:
@@ -25,6 +27,14 @@ func _initialize() -> void:
 	split = a.has("split")
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
+	if a.has("xr"):
+		hmd = preload("res://tests/fake_hmd.gd").new()
+		hmd.size = Vector2i(256, 256)
+		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.25, 0.95, -1.15, 1.05))
+		XRServer.add_interface(hmd)
+		hmd.initialize()
+		XRServer.primary_interface = hmd
+		main.xr_name = "FakeHMD"
 	main.physics = true
 	main.throw_toys = false
 	root.add_child(main)
@@ -61,19 +71,19 @@ func _process(_d: float) -> bool:
 	if split and counts == null:
 		# then which ray tracer each pixel has (split_test.gd's colours): the counts only where the
 		# shell's toys are looked for (stencil 2 and 3)
-		counts = root.get_texture().get_image()
+		counts = _picture()
 		_shaders("#define WH_KIND_COLOUR %.3f")
 		shot = frames
 		return false
 	if split:
-		var cls := root.get_texture().get_image()
+		var cls := _picture()
 		for y in cls.get_height():
 			for x in cls.get_width():
 				if roundi((cls.get_pixel(x, y).srgb_to_linear().g - 0.1) / 0.2) < 2:
 					counts.set_pixel(x, y, Color(0, 0, 0))
 		_report(counts, PlayScenes.SCENES[scene][0] + ", split")
 	else:
-		_report(root.get_texture().get_image(), PlayScenes.SCENES[scene][0])
+		_report(_picture(), PlayScenes.SCENES[scene][0])
 	quit(0)
 	return true
 
@@ -118,3 +128,18 @@ func _shaders(define: String) -> void:
 		var d := define % (0.1 + 0.2 * m[2]) if define.contains("%") else define
 		sh.code = m[1].code.replace("shader_type spatial;", "shader_type spatial;\n" + d)
 		m[0].shader = sh
+
+
+## What was drawn: the window, or with xr both eyes side by side.
+func _picture() -> Image:
+	if hmd == null:
+		return root.get_texture().get_image()
+	var eyes := []
+	for layer in 2:
+		var img: Image = RenderingServer.texture_2d_layer_get(main.xr_view.get_texture().get_rid(), layer)
+		img.convert(Image.FORMAT_RGBA8)
+		eyes.append(img)
+	var both := Image.create(2 * eyes[0].get_width(), eyes[0].get_height(), false, Image.FORMAT_RGBA8)
+	for k in 2:
+		both.blit_rect(eyes[k], Rect2i(Vector2i.ZERO, eyes[k].get_size()), Vector2i(k * eyes[0].get_width(), 0))
+	return both

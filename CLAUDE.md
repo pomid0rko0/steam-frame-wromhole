@@ -230,13 +230,17 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   Then two cubes held: a ray at one lies in the other's plane too (the rays' planes are a pencil
   round the line throat axis - eye), so stencil 3 searched both. Now the mark 3 tests a near cube's
   box as well (`main._near_box`, `wh_nearBox`: flat in the head's normal coordinates, the room's,
-  axes carried back along the head's geodesic, grown by `BOX_GROW` 0.14 x D x (half + 0.08):
-  `ref/test_nearbox.py`, RK4 against the flat box, worst 0.093 in about 1100 cases), and stencil 3's ray
-  tracer drops per ray the near toys whose cone or box it misses (`WH_NEAR_CULL` in `wh_curved`, from
-  (vl, w) and uniforms made from the head, `main._near_cull`: cones and boxes grown by the eye's
-  offset and the head-to-eye frame turn). Model: two cubes held 16.1 -> 12.4 ms, 9 -> 6.3 samples a
-  wave; the rest as before. `count_dump.gd -- scene split` counts the split frame,
-  `class_share.gd -- scene` the classes' shares.
+  axes carried back along the head's geodesic, each slab grown by D (h + e)(0.07 + 0.017 D), e the
+  eyes' real offset + `NEAR_LAG`: `ref/test_nearbox.py`, RK4 against the flat box, the slabs' growth
+  at most 0.057 D (h + e) within 1.5 m, 0.081 at 3 m in 1352 cases; `BOX_GROW` is 1.4 times that),
+  and stencil 3's ray tracer drops per ray the near toys whose cone or box it misses
+  (`WH_NEAR_CULL` in `wh_curved`, from (vl, w) and uniforms per eye, `main._near_cull`, the eye
+  picked by the ray's start point by selects: an index, the view index or a mask from varyings took
+  32 registers). Model (one eye at the head): two cubes held 16.1 -> 12.4 ms; both eyes of the fake
+  HMD, samples a wave (two cubes held / cubes on the floor at the edge): from the head 7.3 / 2.0, per
+  eye 6.7 / 1.7, no margins at all (wrong, a bound) 4.9 / 1.1. `count_dump.gd -- scene split [xr]`
+  counts the split frame (xr: both eyes of fake_hmd.gd), `class_share.gd -- scene` the classes'
+  shares.
   The builds of 9f0d4f9 and d883b1a print the `refresh:` line's new numbers out of order: there
   "max of X" is the scripts' mean and "main's scripts Y ms avg Z max" their most and the frame's
   budget (fixed after).

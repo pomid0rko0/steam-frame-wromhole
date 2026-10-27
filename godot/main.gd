@@ -72,12 +72,12 @@ const SHADER_WHOLE := preload("res://shaders/stencil_whole.gdshader")
 const NEAR_REACH := 3.0
 const NEAR_MAX := 4
 const NEAR_SLACK := 0.01
-# a near cube's box in the room (_near_box): grown by BOX_GROW times its geodesic's length times
-# (half size + NEAR_EYE), the eye's distance from the head where main placed it (half the eyes'
-# distance, and how far the head may have gone since)
-const BOX_GROW := 0.14
-const NEAR_EYE := 0.08
-# how far the eyes may have gone between this frame's script and its rendering (_near_cull)
+# a near cube's box in the room (_near_box): each slab grown by D (half size + eye) (BOX_GROW.x +
+# BOX_GROW.y D), D its geodesic's length, eye the eyes' distance from the head (with NEAR_LAG):
+# ref/test_nearbox.py found at most 0.057 D (h + e) within 1.5 m, 0.081 at 3 m; this is 1.4 times
+# 0.05 + 0.012 D
+const BOX_GROW := Vector2(0.07, 0.017)
+# how far the eyes may go between this frame's script and its rendering (_near_box, _near_cull)
 const NEAR_LAG := 0.01
 # frames after the toys' ray tracers are picked in which every mark and ray tracer is drawn
 # (_update_proxies): their pipelines are compiled then
@@ -1643,6 +1643,11 @@ func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	found.sort_custom(_nearer)
 	var near := PackedVector4Array()
 	var boxes := PackedVector4Array()
+	var eyes := _eye_offsets(head_pos)
+	var eye := 0.0
+	for e: Vector3 in eyes:
+		eye = maxf(eye, e.length())
+	eye += NEAR_LAG
 	var near_toys := []
 	var mask := 0
 	for k in mini(found.size(), NEAR_MAX):
@@ -1662,7 +1667,7 @@ func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 			play = head_pos + Vector3(U.dot(hf[0]), U.dot(hf[1]), U.dot(hf[2]))
 			miss = res[1]
 		near.append(Vector4(play.x, play.y, play.z, t[2] + miss + NEAR_SLACK))
-		_near_box(boxes, t, l, n, hf, U, miss)
+		_near_box(boxes, t, l, n, hf, U, miss, eye)
 		near_toys.append(t)
 		mask |= 1 << t[0]
 	while near.size() < 4:
@@ -1697,85 +1702,90 @@ func _update_near(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 				m.set_shader_parameter("wh_near", near)
 				m.set_shader_parameter("wh_nearBox", boxes)
 	if near_mask != 0:
-		_near_cull(near, boxes, l, n, hf, head_pos)
+		_near_cull(near, boxes, l, n, hf, head_pos, eyes)
 
 
 ## The near toys for the ray tracer of stencil 3 (wormhole_core.gdshaderinc, WH_NEAR_CULL): each
-## ray leaves out those it cannot meet, by the marks' tests (cone, box) made from the head instead
-## of the eye (the shader holds no more for it). An eye's ray starts at most `off` from the head,
-## and its direction taken in the head's frame instead of the eye's turns by at most `turn` (the
-## frames compared, carried to each eye as the shader carries them): a cone wider by
-## asin(off / D) + turn and its D shorter by off, a box grown by off + turn times how far it
-## reaches.
+## ray leaves out those it cannot meet, by the marks' tests (cone, box), per eye: from where each
+## eye is now (its point and the room's axes carried there, as the vertex shader carries them), the
+## shader picking the eye nearer its ray's start (two slots; without XR both the head). Grown by
+## NEAR_LAG for where the eyes go before the frame is drawn: the cone by asin(lag / D) and its D
+## shorter by it, the box by it and by the frame's turn over it times how far it reaches.
 func _near_cull(near: PackedVector4Array, boxes: PackedVector4Array, l: float, n: Vector3, hf: Array,
-		head_pos: Vector3) -> void:
-	var off := 0.0
-	var turn := 0.0
-	var iface := XRServer.primary_interface
-	if in_xr and iface:
-		for v in iface.get_view_count():
-			var e := iface.get_transform_for_view(v, Transform3D.IDENTITY).origin - head_pos
-			off = maxf(off, e.length())
-			if e.length() < 1e-6:
-				continue
-			var dir := WormholeSpace.combine(hf, e)
-			var fe: Array = space.geodesic(l, n, dir / dir.length(), e.length(), hf, WormholeSpace.H_FAST)[2]
-			var f2 := 0.0
-			for i in 3:
-				for j in 3:
-					var d: float = hf[i].dot(fe[j]) - (1.0 if i == j else 0.0)
-					f2 += d * d
-			turn = maxf(turn, sqrt(f2))
-	off += NEAR_LAG
-	turn += 0.002
+		head_pos: Vector3, eyes: Array) -> void:
+	var lag := NEAR_LAG
+	var turn := 0.002 + lag / space.rho0
 	var A := PackedVector4Array()
 	var Q := PackedVector4Array()
 	var O := PackedVector4Array()
+	var E := PackedVector4Array()
 	var H := Vector4.ZERO
 	var bits := Vector4i(-1, -1, -1, -1)
 	for k in 4:
-		var P := near[k]
-		var q := Vector3(P.x, P.y, P.z) - head_pos
-		var D := q.length()
-		var c := -2.0
-		if P.w > 0.0:
+		if near[k].w > 0.0:
 			bits[k] = near_bits[k]
-			# wh_nearCone from the nearest an eye can be
-			var rr := 1.02 * P.w
-			var De := D - off
-			var S := sin(rr / space.rho0) / sin(minf(De, 1.5 * space.rho0) / space.rho0)
-			if De > rr and S < 1.0:
-				var a := asin(S) + 0.005 + asin(minf(off / D, 1.0)) + turn
-				c = cos(a) if a < 0.5 * PI else -2.0
-		Q.append(WormholeSpace.combine(hf, q / maxf(D, 1e-6)))
-		var h := boxes[3 * k].w
-		var o := Vector4(0.0, 0.0, 0.0, c)
-		if h > 0.0:
-			h += off + turn * (D + 1.8 * h)
+	for v in 2:
+		var off: Vector3 = eyes[mini(v, eyes.size() - 1)]
+		var at := [l, n, hf]
+		if off.length() > 1e-6:
+			var dir := WormholeSpace.combine(hf, off)
+			at = space.geodesic(l, n, dir / dir.length(), off.length(), hf, WormholeSpace.H_FAST)
+		var fe: Array = at[2]
+		E.append(space.embed(at[0], at[1]))
+		var eye := head_pos + off
+		for k in 4:
+			var P := near[k]
+			var q := Vector3(P.x, P.y, P.z) - eye
+			var D := q.length()
+			var c := -2.0
+			if P.w > 0.0:
+				# wh_nearCone from the nearest the eye can be by the time it is drawn
+				var rr := 1.02 * P.w
+				var De := D - lag
+				var S := sin(rr / space.rho0) / sin(minf(De, 1.5 * space.rho0) / space.rho0)
+				if De > rr and S < 1.0:
+					var a := asin(S) + 0.005 + asin(minf(lag / D, 1.0)) + turn
+					c = cos(a) if a < 0.5 * PI else -2.0
+			Q.append(WormholeSpace.combine(fe, q / maxf(D, 1e-6)))
+			var h := boxes[3 * k].w
+			var o := Vector4(0.0, 0.0, 0.0, c)
+			if h > 0.0:
+				h += lag + turn * (D + 1.8 * h)
+				for j in 3:
+					var b := boxes[3 * k + j]
+					o[j] = -q.dot(Vector3(b.x, b.y, b.z))
+			H[k] = maxf(H[k], h)
+			O.append(o)
 			for j in 3:
-				var a := Vector3(boxes[3 * k + j].x, boxes[3 * k + j].y, boxes[3 * k + j].z)
-				o[j] = -q.dot(a)
-		H[k] = h
-		O.append(o)
-		for j in 3:
-			var b := boxes[3 * k + j]
-			A.append(WormholeSpace.combine(hf, Vector3(b.x, b.y, b.z)))
+				var b := boxes[3 * k + j]
+				A.append(WormholeSpace.combine(fe, Vector3(b.x, b.y, b.z)))
 	near_material.set_shader_parameter("wh_nearA", A)
 	near_material.set_shader_parameter("wh_nearQ", Q)
 	near_material.set_shader_parameter("wh_nearO", O)
 	near_material.set_shader_parameter("wh_nearH", H)
+	near_material.set_shader_parameter("wh_nearEye", E)
 	near_material.set_shader_parameter("wh_nearBit", bits)
+
+
+## Each eye's offset from the head in the room, as this frame's script has them: two in XR, else
+## the head itself.
+func _eye_offsets(head_pos: Vector3) -> Array:
+	var iface := XRServer.primary_interface
+	if in_xr and iface and iface.get_view_count() >= 2:
+		return [iface.get_transform_for_view(0, Transform3D.IDENTITY).origin - head_pos,
+				iface.get_transform_for_view(1, Transform3D.IDENTITY).origin - head_pos]
+	return [Vector3.ZERO]
 
 
 ## A near cube as the mark 3 sees it (wh_nearBox, three vectors a slot): a box in the head's normal
 ## coordinates, the room's (play space; there a ray from the eye is a straight line from the eye):
 ## its centre where wh_near has it, its body axes carried back along the head's geodesic to it, U
 ## (unrolled into the room: their coordinates in the head's frame carried there), its half size
-## grown by what the flat picture is off by: BOX_GROW times the geodesic's length times the half size
-## and the eye's distance from the head (NEAR_EYE), measured by ref/test_nearbox.py, with where U lands
-## off its centre and NEAR_SLACK. A ball's (or a hand's) slot: zeros, no box (its cone alone).
+## grown by what the flat picture is off by (BOX_GROW, measured by ref/test_nearbox.py: with the
+## geodesic's length and the half size and the eyes' distance from the head, eye), with where U
+## lands off its centre and NEAR_SLACK. A ball's (or a hand's) slot: zeros, no box (its cone alone).
 func _near_box(boxes: PackedVector4Array, t: Array, l: float, n: Vector3, hf: Array, U: Vector4,
-		miss: float) -> void:
+		miss: float, eye: float) -> void:
 	var body: Array = t[5]
 	if body.is_empty():
 		for j in 3:
@@ -1789,7 +1799,7 @@ func _near_box(boxes: PackedVector4Array, t: Array, l: float, n: Vector3, hf: Ar
 	for j in 3:
 		E.append(space.embed_vector(at[0], at[1], at[2][j]))
 	var half: float = t[6]
-	var grown := half + BOX_GROW * D * (half + NEAR_EYE) + miss + NEAR_SLACK
+	var grown := half + D * (half + eye) * (BOX_GROW.x + BOX_GROW.y * D) + miss + NEAR_SLACK
 	for j in 3:
 		var A: Vector4 = body[j]
 		boxes.append(Vector4(A.dot(E[0]), A.dot(E[1]), A.dot(E[2]), grown if j == 0 else 0.0))

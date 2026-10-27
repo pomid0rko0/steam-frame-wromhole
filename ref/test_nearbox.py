@@ -11,8 +11,10 @@ the cases against D, the half size and the curvature there.
 
   SEED=7 python3 ref/test_nearbox.py [--cases N] [--rays M]
 
-main.BOX_GROW is fitted on it: seeds 7 and 11-14 (about 1100 cases with hits) gave at most 0.093 for
-gap / (D (half + eye)); main grows the box by 0.14 D (half + 0.08).
+main.BOX_GROW is fitted on the slabs' growth (what the shader's slab test needs, less than the
+distance to the box): seeds 31-36 (1352 cases with hits) gave at most 0.057 D (half + eye) within
+1.5 m and 0.081 at 3 m; main grows each slab by D (half + eye) (0.07 + 0.017 D), 1.4 times
+0.05 + 0.012 D.
 """
 import os
 import sys
@@ -124,6 +126,19 @@ def line_box_gap(V, e, c, a, half):
     return best
 
 
+def slab_growth(V, e, c, a, half):
+    """What the shader's slab test needs: for each ray e + s V, how much every slab of the box (unit
+    axes a rows, half size) must grow for the ray to pass it, min over s >= 0 of
+    max_k (|(X - c) . a_k| - half)."""
+    s = np.linspace(0.0, 4.5, 4501)
+    best = np.full(len(V), np.inf)
+    for k in range(0, len(s), 500):
+        P = e + s[None, k:k + 500, None] * V[:, None, :] - c
+        q = np.abs(np.einsum('msi,ki->msk', P, a)) - half
+        best = np.minimum(best, q.max(-1).min(1))
+    return best
+
+
 def main():
     ncase = int(sys.argv[sys.argv.index('--cases') + 1]) if '--cases' in sys.argv else 200
     nray = int(sys.argv[sys.argv.index('--rays') + 1]) if '--rays' in sys.argv else 1500
@@ -167,13 +182,16 @@ def main():
         # the flat picture in the head's coordinates: centre D c3, axes Q, the ray from e
         gap = line_box_gap(dirs[hit], e, D * c3, Q, half)
         g = gap.max()
-        worst.append((g, D, half, lh, np.linalg.norm(e)))
-        print('case %3d: head l %6.2f, D %.2f, half %.2f, eye %.3f off: %4d rays meet it; flat box missed by up to %.4f m (%.4f of D half, %.4f of D^2)'
-              % (case, lh, D, half, np.linalg.norm(e), hit.sum(), g, g / (D * half), g / D ** 2))
+        gs = max(slab_growth(dirs[hit], e, D * c3, Q, half).max(), 0.0)
+        worst.append((g, D, half, lh, np.linalg.norm(e), gs))
+        print('case %3d: head l %6.2f, D %.2f, half %.2f, eye %.3f off: %4d rays meet it; flat box missed by up to %.4f m, its slabs by %.4f (%.4f of D (half + eye))'
+              % (case, lh, D, half, np.linalg.norm(e), hit.sum(), g, gs, gs / (D * (half + np.linalg.norm(e)))), flush=True)
     w = np.array(worst)
     print('worst gap %.4f m; gap / (D half): %.4f max; gap / D^2: %.4f max; gap / (D (half + eye)): %.4f max'
           % (w[:, 0].max(), (w[:, 0] / (w[:, 1] * w[:, 2])).max(), (w[:, 0] / w[:, 1] ** 2).max(),
              (w[:, 0] / (w[:, 1] * (w[:, 2] + w[:, 4]))).max()))
+    print('slabs (what the shader tests, main.BOX_GROW): worst growth %.4f m; / (D (half + eye)): %.4f max over %d cases'
+          % (w[:, 5].max(), (w[:, 5] / (w[:, 1] * (w[:, 2] + w[:, 4]))).max(), len(w)))
 
 
 if __name__ == '__main__':

@@ -659,23 +659,28 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
 #endif
 #ifdef WH_NEAR_CULL
     // the near toys (main._update_near) the eye's own ray cannot meet: outside the cone round where
-    // one's centre is seen, or outside a cube's box in the room (main._near_cull, from the head: the
-    // eye's ray (vl, w) taken as the head's, its direction in the head's frame, the cones and the
-    // boxes grown by how far that is off; one that entered from a flat universe keeps them all).
-    // Per eye (a view index here) or a mask made per pixel before this function took the shader to
-    // 32 registers.
+    // one's centre is seen, or outside a cube's box in the room (main._near_cull: for each eye, in
+    // its frame, so (vl, w) dotted with them is the ray's direction in the room; the eye whose point
+    // is nearer the ray's start, by selects: an index there, the view index passed in, or a mask
+    // made per pixel before this function took the shader to 32 registers). A ray that entered from
+    // a flat universe keeps them all.
     if (abs(ls) < wh_Lsh()) {
         vec4 V4 = vec4(vl, w);
+        vec4 prs0 = wh_prof(ls);
+        vec4 Ee = vec4(prs0.x * ns, prs0.y);       // the ray's start (this eye) in R^4
+        bool v1 = dot(Ee - wh_nearEye[0], Ee - wh_nearEye[0]) > dot(Ee - wh_nearEye[1], Ee - wh_nearEye[1]);
         for (int k = 0; k < 4; k++) {
-            vec4 O = wh_nearO[k];          // the head against the box along its axes; the cone's cos
+            vec4 O = v1 ? wh_nearO[4 + k] : wh_nearO[k];   // the eye against the box along its axes; the cone's cos
             float H = wh_nearH[k];
-            vec3 rd = vec3(dot(V4, wh_nearA[3 * k]), dot(V4, wh_nearA[3 * k + 1]), dot(V4, wh_nearA[3 * k + 2]));
+            int a = 3 * k;
+            vec3 rd = v1 ? vec3(dot(V4, wh_nearA[12 + a]), dot(V4, wh_nearA[13 + a]), dot(V4, wh_nearA[14 + a]))
+                         : vec3(dot(V4, wh_nearA[a]), dot(V4, wh_nearA[a + 1]), dot(V4, wh_nearA[a + 2]));
             vec3 ta = (-H - O.xyz) / rd;
             vec3 tb = (H - O.xyz) / rd;
             vec3 tn = min(ta, tb);
             vec3 tf = max(ta, tb);
             bool box = H <= 0.0 || min(min(tf.x, tf.y), tf.z) >= max(max(tn.x, tn.y), max(tn.z, 0.0));
-            if (wh_nearBit[k] >= 0 && !(box && dot(V4, wh_nearQ[k]) >= O.w))
+            if (wh_nearBit[k] >= 0 && !(box && dot(V4, v1 ? wh_nearQ[4 + k] : wh_nearQ[k]) >= O.w))
                 cand &= ~(1 << wh_nearBit[k]);
         }
     }

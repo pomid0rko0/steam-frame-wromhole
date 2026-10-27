@@ -35,7 +35,7 @@ const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nB
 # the marks' own (main._update_near: the toys each looks for, the near ones' cones), for
 # adreno_cost.py's split: the marks 2 (main.mark_materials[0]) and 3 ([1])
 # the ray tracer of stencil 3's own (main._near_cull)
-const NEAR_UNIFORMS := ["wh_nearA", "wh_nearQ", "wh_nearO", "wh_nearH", "wh_nearBit"]
+const NEAR_UNIFORMS := ["wh_nearA", "wh_nearQ", "wh_nearO", "wh_nearEye", "wh_nearH", "wh_nearBit"]
 const MARK_UNIFORMS := ["wh_mkX", "wh_mkY", "wh_mkZ", "wh_mkR2", "wh_mkLo", "wh_mkHi", "wh_mkGroups", "wh_near", "wh_nearBox"]
 
 

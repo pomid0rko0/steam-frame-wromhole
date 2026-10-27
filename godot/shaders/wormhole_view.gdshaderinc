@@ -99,13 +99,16 @@ uniform vec4 wh_nearBox[12];
 #endif
 #ifdef WH_NEAR_CULL
 // The ray tracer of stencil 3 leaves each near toy out of a ray that misses its cone or its box
-// (wormhole_core.gdshaderinc, wh_curved): the same four slots from the head (slot k; main._near_cull): a cube's three axes in the room as
-// vectors of the head's frame (wh_nearA[3 k + j]), the cone's axis the same way (wh_nearQ[k]), the
-// head against the box along those axes and the cone's cos (wh_nearO[k]); the boxes' grown half
-// sizes (0: none); each slot's candidate bit (wormhole_core.gdshaderinc, wh_curved; -1: none)
-uniform vec4 wh_nearA[12];
-uniform vec4 wh_nearQ[4];
-uniform vec4 wh_nearO[4];
+// (wormhole_core.gdshaderinc, wh_curved): the same four slots for each eye (eye v, slot k;
+// main._near_cull): a cube's three axes in the room as vectors of the eye's frame
+// (wh_nearA[12 v + 3 k + j]), the cone's axis the same way (wh_nearQ[4 v + k]), the eye against the
+// box along those axes and the cone's cos (wh_nearO[4 v + k]); each eye's point in R^4 (the shader
+// takes the one nearer its ray's start); the boxes' grown half sizes (0: none); each slot's
+// candidate bit (-1: none)
+uniform vec4 wh_nearA[24];
+uniform vec4 wh_nearQ[8];
+uniform vec4 wh_nearO[8];
+uniform vec4 wh_nearEye[2];
 uniform vec4 wh_nearH;
 uniform ivec4 wh_nearBit = ivec4(-1);
 #endif
