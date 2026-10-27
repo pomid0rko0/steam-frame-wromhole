@@ -105,7 +105,9 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_fball', 'v4', 12, 'WH_TOYS'), ('wh_cube', 'v4', 6, 'WH_TOYS'), ('wh_cubeE', 'v4', 30, 'WH_TOYS'),
             ('wh_cubeCol', 'v4', 6, 'WH_TOYS'), ('wh_nCube', 'i', 0, 'WH_TOYS'),
             ('wht_toChart', 'm4', 0, 'WHT_FLAT'), ('wht_side', 'f', 0, 'WHT_FLAT'), ('wht_full', 'i', 0, 'WHT_SHELL'),
-            ('wht_toy', 'v4', 18, 'WHT_SHELL'), ('wht_win', 'v4', 18, 'WHT_SHELL'), ('wht_nToy', 'i', 0, 'WHT_SHELL'),
+            ('wht_cx', 'v4', 5, 'WHT_SHELL'), ('wht_cy', 'v4', 5, 'WHT_SHELL'), ('wht_cz', 'v4', 5, 'WHT_SHELL'),
+            ('wht_r2', 'v4', 5, 'WHT_SHELL'), ('wht_lo', 'v4', 5, 'WHT_SHELL'), ('wht_hi', 'v4', 5, 'WHT_SHELL'),
+            ('wht_fs', 'v4', 5, 'WHT_SHELL'), ('wht_bit', 'iv4', 5, 'WHT_SHELL'), ('wht_nGroup', 'i', 0, 'WHT_SHELL'),
             ('wht_cone', 'v4', 4, 'WHT_SHELL'), ('wht_coneR', 'v4', 0, 'WHT_SHELL'), ('wht_coneIdx', 'iv4', 0, 'WHT_SHELL')]
 
 
@@ -156,7 +158,7 @@ def material_ubo(defines, values):
         if typ == 'i':
             ui[k] = int(v[0])
         elif typ == 'iv4':
-            ui[k:k + 4] = v.astype(np.int64)[:4]
+            ui[k:k + len(v)] = v.astype(np.int64)
         else:
             u[k:k + len(v)] = v
     return ui
@@ -383,7 +385,7 @@ def frame(passes, e, W, H, tan_x, tan_y, tiles, profile=None, colours=False):
     are drawn, then the world's ray tracer where no toy was. Returns the passes' Acc and, with colours,
     per tile (xs, ys, colour)."""
     acc = {k: Acc(sh) for k, sh in passes.items()}
-    toys = 'shell' in passes and e.get('toys_shell', {}).get('wht_nToy', 0) > 0
+    toys = 'shell' in passes and e.get('toys_shell', {}).get('wht_nGroup', 0) > 0
     for k, sh in passes.items():
         sh.set_uniforms(e.get({'world': 'uniforms', 'shell': 'toys_shell', 'flat': 'toys_flat'}[k], {}), e.get('proj'))
     pics = []

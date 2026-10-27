@@ -67,8 +67,8 @@ CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 def toy_list():
     """main.set_objects's list for the shell's pass (wht_near): every toy within reach of the shell
-    or cut by a flat universe's sheet, (centre xyz, reach) and (its meridian's l window, that
-    universe, its bit: ball i bit i, cube i bit 16 + i)"""
+    or cut by a flat universe's sheet, its centre, reach squared, its meridian's l window, that
+    universe and its bit (ball i bit i, cube i bit 16 + i), in groups of four"""
     from cull import lwindow
     toy, win = [], []
     for bit, C, reach in ([(i, np.asarray(c), rad) for i, (c, rad, _) in enumerate(BALLS)]
@@ -83,8 +83,15 @@ def toy_list():
             lo, hi = 1.0, -1.0
         toy.append(tuple(C[:3]) + (reach,))
         win.append((lo, hi, side if cut else 0.0, float(bit)))
+    # in groups of four, a vec4 per column (wht_near)
     n = len(toy)
-    return toy + [(0.0,) * 4] * (18 - n), win + [(1.0, -1.0, 0.0, 0.0)] * (18 - n), n
+    toy += [(0.0, 0.0, 0.0, -1.0)] * (20 - n)
+    win += [(1.0, -1.0, 0.0, 0.0)] * (20 - n)
+    cols = [[tuple(toy[4 * g + j][c] for j in range(4)) for g in range(5)] for c in range(3)]
+    cols.append([tuple(toy[4 * g + j][3] ** 2 if toy[4 * g + j][3] > 0 else -1.0 for j in range(4)) for g in range(5)])
+    cols += [[tuple(win[4 * g + j][c] for j in range(4)) for g in range(5)] for c in range(3)]
+    bits = [tuple(int(win[4 * g + j][3]) for j in range(4)) for g in range(5)]
+    return cols, bits, (n + 3) // 4
 
 
 def toy_mask():
@@ -123,9 +130,15 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube;
-uniform vec4 wht_toy[18];
-uniform vec4 wht_win[18];
-uniform int wht_nToy;
+uniform vec4 wht_cx[5];
+uniform vec4 wht_cy[5];
+uniform vec4 wht_cz[5];
+uniform vec4 wht_r2[5];
+uniform vec4 wht_lo[5];
+uniform vec4 wht_hi[5];
+uniform vec4 wht_fs[5];
+uniform ivec4 wht_bit[5];
+uniform int wht_nGroup;
 uniform ivec2 uMask;         // the toys the flat pass draws: A's, B's (main.toy_mask)
 uniform vec4 wh_fball[12];
 uniform float wh_pix;
@@ -218,7 +231,8 @@ def render(ctx, state, size, tan, debug):
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
                      wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_pix=0.002,
-                     uMask=toy_mask(), wht_toy=TL[0], wht_win=TL[1], wht_nToy=TL[2], wh_fball=fball,
+                     uMask=toy_mask(), wht_cx=TL[0][0], wht_cy=TL[0][1], wht_cz=TL[0][2], wht_r2=TL[0][3],
+                     wht_lo=TL[0][4], wht_hi=TL[0][5], wht_fs=TL[0][6], wht_bit=TL[1], wht_nGroup=TL[2], wh_fball=fball,
                      wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         if k in prog:      # the toys' uniforms are gone from the shader without them
