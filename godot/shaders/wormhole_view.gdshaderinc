@@ -111,6 +111,7 @@ uniform vec4 wh_nearO[8];
 uniform vec4 wh_nearEye[2];
 uniform vec4 wh_nearH;
 uniform ivec4 wh_nearBit = ivec4(-1);
+uniform int wh_nearAll = 0;          // all their bits
 #endif
 
 #include "res://shaders/wormhole_core.gdshaderinc"

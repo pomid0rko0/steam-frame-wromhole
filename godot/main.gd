@@ -1765,6 +1765,7 @@ func _near_cull(near: PackedVector4Array, boxes: PackedVector4Array, l: float, n
 	near_material.set_shader_parameter("wh_nearH", H)
 	near_material.set_shader_parameter("wh_nearEye", E)
 	near_material.set_shader_parameter("wh_nearBit", bits)
+	near_material.set_shader_parameter("wh_nearAll", near_mask)
 
 
 ## Each eye's offset from the head in the room, as this frame's script has them: two in XR, else

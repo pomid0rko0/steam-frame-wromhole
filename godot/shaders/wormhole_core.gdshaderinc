@@ -711,8 +711,16 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         float hitK = keyEnd;   // where the nearest hit so far is, or the ray's end
         int hitI = -1;         // its object: ball i, or WH_MAXB + cube i
         vec4 prs = wh_prof(ls);
-        for (int mm = cand; mm != 0; mm &= mm - 1) {
+        for (int mm = cand; mm != 0; ) {
+#ifdef WH_NEAR_CULL
+            // the near ones first (those this ray may meet are left): one found, the others'
+            // windows past it are not searched
+            int nb = mm & wh_nearAll;
+            int bit = findLSB(nb != 0 ? nb : mm);
+#else
             int bit = findLSB(mm);
+#endif
+            mm &= ~(1 << bit);
 #ifdef WH_COUNT
             nC++;
             int s0 = nS; int h0 = hitI;

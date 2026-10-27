@@ -77,6 +77,7 @@ func _process(_d: float) -> bool:
 		return false
 	if split:
 		var cls := _picture()
+		cls.save_png("user://kinds_%d.png" % scene)       # what each pixel shows, which ray tracer
 		for y in cls.get_height():
 			for x in cls.get_width():
 				if roundi((cls.get_pixel(x, y).srgb_to_linear().g - 0.1) / 0.2) < 2:

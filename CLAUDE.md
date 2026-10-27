@@ -238,7 +238,11 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   picked by the ray's start point by selects: an index, the view index or a mask from varyings took
   32 registers). Model (one eye at the head): two cubes held 16.1 -> 12.4 ms; both eyes of the fake
   HMD, samples a wave (two cubes held / cubes on the floor at the edge): from the head 7.3 / 2.0, per
-  eye 6.7 / 1.7, no margins at all (wrong, a bound) 4.9 / 1.1. `count_dump.gd -- scene split [xr]`
+  eye 6.7 / 1.7, no margins at all (wrong, a bound) 4.9 / 1.1. Then near first: a cube's pixels
+  (47% of the view) took 8.1 samples, 4.4 its own: the candidates went by index, the held cubes
+  last; stencil 3 now takes the near ones first (`wh_nearAll`), the rest cut at their hit: 6.7 ->
+  5.2 a wave in both eyes, model 12.4 -> 11.6 ms; a ball held and cubes on the floor as before.
+  `count_dump.gd -- scene split [xr]`
   counts the split frame (xr: both eyes of fake_hmd.gd), `class_share.gd -- scene` the classes'
   shares.
   The builds of 9f0d4f9 and d883b1a print the `refresh:` line's new numbers out of order: there

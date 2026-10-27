@@ -98,7 +98,8 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_mkGroups', 'i', 0, 'WH_MARK'), ('wh_near', 'v4', 4, 'WH_MARK'), ('wh_nearBox', 'v4', 12, 'WH_MARK_NEAR'),
             ('wh_nearA', 'v4', 24, 'WH_NEAR_CULL'), ('wh_nearQ', 'v4', 8, 'WH_NEAR_CULL'), ('wh_nearO', 'v4', 8, 'WH_NEAR_CULL'),
             ('wh_nearEye', 'v4', 2, 'WH_NEAR_CULL'),
-            ('wh_nearH', 'v4', 0, 'WH_NEAR_CULL'), ('wh_nearBit', 'iv4', 0, 'WH_NEAR_CULL')]
+            ('wh_nearH', 'v4', 0, 'WH_NEAR_CULL'), ('wh_nearBit', 'iv4', 0, 'WH_NEAR_CULL'),
+            ('wh_nearAll', 'i', 0, 'WH_NEAR_CULL')]
 
 
 def shader_defines(path):
