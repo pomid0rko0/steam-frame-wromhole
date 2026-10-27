@@ -12,8 +12,10 @@
 # other sources' shader with balls too, as tools/ab_shaders.sh copies it). --hands: with them both
 # hands' balls where hands are at every pose; --held: and a ball held in the right one (emu_dump.gd).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
-# arrows); other sources stay as they are. --poses: other poses than the speed check's, as
-# "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py), of the
+# arrows); other sources stay as they are. --poses: other poses than the speed check's scenes
+# (play_scenes.gd: "scenes", or "scenes:5,7" some of them, each with its toys), as
+# "l,yaw,pitch[,what];..." (place_on_axis; what: a scene's toys there, edge_cubes, held_cubes,
+# held_ball); --profile: cycles per stretch of code (adreno_cost.py), of the
 # pixels that look for the shell's toys (with --split: stencil 2), --profile-near: of those that
 # look for all of them (stencil 3: the near toys' cones), --profile-flat: of those that look for the
 # flat universes' toys only (stencil 1).
@@ -62,7 +64,7 @@ trap restore EXIT
 others=()
 for s in "${srcs[@]}"; do [ "$s" = this ] || others+=("$s"); done
 if [ ${#others[@]} -gt 0 ]; then "$ROOT/tools/ab_shaders.sh" "${others[@]}" >/dev/null || exit 1; fi
-[ -n "$POSES" ] || POSES="11.6,0,0;6.2,0,0;6.2,60,0;5.0,0,0;5.0,90,0;5.0,180,0;5.0,0,-35;5.0,0,35;0,0,0;0,90,0;-5.0,180,0;-5.7,160,-5;-6.2,180,0"   # bench.gd PLACES
+[ -n "$POSES" ] || POSES=scenes   # the speed check's (play_scenes.gd SCENES, with their toys)
 scene=$([ -n "$BALLS" ] && echo balls || ([ -n "$TOYS" ] && echo toys$HELD || echo plain))
 n=0
 for s in "${srcs[@]}"; do

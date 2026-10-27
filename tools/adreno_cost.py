@@ -143,7 +143,8 @@ def material_ubo(defines, values):
         if typ == 'i':
             ui[k] = np.uint32(int(v[0]) & 0xffffffff)
         elif typ == 'iv4':
-            ui[k:k + 4] = (v.astype(np.int64)[:4] & 0xffffffff).astype(np.uint32)
+            m = 4 * max(n, 1)
+            ui[k:k + min(len(v), m)] = (v.astype(np.int64)[:m] & 0xffffffff).astype(np.uint32)
         else:
             u[k:k + len(v)] = v
     return ui
@@ -597,7 +598,11 @@ def main():
     sh.flat_order = order
     print('%s: prog %s, %d instr; flat inputs %s' % (os.path.basename(log), sh.name, sh.ninstr, ', '.join(order)))
     if '--check' in flags:
-        bad = check(sh, entries, opt['--tiles'], np.random.default_rng(opt['--seed']), unis)
+        # the picture is the split's (stencil 3 draws the toys near the eye that the material of
+        # stencil 2, dumped here, leaves out): emulated with all of them, as stencil 3 has them
+        cu = [dict(u, wh_candMask=-1) for u in (unis or [uniforms] * len(entries))]
+        sh.set_uniforms(cu[0])
+        bad = check(sh, entries, opt['--tiles'], np.random.default_rng(opt['--seed']), cu)
         sys.exit(0 if bad < 0.002 else 1)
     prof = np.zeros(len(sh.instrs)) if '--profile' in flags else None
     n = opt['--tiles']
@@ -675,8 +680,9 @@ def main():
                 note += ', the marks 2 and 3 %.2f' % mk
         elif plain:
             note = '; marked %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov']))
-        print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%%s'
-              % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, busy, note))
+        what = (' ' + pose[3]) if len(pose) > 3 and pose[3] != 'none' else ''
+        print('pose l %5.1f yaw %4.0f pitch %4.0f%s: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%%s'
+              % (pose[0], pose[1], pose[2], what, ms, alu, nop, c4, c5, busy, note))
     print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
     if prof is not None:
         report(psh, prof)

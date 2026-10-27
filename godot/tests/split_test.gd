@@ -2,13 +2,14 @@ extends SceneTree
 ## The stencil's split (main._update_proxies) against the ray tracer with all the toys over the
 ## whole view (main.TOYS_WHOLE): the same picture at every pose, with the demo's toys, toys on the
 ## shell's edge on either side and on its fillets, and every other pose both hands with a ball held
-## in the right one. The ray tracers are made to colour each pixel only by what its ray ends on
+## in the right one; then the speed check's scenes of play (play_scenes.gd). The ray tracers are made to colour each pixel only by what its ray ends on
 ## (WH_KIND_COLOUR: sky, floor, a static object, which ball or cube), so the pictures must match bit
 ## for bit where either shows a toy: a pixel where the split gave a ray tracer that could not see a
 ## toy its ray meets shows. Elsewhere the ray tracers, compiled apart, can round a ray that grazes a
 ## static object's edge either way: a pixel in 100 000 may differ there.
-##   godot --path . --rendering-method mobile --resolution 192x192 -s res://tests/split_test.gd [-- quick]
-## (under xvfb-run; quick: a quarter of the poses)
+##   godot --path . --rendering-method mobile --resolution 192x192 -s res://tests/split_test.gd [-- quick] [random N]
+## (under xvfb-run; quick: a quarter of the poses; random N: N poses of random places, with the
+## toys moved to random places of the shell and its edges around the viewer each time, a seed each)
 
 var main: Node3D
 var frames := 0
@@ -24,9 +25,18 @@ var toys_pixels := 0
 var pixels := 0
 
 
+var rng := RandomNumberGenerator.new()
+
+
 func _initialize() -> void:
-	var quick := OS.get_cmdline_user_args().has("quick")
-	for l in [11.0, 7.0, 6.2, 5.8, 5.6, 5.5, 5.2, 4.8, 4.2, 3.0, 1.5, 0.0, -1.5, -3.0, -4.2, -5.0, -5.5, -5.8, -6.5, -8.0]:
+	var args := OS.get_cmdline_user_args()
+	var quick := args.has("quick")
+	if args.has("random"):
+		rng.seed = 12345
+		for k in int(args[args.find("random") + 1]):
+			var l := rng.randf_range(-7.0, 7.0)
+			poses.append([l, rng.randf_range(-180.0, 180.0), rng.randf_range(-50.0, 40.0), "random"])
+	for l in ([] if args.has("random") else [11.0, 7.0, 6.2, 5.8, 5.6, 5.5, 5.2, 4.8, 4.2, 3.0, 1.5, 0.0, -1.5, -3.0, -4.2, -5.0, -5.5, -5.8, -6.5, -8.0]):
 		for y in [0.0, 40.0, 90.0, 140.0, 180.0, -60.0, -120.0]:
 			for p in [-35.0, 0.0, 25.0]:
 				poses.append([l, y, p])
@@ -35,6 +45,15 @@ func _initialize() -> void:
 		for k in range(0, poses.size(), 4):
 			q.append(poses[k])
 		poses = q
+	# then the speed check's scenes of play (play_scenes.gd: cubes at the shell's edge, in the hands,
+	# a ball in the hand), each also turned and tilted a little
+	for sc in PlayScenes.SCENES:
+		if sc[5] == "none":
+			continue
+		if args.has("random"):
+			break
+		for d in ([[0.0, 0.0], [-8.0, 0.0], [8.0, 6.0], [3.0, -10.0]] if not quick else [[0.0, 0.0]]):
+			poses.append([sc[2], sc[3] + d[0], sc[4] + d[1], sc[5]])
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
 	main.physics = true
@@ -73,8 +92,18 @@ func _process(_d: float) -> bool:
 				return true
 			var p: Array = poses[i]
 			main.set_toy_mode(main.TOYS_SPLIT)
-			main.place_on_axis(p[0], p[1], p[2])
-			if i % 2 == 1:
+			if p.size() > 3 and p[3] == "random":
+				main.place_on_axis(p[0], p[1], p[2])
+				_random_toys()
+			elif p.size() > 3:
+				for st in main.hand_state:
+					st["on"] = false
+				PlayScenes.place(main, p[3], p[0], p[1], p[2])
+			else:
+				main.place_on_axis(p[0], p[1], p[2])
+			if p.size() > 3:
+				pass
+			elif i % 2 == 1:
 				_hold_ball()
 			else:
 				for st in main.hand_state:
@@ -148,6 +177,51 @@ func _edge_toys() -> void:
 		b["U"] = Vector4.ZERO
 	main._cube_in_throat(4.6, 0.6, 0.25, Color(0.9, 0.5, 0.2))
 	main._cube_in_throat(-5.4, -0.7, 0.3, Color(0.3, 0.6, 0.9))
+
+
+## The demo's balls and cubes moved to random places: around the viewer (some within reach of the
+## eyes, some up in the air), on the shell's fillets and edges on either side and in the throat;
+## the hands at random places in front of the head, every other pose a ball held.
+func _random_toys() -> void:
+	var sp: WormholeSpace = main.space
+	var w = main.world
+	var head: Vector3 = main.camera.transform.origin
+	var hp: Array = sp.geodesic(main.foot_l, main.foot_n, main.frame[1], maxf(head.y, 0.05), main.frame)
+	var place := func() -> Array:
+		if rng.randf() < 0.5:
+			# around the head, 0.3 to 3 m off
+			var off := Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.2, 0.6), rng.randf_range(-1.0, 0.3))
+			off = off.normalized() * rng.randf_range(0.3, 3.0)
+			var dir := WormholeSpace.combine(hp[2], off)
+			var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
+			return [at[0], at[1]]
+		# anywhere in the shell or just outside it, on the floor or above it
+		var l := rng.randf_range(-sp.L - 0.6, sp.L + 0.6)
+		var phi := rng.randf_range(-PI, PI)
+		var z := clampf(rng.randf_range(0.0, 2.0) / sp.r(l), 0.0, 0.9)
+		return [l, Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)]
+	for b in w.balls:
+		var p: Array = place.call()
+		b["l"] = p[0]
+		b["n"] = p[1]
+		b["U"] = Vector4.ZERO
+		b["radius"] = rng.randf_range(0.05, 0.35)
+	var cubes: Array = w.cubes.duplicate()
+	w.cubes.clear()
+	for c in cubes:
+		var p: Array = place.call()
+		var half := rng.randf_range(0.08, BallWorld.MAX_CUBE_HALF)
+		var n: Vector3 = p[1]
+		var F := []
+		for k in 3:
+			F.append(WormholeSpace.tangent(n, Vector4(rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-1, 1))))
+		w.add_cube(p[0], n, Vector4.ZERO, F, Vector3.ZERO, half, c["color"])
+	for k in 2:
+		var off := Vector3((0.22 if k == 1 else -0.22) + rng.randf_range(-0.2, 0.2), rng.randf_range(-0.6, 0.1), rng.randf_range(-0.6, -0.1))
+		var dir := WormholeSpace.combine(hp[2], off)
+		var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
+		main.hand_state[k] = {"on": true, "l": at[0], "n": at[1], "F": at[2], "U": Vector4.ZERO, "ready": k == 1}
+	main._upload_toys()
 
 
 ## Both hands, and a ball held in the right one 0.3 m in front of it (as tests/emu_dump.gd).

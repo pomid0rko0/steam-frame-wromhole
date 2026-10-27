@@ -624,6 +624,13 @@ def execute(ins, w, ex):
                 for b in range(32):
                     v = np.where((v < 0) & (((a >> (31 - b)) & 1) == 1), b, v)
             w.write(d, k, v, 'u' if op != 'clz.s' else 's', ex)
+        elif op in ('sad.s32', 'sad.s16'):
+            # Mesa emits it for iadd3 (ir3_compiler_nir.c): a + b + c, the sources' own (neg) and
+            # (abs) flags aside (an address of a uniform array at a computed index)
+            a = w.read(ins.srcs[0], k, 's').astype(np.int64)
+            b = w.read(ins.srcs[1], k, 's').astype(np.int64)
+            c = w.read(ins.srcs[2], k, 's').astype(np.int64)
+            w.write(d, k, a + b + c, 's', ex)
         elif op == 'absneg.s':
             # integer abs / negate: the source's (abs) and (neg) flags do it
             w.write(d, k, w.read(ins.srcs[0], k, 's'), 's', ex)

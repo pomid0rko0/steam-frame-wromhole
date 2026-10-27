@@ -2,13 +2,15 @@ extends SceneTree
 ## For tools/adreno_cost.py: puts the viewer at a speed check pose, renders a frame and writes what
 ## the ray tracer gets (the head's point and frame, the camera) and the picture, so the emulated
 ## shader can be fed the same inputs and checked against the picture.
-##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch;..." [fov] [scene] [shader]
+##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch[,what];..." [fov] [scene] [shader]
 ## Each pose gives out_<i>.png and an entry in out.json with the ray tracer's path and its
 ## uniforms. fov: vertical, degrees (default 90); scene: plain (default), balls (the stereo
 ## check's), toys (the demo after the throw and the drop, everything at rest: 8 balls, 4 cubes),
 ## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2; with
 ## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
 ## right one in front of the chest (what the hands and grabbing add to a frame);
+## a pose's what: a scene of play_scenes.gd placed there (edge_cubes, held_cubes, held_ball);
+## poses "scenes" (or "scenes:5,7") are PlayScenes.SCENES (those of them), each with its own;
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
@@ -38,9 +40,16 @@ const MARK_UNIFORMS := ["wh_mkX", "wh_mkY", "wh_mkZ", "wh_mkR2", "wh_mkLo", "wh_
 func _initialize() -> void:
 	var a := OS.get_cmdline_user_args()
 	out = a[0]
-	for p in a[1].split(";"):
-		var v := p.split(",")
-		poses.append([float(v[0]), float(v[1]), float(v[2])])
+	if a[1].begins_with("scenes"):
+		var pick: PackedStringArray = a[1].trim_prefix("scenes").trim_prefix(":").split(",", false)
+		for k in PlayScenes.SCENES.size():
+			if pick.is_empty() or pick.has(str(k)):
+				var s: Array = PlayScenes.SCENES[k]
+				poses.append([s[2], s[3], s[4], s[5]])
+	else:
+		for p in a[1].split(";"):
+			var v := p.split(",")
+			poses.append([float(v[0]), float(v[1]), float(v[2]), v[3] if v.size() > 3 else "none"])
 	if a.size() > 2:
 		fov = float(a[2])
 	main = load("res://main.tscn").instantiate()
@@ -96,7 +105,7 @@ func _process(_d: float) -> bool:
 				done_at = _now()
 			return _settled()
 		var p: Array = poses[i]
-		main.place_on_axis(p[0], p[1], p[2])
+		PlayScenes.place(main, p[3], p[0], p[1], p[2])
 		if hands:
 			_hold_ball()
 	elif k == 2:
@@ -194,6 +203,8 @@ static func _uniforms(m: ShaderMaterial, names: Array = UNIFORMS) -> Dictionary:
 			out[name] = _v4(v)
 		elif v is Vector4i:
 			out[name] = [v.x, v.y, v.z, v.w]
+		elif v is PackedInt32Array:
+			out[name] = Array(v)
 		else:
 			out[name] = v
 	return out

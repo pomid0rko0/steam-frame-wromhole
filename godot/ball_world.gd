@@ -39,6 +39,9 @@ const DRAG_CUBE := 1.05
 const MAX_BALLS := 8
 const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls nearby
 const MAX_CUBES := 6
+# the biggest cube's half size: the ray tracer's search in the curved region tests three of a box's
+# four slabs, which holds up to this (wormhole_core.gdshaderinc, wh_cubeReach)
+const MAX_CUBE_HALF := 0.4
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates at 0.5 g
 const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless micro-bounces)
@@ -75,7 +78,7 @@ func add(l: float, n: Vector3, U: Vector4, radius: float, color: Color) -> Dicti
 
 
 ## A cube centred at (l, n): body axes F (tangent vectors, made orthonormal), angular velocity
-## w in body coordinates (rad/s), half the edge length.
+## w in body coordinates (rad/s), half the edge length (at most MAX_CUBE_HALF).
 func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: float, color: Color) -> Dictionary:
 	if cubes.size() >= MAX_CUBES:
 		_drop_oldest(cubes)
@@ -83,9 +86,17 @@ func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: floa
 	for A: Vector4 in F:
 		axes.append(WormholeSpace.tangent(n, A))
 	var c := {"l": l, "n": n, "U": U, "F": WormholeSpace.orthonormalize(axes), "w": w,
-			"half": half, "color": color, "held": &"", "still": 0.0}
+			"half": minf(half, MAX_CUBE_HALF), "color": color, "held": &"", "still": 0.0}
 	cubes.append(c)
 	return c
+
+
+## How far what the space cuts from a cube's box reaches from its centre (chord distance in R^4):
+## as wormhole_core.gdshaderinc's wh_cubeReach (R: min(fillet, rho0)).
+static func cube_reach(half: float, R: float) -> float:
+	var t2 := 3.0 * half * half
+	var hn := minf(half, 1.25 * t2 / (R + sqrt(R * R - t2))) if t2 < R * R else half
+	return sqrt(t2 + hn * hn)
 
 
 ## Makes room for a new ball or cube: the oldest one goes, unless a hand holds it.

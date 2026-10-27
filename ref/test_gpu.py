@@ -64,6 +64,14 @@ def test_cubes():
 CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 
+def cube_reach(half):
+    """BallWorld.cube_reach: how far what the space cuts from a cube's box reaches from its centre."""
+    R = min(PROF[2], PROF[0])
+    t2 = 3.0 * half * half
+    hn = min(half, 1.25 * t2 / (R + np.sqrt(R * R - t2))) if t2 < R * R else half
+    return float(np.sqrt(t2 + hn * hn))
+
+
 def region_order(objs, reach):
     """main.region_order: the objects sorted by where they can be met (universe A's sheet, the
     shell, B's sheet) and the bounds (x, y, z, w): A 0 .. y, the shell x .. w, B z .. the end."""
@@ -78,7 +86,7 @@ def region_order(objs, reach):
 
 # the shader gets them sorted, as from main.set_objects; the reference uses the same order
 BALLS, BIDX = region_order(BALLS, lambda o: o[1])
-CUBES, CIDX = region_order(CUBES, lambda o: 2.0 * o[2])
+CUBES, CIDX = region_order(CUBES, lambda o: cube_reach(o[2]))
 # the fillet polynomials from a table, as Godot's shaders do (WH_TABLE=0: worked out per ray, as the
 # web preview does)
 TABLE = os.environ.get('WH_TABLE', '1') == '1'
@@ -152,11 +160,12 @@ def render(ctx, state, size, tan, debug):
     vao = ctx.vertex_array(prog, [(vbo, '2f', 'p')])
     balls = [tuple(c) for c, _, _ in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
     bcol = [tuple(col) + (rad,) for _, rad, col in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
-    # per cube: the four axes over the half size, then dot(centre, axis) for the four (main.set_objects)
+    # per cube: the four axes over the half size, then dot(centre, axis) for the three body axes and
+    # the reach (main.set_objects)
     cpos = [tuple(c) for c, _, _, _ in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
     cax = []
     for c, ax, half, _ in CUBES:
-        cax += [tuple(a / half) for a in ax] + [tuple(float(np.dot(c, a / half)) for a in ax)]
+        cax += [tuple(a / half) for a in ax] + [tuple(float(np.dot(c, a / half)) for a in ax[:3]) + (cube_reach(half),)]
     cax += [(0.0, 0.0, 0.0, 0.0)] * (5 * MAXC - len(cax))
     ccol = [tuple(col) + (half,) for _, _, half, col in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
     # each ball's sphere in the sheet that cuts it, in that chart (main.set_objects)
@@ -168,7 +177,7 @@ def render(ctx, state, size, tan, debug):
     fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
     # the bounding spheres of each universe's balls and of its cubes, as main.set_objects makes them
     bound = []
-    for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
+    for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), cube_reach(half)) for c, _, half, _ in CUBES]):
         for side in (1.0, -1.0):
             pts = [(c[:3], rr) for c, rr in objs if abs(c[3] - side * PROF[1]) < rr]
             if not pts:

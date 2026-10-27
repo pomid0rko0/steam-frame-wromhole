@@ -69,7 +69,7 @@ const SHADER_WHOLE := preload("res://shaders/stencil_whole.gdshader")
 # the shell's toys this near the head (chord, from its surface) get a cone of their own
 # (_update_near), at most NEAR_MAX of them, the nearest; NEAR_SLACK: added to the reach for what the
 # head's geodesic to one, unrolled into the room, is off by from the eye's (~2 mm at 1 m)
-const NEAR_REACH := 1.0
+const NEAR_REACH := 3.0
 const NEAR_MAX := 4
 const NEAR_SLACK := 0.01
 # frames after the toys' ray tracers are picked in which every mark and ray tracer is drawn
@@ -132,7 +132,7 @@ var whole_mark: MeshInstance3D      # 2 over the whole view (TOYS_WHOLE)
 var mark_materials: Array[ShaderMaterial] = []   # the marks' that read uniforms (_make_marks)
 var toy_params := {}                # the toys' uniforms as last set (_toy_param)
 var mark_sent := [[], []]           # the marks' toys as last set, far and near (_update_near)
-var shell_toys := []                # the shell's toys as the shader has them: [bit, R^4 centre, reach]
+var shell_toys := []                # the shell's toys as the shader has them: [bit, R^4 centre, reach, l from, l to]
 var near_mask := 0                  # the bits of those near the head (_update_near)
 var warm_frames := 0                # frames left that draw every mark and ray tracer (_update_proxies)
 var cpu_us := 0                     # how long the last _process took: the scripts' own CPU time (perf_panel.gd logs it)
@@ -1285,7 +1285,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		rb.append(col[i].w)
 	var rc := PackedFloat64Array()
 	for i in nc:
-		rc.append(2.0 * ccol[i].w)       # a cube's reach: its half diagonal
+		rc.append(_cube_reach(ccol[i].w))    # a cube's reach: what the space cuts from it
 	var ob := region_order(pos, rb, space.h, space.Rout)
 	var oc := region_order(cpos, rc, space.h, space.Rout)
 	var p := PackedVector4Array()
@@ -1309,6 +1309,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		for k in 4:
 			ax.append(axes[4 * i + k])
 			o[k] = cpos[i].dot(axes[4 * i + k])
+		o.w = _cube_reach(ccol[i].w)       # the shader's wh_cubeReach (it tests the body axes' slabs only)
 		ax.append(o)
 	while p.size() < 12:
 		p.append(Vector4.ZERO)
@@ -1342,7 +1343,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		var hi: int = ob[1].w if k == 0 else oc[1].w
 		for i in range(lo, hi):
 			var C: Vector4 = p[i] if k == 0 else cp[i]
-			var reach: float = c[i].w if k == 0 else 2.0 * cc[i].w
+			var reach: float = c[i].w if k == 0 else _cube_reach(cc[i].w)
 			var lc: float = space.unembed(C)[0]
 			var dl := 2.0 * space.fillet * asin(minf((reach + 0.01) / (2.0 * space.fillet), 1.0)) * 1.02 + 0.01
 			shell_toys.append([i + 16 * k, C, reach, lc - dl, lc + dl])
@@ -1358,9 +1359,9 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 		hi = oc[1].y if k == 0 else nc
 		for i in range(lo, hi):
 			var C: Vector4 = cp[i]
-			toy_spheres[k].append(Vector4(C.x if k == 0 else -C.x, C.y, C.z, 2.0 * cc[i].w))
-	# the bounding spheres per flat universe: balls a sheet w = side h cuts, cubes the same (half
-	# diagonal 2 half)
+			toy_spheres[k].append(Vector4(C.x if k == 0 else -C.x, C.y, C.z, _cube_reach(cc[i].w)))
+	# the bounding spheres per flat universe: balls a sheet w = side h cuts, cubes the same (what the
+	# space cuts from one lies within its reach, _cube_reach)
 	var bounds := PackedVector4Array()
 	for group in 2:
 		for side in [1.0, -1.0]:
@@ -1370,7 +1371,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 			var count := n if group == 0 else nc
 			for i in count:
 				var C: Vector4 = pos[i] if group == 0 else cpos[i]
-				var rr: float = col[i].w if group == 0 else 2.0 * ccol[i].w
+				var rr: float = col[i].w if group == 0 else _cube_reach(ccol[i].w)
 				if absf(C.w - side * space.h) < rr:
 					var c3 := Vector3(C.x, C.y, C.z)
 					lo = lo.min(c3)
@@ -1388,12 +1389,16 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos: PackedV
 	_toy_param("wh_bound", bounds)
 
 
+func _cube_reach(half: float) -> float:
+	return BallWorld.cube_reach(half, minf(space.fillet, space.rho0))
+
+
 ## Where each object can be met: in universe A's flat sheet (its reach crosses w = h), in the
 ## shell (it comes within reach of |xyz| < Rout) or in B's sheet (w = -h); none is in both sheets.
 ## Returns [the order, Vector4i(x, y, z, w)]: sorted A only, A and the shell, the shell only, the
 ## shell and B, B only, A's are 0 .. y, the shell's x .. w, B's z .. the end (wh_bIdx, wh_cIdx).
 ## pos: centres as points of R^4, reach: each one's radius of reach (a ball's radius, a cube's
-## half diagonal).
+## _cube_reach).
 static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: float, rout: float) -> Array:
 	var groups := [[], [], [], [], []]
 	for i in pos.size():
@@ -1410,7 +1415,7 @@ static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: 
 		groups[g].append(i)
 	var order := []
 	var ends := []
-	for g in groups:
+	for g: Array in groups:
 		order.append_array(g)
 		ends.append(order.size())
 	return [order, Vector4i(ends[0], ends[1], ends[2], ends[3])]
