@@ -13,6 +13,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 V=4.7.2
 BIN=$ROOT/tools/.bin
 REL=https://github.com/godotengine/godot/releases/download/$V-stable
+GODOT=Godot_v$V-stable_linux.$(uname -m | sed 's/^aarch64$/arm64/')   # x86_64 in the cloud, arm64 on the Frame
 TPL=${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$V.stable
 mkdir -p "$BIN"
 
@@ -36,10 +37,11 @@ fetch() {   # url file
 }
 
 get_godot() {
-	[ ! -x "$BIN/Godot_v$V-stable_linux.x86_64" ] || return 0
+	[ ! -x "$BIN/$GODOT" ] || { ln -sfn "$GODOT" "$BIN/godot"; return 0; }
 	echo "downloading Godot $V"
-	fetch "$REL/Godot_v$V-stable_linux.x86_64.zip" "$BIN/godot.zip"
-	(cd "$BIN" && unzip -oq godot.zip && rm godot.zip && chmod +x "Godot_v$V-stable_linux.x86_64")
+	fetch "$REL/$GODOT.zip" "$BIN/godot.zip"
+	(cd "$BIN" && unzip -oq godot.zip && rm godot.zip && chmod +x "$GODOT")
+	ln -sfn "$GODOT" "$BIN/godot"   # the name the tools use, whatever the machine
 }
 
 get_templates() {
@@ -132,6 +134,7 @@ prefix() {   # name: puts it in front of every line
 	while IFS= read -r l || [ -n "$l" ]; do printf '%s: %s\n' "$1" "$l"; done
 }
 steps=(godot templates pip apt)
+[ $# = 0 ] || steps=("$@")   # or only the steps named: tools/setup.sh godot templates
 pids=()
 # Steps in the background don't get Ctrl-C from the terminal: on it, stop them here. `set -m`
 # gives each step its own process group, so that its curls, unzips and pip stop with it.
@@ -146,9 +149,9 @@ failed=""
 for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}"; done
 [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
 # after apt: it needs the packages that step installs
-get_adreno 2>&1 | prefix adreno
+[ $# != 0 ] || get_adreno 2>&1 | prefix adreno
 
 # also on PATH: the tests fall back to it when this script ran outside the repo,
 # e.g. piped from curl in an environment setup script (then ROOT is not the repo)
-ln -sf "$BIN/Godot_v$V-stable_linux.x86_64" /usr/local/bin/godot 2>/dev/null || true
-echo "ok: $BIN/Godot_v$V-stable_linux.x86_64, $MESA_OUT"
+ln -sf "$BIN/$GODOT" /usr/local/bin/godot 2>/dev/null || true
+echo "ok: $BIN/$GODOT, $MESA_OUT"

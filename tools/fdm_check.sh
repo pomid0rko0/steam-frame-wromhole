@@ -15,7 +15,7 @@
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/Godot_v4.7.2-stable_linux.x86_64}
+GODOT=${GODOT:-$ROOT/tools/.bin/godot}
 [ -x "$GODOT" ] || GODOT=$(command -v godot || true)
 MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
 # setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not

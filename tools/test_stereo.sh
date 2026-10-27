@@ -8,7 +8,7 @@
 # Exit status 0 only if every check passes.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/Godot_v4.7.2-stable_linux.x86_64}
+GODOT=${GODOT:-$ROOT/tools/.bin/godot}
 [ -x "$GODOT" ] || GODOT=$(command -v godot || true)
 [ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
 OUT=${OUT:-/tmp/wormhole-stereo}; mkdir -p "$OUT"
