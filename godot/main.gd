@@ -701,7 +701,7 @@ func _upload_toys() -> void:
 	for i in hand_state.size():
 		var st := hand_state[i]
 		if st.get("on", false):
-			var at := _hand_at(i)
+			var at := _drawn_at(i)
 			pos.append(space.embed(at[0], at[1]))
 			var c: Color = HAND_COLOR_WEAK if _weak(i) else (HAND_COLOR_READY if st.get("ready", false) else HAND_COLOR)
 			col.append(Vector4(c.r, c.g, c.b, HAND_RADIUS))
@@ -911,6 +911,17 @@ func _hand_balls() -> Array:
 func _hand_at(i: int) -> Array:
 	var st := hand_state[i]
 	return st["grip_at"] if st.has("grip_at") else [st["l"], st["n"]]
+
+
+## Where hand i is drawn: where it acts (_hand_at), or where it touches a ball it pushes, on the
+## ball (BallWorld.touch_place: a hand pressed into a ball stays on it, as one that holds a toy).
+func _drawn_at(i: int) -> Array:
+	var st := hand_state[i]
+	if not st.has("held"):
+		var on := world.touch_place(grips[i].tracker)
+		if not on.is_empty():
+			return on
+	return _hand_at(i)
 
 
 ## The toy nearest to hand i's centre within GRAB_REACH of its surface (not one it holds), or {}.

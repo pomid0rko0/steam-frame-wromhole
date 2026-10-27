@@ -98,8 +98,16 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   holds: Gauss-Seidel, `HOLD_ITERATIONS` 4. Balls get axes while held (`hF`, `hw`). `b["held"]`
   (a tracker) is now `b["holds"]` (tracker -> hold), `b["ghost"]` a list of trackers. A held toy
   collides with its own mass, does not bounce off the floor or statics, is not pushed by its own
-  hand. Pushes by a hand are finite too (`_push`, the cubes' hand contacts: `HAND_FORCE`, no bounce,
-  `PALM_FRICTION`, the overlap undone `HAND_SLOP` a substep along the hand's motion).
+  hand; on the floor it slides with friction (`FRICTION_BALL`, `_held_friction`: the hand holds its
+  turn, so it cannot roll). Pushes by a hand are finite too (`HAND_FORCE`, no bounce,
+  `PALM_FRICTION`). A ball (`_push`): the hand pushes where it first touched it (`b["touch"]`, the
+  direction from its centre; it slides over the ball only out of the palm's friction cone,
+  `_palm_slide`) and is drawn there (`touch_place`, `main._drawn_at`); the push (the hand's speed
+  along that normal plus at most `PRESS_SPEED` 0.05 m/s for its depth), the palm's friction and the
+  floor's and a static object's pushes (`_props`) are solved together, warm-started from the last
+  substep; a hand past the ball's centre or `HAND_GIVE` 0.35 m in, one leaving through its far side,
+  one found deep in it and one under the floor go through (a ghost). Cubes: their hand contacts,
+  the overlap undone `HAND_SLOP` a substep.
   `main`: per frame `_track_hands` (poses; velocity, spin and acceleration from the 60 ms
   parabola; one hand farther than `SLIP` 0.35 m from its grip point lets the toy slip, before it
   pulls; `_aim`; a toy both hands hold, `_rig_aim`), then `_toys` (the step), then `_use_hands`
@@ -131,7 +139,15 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   second (cap 10 rad/s; a big toy only between both hands at opposite sides, each grip aiming on
   its own): throws better; turns still sluggish, big toys slipped as soon as the hands moved, one
   hand could not even tip the crate, no ball could be lifted with one hand, pushed toys felt
-  weightless, a ball rolled out from under a pressing hand. All reworked as above, not yet tried.
+  weightless, a ball rolled out from under a pressing hand. All reworked as above. The third: all
+  of README's checks 10-14 yes, but a ball pressed deeper rolled out from under the hand, held and
+  free; the owner: "можно мерджить, не спеши, я дам отмашку". Found and fixed: held, the arm at its
+  limit re-solved through the toy's turn (below); free, the push from the hand's centre turned
+  sideways the deeper the hand went in (below). The owner asked why balls are "nailed to the
+  floor": a free ball pressed beyond the palm's friction angle (39 degrees from its top) still
+  rolls out, nearer its top it stays however deep the hand goes. Pushed while walking by the stick,
+  balls go as easily as the hands move (1.5 m/s, 4 running): honest for 150 N against 4.5 kg, but
+  felt light; not changed.
 - `foveation` — merged into `main`: foveated rendering from the panel: SteamVR's density map
   low/high (`XR_FB_foveation`) or our own softer ones, wide/narrow (`main.OWN_MAPS`,
   `VRS_TEXTURE`; each ring halves the rays, the width or the height first, `main.set_own_order`),
@@ -548,6 +564,21 @@ they line up the same way.
   half fall the impulses aim through (else every held toy looked like it was falling and got the
   braking's extra force). Tests that set a hand's pose far from the last one make the hand's
   60 ms velocity a spike that a held toy follows: wait 6 frames, or jump more than `HAND_JUMP`.
+  Find the arm's impulse again for the twist (through the toy's turn) only when the wrist is at its
+  limit: when the arm is (pressed into the floor, the grip point short of the hand) and the wrist
+  is not, the re-solve turned the toy to bring the grip point nearer, the wrist's twist did not
+  undo it, and a held ball slid 0.8-2 m along the frictionless floor.
+- **A hand pushing a ball it cannot feel** (`strength`): it goes on into it, and a push along the
+  line from the hand's centre turns sideways the deeper it goes: a ball pressed at its very top
+  by a shaking hand 40 cm deep rolled 43 cm. Push from where it first touched (a god-object proxy,
+  with the palm's friction cone), and solve the push with the floor: in one pass from nothing, push,
+  palm friction and floor take back each other's impulses (3 constraints in a 2D velocity space),
+  and the ball crept out at 0.14 m/s; warm-started, it rests within a substep. Velocity added to
+  push the overlap out (the depth over HOLD_TIME) flings light balls (4 m/s) and makes a ball a
+  hand runs into leave faster than the hand: at most `PRESS_SPEED`. A hand past the ball's centre
+  slid its touch round to the side and threw it; a hand that went through, back up from under the
+  floor, threw it up: those go through. Probe with realistic hands (a tilt, a slanted path, a
+  1.5 cm shake, 30-60 cm deep): every straight vertical press in the tests passed before.
 - **`Vector3` is single precision in loops:** `while p.y > x: p.y = maxf(p.y - d, x)` never ends
   when float32(x) > x (0.202); compare with a margin.
 - **Godot prints shader float constants with 14 decimals:** `1e-30` and `1e-20` become 0.0

@@ -33,14 +33,15 @@ extends SceneTree
 ##     gravity rolls it toward the throat by itself
 ## 12. the hand's finite strength: a flick of the wrist (38 rad/s) spins a cube far slower than the
 ##     hand turned; a turn of the hand at 6 rad/s it follows; a held ball pressed into the floor
-##     stays on it, under the hand
+##     stays on it, under the hand, pressed deep by a shaking, turning hand too, and slips off
 ## 13. a toy too big to grip round: one hand holds it with the fingertips (yellow): it lifts a light
 ##     big ball, which dangles, it cannot lift the crate; two at the same side the same; two at its
 ##     opposite sides lift it level, and carry it however the hands part and close (the rig of
 ##     both); the hands are drawn where they hold it; parted far, it slips from both; thrown over
 ##     the head with both hands it flies forward
-## 14. a hand's push is finite and soft: a ball pressed under the hand stays under it, a heavy ball
-##     is pushed no faster than the hand, a light one too
+## 14. a hand's push is finite and soft: a ball pressed under the hand stays under it (within the
+##     palm's friction from its top, however deep the hand goes, the hand drawn on it; beyond, it
+##     rolls out), a heavy ball is pushed no faster than the hand, a light one too
 
 const SIZE := 160                    # each eye's picture
 const FRUSTUM := Vector4(-1.0, 1.0, -1.1, 1.1)
@@ -825,6 +826,44 @@ func _strength() -> void:
 			"held by %s, moved %.3f m" % [ball["holds"].keys(), _at(ball).distance_to(at)])
 	right.set_input(&"grip", 0.0)
 	await _step(2)
+	# as a hand does it: pitched down 30 degrees, going down and 0.2 m back per metre down, shaking
+	# 1.5 cm and turning 8 degrees, 0.6 m below where the ball meets the floor. The arm cannot get
+	# the ball there: the wrist still holds its turn (it was turned instead, and slid 0.8-2 m)
+	_clear()
+	right.set_input(&"grip", 0.0)
+	await _step(2)
+	p = Vector3(0.2, 0.7, -0.4)
+	var b0 := Basis(Vector3.RIGHT, deg_to_rad(-30.0))
+	_pose(right, p, b0)
+	await _step(8)
+	right.set_input(&"grip", 1.0)
+	await _step(1)
+	right.set_input(&"by_button", true)
+	await _step(1)
+	right.set_input(&"by_button", false)
+	await _step(4)
+	ball = _hand(1).get("held", {})
+	var total: float = _at(ball).z - ball["radius"] + 0.6
+	var touched := Vector2.INF
+	drift = 0.0
+	var slipped := false
+	for k in int(120.0 * total) + 90:
+		var t := k / 60.0
+		var down := minf(0.5 * t, total)
+		_pose(right, p + Vector3(0.0, -down, 0.2 * down) + 0.015 * Vector3(sin(7.0 * t), sin(9.0 * t + 1.0), sin(11.0 * t + 2.0)),
+				b0 * Basis(Vector3.RIGHT, deg_to_rad(8.0 * sin(6.0 * t))) * Basis(Vector3.UP, deg_to_rad(8.0 * sin(5.0 * t + 1.0))))
+		await _step(1)
+		var xy := Vector2(_at(ball).x, _at(ball).y)
+		if touched == Vector2.INF and _at(ball).z < ball["radius"] + 0.01:
+			touched = xy
+		if touched != Vector2.INF:
+			drift = maxf(drift, xy.distance_to(touched))
+		slipped = slipped or ball["holds"].is_empty()
+	_check("a held ball pressed 0.6 m into the floor by a shaking, turning hand slides no more than the hand, slips off and stays",
+			slipped and drift < 0.15 and _vel(ball).length() < 0.05, "along the floor %.3f m at most, slipped %s, %.2f m/s at the end" % [drift, slipped, _vel(ball).length()])
+	right.set_input(&"grip", 0.0)
+	_pose(right, Vector3(0.3, 1.2, -0.2))
+	await _step(10)
 
 
 # 13
@@ -1021,6 +1060,48 @@ func _palm() -> void:
 		await _step(1)
 	var moved := Vector2(_at(ball).x - start.x, _at(ball).y - start.y).length()
 	_check("a ball pressed down by the hand stays under it", moved < 0.05, "moved %.3f m along the floor" % moved)
+	_pose(right, Vector3(1.0, 1.5, 0.3))
+	await _step(10)
+	# a 22 cm ball pressed by a hand 20, 30, 45 and 60 degrees from its top (where the hand first
+	# touches it, seen from its centre), straight down 0.2 m into it and on (through it, from 15 cm:
+	# past its centre): within the palm's
+	# friction (0.8: 39 degrees) it stays under the hand, however deep the hand goes; beyond it, it
+	# rolls out; pressed, the hand is drawn on it, where it touched it; and the hand that went
+	# through it and comes back up from under the floor does not throw it up
+	for deg in [20.0, 30.0, 45.0, 60.0]:
+		_clear()
+		_pose(right, Vector3(1.0, 1.5, 0.3))
+		await _step(4)
+		var r := 0.11
+		ball = _ball_at(Vector3(9.4, 0.2, r), r)
+		await _step(10)
+		start = _at(ball)
+		var reach: float = r + main.HAND_RADIUS
+		var top := _play(start + Vector3(-reach * sin(deg_to_rad(deg)), 0.0, reach * cos(deg_to_rad(deg)) + 0.05))
+		var on := 9.0
+		var highest := 0.0
+		for k in 75:
+			var down := minf(0.4 * k / 60.0, 0.25)
+			_pose(right, top + Vector3(0.0, -down, 0.0))
+			await _step(1)
+			if k == 25:                      # 12 cm into it (past its centre, 15, the hand goes through)
+				for h: Vector3 in _hand_balls_at():
+					on = minf(on, absf((h - _at(ball)).length() - reach))
+		for k in 40:
+			_pose(right, top + Vector3(0.0, -0.25 - 0.3 * k / 40.0, 0.0))
+			await _step(1)
+		for k in 60:
+			_pose(right, top + Vector3(0.0, -0.55 + 0.6 * k / 60.0, 0.0))
+			await _step(1)
+			highest = maxf(highest, _at(ball).z)
+		moved = Vector2(_at(ball).x - start.x, _at(ball).y - start.y).length()
+		if deg < 39.0:
+			_check("pressed %.0f degrees from its top, a ball stays under the hand, drawn on it" % deg, moved < 0.03 and on < 0.01,
+					"moved %.3f m, the hand %.3f m off its surface" % [moved, on])
+		else:
+			_check("pressed %.0f degrees from its top, a ball rolls out" % deg, moved > 0.15, "moved %.3f m" % moved)
+		_check("the hand that went through it, back up from under the floor, does not throw it up (%.0f degrees)" % deg,
+				highest < r + 0.01, "its centre up to %.3f m (radius %.2f)" % [highest, r])
 	_pose(right, Vector3(1.0, 1.5, 0.3))
 	await _step(10)
 	# a heavy ball (70 cm, 4.5 kg) hit by the hand at 3 m/s: no faster than the hand, and it takes

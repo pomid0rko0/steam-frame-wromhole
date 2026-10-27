@@ -45,6 +45,7 @@ const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that ke
 const MAX_CUBES := 6
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates at 0.5 g
+const FRICTION_BALL := 0.5           # the same for a held ball (a free one rolls)
 const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
 # a hand or a held toy against a ball: the hand moves on regardless (it is kinematic, and a held
@@ -54,12 +55,19 @@ const ITERATIONS := 6                # velocity iterations of the contact solver
 const RESTITUTION_KINEMATIC := 0.3
 # a hand's push: no bounce (a palm is soft), at most HAND_FORCE (a hand pushing a heavy toy moves it
 # no faster than its strength: it goes into it), with the palm's friction (a ball pressed under the
-# hand stays under it instead of squirting out); an overlap with a hand is undone no faster than
-# HAND_SLOP a substep (the rest is the push's velocity), along the hand's motion (away from its
-# centre, it pushed a ball pressed a little off its top out sideways)
+# hand stays under it instead of squirting out). Balls: _push. A cube's overlap with a hand is
+# undone no faster than HAND_SLOP a substep (the rest is the push's velocity).
 const RESTITUTION_HAND := 0.0
 const PALM_FRICTION := 0.8
 const HAND_SLOP := 0.002
+const HAND_GIVE := 0.35              # m: a hand pressed this far into a ball it pushes goes through it
+const TOUCH_DEPTH := 0.03            # m: a hand deeper in a ball it did not touch went through it
+const PROP_GAP := 0.002              # m: a ball this near the floor or a static object rests on it
+const PUSH_ITERATIONS := 6
+const PRESS_SPEED := 0.05            # m/s: a hand in a ball pushes it out no faster than it moves plus
+									 # this (it is in only because it cannot feel the ball: pressed
+									 # in deep beside its top, it threw a 22 cm ball at 4 m/s; and a
+									 # ball a hand runs into leaves no faster than the hand)
 
 var space: WormholeSpace
 var scene: Dictionary
@@ -145,6 +153,8 @@ func step(delta: float, hands: Array) -> void:
 		for i in balls.size():
 			for j in range(i + 1, balls.size()):
 				_pair(balls[i], balls[j], RESTITUTION_BALL)
+		for b in balls:
+			_forget_touches(b, hands)
 		for hand in hands:
 			for b in balls:
 				if not b["holds"].has(hand["tracker"]):
@@ -180,6 +190,8 @@ func _floor(b: Dictionary, before: Array) -> void:
 		U -= (1.0 + (0.0 if held else RESTITUTION_FLOOR)) * vn * N
 		if absf(vn) < 0.6:
 			U -= U.dot(N) * N               # settle instead of micro-bouncing
+		if held:
+			U = _held_friction(b, U, N, -vn)
 	var Ut := U - U.dot(N) * N
 	var speed := Ut.length()
 	if speed > 0.0:
@@ -198,15 +210,51 @@ func _floor(b: Dictionary, before: Array) -> void:
 	_move(b, N, (rad - H) / gl)
 
 
+## A held ball on the floor does not roll as it likes (the hand holds its turn): its lowest point
+## sliding over the floor is slowed by friction (FRICTION_BALL times the floor's push, which a hand
+## pressing it down adds to: pressed hard, it stays where it is), its spin with it. pushed: the
+## floor's push this substep (m/s: the velocity into the floor it took away). The velocity after it.
+func _held_friction(b: Dictionary, U: Vector4, N: Vector4, pushed: float) -> Vector4:
+	var F: Array = b["hF"]
+	var rad: float = b["radius"]
+	var n := to_body(F, N)
+	var r := -rad * n                                    # the lowest point, from the centre
+	var w: Vector3 = b["hw"]
+	var slip := to_body(F, U) + w.cross(r)
+	slip -= slip.dot(n) * n
+	if slip.length() < 1e-9:
+		return U
+	# per unit mass: J changes the velocity by J and the slip by J (1 + m rad^2 / I) = 3.5 J
+	var J := (-slip / 3.5).limit_length(FRICTION_BALL * pushed)
+	b["hw"] = w + r.cross(J) * (mass_kg(b) / inertia_kg(b))
+	return U + from_body(F, J)
+
+
 func _statics(b: Dictionary) -> void:
+	var touch := _static_contact(b)
+	var depth: float = touch[0]
+	if depth <= 0.0:
+		return
+	var N: Vector4 = touch[1]
+	var U: Vector4 = b["U"]
+	var vn := U.dot(N)
+	if vn < 0.0:
+		U -= (1.0 + (RESTITUTION_BALL if b["holds"].is_empty() else 0.0)) * vn * N
+	b["U"] = U
+	_move(b, N, depth)
+
+
+## The static object (or the invisible wall) ball b overlaps most: [depth, its normal at b (away from
+## it)]; depth 0 or less: none (-INF: nowhere near one).
+func _static_contact(b: Dictionary) -> Array:
 	var l: float = b["l"]
 	if absf(l) < space.L:
-		return                               # static objects live in the flat universes only
+		return [-INF, Vector4.ZERO]          # static objects live in the flat universes only
 	var side := signf(l)
 	var x := space.chart_position(l, b["n"])
 	var rad: float = b["radius"]
 	var normal := Vector3.ZERO
-	var depth := 0.0
+	var depth := -INF
 	var spheres: Array = scene["spheres_A"] if side > 0.0 else scene["spheres_B"]
 	for s in spheres:
 		var d := x - Vector3(s[0], s[1], s[2])
@@ -240,15 +288,9 @@ func _statics(b: Dictionary) -> void:
 		if pen > depth:
 			depth = pen
 			normal = -x / cr
-	if depth <= 0.0:
-		return
-	var N := WormholeSpace.vector_from_chart(side, b["n"], normal)
-	var U: Vector4 = b["U"]
-	var vn := U.dot(N)
-	if vn < 0.0:
-		U -= (1.0 + (RESTITUTION_BALL if b["holds"].is_empty() else 0.0)) * vn * N
-	b["U"] = U
-	_move(b, N, depth)
+	if normal == Vector3.ZERO:
+		return [-INF, Vector4.ZERO]
+	return [depth, WormholeSpace.vector_from_chart(side, b["n"], normal)]
 
 
 func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
@@ -277,37 +319,163 @@ func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
 	_move(b, -Nb, pen * (1.0 - wa))
 
 
-## A hand (kinematic sphere) pushing a ball it does not hold: along the contact at most HAND_FORCE,
-## across it the palm's friction.
+## A hand (kinematic sphere) pushing a ball it does not hold. Where it touches the ball (touch: the
+## direction from the ball's centre, kept per hand in b["touch"]) stays where it first touched
+## while the hand is pressed in, and slides over the ball only as far as the palm's friction cone
+## needs (_palm_slide): a hand cannot feel a toy, and goes on into it; from its centre the push
+## would turn sideways the deeper it went, and a ball pressed under it squirted out. The push is
+## along that place's normal: the ball's speed there what the hand's is, plus what takes the hand's
+## depth in it out in HOLD_TIME, but no more than PRESS_SPEED (pressed in, the hand presses with all
+## it has), at most HAND_FORCE; across it the palm's friction, at most PALM_FRICTION times the push;
+## solved together with the floor and the static object the ball rests against (they take what
+## pushes it into them: a ball pressed against the floor within the palm's friction angle from its
+## top stays, beyond it rolls out). No overlap to undo: the place is on the ball. A hand pressed
+## in deeper than HAND_GIVE or past the ball's centre goes through (it is a ghost until apart), and
+## so does one that leaves it through the far side, one found deep in a ball it was not touching and
+## one under the floor (it came back up through the floor, say: it would throw the ball up).
 func _push(b: Dictionary, hand: Dictionary) -> void:
+	var t: StringName = hand.get("tracker", &"")
+	var touch: Dictionary = b.get("touch", {})
 	if _ghosted(b, hand):
+		touch.erase(t)
 		return
 	var Eb := space.embed(b["l"], b["n"])
-	var Eh := space.embed(hand["l"], hand["n"])
-	var D := Eb - Eh
+	var D := space.embed(hand["l"], hand["n"]) - Eb
+	var reach: float = b["radius"] + hand["radius"]
 	var dist := D.length()
-	var pen: float = b["radius"] + hand["radius"] - dist
-	if pen <= 0.0 or dist < 1e-6:
+	if dist >= reach or dist < 1e-6:
+		if touch.has(t) and D.dot(touch[t]["d"]) < 0.0:
+			ghost(b, t)                      # it left through the far side: it went through
+		touch.erase(t)
 		return
-	var Nb := space.project(b["l"], b["n"], D).normalized()      # at the ball, away from the hand
-	var Nh := space.project(hand["l"], hand["n"], D).normalized()
-	var m := mass_kg(b)
-	var Ub: Vector4 = b["U"]
-	var rel: float = hand["U"].dot(Nh) - Ub.dot(Nb)
-	if rel > 0.0:
-		var jn := minf(m * (1.0 + RESTITUTION_HAND) * rel, HAND_FORCE * DT)
-		Ub += (jn / m) * Nb
-		# the palm drags it along: its motion across the contact, against the hand's, goes
-		var Uh := space.project(b["l"], b["n"], space.embed_vector(hand["l"], hand["n"], hand["U"]))
-		var slide := Ub - Uh
-		slide -= slide.dot(Nb) * Nb
-		var sl := slide.length()
-		if sl > 1e-6:
-			Ub -= slide * (minf(PALM_FRICTION * jn / m, sl) / sl)
-	b["U"] = Ub
 	var Uh := space.project(b["l"], b["n"], space.embed_vector(hand["l"], hand["n"], hand["U"]))
-	var out := Uh.normalized() if Uh.length() > 0.05 and Uh.dot(Nb) > 0.0 else Nb
-	_move(b, out, minf(pen, HAND_SLOP))
+	var Ub: Vector4 = b["U"]
+	var d: Vector4
+	if touch.has(t):
+		d = _palm_slide(touch[t]["d"], D, reach)
+	else:
+		d = D / dist
+		# a new touch is where the hand comes in: no deeper than it and the ball move in a frame,
+		# and not from under the floor
+		if reach - dist > TOUCH_DEPTH + Uh.length() / 60.0 + Ub.length() * DT \
+				or space.height(hand["l"], hand["n"]) < 0.0:
+			ghost(b, t)
+			return
+	var depth := reach - D.dot(d)
+	if depth > minf(HAND_GIVE, reach):           # in deeper, or past the centre: it goes through
+		touch.erase(t)
+		ghost(b, t)
+		return
+	var last: Dictionary = touch.get(t, {})
+	touch[t] = {"d": d, "depth": depth, "reach": reach}
+	b["touch"] = touch
+	var Nb := space.project(b["l"], b["n"], -d).normalized()      # at the ball, away from the hand
+	var m := mass_kg(b)
+	var want := Uh.dot(Nb) + minf(depth / HOLD_TIME, PRESS_SPEED)
+	var props := _props(b)
+	# the palm drags the ball along as it moves, but not into what the ball rests on
+	var drag := Uh
+	for pr: Array in props:
+		drag -= minf(drag.dot(pr[1]), 0.0) * pr[1]
+	# from the last substep's impulses (warm start): pressed against the floor, the push, the palm's
+	# friction and the floor's push do not settle in PUSH_ITERATIONS passes from nothing (each pass
+	# takes back some of the others'), and the ball crept out sideways at 0.14 m/s
+	var jp := PackedFloat64Array()
+	var was_p: Dictionary = last.get("jp", {})
+	for k in props.size():
+		jp.append(was_p.get(props[k][0], 0.0))
+		Ub += (jp[k] / m) * props[k][1]
+	var jn: float = minf(last.get("jn", 0.0), HAND_FORCE * DT)
+	var jt: Vector4 = space.project(b["l"], b["n"], last.get("jt", Vector4.ZERO))
+	jt -= jt.dot(Nb) * Nb
+	if jt.length() > PALM_FRICTION * jn:
+		jt *= PALM_FRICTION * jn / jt.length()
+	Ub += (jn / m) * Nb + jt / m
+	for _it in PUSH_ITERATIONS:
+		var n_new := clampf(jn + m * (want - Ub.dot(Nb)), 0.0, HAND_FORCE * DT)
+		Ub += ((n_new - jn) / m) * Nb
+		jn = n_new
+		var slide := Ub - drag
+		slide -= slide.dot(Nb) * Nb
+		var t_new: Vector4 = jt - m * slide
+		var tl := t_new.length()
+		if tl > PALM_FRICTION * jn:
+			t_new *= PALM_FRICTION * jn / tl
+		Ub += (t_new - jt) / m
+		jt = t_new
+		for k in props.size():
+			var N: Vector4 = props[k][1]
+			var p_new := maxf(jp[k] - m * Ub.dot(N), 0.0)
+			Ub += ((p_new - jp[k]) / m) * N
+			jp[k] = p_new
+	b["U"] = Ub
+	touch[t]["jn"] = jn
+	touch[t]["jt"] = space.embed_vector(b["l"], b["n"], jt)
+	var now_p := {}
+	for k in props.size():
+		now_p[props[k][0]] = jp[k]
+	touch[t]["jp"] = now_p
+
+
+## The floor and the static object ball b rests against, if it does: [name, normal (away from it)].
+func _props(b: Dictionary) -> Array:
+	var out := []
+	var H := space.height(b["l"], b["n"])
+	if H < b["radius"] + PROP_GAP:
+		out.append(["floor", space.height_grad(b["l"], b["n"]).normalized()])
+	var st := _static_contact(b)
+	if st[0] > -PROP_GAP:
+		out.append(["static", st[1]])
+	return out
+
+
+## Touches (_push) of hands that are gone (no tracking) or now hold the ball are over.
+static func _forget_touches(b: Dictionary, hands: Array) -> void:
+	var touch: Dictionary = b.get("touch", {})
+	for t: StringName in touch.keys():
+		var here := false
+		for hand in hands:
+			here = here or hand["tracker"] == t
+		if not here or b["holds"].has(t):
+			touch.erase(t)
+
+
+## Where a hand that touches a ball is on it (d: the direction from its centre) after the hand moved
+## to D (from the centre; reach: the centres' distance at a touch): it stays while the hand is within
+## the palm's friction cone round the place's normal (tangential offset at most PALM_FRICTION times
+## the depth), else it slides toward the hand to the cone's edge.
+static func _palm_slide(d: Vector4, D: Vector4, reach: float) -> Vector4:
+	var dist := D.length()
+	var dc := D / dist
+	var cosa := clampf(d.dot(dc), -1.0, 1.0)
+	var alpha := acos(cosa)
+	if dist * sin(alpha) <= PALM_FRICTION * (reach - dist * cosa):
+		return d
+	# the angle between the place and the hand at the cone's edge (the nearer one):
+	# sin(beta) + mu cos(beta) = mu reach / dist
+	var k := PALM_FRICTION * reach / (dist * sqrt(1.0 + PALM_FRICTION * PALM_FRICTION))
+	var beta := asin(minf(k, 1.0)) - atan(PALM_FRICTION)
+	var across := (dc - cosa * d).normalized()
+	var turn := alpha - beta
+	return (cos(turn) * d + sin(turn) * across).normalized()
+
+
+## Where hand `tracker` is drawn when it pushes a ball: on the ball, where it touches it (the one it
+## is deepest in), or [] when it touches none.
+func touch_place(tracker: StringName) -> Array:
+	var best := {}
+	var deepest := 0.0
+	for b in balls:
+		var touch: Dictionary = b.get("touch", {})
+		if touch.has(tracker) and touch[tracker]["depth"] > deepest:
+			deepest = touch[tracker]["depth"]
+			best = b
+	if best.is_empty():
+		return []
+	var tc: Dictionary = best["touch"][tracker]
+	var dir := space.project(best["l"], best["n"], tc["d"])
+	var at := space.geodesic(best["l"], best["n"], dir.normalized(), tc["reach"], [])
+	return [at[0], at[1]]
 
 
 ## A toy just let go is not pushed by the hands that let it go (ghost: their trackers) until each
@@ -849,11 +1017,11 @@ func _hold(lag: float) -> void:
 ## moves, and a turn it gives the toy: per hand an impulse P at g (the arm) and a twist L (the
 ## wrist), found so that after them the grip point and the spin are as the hand wants (its motion,
 ## plus what takes the place and turn left over out in HOLD_TIME; the spin no more than
-## WRIST_SPEED), then limited: L to HAND_TORQUE first, P then found again for the L there is, and
-## limited to HAND_FORCE. The impulses also hold the toy's weight (this substep's fall is counted in). Body coordinates, the
-## inertia a ball's or a cube's (the same about any axis): an impulse P at g changes the velocity by
-## P / m and the spin by g x P / I, so the grip point moves by P / m along g and by P (1 / m +
-## |g|^2 / I) across it.
+## WRIST_SPEED), then limited: P to HAND_FORCE first, L for that P to HAND_TORQUE, and if L is at its
+## limit, P found again for the turn the toy then has, and limited. The impulses also hold the
+## toy's weight (this substep's fall is counted in). Body coordinates, the inertia a ball's or a
+## cube's (the same about any axis): an impulse P at g changes the velocity by P / m and the spin
+## by g x P / I, so the grip point moves by P / m along g and by P (1 / m + |g|^2 / I) across it.
 func _hold_toy(b: Dictionary, lag: float) -> void:
 	var l: float = b["l"]
 	var n: Vector3 = b["n"]
@@ -919,16 +1087,23 @@ func _hold_toy(b: Dictionary, lag: float) -> void:
 			# the twist for the force the arm can give (for the force it would want, it would turn a toy
 			# pressed against the floor the other way)
 			var P0: Vector3 = _muscle(gr["P"] + m * (dv - dw.cross(g)), arm, gr["force"], INF) - gr["P"]
-			var L: Vector3 = _muscle(gr["L"] + I * dw - g.cross(P0), w0, gr["torque"], BRAKING_SPIN)
+			var Lw: Vector3 = gr["L"] + I * dw - g.cross(P0)
+			var L: Vector3 = _muscle(Lw, w0, gr["torque"], BRAKING_SPIN)
 			var dL: Vector3 = L - gr["L"]
-			var rhs: Vector3 = dv - (dL / I).cross(g)
-			var g2 := g.length_squared()
-			var dP := m * rhs
-			if g2 > 1e-12:
-				var along := (rhs.dot(g) / g2) * g
-				dP = m * along + (rhs - along) / (1.0 / m + g2 / I)
-			var P: Vector3 = _muscle(gr["P"] + dP, arm, gr["force"], INF)
-			dP = P - gr["P"]
+			var dP := P0
+			if not L.is_equal_approx(Lw):
+				# the wrist at its limit: the toy turns otherwise than the hand, and the arm moves the
+				# grip point as the toy turns. (A wrist that holds the turn keeps it: an arm at its
+				# limit, the grip point short of where the hand wants it, does not turn the toy to
+				# get it there: pressed into the floor, a ball was turned and slid away.)
+				var rhs: Vector3 = dv - (dL / I).cross(g)
+				var g2 := g.length_squared()
+				dP = m * rhs
+				if g2 > 1e-12:
+					var along := (rhs.dot(g) / g2) * g
+					dP = m * along + (rhs - along) / (1.0 / m + g2 / I)
+				dP = _muscle(gr["P"] + dP, arm, gr["force"], INF) - gr["P"]
+			var P: Vector3 = gr["P"] + dP
 			v += dP / m
 			w += (dL + g.cross(dP)) / I
 			gr["P"] = P
