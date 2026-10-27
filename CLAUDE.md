@@ -269,7 +269,14 @@ they line up the same way.
 
 ## Running things
 
-- **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
+- **The tools are installed already. Install nothing.** The cloud environment ran `tools/setup.sh`
+  before the session, from outside the repo: Godot 4.7.2, its export templates and Mesa's Turnip
+  are in the directory `godot` on PATH links to (`readlink -f $(command -v godot)`; `/tools/.bin`
+  now), not in the repo's `tools/.bin`, which stays absent; xvfb, lavapipe, EGL, Monado and the
+  pip packages are there too. Every script finds them through that link. An empty `tools/.bin` is
+  not a missing install, and running `setup.sh` is not a way to check (the owner has asked more
+  than once that no chat reinstall them): it now finds that directory and returns in ~2 s.
+- **Truly fresh machine** (`command -v godot` finds nothing): `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~5 min alone, ~12 with other tests beside it: the renders run in parallel, one Godot per core, each with its own display and shader cache; the check scene again with foveation on, and those pictures against the ones without).
 - **Foveation in the Frame's driver:** `tools/fdm_check.sh` (~10 s): Godot on Turnip over the noop drm-shim, the XR view through `fake_hmd.gd` at 1728² per eye, and the driver's trace (`MESA_GPU_TRACES=print`, `TU_DEBUG=perf`) per render pass: in tiles or not, attachments, tiles. Off: no tiles; split: tiles; on: tiles and one attachment more (the density map).
