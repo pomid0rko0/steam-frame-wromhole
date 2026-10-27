@@ -8,6 +8,8 @@
 # its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
 # is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's
 # shader compiler makes of the ray tracer. No package has it for x86 (~10 min, once).
+# On the Steam Frame itself (SteamOS: no apt, a read-only root) Godot and the templates come here
+# and the rest goes into tools/box.sh's Ubuntu container, where the tests run.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 V=4.7.2
@@ -72,11 +74,14 @@ MESA_DEBS="ninja-build python3-mako python3-yaml python3-pycparser flex bison pk
 	libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev libxcb-randr0-dev
 	libxcb-sync-dev libxcb-shm0-dev libxcb-xfixes0-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev"
 MESA_OUT=$BIN/mesa-fd
+SHIM=$MESA_OUT/lib/$(uname -m)-linux-gnu/libfreedreno_noop_drm_shim.so
+# SteamOS: no apt-get, but podman for the container
+frame() { ! command -v apt-get >/dev/null && command -v podman >/dev/null; }
 
 check_apt() {   # sets $missing to the apt packages still needed
 	missing=""
 	local p
-	if [ ! -f "$MESA_OUT/lib/x86_64-linux-gnu/libfreedreno_noop_drm_shim.so" ]; then
+	if [ ! -f "$SHIM" ]; then
 		for p in $MESA_DEBS; do
 			dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing="$missing $p"
 		done
@@ -90,6 +95,7 @@ check_apt() {   # sets $missing to the apt packages still needed
 	{ grep -q "libEGL.so.1 " <<<"$libs" && grep -q libEGL_mesa <<<"$libs"; } || missing="$missing libegl1 libegl-mesa0"
 }
 get_apt() {
+	if frame; then "$ROOT/tools/box.sh" true; return; fi
 	check_apt
 	if [ -n "$missing" ] && command -v apt-get >/dev/null; then
 		echo "installing:$missing"
@@ -103,7 +109,8 @@ get_apt() {
 # Turnip (Mesa's Vulkan driver for Adreno) and the noop drm-shim, built into tools/.bin/mesa-fd.
 # The source comes from mesa3d.org, or from Ubuntu's archive where mesa3d.org is unreachable.
 get_adreno() {
-	[ ! -f "$MESA_OUT/lib/x86_64-linux-gnu/libfreedreno_noop_drm_shim.so" ] || return 0
+	[ ! -f "$SHIM" ] || return 0
+	if frame; then "$ROOT/tools/box.sh" tools/setup.sh adreno; return; fi
 	# Mesa wants meson 1.4 or newer; Ubuntu 24.04 has 1.3
 	python3 -c "import mesonbuild.coredata as c, sys; sys.exit(tuple(map(int, c.version.split('.')[:2])) < (1, 4))" 2>/dev/null \
 		|| pip install --quiet --break-system-packages "meson>=1.4,<1.9" 2>/dev/null || pip install --quiet "meson>=1.4,<1.9"
@@ -134,7 +141,12 @@ prefix() {   # name: puts it in front of every line
 	while IFS= read -r l || [ -n "$l" ]; do printf '%s: %s\n' "$1" "$l"; done
 }
 steps=(godot templates pip apt)
-[ $# = 0 ] || steps=("$@")   # or only the steps named: tools/setup.sh godot templates
+adreno=1
+if [ $# != 0 ]; then   # or only the steps named: tools/setup.sh godot templates
+	steps=()
+	adreno=0
+	for s; do if [ "$s" = adreno ]; then adreno=1; else steps+=("$s"); fi; done
+fi
 pids=()
 # Steps in the background don't get Ctrl-C from the terminal: on it, stop them here. `set -m`
 # gives each step its own process group, so that its curls, unzips and pip stop with it.
@@ -149,7 +161,7 @@ failed=""
 for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}"; done
 [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
 # after apt: it needs the packages that step installs
-[ $# != 0 ] || get_adreno 2>&1 | prefix adreno
+[ $adreno = 0 ] || get_adreno 2>&1 | prefix adreno
 
 # also on PATH: the tests fall back to it when this script ran outside the repo,
 # e.g. piped from curl in an environment setup script (then ROOT is not the repo)
