@@ -12,6 +12,10 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 V=4.7.2
 BIN=$ROOT/tools/.bin
+# Installed already (the cloud environment ran this script from elsewhere, e.g. piped from curl,
+# and linked godot on PATH to it): that directory, so that nothing is installed twice
+G=$(readlink -f "$(command -v godot 2>/dev/null)" 2>/dev/null || true)
+[ -n "$G" ] && [ -x "$G" ] && BIN=$(dirname "$G")
 REL=https://github.com/godotengine/godot/releases/download/$V-stable
 TPL=${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$V.stable
 mkdir -p "$BIN"

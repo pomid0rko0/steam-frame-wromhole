@@ -1,7 +1,7 @@
 """The gravity arrows' surface (n.x = 0 through the wormhole, wormhole_core's WH_GRAVITY): where
 the shader's rays first cross it, against brute-force RK4 rays (ref/wh.py) through flat and curved
 space, as test_gpu.py does for the floor. The shader runs as the gravity view with arrows does
-(wormhole_arrows.gdshader: no movable balls, the fillet table). Exit status 1 on failure.
+(wormhole_arrows.gdshader: the world's ray tracer, the fillet table). Exit status 1 on failure.
     python3 ref/test_slice.py [pixels]"""
 import os, sys
 os.environ['WH_BALLS'] = '0'
@@ -11,7 +11,7 @@ import test_gpu as T
 from test_gpu import W, CORE, frame_from_chart, flat_hit
 
 HEADER = T.FRAG.split(CORE)[0]
-FRAG = HEADER.replace('#define WH_NO_BALLS\n', '#define WH_NO_BALLS\n#define WH_GRAVITY\n#define WH_ARROWS\n#define WH_SLICE_OUT wh_sl\n') + """
+FRAG = HEADER.replace('#version 400\n', '#version 400\n#define WH_GRAVITY\n#define WH_ARROWS\n#define WH_SLICE_OUT wh_sl\n', 1) + """
 uniform vec4 grav_cyl;
 uniform vec4 grav_g[2];
 uniform vec4 grav_d[2];

@@ -206,7 +206,7 @@ class Wormhole:
             return t, 0.5 * np.array(D)
         t = max(z * z - mn, 0.0)
         if f['reg'] == 1:
-            n = [t / (z + np.sqrt(mn))]
+            n = [max(z - np.sqrt(mn), 0.0)]     # int_0^t w dt; as t / (z + sqrt(mn)) it was 0 / 0 at a turning point
             for k in range(1, 4):
                 n.append((t ** k * z - 2 * k * mn * n[-1]) / (2 * k + 1))
             return t, np.array(n)

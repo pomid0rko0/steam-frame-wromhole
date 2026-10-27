@@ -53,8 +53,11 @@ func _process(_d: float) -> bool:
 			if main.material.shader != v[1]:
 				check("the segment's shader", false, b.plan[b.step][1])
 				started = false
-			if main.toy_mode != v[4]:
-				check("the segment's stencil split", false, b.plan[b.step][1])
+			if main.toys_shown != v[4]:
+				check("the segment's toys drawn or not", false, b.plan[b.step][1])
+				started = false
+			if main.bench_hands != (2 if b.plan[b.step][0] >= b.HELD else 0):
+				check("the segment's held ball", false, b.plan[b.step][0])
 				started = false
 			if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
 				check("the segment's foveation", false, "%d %s" % [main.foveation, main.split_pass.enabled])
@@ -67,13 +70,14 @@ func _process(_d: float) -> bool:
 				for v in r:
 					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
-			# this build six ways, and with toys a seventh: over the whole view
+			# this build six ways, and with toys a seventh: the world alone
 			check("all the others in it, this build six (seven) ways", b.variants.size() == b.others.size()
 					+ b.FOVEATIONS.size() + (1 if main.balls > 0 else 0))
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("this build's shader back", main.material.shader == shader_before and main.toy_mode == main.TOYS_SPLIT)
+			check("this build's shader back, its toys drawn, no held ball", main.material.shader == shader_before
+					and main.toys_shown and main.bench_hands == 0)
 			check("the foveation back (off)", main.foveation == 0 and not main.split_pass.enabled)
 			check("the panel shows the foveation's result", main.perf.bench_text.contains("фовеация"), main.perf.bench_text)
 			print("PASS" if ok else "FAIL")

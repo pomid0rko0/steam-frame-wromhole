@@ -165,17 +165,21 @@ func _control_checks() -> void:
 	main._process(0.0)
 	main.hold = false
 	_check("G does nothing during the speed check", main.gravity_view == 0, "view %d" % main.gravity_view)
-	# movable balls (the stereo check's): each view has its ray tracer with them
+	# movable balls (the stereo check's): the toys' passes draw them, with the arrows over them in
+	# view 2; the world's ray tracer is the view's own
 	var pos := PackedVector4Array([Vector4(8.0, 0.0, 1.0, main.space.h)])
 	var col := PackedVector4Array([Vector4(1.0, 0.0, 0.0, 0.3)])
 	main.set_balls(pos, col)
-	var seen_b := [main.material.shader.resource_path.get_file()]
+	var seen_b := []
 	for v in [1, 2, 0]:
 		main.set_gravity_view(v)
-		seen_b.append(main.material.shader.resource_path.get_file())
+		seen_b.append([main.material.shader.resource_path.get_file(), main.toys_flat_mat.shader.resource_path.get_file(),
+				main.toys_shell_mat.shader.resource_path.get_file()])
 	main.set_balls(PackedVector4Array(), PackedVector4Array())
-	_check("gravity view and movable balls", seen_b == ["wormhole_balls.gdshader", "wormhole_balls_gravity.gdshader",
-			"wormhole_balls_arrows.gdshader", "wormhole_balls.gdshader"] and main.material.shader == main.SHADER_PLAIN, str(seen_b))
+	_check("gravity view and movable balls", seen_b == [
+			["wormhole_gravity.gdshader", "toys_flat.gdshader", "toys_shell.gdshader"],
+			["wormhole_arrows.gdshader", "toys_flat_arrows.gdshader", "toys_shell_arrows.gdshader"],
+			["wormhole.gdshader", "toys_flat.gdshader", "toys_shell.gdshader"]] and main.material.shader == main.SHADER_PLAIN, str(seen_b))
 
 
 func _key(code: Key, down: bool) -> void:

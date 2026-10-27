@@ -8,8 +8,11 @@ extends SceneTree
 ## check's), toys (the demo after the throw and the drop, everything at rest: 8 balls, 4 cubes),
 ## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2; with
 ## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
-## right one in front of the chest (what the hands and grabbing add to a frame);
+## right one in front of the chest (main.bench_hands, as the speed check has them);
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
+## Each entry also has the toys' passes' uniforms (toys_flat, toys_shell; with the near toys of the
+## eyes' cones, which eye_data.gd gets from main, as wht_cone (n, l) and wht_coneR) and the flat
+## pass's proxies: the spheres it is drawn over, in the chart of the head's universe.
 
 var main: Node3D
 var frames := 0
@@ -24,7 +27,9 @@ var toys := false
 var held := false
 var hands := false
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
-		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
+		"wh_cubeCol", "wh_nCube", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d", "wht_side",
+		"wht_cx", "wht_cy", "wht_cz", "wht_r2", "wht_lo", "wht_hi", "wht_fs", "wht_bit", "wht_t1", "wht_t2",
+		"wht_phiBin", "wht_bBin", "wht_bStep", "wht_coneIdx"]
 
 
 func _initialize() -> void:
@@ -55,16 +60,13 @@ func _process(_d: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
 		main.material.shader = load(shader_path)
-		if not main.material.shader.code.contains("stencil_mode"):
-			main.set_toy_mode(main.TOYS_BARE)    # another source's: no stencil test, the whole view
+		main.toys_shown = false     # another source's: a ray tracer of the world only
 	if frames == 2:
 		if toys:
 			# the demo after the throw and the drop, all of it at rest, then held still
-			main._throw()
-			main._drop()
-			for k in 12 * 60:
-				main.world.step(1.0 / 60.0, [])
+			main.settle_demo()
 			main.hold = true
+			main.bench_hands = 2 if held else (1 if hands else 0)
 		if gravity > 0:
 			main.set_gravity_view(gravity)
 		main.perf.visible = false
@@ -82,8 +84,6 @@ func _process(_d: float) -> bool:
 			return true
 		var p: Array = poses[i]
 		main.place_on_axis(p[0], p[1], p[2])
-		if hands:
-			_hold_ball()
 	elif k == 2:
 		var img := root.get_texture().get_image()
 		var png := out.get_basename() + "_%d.png" % i
@@ -104,43 +104,42 @@ func _process(_d: float) -> bool:
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
-			# the stencil's proxies (main._update_proxies), chart spheres of the head's universe, or
-			# none (the whole view marked, or no toys)
+			"toys_flat": _uniforms(main.toys_flat_mat),
+			"toys_shell": _shell_uniforms(),
+			# the toys' passes' proxies (main._update_toy_draws): chart spheres of the head's
+			# universe, [bit, centre, radius] for the flat pass's, none with the head in the
+			# curved region or without toys
 			"proxies": _proxies(),
 		})
 		i += 1
 	return false
 
 
-## Both hands as the app has them (main.hand_state), and with +held a ball (radius 0.25) held by the
-## right one, 0.3 m in front of it: placed from the head as main._update_hands does, in the room's axes.
-func _hold_ball() -> void:
-	var sp: WormholeSpace = main.space
-	var hp: Array = sp.geodesic(main.foot_l, main.foot_n, main.frame[1], main.DESKTOP_HEAD_HEIGHT, main.frame)
-	if main.world.balls.size() > 0 and main.world.balls.back()["held"] == &"right_hand":
-		main.world.balls.pop_back()
-	for k in 2:
-		var off := Vector3(0.22 if k == 1 else -0.22, -0.35, -0.3)
-		var dir := WormholeSpace.combine(hp[2], off)
-		var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
-		main.hand_state[k] = {"on": true, "l": at[0], "n": at[1], "F": at[2], "U": Vector4.ZERO, "ready": k == 1}
-		if k == 1 and held:
-			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
-			var b: Dictionary = main.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97))
-			b["held"] = &"right_hand"
-	main._upload_toys()
+func _proxies() -> Dictionary:
+	var l: float = main.material.get_shader_parameter("head_l")
+	if main.balls == 0 or not main.toys_shown or absf(l) <= main.space.L:
+		return {}
+	var side := 1.0 if l > 0.0 else -1.0
+	var toys := []
+	for bit in main.toy_proxies(side):
+		var c: Vector4 = main.toy_chart[bit][1]
+		toys.append([bit, _v3(Vector3(c.x, c.y, c.z)), (c.w + main.PROXY_MARGIN) * main.PROXY_SLACK])
+	return {"toys": toys}
 
 
-func _proxies() -> Array:
-	var out := []
-	if main.balls > 0:
-		for s in main.proxy_spheres(m_head_l()):
-			out.append(_v4(s))
-	return out
-
-
-func m_head_l() -> float:
-	return main.material.get_shader_parameter("head_l")
+## The shell pass's uniforms, and the near toys whose cones eye_data.gd works out (main.eye_frame)
+func _shell_uniforms() -> Dictionary:
+	var u := _uniforms(main.toys_shell_mat)
+	var fd: PackedFloat32Array = main.eye_frame
+	var cones := []
+	var cr := []
+	for j in 4:
+		var o: int = main.eye_fx.F_CONE + 4 * j
+		cones.append([fd[o], fd[o + 1], fd[o + 2], fd[o + 3]])
+		cr.append(fd[main.eye_fx.F_CONE_C + j])
+	u["wht_cone"] = cones
+	u["wht_coneR"] = cr
+	return u
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.
@@ -157,6 +156,8 @@ static func _uniforms(m: ShaderMaterial) -> Dictionary:
 			out[name] = rows
 		elif v is Vector4:
 			out[name] = _v4(v)
+		elif v is Vector3:
+			out[name] = _v3(v)
 		elif v is Vector4i:
 			out[name] = [v.x, v.y, v.z, v.w]
 		else:

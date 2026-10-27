@@ -160,8 +160,8 @@ func _clear() -> void:
 ## The hands' colours the shader got (the balls of the hands' radius).
 func _hand_colors() -> Array:
 	var out := []
-	var col: PackedVector4Array = main.material.get_shader_parameter("wh_ballCol")
-	var n: int = main.material.get_shader_parameter("wh_nBall")
+	var col: PackedVector4Array = main.toys_shell_mat.get_shader_parameter("wh_ballCol")
+	var n: int = main.toys_shell_mat.get_shader_parameter("wh_nBall")
 	for k in n:
 		if absf(col[k].w - main.HAND_RADIUS) < 1e-6:
 			out.append(Color(col[k].x, col[k].y, col[k].z))
@@ -231,16 +231,17 @@ func _hands() -> void:
 		ok = cr.distance_to(_chart(pr)) < 1e-4 and cl.distance_to(_chart(pl)) < 1e-4
 		detail = "right at %s (%s), left at %s (%s)" % [cr, _chart(pr), cl, _chart(pl)]
 	_check("each hand where its grip is, on the curved space", ok, detail)
-	var nb: int = main.material.get_shader_parameter("wh_nBall")
-	var proxies: int = main.proxy_spheres(main.foot_l).size()
-	_check("the shader draws both hands, the stencil's proxies cover them", nb == 2 and proxies == 3,
-			"shader balls %d (2), proxies %d (the shell and 2 hands)" % [nb, proxies])
+	var nb: int = main.toys_shell_mat.get_shader_parameter("wh_nBall")
+	var proxies: int = main.toys_flat.multimesh.visible_instance_count
+	_check("the toys' passes draw both hands, the flat pass over a sphere round each", nb == 2 and proxies == 2
+			and main.toys_flat.visible and main.toys_shell.visible,
+			"shader balls %d (2), flat proxies %d (2)" % [nb, proxies])
 	# the left eye's picture with the right hand and without it
 	var with_hand := _left_eye()
 	_pose(right, pr, Basis.IDENTITY, false)
 	await _step(3)
-	_check("a hand that loses its tracking is not drawn", main.material.get_shader_parameter("wh_nBall") == 1,
-			"shader balls %d" % main.material.get_shader_parameter("wh_nBall"))
+	_check("a hand that loses its tracking is not drawn", main.toys_shell_mat.get_shader_parameter("wh_nBall") == 1,
+			"shader balls %d" % main.toys_shell_mat.get_shader_parameter("wh_nBall"))
 	var without := _left_eye()
 	var sum := Vector2.ZERO
 	var count := 0
@@ -493,7 +494,7 @@ func _grip_and_tracking() -> void:
 	await _step(1)
 	var at := _at(ball)
 	await _step(10)
-	var nb: int = main.material.get_shader_parameter("wh_nBall")
+	var nb: int = main.toys_shell_mat.get_shader_parameter("wh_nBall")
 	_check("a hand that loses its tracking leaves its ball where it was", ball["held"] == &"right_hand"
 			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
 	right.set_input(&"grip", 0.0)
@@ -517,7 +518,7 @@ func _hold_and_reset() -> void:
 	await _step(2)
 	right.set_input(&"by_button", false)
 	left.set_input(&"ax_button", false)
-	var nb: int = main.material.get_shader_parameter("wh_nBall")
+	var nb: int = main.toys_shell_mat.get_shader_parameter("wh_nBall")
 	_check("during the speed check: no hands drawn, no grab, B and X make nothing",
 			nb == 1 and ball["held"] == &"" and main.world.balls.size() == 1 and main.world.cubes.is_empty(),
 			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball["held"], main.world.balls.size(), main.world.cubes.size()])

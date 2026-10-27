@@ -97,7 +97,8 @@ def main():
         around = int(args[args.index('--around') + 1])
     if '--top' in args:
         top = int(args[args.index('--top') + 1])
-    lines, hdr, name, ninstr = A.ray_program(args[0])
+    kind = args[args.index('--kind') + 1] if '--kind' in args else 'world'
+    lines, hdr, name, ninstr = A.ray_program(args[0], kind)
     instrs, labels = E.parse_program(lines)
     press, live = analyse(instrs)
     peak = max(press)

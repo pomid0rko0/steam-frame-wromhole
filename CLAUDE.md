@@ -177,6 +177,52 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   floor had in the middle of the throat (l = 0, `wh_renderE`) is gone; the white 1 m ring there
   stays. Not yet seen in the headset: whether SteamVR takes
   the Frame profile (the log's `interaction profile` lines) and lets View and Menu reach the app.
+- `lean` (from `main`, not yet seen in the headset) — the toys redone for speed (README «Мячи и
+  кубы»), asked after frames dropped with toys at the shell's edge: the world's ray tracer
+  (`wormhole.gdshader` and the gravity views) carries no toys' code at all and is drawn at the far
+  plane, last, so the GPU skips it under the toys (early depth test); the toys are two passes of
+  their own drawn before it, each writing its hit's depth or discarding: the flat one
+  (`toys_flat*.gdshader`, `wht_flat`) the toys of the head's universe seen straight, each over a
+  sphere around it (a MultiMesh, the toy's bit in the instance's custom data), exact; the shell's
+  (`toys_shell*.gdshader`, `wht_shell`) what rays meet once in the shell, drawn only over the cells
+  of each eye's view where a toy can be met (`main._cell_mesh`, `wht_cellDir`: an azimuth sector
+  round the eye's radial axis times a ring of impact parameter, the bins below; not drawn if no toy
+  is in both its masks, or all such are near toys whose cone misses the whole cell; 9-65% of the
+  view where the sphere or the whole view was 74-100%). Each eye's point, play axes and the near
+  toys' cones are worked out once per frame on the GPU before the scene (`eye_data.gd`, a compute
+  shader on the XR camera's compositor, the render's own eyes; the shaders read the texture
+  `wh_eyes`; main hands it the head and the near toys through `call_on_render_thread`). Before any
+  search a ray drops the toys it cannot meet (`wht_near`, exact bounds,
+  `ref/cull.py` against RK4): those farther than their reach from its plane; those whose meridian's
+  l window (`WormholeSpace.meridian_window`, per toy in `set_objects`) it does not reach (away from
+  or through the throat it reaches every l beyond the eye, turning only |l| beyond its turning
+  point); a flat universe's toys if it leaves into the other; and, for the four nearest toys within
+  4 m of the head, those whose cone it is outside: `eye_data.gd` finds, per eye, the geodesic's
+  direction to the toy's centre (`wh_coneAt`) and the half angle by the hinge comparison (the
+  sectional curvature is at most 1/rho0^2: CAT(K)); `main._update_cones` picks the toys. The
+  first two tests are, by the symmetry, an azimuth test of the ray plane's normal round the radial
+  axis and a test of b and the direction along l: `main._update_bins` marks each toy, per frame, in
+  32 azimuth and 2 x 32 b bins valid for an eye within 8 cm of the head point (the reach grown by
+  |C| sin of the angle between the eye's radial axis and the head's), and a pixel tests exactly only
+  the toys of its two bins (testing all 18 in every pixel was ~490 instructions where nothing is). A ball
+  held at the edge was searched by 62% of the rays and met by 18%; with its cone 19% search it.
+  The rest are searched by Newton steps on the curved path for a ball (its distance is convex
+  within 1/k of the path's curvature) and certified slab steps for a cube (`wht_search`,
+  `wht_point`: the path's point and its derivative, exact), then the flat toys of the universe it
+  leaves into. No stencil, no region sorting, no bounding spheres, no chords. `ref/toys.py` checks
+  the search against RK4 (no mismatch, errors below 0.2 mm, 2-6 points of the path per toy
+  searched). Tried and dropped: one march for all of a ray's toys with the exact F'' (the path's
+  acceleration in R^4) and a free first point: half the points (2.8 per ray near the eye where 5.5),
+  0 mismatches against RK4, but every point tests every toy of the ray, and by the model the frame
+  with a ball held is 2% dearer (the shell pass 8-20% inside the shell). Registers: the shell pass is 32 (6 waves; it was 24 at
+  the edge: ~100 live values, ~70 of them the ray's description `WhRay`/`WhFil` held through the
+  search, and a change of the constants' layout tipped it). An experiment, a shell pass that takes
+  the path from a per-eye table (rows: the ray's angle to the radial axis; columns: path length),
+  compiled to 16 registers (12 waves), 3263 instructions against 4547: README wish «Таблица путей
+  лучей глаза». Not built: its precision at the critical rays, its length and its samples' cost are
+  unknown. The speed check has three more
+  places (14-16) with both hands and a ball held in front (`main.bench_hands`) and times the world
+  alone (the toys not drawn: `main.toys_shown`): "предметы +N%".
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 
@@ -255,6 +301,13 @@ When branches are put together, these overlap:
   `set_objects` again (the sorting and the proxies use `space.h`, `space.Rout`). Balls held in the
   hand (`grab`) are fine: a ray that meets a toy leaves its proxy at least the margin (8 cm, more
   than the near plane's 5 cm) beyond the hit, so the near plane never takes the mark away.
+- the toys' passes (on `lean`): three materials, `material` (the world), `toys_flat_mat`,
+  `toys_shell_mat`: a uniform of the world goes through `main._param` (all three), the toys' own
+  (`wh_ball`...) to the two toys' ones (`set_objects`, which keeps `world.balls`' order: ball i is
+  bit i, cube i bit 16 + i). Godot geometry drawn after the toys' passes is depth-tested against
+  them (they write depth); the world's ray tracer is drawn at the far plane. A changed throat
+  (`throat`): `set_objects` again (the masks use `space.h`, `space.Rout`), and the shell's proxy
+  is `space.Rout` (`main.shell_proxy`).
 - `fast-rays` with `physics` or `grab`: they set `wh_ball` / `wh_nBall` on the material; with
   `fast-rays` that goes through `main.set_balls`, which also switches to the shader with balls
   (the one without them has no ball code at all and ignores them).
@@ -269,7 +322,14 @@ they line up the same way.
 
 ## Running things
 
-- **Fresh machine:** `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
+- **The tools are installed already. Install nothing.** The cloud environment ran `tools/setup.sh`
+  before the session, from outside the repo: Godot 4.7.2, its export templates and Mesa's Turnip
+  are in the directory `godot` on PATH links to (`readlink -f $(command -v godot)`; `/tools/.bin`
+  now), not in the repo's `tools/.bin`, which stays absent; xvfb, lavapipe, EGL, Monado and the
+  pip packages are there too. Every script finds them through that link. An empty `tools/.bin` is
+  not a missing install, and running `setup.sh` is not a way to check (the owner has asked more
+  than once that no chat reinstall them): it now finds that directory and returns in ~2 s.
+- **Truly fresh machine** (`command -v godot` finds nothing): `tools/setup.sh` downloads Godot 4.7.2 into `tools/.bin` (and links it as `godot` in `/usr/local/bin`), the export templates and the pip packages, and installs xvfb, lavapipe, EGL and Monado with apt if they are missing. A tool you had to install by hand goes into it too.
 - **Fresh clone:** run `godot --headless --path godot --import` once before running test scripts with `-s`, or `class_name` types such as WormholeSpace are unknown. `test_stereo.sh` does it itself.
 - **Stereo:** `tools/test_stereo.sh` (~5 min alone, ~12 with other tests beside it: the renders run in parallel, one Godot per core, each with its own display and shader cache; the check scene again with foveation on, and those pictures against the ones without).
 - **Foveation in the Frame's driver:** `tools/fdm_check.sh` (~10 s): Godot on Turnip over the noop drm-shim, the XR view through `fake_hmd.gd` at 1728² per eye, and the driver's trace (`MESA_GPU_TRACES=print`, `TU_DEBUG=perf`) per render pass: in tiles or not, attachments, tiles. Off: no tiles; split: tiles; on: tiles and one attachment more (the density map).
@@ -281,7 +341,7 @@ they line up the same way.
   uniforms. Half registers count, two to a full component (the register file is shared); shared
   ones (r48-r55) do not. 47 components is the plain shader's 12 registers, 97 the balls shader's 24.
 - **What the headset's compiler makes of the shader:** `tools/adreno_stats.sh [scene]` (3 s): Godot on Mesa's Turnip (Adreno 750) over the noop drm-shim, which `setup.sh` builds into `tools/.bin/mesa-fd`; it prints instructions, nops, registers and waves of the ray tracer (Godot compiles it twice: a generic ubershader, then the specialised one). The numbers that matter on the Frame: registers per pixel set the waves at once (48 → 4, 24 → 8, 16 → 12, 13 → 14; at 12 or fewer the compiler runs waves of 128), and the instructions a ray runs. No timings: there is no GPU.
-- **Cost without a headset:** `tools/adreno_cost.sh [--check] [--toys] [--gravity 1|2] [source]...` (sources as
+- **Cost without a headset:** `tools/adreno_cost.sh [--check] [--toys [--hands|--held]] [--gravity 1|2] [source]...` (sources as
   `ab_shaders.sh`, `this` = the tree; ~1 min each). Mesa's compiler for the Frame compiles the ray
   tracer, `tools/ir3_emu.py` runs the program it made (the specialised one) on waves at the speed
   check's poses (one eye, 1728², 104°) and counts issue cycles, divergent branches included
@@ -295,10 +355,17 @@ they line up the same way.
   missed: 20% fewer transcendentals per pixel promised -7% and gave -0.7% in the headset, and in
   world B outside the edge (-5.7 m, 20° from the throat) it says 3.8 ms where the headset takes 4.8.
   `--profile` gives cycles per stretch of code, `--poses "l,yaw,pitch;..."` other poses (the
-  throat sideways is the demo's dearest), `--split` the toys as the app draws them (the plain ray
-  tracer where the stencil's proxies do not mark; the proxies from `tests/emu_dump.gd`); with
-  `--toys` other sources are timed with their own balls shader (`tools/ab_shaders.sh` copies it).
-  The flat inputs' packing (v_eye, v_l, v_n here) is found by matching the picture.
+  throat sideways is the demo's dearest). With `--toys`, "this" is the frame as the app draws it
+  (on `lean`): the flat toys' pass over each proxy sphere and the shell's over its sphere (or the
+  whole view), each on the pixels it covers, packed into waves of its own, then the world's ray
+  tracer on the pixels no toy took, waves of it weighted by their share (the GPU skips the rest by
+  the depth test); other sources are timed as worlds alone. The toys' passes are compiled in the
+  demo's scene (`perf.gd toys`), where they are drawn: compiled on the world's quad, the flat
+  pass's MultiMesh custom data (its toy's bit) was a constant and Mesa folded it into another,
+  cheaper program. `adreno_cost.py` picks a pass's program from the log by its smooth and flat
+  inputs' counts (`PASSES`). The inputs' packing (how Mesa ordered the varyings) is found by
+  matching the picture: the world's on the first pose, the shell's at poses with the head in the
+  shell, the flat one's at the others, each on the tiles where the frame without it is furthest off.
 - **Measuring in the headset without the owner walking:** the menu's last row, A (or, in a
   build made with `tools/ab_shaders.sh --auto ...`, the start) runs `godot/bench.gd`. A frame's
   cost depends only on the pose (l, yaw from the throat, pitch, roll), so it goes through poses:
@@ -310,9 +377,10 @@ they line up the same way.
   per second. Its result (under its row in the menu, and on the line below until the menu is opened) says whether 120 Hz held and the comparison. Frame times from
   walking around do not compare between builds: where one looks changes them several times.
   The menu's script also logs a `refresh:` line every second (with where one looks) and one per late frame.
-  Thirteen places (the 13th: in the throat looking sideways). With the demo's toys (the normal
-  scene) it times the balls shaders, other sources' with `main.toy_mode` TOYS_BARE (no stencil),
-  and this build's a seventh way, over the whole view (TOYS_WHOLE): the result's "трафарет -N%".
+  Thirteen places (the 13th: in the throat looking sideways), on `lean` three more (14-16) with
+  both hands and a ball held in front (`main.bench_hands`), where a held ball cost the most. With
+  the demo's toys (the normal scene) other sources are timed as worlds alone (`main.toys_shown`
+  false), and so is this build a seventh way: the result's "предметы +N%" is what the toys add.
 - **Pictures against another commit:** render both at many poses with `tests/emu_dump.gd`
   (`... -- out.json "l,yaw,pitch;..." fov plain|balls [shader]`) and diff the PNGs; `edge-120hz`
   matched the main before it within 1/255 at every pose.
@@ -405,6 +473,12 @@ they line up the same way.
   rate: SteamVR fills in frames on the same GPU, and it reads more than it costs, and so does the
   segment after it (first segments 3.4 ms dearer than the second ones). Compare at places where
   every variant fits.
+- **A stopping test in sg is not one in metres.** The toys' search stopped a back step "inside" only
+  when sg had moved less than 1e-7 (an ulp of sg near 1): in float32 a Newton step at a held ball's
+  surface landed a hair inside again and again, the back steps halved down to that, and 16 steps
+  ran out: light specks over the ball (float64 in `ref/toys.py` never did it). Within 0.1 mm of the
+  entry (sg times the path's speed) is the hit now. A debug copy of the shader writing each pixel's
+  exit reason and step counts as its colour (decoded from sRGB) found it in one render.
 - **Rays that go round the throat** (|vl| below ~2e-4 on the cylinder, a column near where the
   view crosses vl = 0, looking sideways inside the throat) were the owner's "stripe": white
   dashes along the throat at the eye's own l, through the floor, the cube and the ball. Two float32

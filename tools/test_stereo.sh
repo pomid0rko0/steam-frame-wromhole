@@ -56,12 +56,13 @@ done
 for c in 0 1 2 3; do
 	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
-# the same floor lines with the shader the normal scene runs: the one without movable balls
+# the same floor lines without the movable balls: the world's ray tracer alone
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
-# the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
-# ray tracers of their own, with the balls and the cube, and without them (plain)
+# the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows
+# (the world's ray tracers of their own, the toys' passes with the arrows), with the balls and the
+# cube, and without them (plain)
 for v in gravity arrows; do
 	for c in 0 1 2 3; do
 		for m in ray floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
@@ -95,7 +96,7 @@ for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, shader without balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
+	verdict "simulated headset, case $c: floor lines, without the balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: gravity view: the floor, with the balls and the cube" python3 "$CMP/check_scene.py" "$OUT/gra$c"
@@ -104,16 +105,16 @@ for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: gravity view: the arrows, with the balls and the cube" python3 "$CMP/check_scene.py" "$OUT/arr$c"
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, gravity view: the floor, shader without balls" python3 "$CMP/check_scene.py" "$OUT/grp$c" --floor-only
+	verdict "simulated headset, case $c: floor lines, gravity view: the floor, without the balls" python3 "$CMP/check_scene.py" "$OUT/grp$c" --floor-only
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, gravity view: the arrows, shader without balls" python3 "$CMP/check_scene.py" "$OUT/arp$c" --floor-only
+	verdict "simulated headset, case $c: floor lines, gravity view: the arrows, without the balls" python3 "$CMP/check_scene.py" "$OUT/arp$c" --floor-only
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, shader without balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
+	verdict "simulated headset, case $c: floor lines, without the balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
 done
 # the split pass changes nothing in the picture: each image with foveation on against the same off
 verdict "foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk:fov pln:fpl
