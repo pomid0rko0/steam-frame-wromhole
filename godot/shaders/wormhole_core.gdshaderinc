@@ -791,8 +791,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         // A ray that grazes the shell near its edge stays within the r and w windows
                         // of a toy there for metres: a ball held there made the frame 3.5x dearer.
                         // Not where the r and w windows lie past the nearest hit so far
-                        qw = vec2(max(qw.x, 0.0), min(min(qw.y, 1.0), qEnd));
-                        if (dps < 9.0 && qw.y > qw.x) {
+                        qw = vec2(max(qw.x, 0.0), min(qw.y, 1.0));
+                        if (dps < 9.0 && qw.y > qw.x && qw.x < qEnd) {
                             // psi from the fillet's inner end: piece A runs toward it, piece C away
                             vec2 ps = clamp(vec2(psc - dps, psc + dps) + vec2(-5e-3, 5e-3), psi0, psi1);
                             vec2 T = p == 0 ? PA.x - ps : C0.x + ps - PA.x - PB.x;
@@ -805,8 +805,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         }
                     }
                 }
-                qw = vec2(max(qw.x, 0.0), min(min(qw.y, 1.0), qEnd));
-                if (qw.y <= qw.x) { carry = false; continue; }
+                // the window whole, its end not cut at the nearest hit so far: the samples are then
+                // where they would be in any order of the candidates (the search stops after the
+                // first past the hit, below), and so are the silhouettes (in another order a cut
+                // window's other samples flipped single pixels of a ball's edge between ray tracers)
+                qw = vec2(max(qw.x, 0.0), min(qw.y, 1.0));
+                if (qw.y <= qw.x || qw.x >= qEnd) { carry = false; continue; }
                 int N = int(clamp(ceil((p == 0 ? PA.y : (cyl ? PB.y : PC.y)) * (qw.y - qw.x) / (0.35 * size)), 1.0, 160.0));
                 // the first sample: where the window starts, unless that is where the last one was
                 int j0 = carry && qw.x <= 0.0 ? 1 : 0;

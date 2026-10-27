@@ -582,6 +582,11 @@ they line up the same way.
   24. Custom functions can't read `VIEW_INDEX` in Godot. Check multiview programs with
   `tools/adreno_stats.sh plain_xr` (`tests/perf.gd` through `fake_hmd.gd`): Godot compiles the
   specialised program (the smallest `prog`) for each.
+- **A toy's samples must not depend on the search's order.** A window cut at the nearest hit so
+  far was divided into its N samples over the cut part: in another order of the candidates (stencil
+  3's near ones first) the samples moved and single pixels of a ball's edge flipped between ray
+  tracers (`split_test.gd -- random 2000`: 10 of 17 million). The samples are placed over the whole
+  window now and the search stops after the first one past the hit.
 - **The curved search's registers are on a knife's edge (24).** One sqrt per candidate (a cube's
   reach from its half size) or one int carried through the sample loop (a skip's step) took it to
   32: the compiler holds such values through the search. Work them out on the CPU and read them
