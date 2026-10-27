@@ -253,6 +253,9 @@ Where the README wishes start (wishes without a branch start from `main`):
 - pick up and throw, pulling objects like in Half-Life: Alyx → `main` (grip grab and throw of balls
   and cubes on the fast core, the hands on the curved space, merged from `throw`; `grab` is the old
   sketch); the hand of finite strength, two hands, the grip by size → `strength` until it is merged;
+  a push that tells a hand that only walks along past a toy from one pushing it on purpose (which
+  slows the hand and the avatar; README wish «Толчок: мимоходом или всерьёз») → its own branch
+  from `strength` (from `main` once it is merged);
 - cubes next to balls, the light in the throat, the demo's cost → `main` (cubes on the fast core;
   the cheaper demo merged from `toys`);
 - throat shape, VR-friendly knobs, test scenes → `throat` (throat length and fillet on the right
