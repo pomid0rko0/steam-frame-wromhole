@@ -27,7 +27,8 @@ extends Node
 ## that came a refresh late (at most LATE_LINES a second, none during the speed check), with where
 ## and what the GPU and the CPU took for it (a GPU that lowers
 ## its clock makes the same frame take longer; on the Frame it stayed at its top clock while frames
-## were too slow).
+## were too slow). project.godot keeps application/run/flush_stdout_on_print on: an export otherwise
+## buffers print(), and an abort at exit loses the log's end.
 
 signal changed                  # the lines (status, notes) or the verdict changed
 
@@ -81,7 +82,7 @@ func _ready() -> void:
 	RenderingServer.viewport_set_measure_render_time(target.get_viewport_rid(), true)
 	if xr:
 		api = OpenXRAPIExtension.new()
-		# a method, not a lambda: a lambda left connected to the interface corrupts memory at exit (Monado)
+		# a method, not a lambda (main.gd, _ready)
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
 		find_app_setting()

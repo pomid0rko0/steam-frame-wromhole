@@ -4,8 +4,7 @@ Reference math for the wormhole renderer (float64, NumPy).
 The space, its profile r(l) and the method: docs/geometry.md. For h < R the fillets meet at a
 crease, where r'(0+-) = +-sin th0.
 
-Point on the manifold: (l, n), n a unit 3-vector. Tangent: (vl, w), w orthogonal to n.
-Flat charts: side A (l >= L): x = r n;  side B (l <= -L): x = P r n,  P = diag(-1, 1, 1).
+Points, tangents and the flat charts as the shader's (wormhole_core.gdshaderinc's top).
 """
 import numpy as np
 

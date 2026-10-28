@@ -19,7 +19,7 @@ extends SceneTree
 ##    value into effect at once, Menu closes it; closed, the D-pad up, left and right show gravity
 ##    (the floor, the arrows, off)
 ## 7. while the speed check holds the viewer (main.hold), the sticks and A do nothing; then
-##    left Y (generic: the D-pad's upper buttons) shows gravity: the floor, the arrows, off
+##    left Y (generic: secondary/click) shows gravity: the floor, the arrows, off
 
 const U := preload("res://tests/util.gd")
 

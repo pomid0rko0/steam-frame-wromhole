@@ -32,9 +32,9 @@ import numpy as np  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ir3_emu as E  # noqa: E402
 
-# The estimate, fitted on the headset's speed check of older ray tracers at nine poses (rms 0.19 ms,
-# the variants' means within 5%; not refitted for the current poses, PLACES in godot/bench.gd): per 64 pixels of a frame of both eyes at
-# 1728 x 1728, ms = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x
+# The estimate, fitted on speed checks in the headset of older ray tracers at other poses than
+# godot/bench.gd's PLACES (a model to compare variants, not a timing): per 64 pixels of a frame of
+# both eyes at 1728 x 1728, ms = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x
 # transcendental instructions + MS_CAT5 x texture-unit instructions (derivatives, samples). In waves
 # of 128 a 32-bit ALU op takes 2 cycles (Mesa's ir3.c) and a nop slot covers 128 pixels; a cat4 or
 # cat5 instruction's work is per pixel whatever the wave. The fit says transcendentals and

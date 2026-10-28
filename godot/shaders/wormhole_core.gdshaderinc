@@ -65,7 +65,7 @@
 // - A branch that skips work loses when its divergence costs more than the work (a bounding ball
 //   before each box). Near the throat one group of pixels holds both skies, the floor and objects,
 //   and runs every branch of the shading.
-// - A screen derivative costs about 90 ALU cycles (tools/adreno_cost.py's fit).
+// - A screen derivative costs about 90 ALU cycles (tools/adreno_cost.py's fit, on older ray tracers).
 // - 16-bit math (mediump) runs at double rate in waves of 128, but for the sky's colours the
 //   conversions cost more than it saves; line coordinates need float32.
 //

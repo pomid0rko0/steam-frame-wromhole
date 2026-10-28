@@ -1,8 +1,7 @@
 #!/bin/bash
 # Stereo correctness through Godot's real multiview path (the one OpenXR uses), no headset:
 # in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
-# draws at the same place. Run it on every headset build's source; it must pass before the build
-# is worn: broken stereo physically hurts in a headset.
+# draws at the same place. Run it on every headset build's source (CLAUDE.md, the hard rule).
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images,
 #                                    JOBS=n renders at once)
 # Exit status 0 only if every check passes.
