@@ -37,6 +37,9 @@ const GREEN_WAIT := 400         # frames (20 s at Monado's 20 Hz) to see the fra
 func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://settings.cfg"))
 	main = load("res://main.tscn").instantiate()
+	# the toys at rest, without the throw and the drop: a ball bouncing in the throat costs software
+	# rendering on a few cores more than Monado's 50 ms refresh, and frames that keep up are judged here
+	main.toys.demo = false
 	root.add_child(main)
 
 
@@ -92,10 +95,10 @@ func _process(_delta: float) -> bool:
 		# judge from here: the vrcmd calls just before cost a missed frame or two under software rendering
 		r.seconds.clear()
 	if frames > 232 and judged == 0:
-		# Software rendering under Monado misses a refresh every few seconds by itself, and one miss in
-		# a window of 2 s is over the 1% the verdict allows. So: judge windows of MIN_SECONDS, each
-		# started afresh, until one keeps up and the head and the line show it green. Frames made too
-		# slow never get there (they are checked red below).
+		# The rate changes just before cost software rendering a missed refresh now and then, and one
+		# miss in a window of 2 s is over the 1% the verdict allows. So: judge windows of MIN_SECONDS,
+		# each started afresh, until one keeps up and the head and the line show it green. Frames made
+		# too slow never get there (they are checked red below).
 		green = FrameRate.keeps_up(r.seconds) == true and p.plate_mat.albedo_color == p.COLOR_OK \
 				and p.strip_mat.albedo_color == p.COLOR_OK
 		if green or frames >= 232 + GREEN_WAIT:
