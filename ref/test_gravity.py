@@ -66,7 +66,7 @@ G = Gravity(W)
 print('\nnumbers for godot/tests/gravity_test.gd (video profile): beta = %.5f, floor g at l = 0, 2, 4, 5, L: %s'
       % (G.beta, np.array2string(G.floor_g(np.array([0.0, 2.0, 4.0, 5.0, W.L])), precision=5)))
 
-# numbers for the README: a point let go 2 m above the floor
+# numbers for docs/physics.md: a point let go 2 m above the floor
 from scipy.integrate import solve_ivp
 g = 9.81
 # in the middle of the throat it stays on the sphere l = 0 (f' = 0 there) and falls along a meridian:

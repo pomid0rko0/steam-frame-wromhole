@@ -1,8 +1,8 @@
 extends Node3D
-## Real-time wormhole for VR (README). Every pixel is ray traced along a geodesic of the wormhole
-## space in the shader (tracer.gd); this script builds the scene and tracks where the viewer is in
-## that curved space: walking in the room, the left stick walks, the right stick turns, smoothly
-## or in 30-degree snaps, A goes back to the start (button map in the README).
+## Real-time wormhole for VR (README.md, docs/). Every pixel is ray traced along a geodesic of
+## the wormhole space in the shader (tracer.gd); this script builds the scene and tracks where the
+## viewer is in that curved space: walking in the room, the left stick walks, the right stick
+## turns, smoothly or in 30-degree snaps, A goes back to the start (README.md, «Управление»).
 ##
 ## Body model: the feet stay on the floor (the totally geodesic equatorial surface n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,
@@ -131,8 +131,8 @@ func _ready() -> void:
 	menu.xr = xr as OpenXRInterface
 	menu.head = camera
 	bench.menu = menu
+	add_child(bench)                # first: the menu's last row asks it what it compares
 	origin.add_child(menu)
-	add_child(bench)
 
 	place(START_POS, START_FORWARD)
 	if show_check:
@@ -376,7 +376,7 @@ func _on_session_focussed() -> void:
 
 
 ## The controllers' interaction profiles, to godot.log when they change: which bindings the
-## runtime took (README, «Управление»).
+## runtime took (docs/steam-frame.md, «Что надо знать о SteamVR на Фрейме»).
 func _log_profiles() -> void:
 	for hand: XRController3D in [left_hand, right_hand]:
 		var tracker := XRServer.get_tracker(hand.tracker) as XRControllerTracker

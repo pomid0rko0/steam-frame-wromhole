@@ -1,6 +1,6 @@
 class_name Hands
 extends RefCounted
-## The hands (README, «Руки: взять и бросить»): each a small ball at the controller's grip pose,
+## The hands (docs/physics.md, «Руки»): each a small ball at the controller's grip pose,
 ## placed in the curved space as the shader places each eye: by the geodesic from the head along
 ## the hand's offset in the room, with the room's axes carried along it. It pushes the toys; the
 ## grip takes the nearest one within reach and carries it at its offset and turn in the hand's

@@ -1,6 +1,6 @@
 class_name CheckScene
 extends RefCounted
-## The stereo check (README, «Сцена проверки стерео»). Godot's standard renderer draws green lines
+## The stereo check (docs/rendering.md, «Сцена проверки стерео»). Godot's standard renderer draws green lines
 ## on top of what the ray tracer draws: on the white lines of the flat floor, as a grid on three
 ## red balls and along the edges of a magenta cube. With one eye closed, green must lie exactly on
 ## white / on red / on the cube's dark edges; two separate grids mean wrong stereo. Godot's

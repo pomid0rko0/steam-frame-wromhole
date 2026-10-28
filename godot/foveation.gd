@@ -1,6 +1,6 @@
 class_name Foveation
 extends RefCounted
-## Foveated rendering (README, «Фовеальный рендеринг»): the edges of each eye's picture are
+## Foveated rendering (docs/rendering.md, «Фовеальный рендеринг»): the edges of each eye's picture are
 ## rendered coarser. Level 0 is off, 1..3 the runtime's density map at its level low, medium,
 ## high, 4 and 5 our own (OWN_MAPS); split: the 3D scene in a render pass of its own without a
 ## density map (the speed check times that alone).
