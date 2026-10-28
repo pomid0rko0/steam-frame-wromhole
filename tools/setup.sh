@@ -3,7 +3,7 @@
 # Godot 4.7.2 into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
 # Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL for
 # ref/test_gpu.py, Monado to run the app through a real OpenXR runtime without a headset
-# (CLAUDE.md, "Running things").
+# (CLAUDE.md, "Commands").
 # The four steps don't depend on each other and run at once; each line of output starts with
 # its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
 # is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's

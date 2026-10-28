@@ -66,15 +66,17 @@ G = Gravity(W)
 print('\nnumbers for godot/tests/gravity_test.gd (video profile): beta = %.5f, floor g at l = 0, 2, 4, 5, L: %s'
       % (G.beta, np.array2string(G.floor_g(np.array([0.0, 2.0, 4.0, 5.0, W.L])), precision=5)))
 
-# numbers for docs/physics.md: a point let go 2 m above the floor
+# numbers for docs/physics.md: a point let go 2 m above the floor, the height as the app has it,
+# H = r(l) n_z (WormholeSpace.height; the demo drops its balls from H = 2 m)
 from scipy.integrate import solve_ivp
 g = 9.81
 # in the middle of the throat it stays on the sphere l = 0 (f' = 0 there) and falls along a meridian:
-# phi = g f(0) sin(s / rho0), s the arc down to the floor
+# phi = g f(0) sin(s / rho0), s the arc down to the floor, H = rho0 sin(s / rho0)
 f0 = G.f(np.array([0.0]))[0][0]
 down = lambda t, y: y[0]
 down.terminal, down.direction = True, -1
-fall = solve_ivp(lambda t, y: [y[1], -g * f0 / W.rho0 * np.cos(y[0] / W.rho0)], [0, 20], [2.0, 0.0],
+s0 = W.rho0 * np.arcsin(2.0 / W.rho0)
+fall = solve_ivp(lambda t, y: [y[1], -g * f0 / W.rho0 * np.cos(y[0] / W.rho0)], [0, 20], [s0, 0.0],
                  events=down, rtol=1e-10, atol=1e-12).t_events[0][0]
 print('a point let go 2 m above the floor: %.2f s to the floor in the middle of the throat, %.2f s far away'
       % (fall, np.sqrt(2 * 2.0 / g)))

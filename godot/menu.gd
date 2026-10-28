@@ -41,7 +41,7 @@ const SCALES := [1.0, 0.9, 0.8, 0.7]
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the menu's: off, SteamVR low and high, our own wide and narrow
-# until one is chosen: our narrow map, the width first (in the headset: no border to see, 144 Hz holds)
+# until one is chosen: our narrow map, the width first (in the headset its border was not to be seen)
 const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"

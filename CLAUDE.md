@@ -109,8 +109,8 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   View and Menu. A setting is a row: `Menu.ROWS`, `_count`, `_current`, `_apply`, `_value_text`.
 - **The speed check** sets the viewer's pose itself: while it runs (`main.hold`) the sticks, A and
   the hands do nothing, and a new button stays out too; the menu greys the rows it sets.
-- **The hands** take two of the shader's 12 ball slots (`BallWorld.MAX_BALLS` 8 + 2). Each frame
-  the free toys step first (pushed from the hands' last places), then the hands and what they hold
+- **The hands** take two of the shader's 12 ball slots (`Tracer.MAX_BALLS`); the toys take at most
+  8 (`BallWorld.MAX_BALLS`). Each frame the free toys step first (pushed from the hands' last places), then the hands and what they hold
   are placed (`Hands.update`), then everything is drawn: a toy let go starts from the hand. Jumps of
   the viewer (`place`, `set_pose`, a snap turn) call `Hands.forget_motion`, or the jump is a throw.
 - **A throat change** (`space.set_profile`) rebuilds what is built for the shape:
@@ -125,7 +125,7 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   `material` (`set_objects`). A ball's shader index is not its index in `world.balls`
   (`set_objects` sorts them). Godot geometry drawn before the ray tracers must not write the
   stencil. Toys in the hand are fine: a ray that meets a toy leaves its proxy at least the margin
-  (8 cm, more than the near plane's 5 cm) before the hit.
+  (8 cm, more than the near plane's 5 cm) beyond the hit.
 
 ## Commands
 
@@ -149,6 +149,7 @@ named. A tool you had to install goes into `setup.sh`.
 | `python3 ref/test_fast.py`, `test_eye.py`, `test_slice.py`, `test_gravity.py` | the method, the eye's step, the arrows' surface, gravity against RK4 / a grid | seconds to minutes |
 | `tools/adreno_stats.sh [scene]` | the headset's compiler on the shader: instructions, registers, waves | seconds |
 | `python3 tools/ir3_live.py LOG` | live registers along the program, the peak and its code | seconds |
+| `python3 tools/same_programs.py A.log B.log` | whether two compiler logs hold the same ray-tracer programs | seconds |
 | `tools/adreno_cost.sh [opts] [source...]` | the frame-cost model at the speed check's poses | ~1 min per source |
 | `tools/ab_shaders.sh [--auto] source...` | other ray tracers into the build for the headset's speed check | seconds |
 
@@ -171,14 +172,17 @@ named. A tool you had to install goes into `setup.sh`.
 - **Shader changes.** `test_gpu.py` prints errors, no verdict: compare with the same run on the code
   before the change (`WH_BALLS=0` too: the shader without balls). `ref/wh.py` `fast` mirrors the
   shader's curved-region method in float64: keep the two in step. A change that should not touch
-  the compiled shader (comments, a dead `#ifdef`) must give the same program byte for byte: compare
-  two `KEEP_LOG=file tools/adreno_stats.sh` logs with `adreno_cost.ray_program`. After every change
+  the compiled shader (comments, a dead `#ifdef`) must give the same programs byte for byte: compare
+  two `KEEP_LOG=file tools/adreno_stats.sh <scene> --shader res://shaders/<variant>.gdshader` logs
+  with `tools/same_programs.py`, one variant at a time. A scene with toys compiles the plain shader
+  too, and `adreno_cost.ray_program` (which takes the smaller of the two biggest programs) can then
+  pick another shader's program and report a difference that is not there. After every change
   to the shader or the emulator run `tools/adreno_cost.sh --check`. Pictures against another commit:
   `tests/emu_dump.gd` at many poses, then diff the PNGs.
 - **Driver tools without a GPU** (`adreno_stats.sh`, `adreno_cost.sh`, `fdm_check.sh`): Godot on
   Turnip over Mesa's noop drm-shim (`tools/.bin/mesa-fd`). Godot compiles the ray tracer twice, a
   generic ubershader and then the specialised program that runs (`adreno_cost.ray_program` picks
-  it). Turnip's tiling autotune picks by samples the drm-shim makes up: `TU_DEBUG=gmem` tiles
+  it from a log of one shader). Turnip's tiling autotune picks by samples the drm-shim makes up: `TU_DEBUG=gmem` tiles
   wherever possible. `ir3_live.py` counts half registers two to a full component and leaves out the
   shared ones (r48-r55).
 - **The cost model** is fitted on the headset's speed check: compare variants with it, then measure
@@ -303,7 +307,8 @@ The ray tracer's numerics:
   viewpoints around an object when a test's poses may miss a corner case.
 - **`inversesqrt` rounding** gives |w| above 1 for rays along the cylinder (b = rho0): clamp
   `min(dot(w, e2), 1.0)`.
-- **The fog's path length** needs ~5%: r²/b × psi with r at the weight's mean tau. The toys' hits
+- **The path length in the curved region** is an estimate, r²/b × psi with r at the weight's mean
+  tau, used by the fog, the cubes' edge lines, the arrows and the toys' sample step. The toys' hits
   are ordered by place on the path (piece + fraction), not by length.
 - **Moving objects in the curved region: chords, not samples.** Between two samples the chord in
   R⁴ is tested against each object, and the path's point at the chord's entry is the hit if it lies

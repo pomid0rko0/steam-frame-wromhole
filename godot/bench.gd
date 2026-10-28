@@ -3,10 +3,10 @@ extends Node
 ## The speed check, the menu's last row ("замер скорости"), in two parts. The eyes are best kept
 ## closed throughout: the world is turned and moved to the head, and some pictures are no proper ones.
 ##
-## What a frame costs depends only on the pose: how far from the throat one stands (l), where one
-## looks (degrees from the throat along the floor, degrees up) and how the head is tilted (roll:
-## it changes how pixels fall into the GPU's groups). The world is symmetric about the throat and
-## the floor is a plane, so for someone standing on the floor these are all there is; nothing
+## What a frame costs depends on the pose: how far from the throat one stands (l), where one looks
+## (degrees from the throat along the floor, degrees up) and how the head is tilted (roll: it
+## changes how pixels fall into the GPU's groups). With the toys still (main.hold stops them) and
+## the viewer on the axis through the throat (main.place_on_axis), these are all there is; nothing
 ## carries over from one frame to the next, so moving only changes which poses come.
 ##
 ## 1. Comparison, at 72 Hz. The viewer is put at fixed poses (PLACES), with the feet held there,

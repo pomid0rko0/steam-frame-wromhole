@@ -40,7 +40,7 @@ func _initialize() -> void:
 	# the toys at rest, without the throw and the drop: after the drop, frames on software Vulkan
 	# (sharing four cores with Monado) miss a tenth of the 50 ms refreshes, and here frames that keep
 	# up are judged. The physics is not it (a step costs about 0.25 ms); what else is, is not known.
-	# The throw and the drop themselves: physics_test.gd; what they cost the headset: bench.gd.
+	# The throw and the drop themselves: physics_test.gd.
 	main.toys.demo = false
 	root.add_child(main)
 
