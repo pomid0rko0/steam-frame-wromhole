@@ -12,6 +12,11 @@ the branches and the wishlist.
 - **How builds reach the headset:** export straight to `~/wormhole-vr/wormhole_vr.arm64`, already in the Steam library as one entry; the owner starts it from there and tells you what they see. Never start the app (or SteamVR, `vrcmd`, any window) yourself: it takes the view the owner is in. A build made elsewhere (a cloud session) goes in with `tools/deploy_frame.bat` from the PC.
 - **The owner can't judge test images or numbers.** Verifying is your job. Anything they must check in the headset has to be a simple yes/no they can see, like the one-eye check in the README.
 - **The headset is in use: tests stay off it.** Its GPU, display and SteamVR are the owner's view. A Godot started on the host takes SteamVR as its OpenXR runtime (`~/.config/openxr/1/active_runtime.json`) and, through gamescope's Vulkan layer, opens windows on the owner's screen. So every test runs in `tools/box.sh`, an Ubuntu container as the cloud sessions had: software Vulkan (lavapipe), xvfb, Monado's simulated OpenXR runtime, only the repository mounted, no GPU, no display, no SteamVR; on the CPU cores Steam gives desktop apps. `godot/tests/fake_hmd.gd` is a scripted headset through Godot's real multiview path.
+- **Performance problems are solved, never worked around** (the owner's rule, in capitals). The
+  throat's shape and the scene are not fixed (the knobs change the throat, the toys move), so a
+  speed-up must keep working when they change: a table built for the shape is rebuilt with it, as
+  the fillet table is. Godot is not required either. Asked whether those are fixed, the owner said
+  no to all three: don't ask again, make the frame cheaper for what is there.
 - **One wish per chat,** starting from the branch listed below for it.
 - **Name the branch yourself.** The session hands you a `claude/<random-name>` branch: don't use it. Name the wish's branch with a short English word (`throat`, `grab`), start it from the branch listed below for the wish, and push there. The owner allows this; it is their standing permission to push to a branch other than the one the session gives you.
 - **Versions are git tags,** set on a commit once the owner has checked it in the headset. Don't put versions or a history of builds into docs or comments; git keeps them.
