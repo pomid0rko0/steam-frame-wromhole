@@ -37,8 +37,10 @@ const GREEN_WAIT := 400         # frames (20 s at Monado's 20 Hz) to see the fra
 func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://settings.cfg"))
 	main = load("res://main.tscn").instantiate()
-	# the toys at rest, without the throw and the drop: a ball bouncing in the throat costs software
-	# rendering on a few cores more than Monado's 50 ms refresh, and frames that keep up are judged here
+	# the toys at rest, without the throw and the drop: the dropped ball in the throat is a candidate
+	# for every ray through it, and the toys' shader on software Vulkan, sharing a few cores with
+	# Monado, then misses its 50 ms refreshes; here frames that keep up are judged. (The physics is
+	# not it: a step costs about 0.25 ms. What that pose costs the headset's GPU, bench.gd measures.)
 	main.toys.demo = false
 	root.add_child(main)
 
