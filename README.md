@@ -608,7 +608,7 @@ godot/                         проект Godot 4.7.2
   wormhole_space.gd            метрика, геодезические, перенос репера, вложение в R⁴, гравитация (CPU)
   ball_world.gd                мячи и кубы: движение в поле гравитации, пол, столкновения, трение
   scene.json                   статические объекты: один источник для шейдера, физики и тестов
-  shaders/wormhole_core.gdshaderinc   ядро рендера: один исходник для Godot, тестов и превью
+  shaders/wormhole_core.gdshaderinc   ядро рендера: один исходник для Godot и тестов
   shaders/wormhole_view.gdshaderinc   обёртка: луч каждого глаза
   shaders/wormhole.gdshader    рендер без подвижных мячей и кубов (WH_NO_BALLS)
   shaders/wormhole_balls.gdshader     рендер с подвижными мячами и кубами
@@ -619,7 +619,6 @@ godot/                         проект Godot 4.7.2
   shaders/stencil_mark*.gdshader   метки трафарета: где шейдер с мячами и кубами (сферы-заглушки, или весь кадр)
   tests/                       тесты в Godot (в сборку не попадают); emu_dump.gd — входы шейдера для модели цены
 ref/                           эталонная математика и тесты точности (Python)
-preview/                       веб-превью (WebGL 2): tools/build_preview.py → preview/wormhole.html
 tools/                         установка инструментов, тесты стерео и OpenXR, установка сборки на Frame, логи с него;
                                ir3_emu.py, adreno_cost.py/.sh — модель цены кадра на Adreno 750; ir3_live.py — где шейдеру
                                нужны регистры; fdm_check.sh — фовеация в драйвере

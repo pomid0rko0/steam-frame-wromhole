@@ -4,7 +4,6 @@ godot/build/
 # tools/setup.sh downloads
 tools/.bin/
 # generated
-preview/wormhole.html
 ref/out/
 __pycache__/
 *.zip
