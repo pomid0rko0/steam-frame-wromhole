@@ -136,6 +136,29 @@ get_adreno() {
 	rm -rf "$src" "$BIN/mesa-build" "$BIN/mesa-setup.log" "$BIN/mesa-build.log"
 }
 
+# A cloud environment's setup script is a copy of this one, run outside the repo (ROOT is then
+# not the repo: `/` so far, so its BIN is /tools/.bin); the cloud keeps what it installed and
+# clones the repo afresh for each session. Take that install, found through the godot it put on
+# PATH, instead of downloading Godot and building Turnip again. Not on the Frame: box.sh mounts
+# only the repo, a link out of it leads nowhere there.
+reuse() {
+	local g d
+	if frame; then return 0; fi
+	g=$(readlink -f "$(command -v godot)" 2>/dev/null) || return 0
+	d=$(dirname "$g")
+	[ "$d" != "$BIN" ] || return 0
+	if [ ! -x "$BIN/$GODOT" ] && [ "$(basename "$g")" = "$GODOT" ]; then
+		ln -sfn "$g" "$BIN/$GODOT"
+		echo "reuse: $g"
+	fi
+	if [ ! -f "$SHIM" ] && [ -f "$d/mesa-fd/${SHIM#"$MESA_OUT"/}" ]; then
+		rm -rf "$MESA_OUT"
+		ln -sfn "$d/mesa-fd" "$MESA_OUT"   # a link, not a copy: its Vulkan ICD names absolute paths
+		echo "reuse: $d/mesa-fd"
+	fi
+}
+reuse
+
 prefix() {   # name: puts it in front of every line
 	local l
 	while IFS= read -r l || [ -n "$l" ]; do printf '%s: %s\n' "$1" "$l"; done
@@ -165,5 +188,5 @@ for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}";
 
 # also on PATH: the tests fall back to it when this script ran outside the repo,
 # e.g. piped from curl in an environment setup script (then ROOT is not the repo)
-ln -sf "$BIN/$GODOT" /usr/local/bin/godot 2>/dev/null || true
+ln -sf "$(readlink -f "$BIN/$GODOT")" /usr/local/bin/godot 2>/dev/null || true
 echo "ok: $BIN/$GODOT, $MESA_OUT"

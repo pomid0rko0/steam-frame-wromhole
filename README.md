@@ -440,6 +440,7 @@ gravity = −∇φ = −g (f' n_z,  (f/r)(e_z − n_z n))      на полу: р
 
 ```
 tools/setup.sh          # Godot 4.7.2 в tools/.bin, шаблоны экспорта, Python-пакеты, драйвер Adreno (Turnip) для adreno_stats.sh
+                        # в облачной сессии всё это уже поставил скрипт настройки окружения (копия setup.sh): тогда он только ставит ссылки, 1–2 с
 tools/test_stereo.sh    # стерео на программном Vulkan, ~5 мин (рендеры параллельно, по одному на ядро)
 tools/test_openxr.sh    # main через настоящий OpenXR под Monado: замер частоты, строки меню с подменённым vrcmd, замер скорости, ~3 мин
 tools/adreno_stats.sh   # шейдер глазами компилятора Adreno 750: код, регистры, волны (сцены tests/perf.gd: near, plain, check)
