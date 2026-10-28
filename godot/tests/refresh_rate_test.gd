@@ -1,18 +1,15 @@
 extends SceneTree
 ## The refresh rate logic without a headset: how display times from OpenXR turn into the
-## measured rate and missed frames, the panel's verdict, and reading the GPU clock.
+## measured rate and missed frames, the verdict (frame_rate.gd), and reading the GPU clock.
 ##   godot --headless --xr-mode off --path . -s res://tests/refresh_rate_test.gd
 
-const PerfPanel := preload("res://perf_panel.gd")
+const U := preload("res://tests/util.gd")
 const RateMeter := preload("res://rate_meter.gd")
-
-var ok := true
 
 
 func check(name: String, got: Variant, want: Variant) -> void:
 	var same: bool = is_equal_approx(got, want) if got is float else got == want
-	ok = ok and same
-	print("%-48s %-10s %s" % [name, str(got), "ok" if same else "WRONG, expected " + str(want)])
+	U.check(name, same, "%s%s" % [got, "" if same else ", expected %s" % [want]])
 
 
 func _initialize() -> void:
@@ -90,11 +87,11 @@ func _initialize() -> void:
 	check("pause: missed", m.missed(), 0)
 
 	# the verdict over the last seconds: [frames, refreshes, ...]
-	check("verdict: one second is too little", PerfPanel.keeps_up([[90, 90]]), null)
-	check("verdict: all frames", PerfPanel.keeps_up([[90, 90], [90, 90]]), true)
-	check("verdict: 1 missed of 450", PerfPanel.keeps_up([[90, 90], [90, 90], [89, 90], [90, 90], [90, 90]]), true)
-	check("verdict: 9 missed of 180", PerfPanel.keeps_up([[81, 90], [90, 90]]), false)
-	check("verdict: half rate", PerfPanel.keeps_up([[36, 72], [36, 72]]), false)
+	check("verdict: one second is too little", FrameRate.keeps_up([[90, 90]]), null)
+	check("verdict: all frames", FrameRate.keeps_up([[90, 90], [90, 90]]), true)
+	check("verdict: 1 missed of 450", FrameRate.keeps_up([[90, 90], [90, 90], [89, 90], [90, 90], [90, 90]]), true)
+	check("verdict: 9 missed of 180", FrameRate.keeps_up([[81, 90], [90, 90]]), false)
+	check("verdict: half rate", FrameRate.keeps_up([[36, 72], [36, 72]]), false)
 
 	# the GPU's clock as the kernel shows it: /sys/class/devfreq/<address>.gpu, a symlink
 	var fake := ProjectSettings.globalize_path("user://fake_devfreq")
@@ -108,18 +105,17 @@ func _initialize() -> void:
 		w.close()
 	OS.execute("ln", ["-s", fake + "/devices/soc:qcom,cpu-bw", fake + "/class/soc:qcom,cpu-bw"])
 	OS.execute("ln", ["-s", fake + "/devices/3d00000.gpu", fake + "/class/3d00000.gpu"])
-	var panel = PerfPanel.new()
-	panel.devfreq = fake + "/class"
-	panel._find_gpu_clock()
-	check("GPU clock found among devfreq symlinks", panel.gpu_clock, fake + "/class/3d00000.gpu")
-	check("GPU clock read in MHz", panel._gpu_mhz(), 680)
-	panel.free()
+	var rate := FrameRate.new()
+	rate.devfreq = fake + "/class"
+	rate._find_gpu_clock()
+	check("GPU clock found among devfreq symlinks", rate.gpu_clock, fake + "/class/3d00000.gpu")
+	check("GPU clock read in MHz", rate.gpu_mhz(), 680)
+	rate.free()
 
 	# a real sysfs file: says 4096 bytes, holds a few
 	if FileAccess.file_exists("/sys/devices/system/cpu/online"):
-		var v := PerfPanel.read_line("/sys/devices/system/cpu/online")
+		var v := FrameRate.read_line("/sys/devices/system/cpu/online")
 		check("sysfs file read up to its value (%s)" % v, v.is_valid_int() or v.contains("-") or v.contains(","), true)
 		check("sysfs value is clean ASCII", v.to_ascii_buffer().size(), v.length())
 
-	print("PASS" if ok else "FAIL")
-	quit(0 if ok else 1)
+	U.finish(self)

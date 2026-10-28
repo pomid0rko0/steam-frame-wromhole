@@ -1,8 +1,8 @@
 """Are two sets of renders the same picture? For each pair of prefixes a:b, every image
 <dir>/<b><rest>.png against <dir>/<a><rest>.png: the largest difference of any colour channel
-of any pixel, in 1/255, and how many pixels differ by more than 1/255. Passes when every pair
-matches within 1/255 (the GPU may round a colour either way) and pixels off by more are fewer
-than 1 in 10 000. Used for foveation on against off (tools/test_stereo.sh): on software Vulkan
+of any pixel, in 1/255, and how many pixels differ by more than 1/255. Passes when in every pair
+the pixels off by more than 1/255 (the GPU may round a colour either way) are fewer than 1 in
+10 000. Used for foveation on against off (tools/test_stereo.sh): on software Vulkan
 there is no density map, so only the split render pass could change anything.
    python3 same_images.py dir a:b [a:b ...]"""
 import sys, glob, os

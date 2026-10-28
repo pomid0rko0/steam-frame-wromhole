@@ -1,18 +1,24 @@
-"""Per-eye comparison of red silhouettes, several balls: union IoU and per-ball centroid offsets.
-Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...). PASS: every
-ball's ray-traced and rasterized centroids differ by less than 0.5 px in both eyes."""
+"""Per-eye comparison of red silhouettes, five balls or cubes: union IoU and per-object centroid
+offsets. Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...). PASS:
+in both eyes all five objects are there, each one away from the picture's edge has a ray-traced
+silhouette, and their centroids differ by less than 0.5 px."""
 import sys, numpy as np
 from PIL import Image
 from scipy import ndimage
 def mask(p):
     a = np.asarray(Image.open(p).convert('RGB'), int)
     return (a[..., 0] - np.maximum(a[..., 1], a[..., 2])) > 60
+COUNT = 5
 worst = 0.0
+ok = True
 for eye in ('left', 'right'):
     A = mask(f'{sys.argv[1]}_ray_{eye}.png'); B = mask(f'{sys.argv[1]}_mesh_{eye}.png')
     iou = (A & B).sum() / max((A | B).sum(), 1)
     lb, nb = ndimage.label(B)
     print(f'{eye}: union IoU {iou:.4f}, mesh blobs {nb}')
+    if nb != COUNT or A.sum() == 0:
+        print(f'   expected {COUNT} mesh blobs and a ray-traced picture')
+        ok = False
     for k in range(1, nb + 1):
         mb = lb == k
         ys, xs = np.nonzero(mb)
@@ -27,4 +33,4 @@ for eye in ('left', 'right'):
         worst = max(worst, d)
         print(f'   mesh ({xs.mean():7.2f},{ys.mean():7.2f}) n={mb.sum():6d} | ray ({rx.mean():7.2f},{ry.mean():7.2f}) n={near.sum():6d} | offset {d:.2f} px')
 print(f'worst centroid offset {worst:.2f} px')
-print('PASS' if worst < 0.5 else 'FAIL')
+print('PASS' if ok and worst < 0.5 else 'FAIL')

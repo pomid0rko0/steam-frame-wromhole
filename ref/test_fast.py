@@ -1,5 +1,6 @@
 """Fast per-ray method vs brute-force 3D geodesic integration, for several profiles."""
 import sys
+import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 from wh import Wormhole
 

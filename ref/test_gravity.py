@@ -2,6 +2,7 @@
 solve of Laplace's equation, for several profiles; prints the numbers the Godot test checks.
 Exit status 1 on any failure."""
 import sys
+import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 from wh import Wormhole
 from gravity import Gravity, solve_2d

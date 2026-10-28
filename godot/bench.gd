@@ -1,6 +1,7 @@
+class_name Bench
 extends Node
-## The speed check, "замер" on the frame rate panel, in two parts. The eyes are best kept closed
-## throughout: the world is turned and moved to the head, and some pictures are no proper ones.
+## The speed check, the menu's last row ("замер скорости"), in two parts. The eyes are best kept
+## closed throughout: the world is turned and moved to the head, and some pictures are no proper ones.
 ##
 ## What a frame costs depends only on the pose: how far from the throat one stands (l), where one
 ## looks (degrees from the throat along the floor, degrees up) and how the head is tilted (roll:
@@ -15,12 +16,12 @@ extends Node
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## makes SteamVR step in, and the GPU time then grows by half for reasons of its own.
-## This build's ray tracer is timed six ways (FOVEATIONS), and with the demo's toys a seventh,
-## the ray tracer with toys over the whole view, not only where the stencil marks a toy may be seen
-## (main.set_toy_mode): as it always ran, with the 3D scene in
+## This build's ray tracer is timed six ways (FOVEATIONS): as it always ran, with the 3D scene in
 ## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
-## foveated rendering: SteamVR's map low and high, our own wide and narrow (main.set_foveation).
-## The others run without foveation.
+## foveated rendering: SteamVR's map low and high, our own wide and narrow (foveation.gd); with the
+## demo's toys a seventh, the ray tracer with toys over the whole view, not only where the stencil
+## marks that a toy may be seen (Tracer.toy_mode). The others run without foveation, a ray tracer
+## with toys over the whole view.
 ##
 ## 2. The tour, at 120 Hz with this build's ray tracer: at each of TOUR_L the view sweeps from
 ## the throat round to the other side, in rows from 60 degrees down to 60 up; then walks through
@@ -29,9 +30,10 @@ extends Node
 ## and the GPU and CPU time; every second a "tour:" line. Before each place the viewer goes back
 ## to the start for a moment, so that a headset that fell to every 2nd refresh has come back.
 ##
-## The panel's line says whether 120 Hz held (and where it did worst), how this build's ray
-## tracer compares with the first of the others, and what the foveation saves. Render
-## scale 100% throughout, the tour with the foveation chosen on the panel; afterwards the rate,
+## The result, on the menu's line below and under its row, says whether 120 Hz held (and where it
+## did worst), how this build's ray tracer compares with the first of the others, and what the
+## foveation and the stencil save. Render scale 100% throughout, the tour with the foveation chosen
+## in the menu; afterwards the rate,
 ## the scale, the shader, the foveation and where one stood come back. A build made for measuring
 ## (tools/ab_shaders.sh --auto) runs it by itself once the headset has tracked the head for
 ## AUTO_AFTER seconds: start it, put the headset on, close the eyes, send the log afterwards.
@@ -65,27 +67,24 @@ const TOUR_L := [11.6, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2]
 const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
-const MISSED_OK := 0.01         # as the panel: at most 1% of the refreshes without a new frame
-# this build's ray tracer: [label, foveation level (main.set_foveation), split]; the first is the
+# this build's ray tracer: [label, foveation level (Foveation.set_level), split]; the first is the
 # reference the others are compared with
 const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
 	["this build, SteamVR low", 1, false], ["this build, SteamVR high", 3, false],
 	["this build, own wide", 4, false], ["this build, own narrow", 5, false]]
 
 var main: Node                  # main.gd
-var panel: Node                 # perf_panel.gd
+var menu: Menu                  # the result goes there; its render scale
 var warm := 0.3                 # s after each switch, not timed
 var time := 0.8                 # s timed per segment
 var tour_scale := 1.0           # the tour's durations, scaled (tests)
-var with_tour := true
 var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
-var variants: Array = []        # this run's [label, Shader, foveation, split, main.toy_mode]:
-                                # others (of the kind
-                                # this build runs: with movable balls or without), then this
-                                # build's (FOVEATIONS)
+var variants: Array = []        # this run's [label, Shader, foveation, split, Tracer.toy_mode]:
+                                # others (of the kind this build runs: with toys or without),
+                                # then this build's (FOVEATIONS)
 var own := 0                    # the variant that is this build as it always ran
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
@@ -98,7 +97,7 @@ var results: Array = []         # per place: per variant, the segments' GPU ms (
                                 # a hitch of the system does not move it)
 var tour: Array = []            # the tour's steps (_make_tour)
 var tour_results: Array = []    # per step: {frames, refreshes, worst: [share, l, yaw, pitch, roll]}
-var meter := RateMeter.new()    # fed by the panel each frame
+var meter := RateMeter.new()    # fed by main.rate each frame
 var counting := false
 var tour_t := 0.0               # s since the tour began counting (the "tf" lines' time)
 var pose := [0.0, 0.0, 0.0, 0.0]     # the tour's pose now: l, degrees right, up, roll
@@ -156,26 +155,30 @@ func start() -> void:
 	if running:
 		return
 	running = true
-	own_shader = main.material.shader
+	var tracer: Tracer = main.tracer
+	own_shader = tracer.material.shader
 	variants = []
-	# others compared with the same kind: without movable balls, or with them (the demo's toys)
-	# (theirs without the stencil: they have no stencil test)
-	for o in others:
-		if own_shader == main.SHADER_PLAIN:
-			variants.append([o[0], o[1], 0, false, main.TOYS_BARE])
-		elif own_shader == main.SHADER_BALLS and o[2] != null:
-			variants.append([o[0], o[2], 0, false, main.TOYS_BARE])
+	# others compared with the same kind: without toys, or with them (the demo's), theirs over the
+	# whole view: with the stencil test (since the stencil split) the whole view marked, without
+	# it no stencil at all; none with the gravity view on (theirs are without it)
+	for o in others if tracer.gravity_view == 0 else []:
+		if tracer.plain():
+			variants.append([o[0], o[1], 0, false, Tracer.BARE])
+		elif o[2] != null:
+			var with_stencil: bool = o[2].code.contains("stencil_mode")
+			variants.append([o[0], o[2], 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE])
 	own = variants.size()
 	for f in FOVEATIONS:
-		variants.append([f[0], own_shader, f[1], f[2], main.TOYS_SPLIT])
-	if main.balls > 0:
-		variants.append(["this build, toys over the whole view", own_shader, 0, false, main.TOYS_WHOLE])
+		variants.append([f[0], own_shader, f[1], f[2], Tracer.SPLIT])
+	if not tracer.plain():
+		variants.append(["this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE])
 	saved_pose = main.get_pose()
 	main.hold = true
-	saved_scale = panel.render_scale
-	panel._set_scale(1.0)
+	saved_scale = menu.render_scale
+	menu.set_render_scale(1.0)
 	# back to this app's own setting where there is one, else to what the display ran at
-	saved_rate = panel.stored if panel.steam_key != "" and panel.stored > 0.0 else panel.rate
+	var rate: FrameRate = main.rate
+	saved_rate = rate.stored if rate.steam_key != "" and rate.stored > 0.0 else rate.rate
 	var order: Array = range(variants.size())
 	if variants.size() > 1:
 		var back := order.duplicate()
@@ -199,12 +202,12 @@ func start() -> void:
 	for i in variants.size():
 		names.append("%d = %s" % [i + 1, variants[i][0]])
 	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first; gravity view %s"
-			% [", ".join(names), PLACES.size(), time, "width" if main.own_order == 0 else "height",
-			main.GRAVITY_VIEWS[main.gravity_view]])
+			% [", ".join(names), PLACES.size(), time, "width" if main.foveation.order == 0 else "height",
+			Tracer.GRAVITY_VIEWS[tracer.gravity_view]])
 	var tour_s := 0.0
 	for s in tour:
 		tour_s += s.secs + (TOUR_RECOVER * tour_scale if s.recover else 0.0)
-	var total := plan.size() * (warm + time) + preparing * PREPARE + (tour_s if with_tour and panel.xr != null else 0.0)
+	var total := plan.size() * (warm + time) + preparing * PREPARE + (tour_s if _headset() else 0.0)
 	_show("замер: закрой глаза, не двигай головой, ~%d мин" % ceili(total / 60.0))
 	_rate(RATE, "prepare")
 
@@ -212,8 +215,8 @@ func start() -> void:
 ## Ask for a rate (the headset only), then go on to the next phase.
 func _rate(hz: float, next: String) -> void:
 	phase_t = 0.0
-	if panel.xr != null and absf(panel.rate - hz) > 0.5:
-		panel.choose_rate(hz)
+	if _headset() and absf(main.rate.rate - hz) > 0.5:
+		main.rate.choose(hz)
 		phase = "rate"
 		_next = next
 	else:
@@ -227,7 +230,7 @@ func _enter(p: String) -> void:
 		_prepare()
 	elif p == "tour":
 		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
-				% [panel.rate, main.foveation, "width" if main.own_order == 0 else "height", tour.size()])
+				% [main.rate.rate, main.foveation.level, "width" if main.foveation.order == 0 else "height", tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
 
@@ -235,7 +238,7 @@ func _enter(p: String) -> void:
 func _process(delta: float) -> void:
 	if auto and not running:
 		# by itself, once the headset has tracked the head for a while
-		if panel.xr != null and not main.await_pose and panel.rate > 0.0:
+		if _headset() and not main.await_pose and main.rate.rate > 0.0:
 			auto_t += delta
 			var left := ceili(AUTO_AFTER - auto_t)
 			if left != ceili(AUTO_AFTER - auto_t + delta):
@@ -249,7 +252,7 @@ func _process(delta: float) -> void:
 	phase_t += delta
 	match phase:
 		"rate":
-			if absf(panel.rate - (TOUR_RATE if _next == "tour" else RATE)) < 0.5 or phase_t > RATE_WAIT:
+			if absf(main.rate.rate - (TOUR_RATE if _next == "tour" else RATE)) < 0.5 or phase_t > RATE_WAIT:
 				_enter(_next)
 		"prepare":
 			if phase_t >= PREPARE:
@@ -276,10 +279,11 @@ func _prepare() -> void:
 
 ## A variant's ray tracer and foveation.
 func _use(v: Array) -> void:
-	main.material.shader = v[1]
-	main.set_toy_mode(v[4])
-	if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
-		main.set_foveation(v[2], v[3])
+	main.tracer.material.shader = v[1]
+	main.tracer.toy_mode = v[4]
+	var fov: Foveation = main.foveation
+	if fov.level != v[2] or fov.split_pass.enabled != (v[2] > 0 or v[3]):
+		fov.set_level(v[2], v[3])
 
 
 func _segment() -> void:
@@ -287,7 +291,7 @@ func _segment() -> void:
 		return
 	if gpu_ms.is_empty():
 		_clock()
-	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(panel.target.get_viewport_rid()))
+	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
 	if phase_t >= warm + time:
 		_clock()
 		_end_segment()
@@ -299,7 +303,7 @@ func _segment() -> void:
 
 ## The GPU's clock now (read twice a segment: a kernel file each frame is not free).
 func _clock() -> void:
-	var mhz: int = panel._gpu_mhz()
+	var mhz: int = main.rate.gpu_mhz()
 	if mhz > 0:
 		clock_lo = mhz if clock_lo == 0 else mini(clock_lo, mhz)
 		clock_hi = maxi(clock_hi, mhz)
@@ -335,13 +339,11 @@ func _end_segment() -> void:
 		parts.append(s)
 		segs.append(_list(r[v]))
 	print("bench: l %.1f m, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [place[0], place[1], place[2], ", ".join(parts), panel.rate, clock_lo, clock_hi, " ".join(segs)])
+			% [place[0], place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
 
 
 func _compared() -> void:
-	main.material.shader = own_shader
-	main.set_toy_mode(main.TOYS_SPLIT)
-	main.set_foveation(panel.foveation)     # the tour runs with the foveation chosen on the panel
+	_restore()      # the tour runs with this build's ray tracer and the foveation chosen in the menu
 	if variants.size() > 1:
 		# each variant against the first, averaged over the places (geometric mean)
 		var summary := []
@@ -359,7 +361,7 @@ func _compared() -> void:
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
 		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
-		# on the panel, what each foveation saves: SteamVR low, high, own wide, narrow
+		# for the menu, what each foveation saves: SteamVR low, high, own wide, narrow
 		var pcts := []
 		for v in range(own + 2, own + FOVEATIONS.size()):
 			pcts.append("%+d" % roundi(100.0 * (_ratio(v, own) - 1.0)))
@@ -368,7 +370,7 @@ func _compared() -> void:
 		if variants.size() > own + FOVEATIONS.size():
 			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
 		verdict = " · ".join(parts)
-	if with_tour and panel.xr != null:
+	if _headset():
 		_show("замер: теперь 120 Гц, глаза закрыты")
 		_rate(TOUR_RATE, "tour")
 	else:
@@ -377,14 +379,14 @@ func _compared() -> void:
 
 # ---------------------------------------------------------------- the tour
 
-## The panel's frame timing, every frame: while counting, a "tf" line for the frame.
+## The frame timing (main.rate), every frame: while counting, a "tf" line for the frame.
 func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 	var refreshes_before := meter.refreshes
 	var frames_before := meter.frames
 	meter.add(display_time, period, expected_hz)
 	if not counting or meter.frames == frames_before:
 		return
-	var vp: RID = panel.target.get_viewport_rid()
+	var vp: RID = main.rate.target.get_viewport_rid()
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
 	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
@@ -458,19 +460,19 @@ func _toured() -> void:
 		var r: Dictionary = tour_results[i]
 		total_f += r.frames
 		total_r += r.refreshes
-		if r.worst[0] > MISSED_OK and (worst < 0 or r.worst[0] > tour_results[worst].worst[0]):
+		if r.worst[0] > FrameRate.MISSED_OK and (worst < 0 or r.worst[0] > tour_results[worst].worst[0]):
 			worst = i
-	var line := "%.0f Гц держится везде" % panel.rate
+	var line := "%.0f Гц держится везде" % main.rate.rate
 	if worst >= 0:
 		var w: Array = tour_results[worst].worst
-		line = "%.0f Гц: пропуски, хуже всего %s (%d%%)" % [panel.rate, _ru(w[1], w[2], w[3]), roundi(100.0 * w[0])]
+		line = "%.0f Гц: пропуски, хуже всего %s (%d%%)" % [main.rate.rate, _ru(w[1], w[2], w[3]), roundi(100.0 * w[0])]
 	print("tour: done at %.0f Hz: %d of %d refreshes without a new frame (%.1f%%), %s"
-			% [panel.rate, total_r - total_f, total_r, 100.0 * (total_r - total_f) / maxi(total_r, 1),
+			% [main.rate.rate, total_r - total_f, total_r, 100.0 * (total_r - total_f) / maxi(total_r, 1),
 			"no second above 1%" if worst < 0 else "worst: " + tour[worst].what])
 	_finish(line)
 
 
-## A pose in words for the panel.
+## A pose in words for the menu.
 func _ru(l: float, yaw: float, pitch: float) -> String:
 	var a := absf(l)
 	var where := "старт" if a >= 10.0 else ("снаружи у края" if a >= main.space.L else ("край зоны" if a >= main.space.Lc else "горло"))
@@ -490,14 +492,12 @@ func _finish(tour_line: String) -> void:
 	running = false
 	counting = false
 	phase = ""
-	main.material.shader = own_shader
-	main.set_toy_mode(main.TOYS_SPLIT)
-	main.set_foveation(panel.foveation)
+	_restore()
 	main.hold = false
 	main.set_pose(saved_pose)
-	panel._set_scale(saved_scale)
-	if panel.xr != null and saved_rate > 0.0 and absf(saved_rate - panel.rate) > 0.5:
-		panel.choose_rate(saved_rate)
+	menu.set_render_scale(saved_scale)
+	if _headset() and saved_rate > 0.0 and absf(saved_rate - main.rate.rate) > 0.5:
+		main.rate.choose(saved_rate)
 	print("bench: done")
 	var parts := []
 	if tour_line != "":
@@ -532,5 +532,17 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
+## This build's ray tracer as it runs, with the foveation chosen in the menu.
+func _restore() -> void:
+	main.tracer.material.shader = own_shader
+	main.tracer.toy_mode = Tracer.SPLIT
+	main.foveation.set_level(menu.foveation)
+
+
+## A headset whose rate can be asked for and measured (not the desktop, not a test's fake one).
+func _headset() -> bool:
+	return main.rate.xr != null
+
+
 func _show(s: String) -> void:
-	panel.bench_status(s)
+	menu.bench_status(s)

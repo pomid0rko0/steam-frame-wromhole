@@ -7,13 +7,15 @@ keeps its log with KEEP_LOG); this runs the specialised program it made on waves
 a wave both sides, as on the GPU. It is a model: no timings, no waits on transcendental or
 texture-unit results (counted apart: cat4, cat5), no memory.
 
-  python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--check] [--split PLAINLOG]
+  python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--seed K] [--check] [--profile]
+                               [--split PLAINLOG]
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
 headset, S x S pixels (default 1728) and F degrees of vertical field of view (default 104),
-on N random tiles (default 300; the same tiles for every LOG with the same seed).
---split: the frame split by the stencil (main.gd, _update_proxies): LOG's ray tracer (with the
+on N random tiles (default 300; the same tiles for every LOG with the same seed K). --profile:
+cycles per stretch of code.
+--split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
 toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
 (the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
 GPU packs the passing pixels into waves). The proxies' own pass is not counted.
@@ -22,10 +24,13 @@ import json
 import os
 import re
 import sys
-import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'ref'))
+import in_box  # noqa: F401,E402 (first: on the Frame, into tools/box.sh's container)
+import numpy as np  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ir3_emu as E
+import ir3_emu as E  # noqa: E402
 
 # The estimate, fitted on the headset's speed check (main and three variants of edge-120hz, nine
 # poses each; rms 0.19 ms, the variants' means within 5%): per 64 pixels of a frame of both eyes at
@@ -76,7 +81,7 @@ UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f'
             ('wh_sph', 'v4', 6, None), ('wh_pil', 'v4', 4, None), ('wh_box', 'v4', 4, None),
             ('wh_ball', 'v4', 12, None), ('wh_ballCol', 'v4', 12, None), ('wh_nBall', 'i', 0, None),
             ('head_l', 'f', 0, None), ('head_n', 'v3', 0, None), ('head_f', 'v4', 3, None), ('head_pos', 'v3', 0, None),
-            ('wh_tabLo', 'v4', 0, 'WH_TABLE'), ('wh_tabInv', 'v4', 0, 'WH_TABLE'), ('wh_tabReg', 'v4', 0, 'WH_TABLE'),
+            ('wh_tabLo', 'v4', 0, None), ('wh_tabInv', 'v4', 0, None), ('wh_tabReg', 'v4', 0, None),
             ('grav_cyl', 'v4', 0, 'WH_GRAVITY'), ('grav_g', 'v4', 2, 'WH_GRAVITY'), ('grav_d', 'v4', 2, 'WH_GRAVITY'),
             ('wh_pix', 'f', 0, 'WH_PIX'),
             ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
@@ -308,7 +313,7 @@ def check(sh, entries, ntiles, rng, unis=None):
 
 
 def proxy_marked(e, xs, ys, size, tan_x, tan_y):
-    """Per lane: whether the stencil marks its pixel (main.gd, _update_proxies): its straight ray
+    """Per lane: whether the stencil marks its pixel (Tracer.set_head, proxy_spheres): its straight ray
     from the head, in the chart of the head's universe, meets a proxy sphere (or starts in one).
     No proxies: the whole view is marked."""
     P = np.array(e.get('proxies') or [], float).reshape(-1, 4)

@@ -4,7 +4,7 @@ extends RefCounted
 ##
 ## A ball is a point (l, n) with velocity U = (U_l, u) and a radius. Free motion follows
 ## geodesics (zero redshift: no gravity from the metric itself) plus gravity, -g grad phi.
-## phi is the potential Poisson's equation gives on the curved space itself, as in optozorax's
+## phi is the potential Laplace's equation gives on the curved space itself, as in optozorax's
 ## video about gravity and portals: ordinary uniform gravity far away in both universes, bent
 ## through the wormhole and weaker in the throat (WormholeSpace.potential, ref/gravity.py).
 ## Collisions use chord distances in R^4, the same definition of a
@@ -106,7 +106,8 @@ func distance_to(b: Dictionary, P: Vector4) -> float:
 	return (d - q.x * box[1] - q.y * box[2] - q.z * box[3] - q.w * box[4]).length()
 
 
-## Advance by delta seconds with fixed substeps. hands: Array of {l, n, U, radius} (kinematic).
+## Advance by delta seconds with fixed substeps. hands: Array of {l, n, U, radius, tracker}
+## (kinematic; the tracker: the hand a toy it just let go is "ghost" of, Hands.balls).
 ## A held ball or cube (held: the hand's tracker) is kinematic too: the hand places it and sets its
 ## U (and w) before each step, and it pushes the others without being pushed back.
 func step(delta: float, hands: Array) -> void:
@@ -140,11 +141,6 @@ func step(delta: float, hands: Array) -> void:
 ## A step of air drag, -k |U| U (k: drag / mass per metre), integrated implicitly: stable at any speed.
 func _air(U: Vector4, k: float) -> Vector4:
 	return U / (1.0 + k * U.length() * DT) if air else U
-
-
-## Signed chord distance between the surfaces of two balls (negative: overlap).
-func gap(a: Dictionary, b: Dictionary) -> float:
-	return (space.embed(a["l"], a["n"]) - space.embed(b["l"], b["n"])).length() - a["radius"] - b["radius"]
 
 
 ## Bounce, rolling friction and the floor's push. before: [l, n, U] before this step's motion.

@@ -8,14 +8,14 @@
 //                                           movable balls: centre as a point of R^4 (xyz, w) and
 //                                           (rgb, radius). A ball is every point of space whose chord
 //                                           distance in R^4 to the centre is below the radius.
-//   ivec4 wh_bIdx                          the balls sorted by where they are (main.set_objects):
+//   ivec4 wh_bIdx                          the balls sorted by where they are (Tracer.set_objects):
 //                                           those a flat universe's sheet cuts, A's first and B's
 //                                           last, those within reach of the shell between them:
 //                                           A 0 .. y, the shell x .. w, B z .. wh_nBall
 //   vec4 wh_fball[WH_MAXB]                  the same balls in a flat universe: the sphere the
 //                                           sheet cuts from it, in that universe's chart (centre,
 //                                           radius squared)
-//   vec4 wh_cube[WH_MAXC], wh_cubeE[5 * WH_MAXC], wh_cubeCol[WH_MAXC], int wh_nCube, float wh_pix
+//   vec4 wh_cube[6], wh_cubeE[5 * 6], wh_cubeCol[6], int wh_nCube, float wh_pix
 //                                           movable cubes: a 4D box of R^4 cut by the space, as a box
 //                                           of a 4D SDF scene. Centre as a point of R^4; per cube five
 //                                           vectors: four orthonormal axes of R^4 divided by the half size
@@ -26,11 +26,14 @@
 //                                           In a flat universe this is an ordinary cube. wh_pix: a
 //                                           pixel's angle (the edge lines' width). ivec4 wh_cIdx:
 //                                           the cubes sorted as the balls.
+//   vec4 wh_bound[4]                        bounding spheres of the balls in A, in B, of the cubes in
+//                                           A, in B (xyz of the centre, radius; < 0: none): a ray of a
+//                                           flat universe that misses one tests none of them
 //                                           With WH_NO_BALLS defined first the balls' and cubes' code is
-//                                           left out.
-//   with WH_TABLE defined: sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
+//                                           left out (wh_ball, wh_ballCol and wh_nBall stay declared).
+//   sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
 //                                           the fillet polynomials by impact parameter
-//                                           (WormholeSpace.fillet_table), instead of per ray
+//                                           (WormholeSpace.fillet_table)
 //   with WH_GRAVITY defined: vec4 grav_cyl, grav_g[2], grav_d[2]
 //                                           the gravity view (WormholeSpace.gravity_shader): the
 //                                           floor coloured by the strength of gravity
@@ -56,7 +59,6 @@
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;
-const int WH_MAXC = 6;
 
 float wh_Lc() { return max(wh_h - wh_fillet, 0.0); }
 float wh_th0() { return asin(max(1.0 - wh_h / wh_fillet, 0.0)); }
@@ -106,7 +108,7 @@ float wh_asin(float x) {
 
 // The values of a ray's start point that do not depend on its direction: (r, r - rmin), the
 // second as a product (no cancellation near the fillet's inner end). The same for every pixel
-// of an eye: the view shader computes them per eye (wh_render's eye argument).
+// of an eye: the view shader computes them per eye (wh_renderE's eye argument).
 vec2 wh_eye(float l) {
     float th0 = wh_th0();
     float ths = th0 + max(abs(l) - wh_Lc(), 0.0) / wh_fillet;
@@ -282,15 +284,11 @@ vec4 wh_arrow(float l, float a, float foot) {
 // are below 1; a factor 1 / sqrt(t + al or ga) that is 1 or more is smooth on [0, 1] and is moved
 // into the interpolated part instead (regimes 1 and 2). No loops, the same cost for every ray, and
 // the integral up to any point is the same closed form: the floor crossing is a Newton solve on it.
-// v ("z" below) is the variable in which that solve and the ball sampling run: in regime 0
+// v ("z" below) is the variable in which that solve and the toys' search run: in regime 0
 // z = int w dt, in regimes 1 and 2 z = sqrt(t + mn).
 // With 4 nodes the error in psi is below 0.004 degrees (0.0001 typical) on the profiles in use.
-const vec4 WH_TAU = vec4(0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785);
-// e = A f: polynomial coefficients from the node values (the rows of A)
-const vec4 WH_A0 = vec4(1.0635954209629264, -0.06994895315294707, 0.0072202981818859785, -0.0008667659918653305);
-const vec4 WH_A1 = vec4(-13.363790651033874, 14.746483787306632, -1.5723807203730116, 0.1896875841002548);
-const vec4 WH_A2 = vec4(35.770406476784, -49.259940350673936, 15.558746458518186, -2.0692125846282434);
-const vec4 WH_A3 = vec4(-25.12406687051129, 37.32760503465092, -15.881390739642725, 3.6778525755030924);
+// The polynomial depends on b alone: WormholeSpace.fillet_table works it out (its nodes and the
+// matrix to the coefficients: _TAU, _A) and the shader samples it.
 const float WH_TABN = 256.0;     // knots per row of wh_tab (WormholeSpace.TABLE_N)
 
 struct WhFil {
@@ -378,13 +376,11 @@ float wh_filMomT(WhFil f, float t, out vec4 m) {
 
 float wh_poly(vec4 c, float t) { return c.x + t * (c.y + t * (c.z + t * c.w)); }
 
-vec4 wh_coef(vec4 v) { return vec4(dot(WH_A0, v), dot(WH_A1, v), dot(WH_A2, v), dot(WH_A3, v)); }
-
-// The path length from the fillet's inner end, m the moments there, for the fog and the cubes'
-// edge lines only: r^2 / b times psi (r^2 / b is the length per angle), r taken at the weight's
-// mean tau, within 1.5% here and 7% on long fillets; the shader then holds one polynomial less
-// (12 registers, waves of 128 pixels). Movable objects' hits are ordered by where on the path they
-// are (piece and fraction of it, wh_curved), not by length.
+// The path length from the fillet's inner end, m the moments there, for the fog, the cubes' edge
+// lines and the arrows only: r^2 / b times psi (r^2 / b is the length per angle), r taken at the
+// weight's mean tau, within 1.5% here and 7% on long fillets; the shader then holds one polynomial
+// less. Movable objects' hits are ordered by where on the path they are (piece and fraction of
+// it, wh_curved), not by length.
 float wh_filLen(WhFil f, vec4 m) {
     float re = f.ra + f.span * m.y / max(m.x, 1e-30);
     return re * re * dot(f.e, m) * f.ib;
@@ -408,7 +404,6 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     float sal = turn ? sq : sqrt((rmin - rho0) / max(wh_Rout() - rmin, 1e-6 * R));   // uniforms only
     float sga = turn ? 0.0 : sq;
     f.E0 = max(sal + sga, 1e-6);
-#ifdef WH_TABLE
     // f.e depends on b alone: sampled from the row of b's regime (the regime is taken from the row,
     // so that the moments match the table), with the factor the table leaves out put back
     int row = turn ? (b >= wh_tabLo.w ? 3 : 2) : (b >= wh_tabLo.y ? 1 : 0);
@@ -418,16 +413,6 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     float x = clamp((b - rw.x) * rw.y, 0.0, WH_TABN - 1.0);
     vec4 et = textureLod(wh_tab, vec2((x + 0.5) / WH_TABN, (float(row) + 0.5) * 0.25), 0.0);
     f.e = f.reg == 0 ? et : et * inversesqrt(f.mx * (f.reg == 2 ? f.mn : 1.0));
-#else
-    vec4 r = f.ra + f.span * WH_TAU;
-    vec4 u = (r - rho0) / (2.0 * R);
-    // F = b sqrt(2R) / (r sqrt(q)), q holding the factors moved out of the weight
-    vec4 q = (1.0 - u) * (r + b);
-    if (f.reg >= 1) q *= WH_TAU + f.mx;
-    if (f.reg == 2) q *= WH_TAU + f.mn;
-    vec4 k = sqrt(2.0 * R) * inversesqrt(q * r * r);
-    f.e = wh_coef(b * k);
-#endif
     f.ib = 1.0 / max(b, 1e-30);
     f.zlo = f.reg == 0 ? 0.0 : min(sal, sga);    // sqrt(mn)
     vec4 m;
@@ -469,7 +454,7 @@ vec2 wh_filLW(WhFil f, float t, float side) {
 //   0: leaves the shell, given in flat chart coordinates (outSide, outX, outD)
 //   1: hits the floor at (hitL, hitN)        2: enters ball ballI at (hitL, hitN)
 //      (ballI >= WH_MAXB: cube ballI - WH_MAXB)
-// arc = path length travelled inside the shell. WH_ARROWS: if slc.w < 0 (none found before), the
+// arc = path length travelled inside the shell. WH_ARROWS: if slc.z < 0 (none found before), the
 // first crossing of the arrows' surface n.x = 0 before the ray's end goes into slc: (l, the angle
 // of n from +y toward +z, path length from the eye), dist0 being the path length before the shell.
 // The path: piece A, a fillet travelled inward from the start (to the throat, or to the turning
@@ -580,7 +565,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     // Balls and cubes this ray can reach: the whole ray lies in span(e1, e2, w-axis) of R^4, so
     // one whose centre is farther than its reach (a ball's radius, a cube's half diagonal, two half
     // sizes) from that subspace is never hit. Only those within reach of the shell are looked at
-    // (wh_bIdx.x .. .w, wh_cIdx.x .. .w: main.set_objects sorts them by where they are). Each
+    // (wh_bIdx.x .. .w, wh_cIdx.x .. .w: Tracer.set_objects sorts them by where they are). Each
     // candidate is searched on its own, only where the path can come within its reach:
     //  - in r = |xyz| and in w: the chord distance in R^4 is at least either difference. On a
     //    fillet r and w grow together, so the w bounds are r bounds there, and r is linear in tau;
@@ -699,7 +684,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         // psi bounds the samples here too: it grows along the piece (not linearly
                         // in z), so its window's ends are solved for z, as the floor's crossing is.
                         // A ray that grazes the shell near its edge stays within the r and w windows
-                        // of a toy there for metres: a ball held there made the frame 3.5x dearer
+                        // of a toy there for metres, and a ball held there would be sampled all along
                         if (dps < 9.0 && qw.y > qw.x) {
                             // psi from the fillet's inner end: piece A runs toward it, piece C away
                             vec2 ps = clamp(vec2(psc - dps, psc + dps) + vec2(-5e-3, 5e-3), psi0, psi1);
@@ -931,9 +916,9 @@ void wh_enter(float side, vec3 x, vec3 d, out float l, out vec3 n, out float vl,
 }
 
 // ---------------------------------------------------------------- flat scene
-// Every object only offers its entry distance; the nearest one's normal and colour are worked
-// out once at the end. The pillars and boxes are first tested against their bounding balls:
-// most rays pass far from all of them.
+// Each static object is tested in turn and writes its normal and colour when it is the nearest so
+// far; world B's boxes are skipped by rays that go up above all of them. The movable balls and
+// cubes: only those of this universe, after their bounding spheres (wh_bound).
 struct WhHit {
     float t;
     int kind;      // 0 none, 1 floor, 2 object, 3 shell, 4 ball, 5 cube
@@ -1032,7 +1017,7 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     float dsb = bqb * bqb - cqb;
     float eb = -bqb - bt;
     bool nearB = bb.w > 0.0 && (cqb <= 0.0 || (bqb < 0.0 && dsb >= 0.0 && (eb < 0.0 || eb * eb < dsb)));
-    // this universe's balls only (main.set_objects sorts them: A's first, B's last), each as the
+    // this universe's balls only (Tracer.set_objects sorts them: A's first, B's last), each as the
     // sphere its sheet cuts from it in this chart (wh_fball: centre, radius squared)
     for (int i = side > 0.0 ? 0 : wh_bIdx.z; i < (nearB ? (side > 0.0 ? wh_bIdx.y : wh_nBall) : 0); i++) {
         vec4 S = wh_fball[i];

@@ -1,11 +1,7 @@
 """wh_geodesic (the GPU move from the head to an eye) vs a float64 fine-step reference:
 eye position and transported frame for random heads, offsets and profiles."""
-import os, sys, shutil
-# On a machine without apt (the Steam Frame's SteamOS) this runs in tools/box.sh's container: EGL
-# there is software, here it would be the headset's GPU (tools/env.sh)
-if not shutil.which('apt-get') and shutil.which('podman'):
-    BOX = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools', 'box.sh')
-    os.execv(BOX, [BOX, 'python3', os.path.abspath(sys.argv[0])] + sys.argv[1:])
+import os, sys
+import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from wh import Wormhole
@@ -19,6 +15,7 @@ FRAG = """#version 330
 uniform float wh_rho0; uniform float wh_h; uniform float wh_fillet;
 uniform vec4 wh_sph[6]; uniform vec4 wh_pil[4]; uniform vec4 wh_box[4];
 uniform vec4 wh_ball[12]; uniform vec4 wh_ballCol[12]; uniform int wh_nBall;
+uniform sampler2D wh_tab; uniform vec4 wh_tabLo; uniform vec4 wh_tabInv; uniform vec4 wh_tabReg;
 uniform sampler2D uIn;    // rows: (l, n.xyz) (off.xyz, 0) f0 f1 f2
 out vec4 o[4];
 """ + CORE + """

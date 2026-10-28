@@ -82,7 +82,7 @@ for s in "${srcs[@]}"; do
 	echo "$s: $stats"
 	# the poses' inputs (and pictures, for --check), from Godot itself
 	(cd "$ROOT/godot" && XDG_DATA_HOME=$WORK/data timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
-		--rendering-method mobile --resolution 128x128 -s res://tests/emu_dump.gd -- "$WORK/d$n.json" "$POSES" 90 $sc "$sh" \
+		--resolution 128x128 -s res://tests/emu_dump.gd -- "$WORK/d$n.json" "$POSES" 90 $sc "$sh" \
 		> "$WORK/dump.log" 2>&1) || { echo "emu_dump failed"; tail "$WORK/dump.log"; exit 1; }
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""

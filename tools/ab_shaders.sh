@@ -2,9 +2,9 @@
 # Other ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of each
 # source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the one
 # with movable balls where the source has it (the speed check times that one while the demo's
-# toys are on: the normal scene). In the
-# headset the panel's "замер" button then times this build's ray tracer and these at the same
-# places, one after the other; the panel compares this build's with the first.
+# toys are on: the normal scene). In the headset the menu's last row, the speed check, then times
+# this build's ray tracer and these at the same places, one after the other, and says how this
+# build's compares with the first.
 #   tools/ab_shaders.sh <source>...   a source: a commit, or a directory holding wormhole.gdshader,
 #                                     wormhole_view.gdshaderinc, wormhole_core.gdshaderinc
 #                                     (optionally a file "label" naming it), or one of the cost

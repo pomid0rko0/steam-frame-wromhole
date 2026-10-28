@@ -5,17 +5,17 @@ extends SceneTree
 ## and gives back the shader, the foveation and where the viewer stood. The menu has its row.
 ##   godot --path . -s res://tests/bench_test.gd
 
+const U := preload("res://tests/util.gd")
+
 var main: Node3D
 var frames := 0
-var ok := true
 var pose_before: Array
 var shader_before: Shader
 var started := false
 
 
 func check(name: String, good: bool, got: Variant = "") -> void:
-	ok = ok and good
-	print("%-52s %-24s %s" % [name, str(got), "ok" if good else "WRONG"])
+	U.check(name, good, str(got))
 
 
 func _initialize() -> void:
@@ -28,14 +28,14 @@ func _process(_d: float) -> bool:
 	frames += 1
 	var b: Node = main.bench
 	if frames == 3:
-		var p: Node3D = main.perf
+		var p: Node3D = main.menu
 		var has_row := false
 		for r: Dictionary in p.rows:
 			has_row = has_row or r.key == "bench"
 		check("the menu has the speed check's row", has_row)
-		main.place(1.0, Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
+		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
-		shader_before = main.material.shader
+		shader_before = main.tracer.material.shader
 		b.warm = 0.1
 		b.time = 0.2
 		b.start()
@@ -50,14 +50,14 @@ func _process(_d: float) -> bool:
 				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, place[0]])
 				started = false
 			var v: Array = b.variants[b.plan[b.step][1]]
-			if main.material.shader != v[1]:
+			if main.tracer.material.shader != v[1]:
 				check("the segment's shader", false, b.plan[b.step][1])
 				started = false
-			if main.toy_mode != v[4]:
+			if main.tracer.toy_mode != v[4]:
 				check("the segment's stencil split", false, b.plan[b.step][1])
 				started = false
-			if main.foveation != v[2] or main.split_pass.enabled != (v[2] > 0 or v[3]):
-				check("the segment's foveation", false, "%d %s" % [main.foveation, main.split_pass.enabled])
+			if main.foveation.level != v[2] or main.foveation.split_pass.enabled != (v[2] > 0 or v[3]):
+				check("the segment's foveation", false, "%d %s" % [main.foveation, main.foveation.split_pass.enabled])
 				started = false
 		if not b.running:
 			check("finished", true, "%d frames" % frames)
@@ -69,19 +69,17 @@ func _process(_d: float) -> bool:
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
 			# this build six ways, and with toys a seventh: over the whole view
 			check("all the others in it, this build six (seven) ways", b.variants.size() == b.others.size()
-					+ b.FOVEATIONS.size() + (1 if main.balls > 0 else 0))
+					+ b.FOVEATIONS.size() + (1 if main.tracer.toys > 0 else 0))
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("this build's shader back", main.material.shader == shader_before and main.toy_mode == main.TOYS_SPLIT)
-			check("the foveation back (off)", main.foveation == 0 and not main.split_pass.enabled)
-			check("the panel shows the foveation's result", main.perf.bench_text.contains("фовеация"), main.perf.bench_text)
-			print("PASS" if ok else "FAIL")
-			quit(0 if ok else 1)
+			check("this build's shader back", main.tracer.material.shader == shader_before and main.tracer.toy_mode == Tracer.SPLIT)
+			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
+			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
+			U.finish(self)
 			return true
 	if Time.get_ticks_msec() > 600_000:
 		check("finished in 10 minutes", false)
-		print("FAIL")
-		quit(1)
+		U.finish(self)
 		return true
 	return false

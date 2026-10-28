@@ -17,8 +17,10 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'ref'))
+import in_box  # noqa: F401,E402 (first: on the Frame, into tools/box.sh's container)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ir3_emu as E
+import ir3_emu as E  # noqa: E402
 import adreno_cost as A
 
 BRANCH = ('br', 'brao', 'braa', 'bany', 'ball', 'getone')

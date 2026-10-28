@@ -5,6 +5,4 @@ stencil_mode read, compare_equal, 1;
 
 // The ray tracer with movable balls (wh_ball, wh_ballCol, wh_nBall) and cubes (wh_cube, wh_cubeE,
 // wh_cubeCol, wh_nCube).
-// The fillet polynomials from a table (main.gd sets it), as the plain ray tracer
-#define WH_TABLE
 #include "res://shaders/wormhole_view.gdshaderinc"

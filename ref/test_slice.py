@@ -4,6 +4,7 @@ space, as test_gpu.py does for the floor. The shader runs as the gravity view wi
 (wormhole_arrows.gdshader: no movable balls, the fillet table). Exit status 1 on failure.
     python3 ref/test_slice.py [pixels]"""
 import os, sys
+import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 os.environ['WH_BALLS'] = '0'
 import numpy as np
 import moderngl

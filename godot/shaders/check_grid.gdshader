@@ -7,7 +7,7 @@ render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, fog_
 
 uniform float rout;            // chart radius where the flat floor starts
 uniform float lsh;             // l at that radius
-uniform float clear = 0.3;     // keep away from the curved part
+const float clear = 0.3;       // keep away from the curved part
 uniform vec4 balls[3];         // the check balls (chart centre, radius) hide the floor behind them
 uniform vec4 cube;             // and the check cube (chart centre, radius of a ball around it)
 uniform bool solid = false;    // tests: fill everywhere a line could be drawn

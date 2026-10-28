@@ -71,20 +71,20 @@ func _deriv(l: float, n: Vector3, vecs: Array) -> Array:
 	var rr := r(l)
 	var k := dr(l) / rr
 	var vel: Vector4 = vecs[0]
-	var w := Vector3(vel.y, vel.z, vel.w)
+	var v := Vector3(vel.y, vel.z, vel.w)
 	var dvecs := []
 	for U: Vector4 in vecs:
 		var u := Vector3(U.y, U.z, U.w)
-		var du := -k * U.x * w - (u.dot(w) / rr) * n
-		dvecs.append(Vector4(k * w.dot(u), du.x, du.y, du.z))
-	return [vel.x, w / rr, dvecs]
+		var du := -k * U.x * v - (u.dot(v) / rr) * n
+		dvecs.append(Vector4(k * v.dot(u), du.x, du.y, du.z))
+	return [vel.x, v / rr, dvecs]
 
 
-func _shift(l: float, n: Vector3, vecs: Array, d: Array, h: float) -> Array:
+func _shift(l: float, n: Vector3, vecs: Array, d: Array, ds: float) -> Array:
 	var out := []
 	for i in vecs.size():
-		out.append(vecs[i] + h * d[2][i])
-	return [l + h * d[0], n + h * d[1], out]
+		out.append(vecs[i] + ds * d[2][i])
+	return [l + ds * d[0], n + ds * d[1], out]
 
 
 ## Follow the geodesic from (l, n) with unit initial direction dir for length dist,
@@ -95,20 +95,20 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 	var vecs := [dir]
 	vecs.append_array(frame)
 	var steps := maxi(1, ceili(dist / STEP))
-	var h := dist / steps
+	var ds := dist / steps
 	for _s in steps:
 		var k1 := _deriv(l, n, vecs)
-		var y2 := _shift(l, n, vecs, k1, 0.5 * h)
+		var y2 := _shift(l, n, vecs, k1, 0.5 * ds)
 		var k2 := _deriv(y2[0], y2[1], y2[2])
-		var y3 := _shift(l, n, vecs, k2, 0.5 * h)
+		var y3 := _shift(l, n, vecs, k2, 0.5 * ds)
 		var k3 := _deriv(y3[0], y3[1], y3[2])
-		var y4 := _shift(l, n, vecs, k3, h)
+		var y4 := _shift(l, n, vecs, k3, ds)
 		var k4 := _deriv(y4[0], y4[1], y4[2])
-		l += h / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
-		n += h / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
+		l += ds / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
+		n += ds / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
 		n = n.normalized()
 		for i in vecs.size():
-			var U: Vector4 = vecs[i] + h / 6.0 * (k1[2][i] + 2.0 * k2[2][i] + 2.0 * k3[2][i] + k4[2][i])
+			var U: Vector4 = vecs[i] + ds / 6.0 * (k1[2][i] + 2.0 * k2[2][i] + 2.0 * k3[2][i] + k4[2][i])
 			vecs[i] = tangent(n, U)
 	return [l, n, vecs.slice(1)]
 
@@ -449,7 +449,7 @@ static func vector_to_chart(side: float, n: Vector3, U: Vector4) -> Vector3:
 	return d
 
 
-## Chart side and chart position of a point in a flat region.
+## The chart position of a point in a flat region (its side: the sign of l).
 func chart_position(l: float, n: Vector3) -> Vector3:
 	var x := r(l) * n
 	if l < 0.0:
@@ -513,14 +513,14 @@ func _fillet_coef(b: float, turn: bool, reg: int, rmin: float) -> Vector4:
 	var mx := maxf(al, ga)
 	var F := []
 	for k in 4:
-		var r: float = ra + span * _TAU[k]
-		var u := (r - rho0) / (2.0 * fillet)
-		var q := (1.0 - u) * (r + b)
+		var rk: float = ra + span * _TAU[k]
+		var u := (rk - rho0) / (2.0 * fillet)
+		var q := (1.0 - u) * (rk + b)
 		if reg >= 1:
 			q *= _TAU[k] + mx
 		if reg == 2:
 			q *= _TAU[k] + mn
-		F.append(b * sqrt(2.0 * fillet) / sqrt(q * r * r))
+		F.append(b * sqrt(2.0 * fillet) / sqrt(q * rk * rk))
 	var scale := 1.0
 	if reg >= 1:
 		scale *= sqrt(mx)

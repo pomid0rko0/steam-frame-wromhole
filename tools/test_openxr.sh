@@ -26,15 +26,15 @@ for i in $(seq 40); do [ -S /tmp/monado_comp_ipc ] && break; sleep 0.5; done
 [ -S /tmp/monado_comp_ipc ] || { echo "monado-service did not start:"; tail -5 /tmp/monado-service.log; exit 2; }
 sleep 2
 
-log=$(timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . --rendering-method mobile \
+log=$(timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
 	-s res://tests/openxr_smoke.gd 2>&1)
 code=$?
 kill $monado 2>/dev/null
 echo "$log" > /tmp/wormhole-openxr.log
-grep -E "^(in_xr|runtime|measured|panel|refresh|window|bench)| (ok|WRONG)$" <<<"$log"
+grep -E "^(in_xr|runtime|measured|menu|refresh|bench|PASS |FAIL )" <<<"$log"
 failed=0
 if grep -qE "SCRIPT ERROR|SHADER ERROR" <<<"$log"; then grep -E "SCRIPT ERROR|SHADER ERROR" -A3 <<<"$log"; failed=1; fi
-grep -q "^PASS$" <<<"$log" || failed=1
+grep -q "^FAILURES: 0$" <<<"$log" || failed=1
 # a crash on the way out (it happened once: a lambda connected to the OpenXR interface)
 [ $code -eq 0 ] || { echo "Godot exited with $code (full log: /tmp/wormhole-openxr.log)"; tail -3 <<<"$log"; failed=1; }
 if [ $failed -eq 0 ]; then echo "PASS"; else echo "FAILED"; fi

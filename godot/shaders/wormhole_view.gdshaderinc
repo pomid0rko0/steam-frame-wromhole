@@ -22,12 +22,11 @@ uniform float head_l = 10.0;
 uniform vec3 head_n = vec3(1.0, 0.0, 0.0);
 uniform vec4 head_f[3];
 uniform vec3 head_pos;
-#ifdef WH_TABLE
+// the fillet polynomials by impact parameter (WormholeSpace.fillet_table)
 uniform sampler2D wh_tab : filter_linear, repeat_disable;
 uniform vec4 wh_tabLo;
 uniform vec4 wh_tabInv;
 uniform vec4 wh_tabReg;
-#endif
 #ifdef WH_GRAVITY
 uniform vec4 grav_cyl;
 uniform vec4 grav_g[2];
@@ -50,7 +49,7 @@ uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube = 0;
 // balls' and cubes' bounding spheres (R^4 xyz of the centre, radius; < 0: none) in universe A, B
-// (main.set_objects): a ray of a flat universe that misses one tests none of them
+// (Tracer.set_objects): a ray of a flat universe that misses one tests none of them
 uniform vec4 wh_bound[4];
 // where in the sorted lists the balls and cubes of universe A, of the shell and of universe B are
 uniform ivec4 wh_bIdx;

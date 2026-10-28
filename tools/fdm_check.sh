@@ -3,12 +3,12 @@
 # Turnip (Mesa's driver for the Frame's Adreno 750) over Mesa's "noop" drm-shim (no GPU, nothing
 # is drawn), the XR view through the simulated headset, and the driver's trace (u_trace) says
 # for each render pass whether it rendered in tiles and with how many attachments. Turnip only
-# applies a density map in tiles. Three runs of tests/fdm_check.gd:
+# applies a density map in tiles. Four runs of tests/fdm_check.gd:
 #   off    the XR 3D pass as it always ran: one pass with two subpasses, which Turnip renders
 #          without tiles (Godot 4.7.2's subpass dependency lacks BY_REGION, split_pass.gd)
 #   split  the 3D scene in a pass of its own: in tiles
 #   on     foveation: in tiles, and with one attachment more than split (the density map)
-#   own    the same with our own density map (main.OWN_MAPS)
+#   own    the same with our own density map (Foveation.OWN_MAPS)
 # Each eye at 1728x1728, as SteamVR gives the app on the Frame; the tiles' size is printed too
 # (a density is per tile).
 #   tools/fdm_check.sh           (exit 0 if "on" and "own" render the XR pass in tiles with the density map)
@@ -34,7 +34,7 @@ for m in off split on own; do
 	# on the Frame: "Autotune selected sysmem"); the reasons tiles are impossible come first
 	XDG_DATA_HOME=$TMP/data_$m LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
 	VK_ICD_FILENAMES=$TMP/icd.json MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=$TMP/trace_$m.txt TU_DEBUG=perf,gmem \
-		timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . --rendering-method mobile \
+		timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
 		--resolution 320x180 -s res://tests/fdm_check.gd -- $m 1728 > "$TMP/log_$m.txt" 2>&1
 	if grep -qE "SCRIPT ERROR|SHADER ERROR" "$TMP/log_$m.txt"; then
 		grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$TMP/log_$m.txt"; rm -rf "$TMP"; exit 1
