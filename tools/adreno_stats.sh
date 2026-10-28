@@ -4,7 +4,7 @@
 # GPU, nothing is drawn), and ir3 prints each fragment shader's statistics. For the ray tracer:
 #   instr (nops)     code size; nops are cycles the shader waits for a result
 #   full regs        registers per pixel, in vec4: 48 is the most, and then only 4 waves of pixels
-#                    run at once on a core; 24 gives 8, 16 gives 12, 12 or fewer 16
+#                    run at once on a core; 24 gives 8, 16 gives 12, 12 or fewer 8 of 128
 #   waves            how many waves of 64 (128) pixels run at once: more hide waiting better
 #   cat4             transcendental instructions (exp, log, sqrt, rcp, sin...)
 #   loops            loops left after unrolling

@@ -191,8 +191,8 @@ func _carry(i: int) -> void:
 
 ## Hand i lets its toy go: it flies off with the hand's velocity and turns as the hand turned. Not
 ## with its own velocity in the hand: held off the hand (half a metre to a big ball's centre), it
-## also moved with the turn of the wrist times that lever, and a flick of the wrist threw it at
-## 15-20 m/s.
+## also moves with the turn of the wrist times that lever, and a flick of the wrist would throw it
+## far too fast.
 func _release(i: int) -> void:
 	var st := state[i]
 	if not st.has("held"):

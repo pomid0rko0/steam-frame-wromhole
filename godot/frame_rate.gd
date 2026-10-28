@@ -72,7 +72,7 @@ func _ready() -> void:
 	RenderingServer.viewport_set_measure_render_time(target.get_viewport_rid(), true)
 	if xr:
 		api = OpenXRAPIExtension.new()
-		# a method, not a lambda: a lambda left connected to the interface corrupted memory at exit
+		# a method, not a lambda: a lambda left connected to the interface corrupts memory at exit (Monado)
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
 		find_app_setting()

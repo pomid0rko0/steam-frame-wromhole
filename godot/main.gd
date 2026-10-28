@@ -82,7 +82,7 @@ func _ready() -> void:
 		in_xr = true
 		var oxr := xr as OpenXRInterface
 		if oxr:
-			# methods, not lambdas: a lambda left connected to the interface corrupted memory at exit
+			# methods, not lambdas: a lambda left connected to the interface corrupts memory at exit (Monado)
 			oxr.pose_recentered.connect(_on_recentered)
 			# for godot.log: input reaches the app only while the session is focused (an open
 			# SteamVR dashboard takes the focus away)

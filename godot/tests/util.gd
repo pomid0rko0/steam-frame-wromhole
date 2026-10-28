@@ -10,8 +10,8 @@ const GENERIC := "/interaction_profiles/khr/generic_controller"
 const TOUCH := "/interaction_profiles/oculus/touch_controller"
 # action name -> the binding paths openxr_action_map.tres has for it, per profile, exactly (one
 # path a runtime rejects drops the profile's bindings, so nothing the app does not read): the Steam
-# Frame's own (paths from Valve's page «Steam Frame Input»), the KHR generic controller (as the
-# Frame's controllers came before the map had theirs), Touch (SteamVR's next fallback), the eyes
+# Frame's own (paths from Valve's page «Steam Frame Input»), the KHR generic controller (SteamVR's
+# fallback when an app offers no Frame profile), Touch (SteamVR's next fallback), the eyes
 const L := "/user/hand/left/"
 const R := "/user/hand/right/"
 const POSES := {"aim_pose": [L + "input/aim/pose", R + "input/aim/pose"],
@@ -99,8 +99,7 @@ static func headset(case := 0, pitch := -12.0, size := Vector2i(1000, 1100), hmd
 	return hmd
 
 
-## A controller tracker with the app's inputs at rest, as the Frame's controllers came before the
-## map had their profile.
+## A controller tracker with the app's inputs at rest.
 static func controller(tracker_name: StringName) -> XRControllerTracker:
 	var t := XRControllerTracker.new()
 	t.name = tracker_name

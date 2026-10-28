@@ -106,7 +106,8 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   Left X / Y of the other profiles are the Frame's D-pad down / up, left, right.
 - **The menu.** While it is open (`main.menu_active`, including the frame that closes it) A, B, the
   D-pad and the left stick are its; a new button checks it and stays off the left stick's click,
-  View and Menu. A setting is a row: `Menu.ROWS`, `_count`, `_current`, `_apply`, `_value_text`.
+  View and Menu. A setting is a row: `Menu.ROWS`, `NAMES`, `_count`, `_current`, `_apply`, `_enabled`,
+  `_value_text`.
 - **The speed check** sets the viewer's pose itself: while it runs (`main.hold`) the sticks, A and
   the hands do nothing, and a new button stays out too; the menu greys the rows it sets.
 - **The hands** take two of the shader's 12 ball slots (`Tracer.MAX_BALLS`); the toys' balls take
@@ -114,10 +115,12 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   last places), then the hands and what they hold are placed (`Hands.update`), then everything is
   drawn: a toy let go starts from the hand. Jumps of
   the viewer (`place`, `set_pose`, a snap turn) call `Hands.forget_motion`, or the jump is a throw.
-- **A throat change** (`space.set_profile`) rebuilds what is built for the shape:
-  `tracer.upload_fillet_table()` (slow in GDScript: not per frame), `tracer.upload_gravity()`,
-  `set_objects` (its sorting and proxies use `space.h`, `space.Rout`). Balls keep their distance to
-  the shell's edge, as the feet do.
+- **A throat change** (`space.set_profile`; today only `WormholeSpace._init` calls it) must rebuild
+  what is built for the shape: the shader's `wh_rho0`, `wh_h`, `wh_fillet` (`tracer.param`, set once
+  in `Tracer._ready`), `tracer.upload_fillet_table()` (slow in GDScript: not per frame),
+  `tracer.upload_gravity()`, `set_objects` (its sorting and proxies use `space.h`, `space.Rout`) and
+  the stereo check grid's `rout`, `lsh` (`check_scene.gd`). The feet and the balls should keep their
+  distance to the curved zone's edge; nothing does that yet.
 - **Foveation and the render scale:** one of them at a time (the eye-tracked offsets are in
   full-size pixels). The split pass sits on the XR camera's compositor: an effect added there
   splits the pass too.
@@ -142,7 +145,7 @@ named. A tool you had to install goes into `setup.sh`.
 | command | what | time |
 |---|---|---|
 | `tools/test_stereo.sh` | the stereo suite (`docs/checks.md`); renders in parallel, one Godot per core | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
-| `tools/test.sh [name...]` | the Godot tests `godot/tests/<name>_test.gd`, all at once, each in its own xvfb; logs in `/tmp/wormhole-tests` | 1–3 min |
+| `tools/test.sh [name...]` | the Godot tests `godot/tests/<name>_test.gd`, `JOBS` at a time (one per core), each in its own xvfb; logs in `/tmp/wormhole-tests` | 1–3 min |
 | `tools/test_openxr.sh` | the app through OpenXR under Monado (`tests/openxr_smoke.gd`) | ~3 min |
 | `tools/fdm_check.sh` | foveation as the Frame's driver applies it | ~10 s |
 | `tools/export.sh [--check] [label]` | the build; `--check` turns on the stereo check scene (an empty `godot/check` during the export, `main.CHECK_FLAG`); on the Frame the file is replaced at once, a running build keeps the old one | ~40 s |
@@ -212,7 +215,7 @@ Godot, SteamVR and the Frame:
 - **SteamVR on the Frame** shows a non-Steam app's window on a virtual screen in the headset: XR
   renders into a SubViewport and the window shows only a notice. While its dashboard is open the
   app gets no input.
-- **Refresh rate.** The app starts at 72 Hz. SteamVR answers `XR_FB_display_refresh_rate` with
+- **Refresh rate.** The app starts at 72 Hz until the menu stores a rate for it. SteamVR answers `XR_FB_display_refresh_rate` with
   success and ignores it; it follows `steam.app.<SteamAppId>.preferredRefreshRate`, set by
   `/opt/steamvr/bin/linuxarm64/vrcmd`, and the running app switches within a second (SteamVR
   2.18.2). No `XR_EXT_performance_settings`. The GPU stays at its top clock (903 MHz) while frames
@@ -255,8 +258,8 @@ Godot, SteamVR and the Frame:
   with `get_line()` (`FrameRate.read_line`).
 - **GDScript's `Vector2/3/4` are single precision** (`float` is double): keep ODE states and tables
   in floats or `PackedFloat64Array`.
-- **A method named like a native one** (`set_scale` on a Node3D) is a parse error: the project
-  treats warnings as errors.
+- **A method named like a native one** (`set_scale` on a Node3D) is a parse error: GDScript's
+  NATIVE_METHOD_OVERRIDE warning is an error by default.
 - **The stencil** (`stencil_mode read|write, compare_..., ref`) works on Mobile, multiview and
   lavapipe. Opaque draws follow `render_priority`, lower first. A MeshInstance3D whose
   ShaderMaterial has no shader yet is drawn with Godot's default lit material, a huge program:
@@ -298,9 +301,11 @@ The Adreno 750 and its compiler (ir3):
 - **Software-Vulkan timings** are good for ratios only, not for the shader's inner costs.
 
 The ray tracer's numerics:
-- **The fillet table** stores e·sqrt(mx), not e: e has a factor 1/sqrt(mx) that goes to zero like a
-  square root at b → Rout, which interpolation misses; the pixel puts sqrt(mx) back. One row per
-  regime, so the moments match the table. Sample it with `textureLod`.
+- **The fillet table** has 4 rows, one per span of b, each in one regime of the moments (the row
+  gives the regime, so the moments match the table). In regimes 1 and 2 e has a factor
+  1/sqrt(mx) (and 1/sqrt(mn) in regime 2) that goes to zero like a square root at b → Rout, which
+  interpolation misses: those rows store e with it taken out, and the pixel multiplies it back
+  (`inversesqrt`). Sample the table with `textureLod`.
 - **Rays that go round the throat** (|vl| tiny on the cylinder, looking sideways inside it) lose
   float32 digits: 1 - wc² is (rho0 - b)(rho0 + b) with rho0 - b from vl², and hit keys carry no large
   offsets. Test such rays with a pose at an odd width (the middle column at vl = 0).
@@ -315,7 +320,7 @@ The ray tracer's numerics:
 - **Moving objects in the curved region: chords, not samples.** Between two samples the chord in
   R⁴ is tested against each object, and the path's point at the chord's entry is the hit if it lies
   within the chord's sag. Objects cost per ray: each is searched only where the path is within
-  reach in r and w, and on a fillet in its psi window (`wh_filSolve`); a ball at the eye or in the
+  reach in r and w, and in its psi window (on a fillet `wh_filSolve`, on the cylinder too); a ball at the eye or in the
   throat is a candidate for many rays, a ball far from the throat must not be one.
 - **Render scale and the stereo test:** below 100% the bilinear upscale shifts `tools/compare`'s
   one-colour threshold by tenths of a pixel: test a scale with `SCALING_3D_MODE_NEAREST`.

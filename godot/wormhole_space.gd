@@ -151,7 +151,7 @@ static func combine(f: Array, c: Vector3) -> Vector4:
 
 ## The tangent vector at (l, n) whose geodesic, followed for its length, reaches (tl, tn): the
 ## inverse of geodesic, for points within a hand's reach. The chord of R^4 seen from (l, n) is a
-## first guess (on the fillet it misses by d^3 / R^2, 4 mm at 30 cm); two corrections by where its
+## first guess (on the fillet it misses, the more the farther); two corrections by where its
 ## geodesic lands leave micrometres.
 func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	var E := embed(l, n)

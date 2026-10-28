@@ -62,7 +62,7 @@ get_templates() {
 }
 
 # One pip for all four: PyPI through the cloud session's proxy swings between 0.1 and 35 MB/s
-# per connection, and four pip downloads at once came out slower than one after another.
+# per connection.
 get_pip() {
 	pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/null \
 		|| pip install --quiet numpy scipy pillow moderngl
