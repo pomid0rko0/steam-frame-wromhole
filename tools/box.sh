@@ -24,7 +24,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
-SETUP=3   # what the setup below makes; a container set up by an older one is set up again
+SETUP=3   # what the setup below makes; a container set up by an older one is set up again (one
+          # set up by a newer box.sh, another branch's, already has all of it)
 if ! podman container exists $NAME; then
 	podman run -d --name $NAME --init -v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
 fi
@@ -32,7 +33,7 @@ podman inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' $NAME | gre
 	|| { echo "the $NAME container does not mount $REPO: podman rm -f $NAME makes it anew" >&2; exit 2; }
 [ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
 # a setup that stopped halfway runs again
-if [ "$(podman exec $NAME cat /box-ready 2>/dev/null)" != $SETUP ]; then
+if [ "$(podman exec $NAME cat /box-ready 2>/dev/null || echo 0)" -lt $SETUP ]; then
 	echo "setting up the $NAME container"
 	podman exec $NAME sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 		curl unzip xauth python3-pip git >/dev/null'
