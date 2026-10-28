@@ -37,6 +37,14 @@ what a change has to fit, the commands, and facts that cost time to find.
   history (git and the PRs keep it), no versions, numbers only as measured on the current code (the
   doc names the tool or test that gives them). A change that makes a statement or a number stale
   fixes or removes it in the same branch.
+- **Docs don't retell the code.** What a file does is written in the comment at its top, next to
+  the code. README and `docs/` hold only what the code can't say: what the project is, how to run,
+  install and check it, the maths, the wishes.
+- **A number's source, by its meaning.** Before writing a number, check what exactly the counter,
+  test or tool measures and in what unit, not only that it prints that number.
+- **"Done" after a cold read.** Before calling docs done, have an agent without this chat's context
+  read them and check every statement against the code; fix what it finds and repeat until a read
+  finds nothing substantive.
 - **Don't anchor on what is already here.** The code and what the docs say about it are how things
   are done now, not how they must be done. Look for the best way as if starting fresh and take it
   even if it replaces what exists, up to writing the project anew. Break and migrate freely: nothing
