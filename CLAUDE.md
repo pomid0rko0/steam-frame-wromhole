@@ -103,74 +103,37 @@ button. The buttons themselves are README's table.
 
 ## Commands
 
-The cloud session is set up already: run `tools/setup.sh` once at the start, which only links
-`tools/.bin` to the environment's install in a second or two. Install nothing by hand (apt, pip,
-Godot, Mesa); if `setup.sh` starts downloading or building, the environment lacks something: tell
-the owner which step. On a fresh machine it downloads and installs everything; on the Frame all of
-it goes into `tools/box.sh`'s container (made on first use in minutes, then kept). `tools/box.sh CMD`
-passes the tools' variables (`JOBS`, `OUT`, `GODOT`, `MESA`, `KEEP_LOG`, `WH_*`) and nothing else
-(`tools/box.sh env VAR=... CMD` for others). `tools/setup.sh godot templates` runs only the steps
-named. A tool you had to install goes into `setup.sh`.
+The cloud session is set up already: run `tools/setup.sh` once at the start (it only links
+`tools/.bin` to the environment's install). Install nothing by hand; if `setup.sh` starts
+downloading or building, the environment lacks something: tell the owner which step. On the Frame
+everything runs in `tools/box.sh`'s container. A tool you had to install goes into `setup.sh`.
 
-| command | what | time |
-|---|---|---|
-| `tools/test_stereo.sh` | the stereo suite (its header); renders in parallel, one Godot per core | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
-| `tools/test.sh [name...]` | the Godot tests `godot/tests/<name>_test.gd`, `JOBS` at a time (one per core), each in its own xvfb; logs in `/tmp/wormhole-tests` | 1–3 min |
-| `tools/test_openxr.sh` | the app through OpenXR under Monado (`tests/openxr_smoke.gd`) | ~3 min |
-| `tools/fdm_check.sh` | foveation as the Frame's driver applies it | ~10 s |
-| `tools/export.sh [--check] [label]` | the build; `--check` turns on the stereo check scene (an empty `godot/check` during the export, `main.CHECK_FLAG`); on the Frame the file is replaced at once, a running build keeps the old one | ~40 s |
-| `python3 ref/test_gpu.py` | the shader against the float64 reference, errors per pose | ~4 min |
-| `python3 ref/test_fast.py`, `test_eye.py`, `test_slice.py`, `test_gravity.py` | the method, the eye's step, the arrows' surface, gravity against RK4 / a grid | seconds to minutes |
-| `tools/adreno_stats.sh [scene]` | the headset's compiler on the shader: instructions, registers, waves | seconds |
-| `python3 tools/ir3_live.py LOG` | live registers along the program, the peak and its code | seconds |
-| `python3 tools/same_programs.py A.log B.log` | whether two compiler logs hold the same ray-tracer programs | seconds |
-| `tools/adreno_cost.sh [opts] [source...]` | the frame-cost model at the speed check's poses | ~1 min per source |
-| `tools/ab_shaders.sh [--auto] source...` | other ray tracers into the build for the headset's speed check | seconds |
+Each tool says what it does and how to call it at its top; the times:
 
-- **Godot tests.** A test's header has its run line (`##   godot <flags> -s res://tests/<name>_test.gd`);
-  `tools/test.sh` takes its flags from there, so a new test needs one. Tests share `tests/util.gd`:
-  `U.check` prints `PASS name` / `FAIL name  detail`, `U.finish` prints `FAILURES: n`, takes a
-  simulated headset down (left up, it aborts Godot at exit with status 134) and quits 1 on any
-  failure; also keys, `U.headset`, `U.controller`, `U.save_eyes`. `main._ready` has not run during a
-  test's `_initialize`: set main's fields there (`main.toys.enabled`, `main.xr_name`,
-  `main.show_check`), touch its nodes from `_process`, frame 2 or later.
-- **Script classes.** The tools import the project when `godot/.godot` is missing. After adding a
-  `class_name`, or before a Godot run of your own with `-s`, run
+| command | time |
+|---|---|
+| `tools/test_stereo.sh` | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
+| `tools/test.sh [name...]` | 1–3 min |
+| `tools/test_openxr.sh` | ~3 min; never beside `test_stereo.sh` or `test.sh`: while Monado runs, any Godot here connects to it as a headset |
+| `tools/export.sh [--check] [label]` | ~40 s |
+| `python3 ref/test_gpu.py`, `ref/test_eye.py` | ~4 min, ~1.5 min |
+| `python3 ref/test_fast.py`, `test_slice.py`, `test_gravity.py` | seconds to 2 min |
+| `tools/fdm_check.sh`, `adreno_stats.sh`, `ir3_live.py`, `same_programs.py`, `ab_shaders.sh` | seconds |
+| `tools/adreno_cost.sh` | ~1 min per source |
+
+- **After adding a `class_name`,** or before a Godot run of your own with `-s`, run
   `tools/box.sh godot --headless --path godot --import`.
-- **Monado** (`test_openxr.sh`): while `monado-service` runs, any Godot here connects to it as a
-  headset, so it never runs beside `test_stereo.sh` or `tools/test.sh`. Its stdin must be a pipe or
-  FIFO (on `/dev/null` it quits at once). Its null compositor offers one rate, 20 Hz, 128×128 per
-  eye, and reading eye images back fails there: images come from `fake_hmd.gd` or "Native mobile".
-  Its simulated controllers bind to none of our profiles and it has no Frame profile: controller
-  input in tests comes from `XRControllerTracker`s set by hand (`U.controller`).
-- **Shader changes.** `test_gpu.py` prints errors, no verdict: compare with the same run on the code
-  before the change (`WH_BALLS=0` too: the shader without balls). `ref/wh.py` `fast` mirrors the
-  shader's curved-region method in float64: keep the two in step. A change that should not touch
-  the compiled shader (comments, a dead `#ifdef`) must give the same programs byte for byte: compare
-  two `KEEP_LOG=file tools/adreno_stats.sh plain --shader res://shaders/<variant>.gdshader` logs
-  with `tools/same_programs.py`, one variant at a time. Use a scene without toys: with toys
-  `Tracer.set_objects` swaps in `wormhole_balls` and the plain shader after the first frame, the log
-  holds their programs too, and `adreno_cost.ray_program` (the smallest `/1` program of at least
-  half the biggest) then picks `wormhole_balls`'s. After every change to the shader or the
-  emulator run `tools/adreno_cost.sh --check`. Pictures against another commit:
-  `tests/emu_dump.gd` at many poses, then diff the PNGs.
-- **Driver tools without a GPU** (`adreno_stats.sh`, `adreno_cost.sh`, `fdm_check.sh`): Godot on
-  Turnip over Mesa's noop drm-shim (`tools/.bin/mesa-fd`). Godot compiles the ray tracer twice, a
-  generic ubershader and then the specialised program that runs (`adreno_cost.ray_program` picks
-  it from a log of one shader). Turnip's tiling autotune picks by samples the drm-shim makes up:
-  `TU_DEBUG=gmem` tiles wherever possible. `ir3_live.py` counts half registers two to a full
-  component and leaves out the shared ones (r48-r55).
-- **The cost model** is fitted on the headset's speed check: compare variants with it, then measure
-  the best in the headset. It knows no memory waits, and it underrates the toys' shaders and world
-  B's outer edge. `--split` models the stencil split, `--hands` / `--held` give each pose its own
-  uniforms; the UBO layout `adreno_cost.UNIFORMS` follows the view include's order.
-- **The headset's speed check** (`godot/bench.gd`): `bench:`, `tf` and `tour:` lines in the log,
-  `refresh:` every second. Frame times from walking around don't compare
-  between builds: where one looks changes them several times.
+- **In a test script** `main._ready` has not run during `_initialize`: set main's fields there,
+  touch its nodes from `_process`, frame 2 or later.
+- **A shader change:** `test_gpu.py` prints errors, no verdict: compare with the same run on the
+  code before (`WH_BALLS=0` too). Keep `ref/wh.py`'s `fast` in step with the shader. A change that
+  should not touch the compiled shader must give the same programs: `tools/same_programs.py`. Then
+  `tools/adreno_cost.sh --check`.
+- **Speed:** the cost model compares variants; measure the best in the headset with the speed check.
+  Frame times from walking around don't compare between builds: where one looks changes them.
 - **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,
-  `gh auth setup-git`), commits as `Claude <noreply@anthropic.com>` (the repository's git config).
-  In a cloud session branch pushes go through the session's proxy and tag pushes are refused. The
-  owner creates tags on GitHub.
+  `gh auth setup-git`), commits as `Claude <noreply@anthropic.com>`. In a cloud session branch
+  pushes go through the session's proxy and tag pushes are refused. The owner creates tags.
 
 ## Facts that cost time to find
 
@@ -190,17 +153,8 @@ Godot, SteamVR and the Frame:
   on the same GPU, our frame at the same pose costs more, and it can stay there until the frame
   gets cheaper or the rate is switched there and back. The Steam overlay and SteamVR's camera view
   do the same. The app can't stop it; cheaper frames make it rarer.
-- **Foveation in Godot 4.7.2 on Turnip.** The density map applies per tile, only in tiled passes;
-  Turnip renders a pass without tiles if a subpass dependency lacks `VK_DEPENDENCY_BY_REGION_BIT`,
-  and Godot 4.7.2's two-subpass pass at 100% has one (godotengine/godot#124141, fixed after
-  4.7.2): `split_pass.gd` (an empty POST_TRANSPARENT CompositorEffect) splits it. Subsampled
-  images are off (SteamVR can't read them). Godot asks for the eye-tracked offsets only with
-  `xr/openxr/extensions/eye_gaze_interaction` on, in full-size pixels. The swapchain gets a density
-  map only if `foveation_level` > 0 at creation (`project.godot` asks for 3; "off" is `vrs_mode`
-  disabled). No shading-rate VRS on the Frame: the sharp zone is whole tiles. Our map is a
-  `Texture2DArray` set with `RenderingServer.viewport_set_vrs_texture` and `VRS_UPDATE_ALWAYS` (a
-  buffer rebuild leaves the driver's map empty otherwise). Godot maps a colour c to density 1 - c,
-  Turnip a density d to 1/d floored to a power of two: 4x is byte 192 (191 gives 2).
+- **Foveation in Godot 4.7.2 on Turnip:** how and why it works is in `foveation.gd` and
+  `split_pass.gd`. Subsampled images stay off (`project.godot`): SteamVR can't read them.
   `verbose_stdout` lists the extensions and the driver's support (hundreds of lines: keep it off).
 - **Controllers.** Godot 4.7.2 knows the Frame's profile (`/interaction_profiles/valve/frame_controller_valve`).
   Valve's page «Steam Frame Input» lists its paths: left `dpad_up/down/left/right`, `view`,
