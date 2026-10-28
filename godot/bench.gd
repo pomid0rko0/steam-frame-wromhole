@@ -55,7 +55,7 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[5.0, 0.0, 35.0],   # up
 	[0.0, 0.0, 0.0],    # in the throat
 	[0.0, 90.0, 0.0],   # in the throat, looking sideways round it
-	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat (its static objects are boxes)
+	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat (boxes where A has pillars)
 	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
 ]

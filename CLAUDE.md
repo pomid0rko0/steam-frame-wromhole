@@ -109,8 +109,8 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   View and Menu. A setting is a row: `Menu.ROWS`, `_count`, `_current`, `_apply`, `_value_text`.
 - **The speed check** sets the viewer's pose itself: while it runs (`main.hold`) the sticks, A and
   the hands do nothing, and a new button stays out too; the menu greys the rows it sets.
-- **The hands** take two of the shader's 12 ball slots (`Tracer.MAX_BALLS`); the toys take at most
-  8 (`BallWorld.MAX_BALLS`). Each frame the free toys step first (pushed from the hands' last places), then the hands and what they hold
+- **The hands** take two of the shader's 12 ball slots (`Tracer.MAX_BALLS`); the toys' balls take
+  at most 8 (`BallWorld.MAX_BALLS`). Each frame the free toys step first (pushed from the hands' last places), then the hands and what they hold
   are placed (`Hands.update`), then everything is drawn: a toy let go starts from the hand. Jumps of
   the viewer (`place`, `set_pose`, a snap turn) call `Hands.forget_motion`, or the jump is a throw.
 - **A throat change** (`space.set_profile`) rebuilds what is built for the shape:
@@ -173,17 +173,18 @@ named. A tool you had to install goes into `setup.sh`.
   before the change (`WH_BALLS=0` too: the shader without balls). `ref/wh.py` `fast` mirrors the
   shader's curved-region method in float64: keep the two in step. A change that should not touch
   the compiled shader (comments, a dead `#ifdef`) must give the same programs byte for byte: compare
-  two `KEEP_LOG=file tools/adreno_stats.sh <scene> --shader res://shaders/<variant>.gdshader` logs
-  with `tools/same_programs.py`, one variant at a time. A scene with toys compiles the plain shader
-  too, and `adreno_cost.ray_program` (which takes the smaller of the two biggest programs) can then
-  pick another shader's program and report a difference that is not there. After every change
+  two `KEEP_LOG=file tools/adreno_stats.sh plain --shader res://shaders/<variant>.gdshader` logs
+  with `tools/same_programs.py`, one variant at a time. Use a scene without toys: with toys
+  `Tracer.set_objects` swaps in `wormhole_balls` and the plain shader after the first frame, the log
+  holds their programs too, and `adreno_cost.ray_program` (the smallest `/1` program of at least
+  half the biggest) then picks `wormhole_balls`'s. After every change
   to the shader or the emulator run `tools/adreno_cost.sh --check`. Pictures against another commit:
   `tests/emu_dump.gd` at many poses, then diff the PNGs.
 - **Driver tools without a GPU** (`adreno_stats.sh`, `adreno_cost.sh`, `fdm_check.sh`): Godot on
   Turnip over Mesa's noop drm-shim (`tools/.bin/mesa-fd`). Godot compiles the ray tracer twice, a
   generic ubershader and then the specialised program that runs (`adreno_cost.ray_program` picks
-  it from a log of one shader). Turnip's tiling autotune picks by samples the drm-shim makes up: `TU_DEBUG=gmem` tiles
-  wherever possible. `ir3_live.py` counts half registers two to a full component and leaves out the
+  it from a log of one shader). Turnip's tiling autotune picks by samples the drm-shim makes up:
+  `TU_DEBUG=gmem` tiles wherever possible. `ir3_live.py` counts half registers two to a full component and leaves out the
   shared ones (r48-r55).
 - **The cost model** is fitted on the headset's speed check: compare variants with it, then measure
   the best in the headset. It knows no memory waits, and it underrates the toys' shaders and world

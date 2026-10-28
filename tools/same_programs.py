@@ -1,39 +1,55 @@
-"""Does a change leave the compiled ray tracer as it was? Compares the fragment programs in two ir3
-logs from tools/adreno_stats.sh (KEEP_LOG=file): every big program in the first log (the ubershader,
-the specialised program and their unused "safe constlen" /2 variants) must be found, instruction
-for instruction, in the second. A log holds the programs of every shader the scene compiled (with
-toys also the plain one), so programs are matched by their code, not by their number or order.
+"""Does a change leave the compiled ray tracer as it was? Compares the big fragment programs in two
+ir3 logs from tools/adreno_stats.sh (KEEP_LOG=file): the ubershader, the specialised program and
+their unused "safe constlen" /2 variants. Programs are matched by their code, both ways: every
+program of each log must be in the other, instruction for instruction.
    python3 tools/same_programs.py before.log after.log
-Exit status 0 when all are found."""
+Make the logs with a scene without toys (tools/adreno_stats.sh plain --shader res://shaders/X):
+with toys, Tracer.set_objects swaps in the toys' shader and the plain one after the first frame,
+and the log holds their programs too.
+Exit status 0: the same programs; 1: different; 2: a log can't be compared (no programs, or two
+programs' listings interleaved: Godot compiles in threads; compile again)."""
 import hashlib
 import re
 import sys
 
 MIN_INSTR = 2000        # the ray tracers' programs; Godot's own shaders are far smaller
+PREFIX = 'MESA: info: '
+STATS = re.compile(r'; (\w+) prog (\d+/\d+): (\d+) instr')     # every stage's: each ends a listing
 
 
 def programs(log):
-    """{(program number, instructions): hash of its instructions} for the big fragment programs."""
-    text = open(log, errors='replace').read().replace('MESA: info: ', '')
+    """{hash of the instructions: 'number, instructions'} for the big fragment programs."""
+    # only the compiler's lines: anything else Godot prints can land inside a listing
+    lines = [x[len(PREFIX):] for x in open(log, errors='replace').read().split('\n') if x.startswith(PREFIX)]
     out = {}
-    for m in re.finditer(r'; FRAG prog (\d+/\d+): (\d+) instr', text):
-        if int(m.group(2)) < MIN_INSTR:
+    start = None            # the line of the listing's header
+    headers = 0             # headers since the last statistics: one, or listings interleaved
+    for i, x in enumerate(lines):
+        if x.startswith('Native code for'):
+            start = i
+            headers += 1
             continue
-        start = text.rfind('Native code for', 0, m.start())
-        # Godot compiles in threads: another shader's "NIR (final form) for ..." header can land
-        # inside a listing
-        lines = [x for x in text[start:m.start()].split('\n') if not x.startswith(('NIR (', 'Native code for'))]
-        code = [x for x in lines if x.strip() and not x.startswith(('@', ';', 'SIMD'))]
-        out[(m.group(1), int(m.group(2)))] = hashlib.sha1('\n'.join(code).encode()).hexdigest()
+        m = STATS.match(x)
+        if not m:
+            continue
+        if m.group(1) == 'FRAG' and int(m.group(3)) >= MIN_INSTR:
+            if headers != 1:
+                print('%s: program %s: %d listings interleaved before its statistics; compile again'
+                      % (log, m.group(2), headers))
+                sys.exit(2)
+            body = [y for y in lines[start + 1:i] if not y.startswith('NIR (')]
+            code = [y for y in body if y.strip() and not y.startswith(('@', ';', 'SIMD'))]
+            out[hashlib.sha1('\n'.join(code).encode()).hexdigest()] = '%s, %s instr' % (m.group(2), m.group(3))
+        headers = 0
+    if not out:
+        print('%s: no ray-tracer programs (%d instructions or more)' % (log, MIN_INSTR))
+        sys.exit(2)
     return out
 
 
-before, after = programs(sys.argv[1]), programs(sys.argv[2])
-found = set(after.values())
-missing = 0
-for (num, n), h in sorted(before.items(), key=lambda kv: kv[0][1]):
-    ok = h in found
-    missing += not ok
-    print('%-6s %5d instr %s  %s' % (num, n, h[:12], 'same' if ok else 'NOT FOUND in the second log'))
-print('SAME' if before and not missing else 'DIFFERENT')
-sys.exit(0 if before and not missing else 1)
+a, b = programs(sys.argv[1]), programs(sys.argv[2])
+for h in sorted(set(a) | set(b), key=lambda h: (a.get(h) or b.get(h))):
+    where = 'same' if h in a and h in b else ('only in the first' if h in a else 'only in the second')
+    print('%-18s %s  %s' % (a.get(h) or b.get(h), h[:12], where))
+print('SAME' if set(a) == set(b) else 'DIFFERENT')
+sys.exit(0 if set(a) == set(b) else 1)

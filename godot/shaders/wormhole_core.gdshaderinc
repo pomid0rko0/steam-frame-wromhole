@@ -376,11 +376,11 @@ float wh_filMomT(WhFil f, float t, out vec4 m) {
 
 float wh_poly(vec4 c, float t) { return c.x + t * (c.y + t * (c.z + t * c.w)); }
 
-// The path length from the fillet's inner end, m the moments there, for the fog, the cubes' edge
-// lines and the arrows only: r^2 / b times psi (r^2 / b is the length per angle), r taken at the
-// weight's mean tau, within 1.5% here and 7% on long fillets; the shader then holds one polynomial
-// less. Movable objects' hits are ordered by where on the path they are (piece and fraction of
-// it, wh_curved), not by length.
+// The path length from the fillet's inner end, m the moments there, as an estimate: r^2 / b times
+// psi (r^2 / b is the length per angle), r taken at the weight's mean tau; the shader then holds one
+// polynomial less. The fog, the cubes' edge lines, the arrows and the number of samples of the
+// movable objects' search (wh_curved) use it. Their hits are ordered by where on the path they are
+// (piece and fraction of it), not by length.
 float wh_filLen(WhFil f, vec4 m) {
     float re = f.ra + f.span * m.y / max(m.x, 1e-30);
     return re * re * dot(f.e, m) * f.ib;
