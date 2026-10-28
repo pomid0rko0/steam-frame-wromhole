@@ -20,12 +20,12 @@ The field is g_vec = -grad phi, in the (U_l, u) representation of a tangent vect
     grad phi = g (f' n_z,  (f / r) (e_z - n_z n))
 On the floor (n_z = 0) it points straight down with strength g f / r.
 
-The old field of the physics branch, -g grad(r n_z), is the same with f = r: conservative, but
+The simple field -g grad(r n_z) is the same with f = r: conservative, but
 not harmonic in the shell (as if mass sat in the throat: Laplacian = (r'' + 2 (r'^2 - 1) / r) n_z).
 
 The odd solution (the l = 0 mode, phi' = C / r^2) would make the two universes' potentials differ
-at infinity and the throat look like a point mass from both sides; both universes have the same
-field at infinity, so it is absent.
+at infinity and the throat look like a positive mass from one side and a negative one from the
+other; both universes have the same field at infinity, so it is absent.
 """
 import numpy as np
 from scipy.integrate import solve_ivp

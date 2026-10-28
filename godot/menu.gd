@@ -6,7 +6,7 @@ extends Node3D
 ## View on the left, or a click of the left stick; M on the desktop) and is worked with buttons:
 ## the D-pad (or the left stick) up and down picks a row, left and right change its value, A
 ## presses, B closes. It opens 1.1 m in front of where the head looks, a little below the eyes, and
-## follows: as the head walks, at once; as it turns, only once it has turned well away, then
+## follows: as the head walks, quickly; as it turns, only once it has turned well away, then
 ## smoothly. So it is there at the wormhole and inside it, without being glued to the view.
 ##
 ## Its head: the refresh rate the headset really runs at and whether frames keep up, the frames of

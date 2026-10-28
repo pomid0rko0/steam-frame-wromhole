@@ -108,7 +108,7 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   left Y (the D-pad up, left, right) steps the gravity view; A resets everything (a new reset joins
   it); the left trigger runs; the right stick's x turns, its click switches smooth/snap. Nothing is
   pointed at with the triggers.
-- **The action map** (`openxr_action_map.tres`) binds only what the app reads, in the Frame's
+- **The action map** (`openxr_action_map.tres`) binds what the app reads (and the right trigger, which nothing reads), in the Frame's
   profile, KHR generic, Touch and eye gaze; `tests/util.gd` `BINDINGS` is the same table and the
   tests compare them exactly. A new action goes into both, in the Frame profile with Valve's paths.
   Left X / Y of the other profiles are the Frame's D-pad down / up, left, right.
@@ -123,12 +123,12 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
   last places), then the hands and what they hold are placed (`Hands.update`), then everything is
   drawn: a toy let go starts from the hand. Jumps of
   the viewer (`place`, `set_pose`, a snap turn) call `Hands.forget_motion`, or the jump is a throw.
-- **A throat change** (`space.set_profile`; today only `WormholeSpace._init` calls it) must rebuild
+- **A throat change** (`space.set_profile`; only `WormholeSpace._init` calls it) must rebuild
   what is built for the shape: the shader's `wh_rho0`, `wh_h`, `wh_fillet` (`tracer.param`, set once
   in `Tracer._ready`), `tracer.upload_fillet_table()` (slow in GDScript: not per frame),
   `tracer.upload_gravity()`, `set_objects` (its sorting and proxies use `space.h`, `space.Rout`) and
   the stereo check grid's `rout`, `lsh` (`check_scene.gd`). The feet and the balls should keep their
-  distance to the curved zone's edge; nothing does that yet.
+  distance to the curved zone's edge; nothing does that.
 - **Foveation and the render scale:** one of them at a time (the eye-tracked offsets are in
   full-size pixels). The split pass sits on the XR camera's compositor: an effect added there
   splits the pass too.
@@ -251,7 +251,7 @@ Godot, SteamVR and the Frame:
   if the app offers it, else generic, else Touch remapped (Touch's menu is View, its upper button
   all three upper buttons). One path a runtime rejects drops the whole profile (Monado rejects
   `grip_surface/pose` on Touch). Which profile SteamVR gave shows in the log's `interaction profile`
-  lines; that it takes our Frame profile has not been seen in the headset yet.
+  lines; that it takes our Frame profile is not confirmed in the headset.
 - **OpenXR interface signals:** connect a method callable, not a GDScript lambda (a lambda corrupts
   the heap at exit under Monado). `tools/test_openxr.sh` fails on a crash at exit.
 - **Godot on the Frame's host** connects to SteamVR unless `XR_RUNTIME_JSON` points elsewhere;

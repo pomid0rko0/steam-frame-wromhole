@@ -24,12 +24,12 @@ const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
 # Rolling friction: a small part that follows the weight, and a part that follows the speed; air
 # drag on top. A ball at rest stays where the floor pulls along itself less than ROLLING_RESISTANCE g;
-# near the wormhole gravity pulls along the floor toward the throat, 0.01 g at the shell's edge
-# (0.06-0.1 g where the fillet meets the throat), so a ball set down there rolls in by itself. 0.04 g
-# alone held it still for the outer metre and a half of the fillet; 0.02 g alone let a thrown ball
-# roll for 40 m. Air drag (as the square of the speed) slows fast balls, in flight too, but hardly a
-# slow roll: that is the rolling drag's. A 50 cm ball rolling at 4 m/s stops in 19 m, at 2 m/s in
-# 9.5 m, at 1 m/s in 4 m (0.04 g alone: 20, 5, 1.3 m).
+# near the wormhole gravity pulls along the floor toward the throat, so a ball set down at the
+# curved zone's edge rolls in by itself (tests/physics_test.gd). A larger part that follows the
+# weight would hold such a ball still; a smaller one would let a thrown ball roll very far: the
+# part that follows the speed stops it. Air drag (as the square of the speed) slows fast balls, in
+# flight too, but hardly a slow roll. A 50 cm ball rolling at 4 m/s stops in 19 m, at 2 m/s in
+# 9.5 m, at 1 m/s in 4 m.
 const ROLLING_RESISTANCE := 0.005
 const ROLLING_DRAG := 0.1            # 1/s: the deceleration per m/s of rolling speed
 const AIR_DENSITY := 1.2             # kg/m^3
@@ -45,8 +45,8 @@ const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless 
 const ITERATIONS := 6                # velocity iterations of the contact solver
 const KINEMATIC := 1e9               # mass of held balls and hands
 # a hand or a held toy against a free ball: it moves on regardless, so with the balls' 0.85 a ball
-# it meets flew off at 1.85 times its speed, and one pressed against the floor or another ball
-# gained speed from nothing; this is a soft hand's
+# it meets would fly off at 1.85 times its speed, and one pressed against the floor or another ball
+# would gain speed from nothing; this is a soft hand's
 const RESTITUTION_KINEMATIC := 0.3
 
 var space: WormholeSpace

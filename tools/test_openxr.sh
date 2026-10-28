@@ -35,7 +35,7 @@ grep -E "^(in_xr|runtime|measured|menu|refresh|bench|PASS |FAIL )" <<<"$log"
 failed=0
 if grep -qE "SCRIPT ERROR|SHADER ERROR" <<<"$log"; then grep -E "SCRIPT ERROR|SHADER ERROR" -A3 <<<"$log"; failed=1; fi
 grep -q "^FAILURES: 0$" <<<"$log" || failed=1
-# a crash on the way out (it happened once: a lambda connected to the OpenXR interface)
+# a crash on the way out (a lambda connected to the OpenXR interface causes one)
 [ $code -eq 0 ] || { echo "Godot exited with $code (full log: /tmp/wormhole-openxr.log)"; tail -3 <<<"$log"; failed=1; }
 if [ $failed -eq 0 ]; then echo "PASS"; else echo "FAILED"; fi
 exit $failed

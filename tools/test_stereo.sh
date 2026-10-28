@@ -1,8 +1,8 @@
 #!/bin/bash
 # Stereo correctness through Godot's real multiview path (the one OpenXR uses), no headset:
 # in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
-# draws at the same place. Run this before handing anyone a headset build: broken stereo
-# physically hurts in a headset.
+# draws at the same place. Run it on every headset build's source; it must pass before the build
+# is worn: broken stereo physically hurts in a headset.
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images,
 #                                    JOBS=n renders at once)
 # Exit status 0 only if every check passes.
@@ -28,8 +28,7 @@ render() {   # a Godot test script, in the background
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
 	local i=$n
 	mkdir -p "$LOGS/data$i"
-	# its own X display; one some other X server holds (a stray Xvfb left from an earlier run
-	# did) would fail this render: then 1000 further on, where no other render of this run is
+	# its own X display; one some other X server holds (say, a stray Xvfb) would fail this render: then 1000 further on, where no other render of this run is
 	local d=$((90 + i))
 	while [ -e /tmp/.X$d-lock ] || [ -e /tmp/.X11-unix/X$d ]; do d=$((d + 1000)); done
 	( XDG_DATA_HOME=$LOGS/data$i timeout 600 xvfb-run -n $d -s "-screen 0 1280x720x24" \

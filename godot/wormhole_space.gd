@@ -251,11 +251,11 @@ func height_grad(l: float, n: Vector3) -> Vector4:
 # field comes from far below, like the Earth's), so the potential is harmonic, and far away it
 # is ordinary uniform gravity, g z, in both universes. The space is SO(3)-symmetric, so with
 # phi = g f(l) n_z the equation separates exactly into (r^2 f')' = 2 f, f even, f = r + beta / r^2
-# in the flat universes (ref/gravity.py, checked there against a 2D solve of the full equation).
+# in the flat universes (ref/gravity.py; ref/test_gravity.py checks it against a 2D solve of the full equation).
 # On the throat's cylinder f = a cosh(sqrt(2) l / rho0): the field is screened, and in the
 # middle of the long throat gravity on the floor is about 0.2 g.
 # Everything here is in plain floats (double precision): GDScript's Vector2/3/4 are single
-# precision, and an ODE or a table kept in them made the field's second derivative noisy.
+# precision, too coarse for an ODE or a table whose second derivative is used.
 
 ## Solve the ODE for the current profile: closed form on the cylinder, RK4 over the fillet into
 ## a table, then scale so that f = r + beta / r^2 outside.
@@ -349,9 +349,8 @@ func floor_gravity(l: float) -> float:
 ## The ray tracer's gravity view (wormhole_gravity.gdshader) without a table: on the cylinder
 ## f / r = (a / rho0) cosh(k l) and f' = a k sinh(k l); outside f / r = 1 + beta / r^3 and
 ## f' = 1 - 2 beta / r^3; on the fillet f / r and f' as polynomials of degree GRAV_DEG in
-## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (near the best fit:
-## within 1e-6 g here, 4e-5 on a fillet as long as the throat's radius; the gravity test checks
-## them). {cyl: (a / rho0, k, a k, beta), g: [2 Vector4], d: [2 Vector4]}: the shader's grav_cyl,
+## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (near the best fit;
+## tests/gravity_test.gd checks them on the app's profile). {cyl: (a / rho0, k, a k, beta), g: [2 Vector4], d: [2 Vector4]}: the shader's grav_cyl,
 ## grav_g, grav_d, coefficients from x^0 up.
 func gravity_shader() -> Dictionary:
 	var n := GRAV_DEG + 1

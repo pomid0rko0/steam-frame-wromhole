@@ -66,7 +66,7 @@ CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 
 def region_order(objs, reach):
-    """main.region_order: the objects sorted by where they can be met (universe A's sheet, the
+    """Tracer.region_order: the objects sorted by where they can be met (universe A's sheet, the
     shell, B's sheet) and the bounds (x, y, z, w): A 0 .. y, the shell x .. w, B z .. the end."""
     groups = [[], [], [], [], []]
     for o in objs:
