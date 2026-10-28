@@ -51,9 +51,9 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right, degrees 
 	[11.6, 0.0, 0.0],   # the start
 	[6.2, 0.0, 0.0],    # just outside the curved zone: the wormhole fills the view
 	[6.2, 60.0, 0.0],
-	[5.0, 0.0, 0.0],    # inside, at the edge
+	[5.0, 0.0, 0.0],    # inside, at the edge: every ray starts in the curved zone
 	[5.0, 90.0, 0.0],
-	[5.0, 180.0, 0.0],  # facing away: every ray starts in the curved zone
+	[5.0, 180.0, 0.0],  # facing away
 	[5.0, 0.0, -35.0],  # down at the floor
 	[5.0, 0.0, 35.0],   # up
 	[0.0, 0.0, 0.0],    # in the throat
