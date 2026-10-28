@@ -178,6 +178,15 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   floor had in the middle of the throat (l = 0, `wh_renderE`) is gone; the white 1 m ring there
   stays. Not yet seen in the headset: whether SteamVR takes
   the Frame profile (the log's `interaction profile` lines) and lets View and Menu reach the app.
+- `rethink` — a study, no change to the app (`research/README.md`, in Russian): the owner asked
+  for a radical speed-up from scratch. By symmetry a ray's curved part depends on one angle per
+  eye, so per-eye tables (by alpha, dense toward the critical angle with one log per pixel, and by
+  psi or path length) replace the per-pixel integrals: measured against an own float64 reference
+  (`research/geo`, Rust) within 0.15 px at 10 poses. Movable objects by a search with a hard
+  bound (sphere tracing along the unit-speed path while far, chords against the object grown by
+  their sag near it, split on a hit): at most 22 table samples per candidate pixel in the six
+  worst scenes, none lost. Not measured: GPU time on the Frame; the plan there starts with
+  headset A/B builds before any rewrite.
 - `controls` — the old sketch that `walking`, `throat` and `grab` were split from (on
   `physics` on `refresh-rate`); don't start from it.
 

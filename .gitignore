@@ -10,3 +10,5 @@ __pycache__/
 *.zip
 godot/shaders/ab/
 godot/check
+research/geo/target/
+research/geo/Cargo.lock
