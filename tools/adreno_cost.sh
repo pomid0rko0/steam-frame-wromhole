@@ -62,7 +62,7 @@ for s in "${srcs[@]}"; do
 	if [ "$s" = this ]; then sh=""; else n=$((n + 1)); sh=res://shaders/ab/$n/wormhole.gdshader; fi
 	sc=$scene
 	stsh=$sh
-	if [ "$s" = this ] && [ -n "$TOYS" ]; then stsh=res://shaders/wormhole_balls.gdshader; fi
+	if [ "$s" = this ] && [ -n "$TOYS$BALLS" ]; then stsh=res://shaders/wormhole_balls.gdshader; fi
 	if [ "$s" = this ] && [ -n "$GRAV" ]; then
 		sc=$scene+gravity$GRAV
 		stsh=res://shaders/$([ -n "$TOYS$BALLS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
