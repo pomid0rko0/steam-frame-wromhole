@@ -29,7 +29,7 @@ const SHADERS_TOYS := [preload("res://shaders/wormhole_balls.gdshader"),
 const SHADER_MARK := preload("res://shaders/stencil_mark.gdshader")
 const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
-const MAX_BALLS := 12           # the shader's slots: the toys' balls, then the hands'
+const MAX_BALLS := 12           # the shader's slots for the toys' and the hands' balls
 const MAX_CUBES := 6
 # m around each proxy sphere: more than the near plane (main.NEAR). A ray that meets a toy inside its
 # sphere leaves the sphere at least this far beyond the hit, so it is marked even where the near
@@ -54,8 +54,7 @@ var toy_mode := SPLIT
 var toys := 0                   # balls and cubes the shader has (set_objects)
 var toy_spheres := [PackedVector4Array(), PackedVector4Array()]   # per universe A, B: the toys' chart spheres
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
-var pixel_angle := 0.0          # wh_pix as last set
-var head_l := 0.0               # where the head is, as last set (the proxies follow it)
+var pixel_angle := 0.0          # the pixel angle set_head last saw: wh_pix goes again when it changes
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -125,7 +124,6 @@ func param(name: StringName, value: Variant) -> void:
 ## room from where the head is (in a flat universe the play-space offset from the head along the
 ## head's frame), or the whole view marked.
 func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
-	head_l = l
 	param("head_l", l)
 	param("head_n", n)
 	param("head_f", PackedVector4Array(hf))
@@ -309,10 +307,8 @@ static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: 
 	return [order, Vector4i(ends[0], ends[1], ends[2], ends[3])]
 
 
-## How gravity is shown (docs/gravity.md): 0 not at all, 1 the floor
-## coloured by its strength (optozorax's palette: dark is none, yellow 1 g), 2 also arrows of the
-## field on the vertical surface through the wormhole that faces the start (x = 0 in both
-## universes, through the throat).
+## How gravity is shown (docs/gravity.md, «Показ»): 0 not at all, 1 the floor coloured by its
+## strength, 2 also arrows of the field on the vertical surface x = 0 through the throat.
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	param("wh_pix", _pixel_angle())
@@ -340,7 +336,7 @@ func plain() -> bool:
 
 
 ## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the
-## cubes' edge lines): the headset's field of view is about 104 degrees up and down.
+## cubes' edge lines): the headset's vertical field of view taken as 104 degrees (not asked of the runtime).
 func _pixel_angle() -> float:
 	if xr:
 		return 2.0 * tan(0.5 * deg_to_rad(104.0)) / maxf(xr.get_render_target_size().y * xr_view.scaling_3d_scale, 1.0)
@@ -349,7 +345,7 @@ func _pixel_angle() -> float:
 
 
 ## Gravity for the gravity views: f / r and f' as the shader evaluates them
-## (WormholeSpace.gravity_shader). A change of the throat's shape needs them again.
+## (WormholeSpace.gravity_shader).
 func upload_gravity() -> void:
 	var g := space.gravity_shader()
 	param("grav_cyl", g.cyl)
@@ -358,8 +354,7 @@ func upload_gravity() -> void:
 	param("wh_pix", _pixel_angle())
 
 
-## The fillet polynomials by impact parameter (WormholeSpace.fillet_table). A change of the
-## throat's shape needs them again.
+## The fillet polynomials by impact parameter (WormholeSpace.fillet_table).
 func upload_fillet_table() -> void:
 	var tab := space.fillet_table()
 	param("wh_tab", ImageTexture.create_from_image(tab.image))

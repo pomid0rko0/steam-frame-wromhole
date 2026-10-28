@@ -182,10 +182,8 @@ vec3 wh_cubeLook(int i, vec4 X, float dist) {
 
 #ifdef WH_GRAVITY
 // ---------------------------------------------------------------- gravity
-// The potential is g f(l) n_z (WormholeSpace.gravity_f: Laplace's equation on the space itself,
-// as in optozorax's video about gravity and portals). (f / r, d(f / r)/dl, f') at l: f / r is the
-// strength of gravity on the floor, in g. Cylinder: f = a cosh(k l); fillet: polynomials of degree 7
-// in x = (|l| - Lc) / (L - Lc); flat: f = r + beta / r^2.
+// The potential is g f(l) n_z (docs/gravity.md), f in the three pieces WormholeSpace.gravity_shader
+// gives. (f / r, d(f / r)/dl, f') at l: f / r is the strength of gravity on the floor, in g.
 vec3 wh_grav(float l) {
     float al = abs(l);
     float sg = l < 0.0 ? -1.0 : 1.0;
@@ -293,18 +291,18 @@ vec4 wh_arrow(float l, float a, float foot) {
 //   dpsi = F(u) dv,  dlength = G(u) dv,   dv = ds / sqrt(s^2 - sig) = du / (2 sqrt(u (u - sig)))
 //   F = b sqrt(2R) / (r sqrt((1 - u)(r + b))),  G = r^2 / b F.
 // F and G are smooth on the fillet; all the trouble (the turning point, the log at b -> rmin) is in
-// dv. So the integral is "product integration": F and G are interpolated by polynomials in
+// dv. So the integral is "product integration": F is interpolated by a polynomial in
 // tau = (u - ua) / (0.5 - ua) in [0, 1] (4 nodes: squares of the Gauss-Legendre nodes on [0, 1]),
-// and their moments against the exact weight, int t^k w(t) dt, are elementary:
+// and its moments against the exact weight, int t^k w(t) dt, are elementary (G, the path length,
+// is estimated instead: wh_filLen; ref/wh.py integrates G as F):
 //   w(t) = 1 / (2 sqrt((t + al)(t + ga)))     (regime 0)
 // ua is where the fillet path starts: the turning point u = sig, or the fillet's inner end s0^2.
 // One of al, ga is 0 unless h < R. The moments come from a recursion that is stable while al and ga
 // are below 1; a factor 1 / sqrt(t + al or ga) that is 1 or more is smooth on [0, 1] and is moved
 // into the interpolated part instead (regimes 1 and 2). No loops, the same cost for every ray, and
 // the integral up to any point is the same closed form: the floor crossing is a Newton solve on it.
-// v ("z" below) is the variable in which that solve and the toys' search run: in regime 0
-// z = int w dt, in regimes 1 and 2 z = sqrt(t + mn).
-// With 4 nodes the error in psi is below 0.004 degrees (0.0001 typical) on the profiles in use.
+// z is the variable in which that solve and the toys' search run: z = int w dt in regime 0,
+// sqrt(t + mn) in regimes 1 and 2. The method's accuracy: docs/geometry.md, «Точность».
 // The polynomial depends on b alone: WormholeSpace.fillet_table works it out (its nodes and the
 // matrix to the coefficients: _TAU, _A) and the shader samples it.
 const float WH_TABN = 256.0;     // knots per row of wh_tab (WormholeSpace.TABLE_N)
@@ -361,9 +359,9 @@ void wh_filMom(WhFil f, float z, out float t, out vec4 m) {
         float mn = wh_mn(f);
         t = max(z * z - mn, 0.0);
         if (f.reg == 1) {                              // w = 1 / (2 sqrt(t + mn))
-            // int_0^t w dt = sqrt(t + mn) - sqrt(mn) = z - zlo. As t / (z + zlo) it was 0 / 0 at a
-            // turning ray's turning point (z = zlo = 0), where the toys' search samples: NaN there
-            // blinded the rest of the ray, and toys near the shell's edge showed a crack
+            // int_0^t w dt = sqrt(t + mn) - sqrt(mn) = z - zlo. As t / (z + zlo) it would be 0 / 0 at
+            // a turning ray's turning point (z = zlo = 0), where the toys' search samples: a NaN
+            // there blinds the rest of the ray (a crack in toys near the shell's edge)
             float n0 = max(z - f.zlo, 0.0);
             float ty = t * z;
             float n1 = (ty - 2.0 * mn * n0) / 3.0;
@@ -535,8 +533,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     float wc = b / rho0;
     // 1 / the radial velocity on the cylinder, 1 / sqrt(1 - wc^2), with rho0^2 - b^2 as
     // (rho0 - b)(rho0 + b) and rho0 - b = rs vl^2 / (1 + wn) - (rs - rho0): 1 - wc^2 itself cancels
-    // for a ray that goes round the throat (vl ~ 1e-4: wrong by half), and it put the floor's point
-    // of such rays off. rs - rho0 is eye.y (rmin = rho0 when there is a cylinder), R from the edge.
+    // for a ray that goes round the throat (at vl ~ 1e-4 it is wrong by half, and so would be the
+    // floor's point of such rays). rs - rho0 is eye.y (rmin = rho0 when there is a cylinder), R from the edge.
     float omb = rs * vl * vl / (1.0 + wn) - (fromEdge ? R : eye.y);
     float ivlc = rho0 * inversesqrt(max(omb * (rho0 + b), 1e-14 * rho0 * rho0));
     float kc = wc / rho0 * ivlc;
@@ -593,12 +591,12 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     //    the projection's angle. The whole path in the shell turns by less than pi (it meets the
     //    floor by then), so one window. On the cylinder psi is linear along the path: there it
     //    bounds the samples (a ray looking sideways in the throat winds round it slowly in l, and
-    //    with r and w alone a ball in the throat was within reach for metres of its path); on a
+    //    with r and w alone a ball in the throat would be within reach for metres of its path); on a
     //    fillet psi grows along the piece too, and the window's ends are solved for z.
-    // There the path is sampled at steps of a third of the object's size; between two samples
+    // There the path is sampled at steps of 0.35 of the object's radius or half size; between two samples
     // the ray is taken as the chord in R^4: where the chord enters the object, the path's point at
     // that fraction (one more sample) is the hit, if it lies in the object or within the chord's
-    // sag of it (step^2 / 8R: a millimetre on the fillet at the usual steps). So a ray that only
+    // sag of it (step^2 / 8 min(R, rho0), plus 0.1 mm). So a ray that only
     // grazes one, or meets the floor right after entering it, still finds it, and a long chord of a
     // ray that winds round the throat cannot cut across an object the path passes by. Only entries
     // count: a ray that starts inside one does not see it from inside. Hits are ordered by where
@@ -622,9 +620,9 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     if (cand != 0) {
         // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
         // 1 B from 0, 2 C from 2; 4: the edge), as the hits are ordered. The cylinder's fraction
-        // goes without an offset: a ray that winds round the throat meets things at ~1e-5 of it,
-        // and 2 + that kept a tenth of its digits (the floor's point and an object's normal off:
-        // white dashes along the throat). The floor's point itself is worked out after the
+        // goes without an offset: a ray that winds round the throat meets things at small fractions
+        // of it, whose digits 2 + q would lose (the floor's point and an object's normal off: white
+        // dashes along the throat). The floor's point itself is worked out after the
         // search, from there, as an object's hit is: the search then holds fewer numbers.
         float keyEnd = 4.0;
         if (floorHit) {
@@ -664,8 +662,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
             vec3 prevQ = vec3(prs.x, 0.0, prs.y);    // the previous sample, (u, v, w) in the subspace
             bool carry = true;                       // prevQ is where the next piece starts
             for (int p = 0; p < 3; p++) {
-                // piece p: a fillet from z0 to z1 (sign sg: psi from the inner end grows with z along
-                // the travel, or shrinks), or the cylinder (x0B .. x0B + DB)
+                // piece p: a fillet from z0 to z1 (psi from the inner end grows with z along the
+                // travel, or shrinks), or the cylinder (x0B .. x0B + DB)
                 bool cyl = p == 1;
                 if ((p == 0 && !hasA) || (cyl && !hasB)) continue;
                 float qEnd = hitK - 2.0 * float(p - 1);  // the nearest hit so far, or the ray's end
@@ -675,7 +673,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 // the windows: r from, to; w from, to (worked out here, not held through the search)
                 vec4 win = vec4(rc - reach, rc + reach, cb.z - reach, cb.z + reach);
                 // the piece's part in the windows, as fractions q of it: on the cylinder r = rho0,
-                // w = l = d pz and psi = psi0 + PB.x q; on a fillet r = rho0 + R (1 - cos th) and
+                // w = l = d (x0B + DB q) and psi = psi0 + PB.x q; on a fillet r = rho0 + R (1 - cos th) and
                 // side w = h - R + R sin th, both growing with th
                 vec2 qw = vec2(2.0);
                 if (psc + dps >= psi0 && psc - dps <= psi1) {
@@ -1019,8 +1017,7 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     // balls: the chord ball cut by this universe's sheet w = side*h is an ordinary sphere;
     // only entries count (a ray that starts inside a ball does not see it from inside)
     // The loops keep only the nearest one's distance and index (and a cube's face); its normal
-    // and colour are worked out once after the loop: updating the whole hit at every candidate
-    // cost the loop half its time.
+    // and colour are worked out once after the loop.
     float sheet = side * wh_h;
     float bt = h.t;
     int bi = -1;
@@ -1288,8 +1285,8 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     vec2 gq = kind == 1 ? vec2(fl, az * 24.0 / (2.0 * WH_PI))
                         : vec2(az, wh_asin(dn.z)) * (180.0 / WH_PI / 15.0);
     // fwidth = |d/dx| + |d/dy|. Across the edge of what the rays end on (floor next to an object,
-    // sky of A next to sky of B) a difference is meaningless and huge, and drew grid lines along
-    // such edges: there the other screen axis stands in, and with edges both ways there are
+    // sky of A next to sky of B) a difference is meaningless and huge and would draw grid lines
+    // along such edges: there the other screen axis stands in, and with edges both ways there are
     // no lines in that pixel. The edges are found in the same derivatives: the second coordinate
     // carries 64 per class (sky A, sky B, floor, object), and between neighbours of one class it
     // changes by 24 at most (the spokes' cut), so a change above 32 is an edge.

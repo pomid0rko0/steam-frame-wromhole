@@ -67,7 +67,7 @@ func _process(_delta: float) -> bool:
 				"%d cubes, moved %.5f m, tilt %.5f rad, lowest corner %.5f m from the floor" % [w.cubes.size(), cube_moved, cube_tilt, cube_floor])
 		w.balls.clear()
 		w.cubes.clear()
-		w.air = false          # 2-6 check the motion itself: no air drag
+		w.air = false          # 2-6d check the motion itself: no air drag (6e turns it on)
 		# 2: a ball flying through the throat without touching anything (no floor contact: high up)
 		var p := sp.point_from_chart(1.0, Vector3(9.0, 0.3, 2.2))
 		var d := WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-1.0, 0.0, 0.45).normalized())
@@ -127,7 +127,7 @@ func _chart_vel(b: Dictionary) -> Vector3:
 
 # ---------------------------------------------------------------- cubes
 
-## A cube on the floor of universe A at chart (x, y), turned by yaw, with chart velocity v and
+## A cube at chart point x of universe A, turned by yaw, with chart velocity v and
 ## angular velocity w (body coordinates).
 func _cube(x: Vector3, yaw: float, v: Vector3, w: Vector3, half: float, tilt := Vector3.ZERO) -> Dictionary:
 	var sp: WormholeSpace = main.space
@@ -346,7 +346,7 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 		res = maxf(res, absf(lap))
 	U.check("gravity solves Laplace's equation", res < 2e-3, "max |(r^2 f')' - 2 f| %.5f m^-1 over the shell and around it" % res)
 
-	# 6c: the demo's two balls let go at the same height: in front of the wormhole and in the
+	# 6c: two balls of the demo's size let go at its height: in front of the wormhole and in the
 	# middle of the throat
 	var rad: float = Toys.DROP_RADIUS
 	var hgt: float = Toys.DROP_HEIGHT

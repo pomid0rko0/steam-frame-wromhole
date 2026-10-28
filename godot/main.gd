@@ -238,12 +238,12 @@ func _process(delta: float) -> void:
 	if not hold:
 		_walk(step)
 	if moved:
-		# the controls moved the world against the room; physical walking does not
+		# the controls or a recentre moved the world against the room; physical walking does not
 		_update_chart_map()
 	if gaze_dot and gaze_dot.visible:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
 	if overlay:
-		# the chart -> play map only exists with the feet in the flat part
+		# the chart -> play map only exists with the feet in the flat part of sheet A
 		overlay.visible = foot_l > space.L
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
@@ -288,12 +288,13 @@ func place(pos: Vector3, forward: Vector3) -> void:
 
 
 ## Put the feet at l on the axis through the throat (n = +x), looking yaw degrees to the right of
-## the throat (the head's own yaw is taken out), and turn the view pitch degrees up and roll
+## the direction of falling l (toward the throat at l > 0, away from it at l < 0; the head's own yaw
+## is taken out), and turn the view pitch degrees up and roll
 ## degrees about the line of sight (right side down) on top of the head's own: the speed check.
 func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	foot_l = l
 	foot_n = Vector3(1.0, 0.0, 0.0)
-	# right, up, back as (U_l, u): facing the throat, back is +l and right is +y of chart A
+	# right, up, back as (U_l, u): back is +l (facing the throat at l > 0), right is +y of chart A
 	frame = [Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)]
 	_rotate_frame(deg_to_rad(yaw))
 	_face_head()
@@ -343,7 +344,7 @@ func gaze_text() -> String:
 	return "none" if g == null else "%.0f deg right %.0f deg up" % [g.x, g.y]
 
 
-## How gravity is shown (Tracer.set_gravity_view): the menu's row, the D-pad up, G.
+## How gravity is shown (Tracer.set_gravity_view): the menu's row, the D-pad up, left or right, Y, G.
 func set_gravity_view(view: int) -> void:
 	tracer.set_gravity_view(view)
 	menu.refresh()
@@ -427,7 +428,7 @@ func _run_pressed() -> bool:
 ## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
 ## in 30-degree snaps; a right stick click (Tab) switches between the two. Right A (R): back to
 ## the start, the toys back in place and the hands empty (not while the menu is open: A is its).
-## True if any of it moved the viewer against the room.
+## True if a turn moved the view against the room (the reset redoes the chart map itself).
 func _turn_and_reset(delta: float) -> bool:
 	var turn := 0.0
 	var mode_down := Input.is_key_pressed(KEY_TAB)
@@ -507,8 +508,7 @@ func _head_forward_xz() -> Vector2:
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a
 ## rigid motion: computed where the feet are placed and after a recentre of the play space, a stick
 ## step or turn, and left alone while one walks and turns in the room. The stereo check's overlay
-## is fixed to the room by it, so if the ray-traced world drifted against the room, its green
-## lines would part from it.
+## hangs on it (check_scene.gd).
 func _update_chart_map() -> void:
 	if overlay == null or foot_l <= space.L:
 		return

@@ -26,7 +26,7 @@ var space: WormholeSpace
 var world: BallWorld
 var grips: Array[XRController3D] = []   # left, right at their grip pose; none on the desktop
 # per hand: where it is in the curved space (on, l, n, F: its axes, U: its velocity), the grip,
-# what it holds (held, off, rel), its recent places (hist, thist), ready (a toy within reach)
+# what it holds (held, off, rel), its recent places (hist, thist), ready (a toy within reach, or held)
 var state: Array[Dictionary] = [{}, {}]
 var clock := 0.0                # s: the recent places' times
 
@@ -219,8 +219,8 @@ func _release(i: int) -> void:
 			(", spin %.1f rad/s" % toy["w"].length()) if toy.has("F") else ""])
 
 
-## A new ball (right) or cube (left) just in front of hand i, moving with it: held if the grip
-## is closed and the hand holds nothing else. The oldest toy goes if there are too many
+## A new ball (right) or cube (left) just in front of hand i, moving with it: none while the hand
+## holds a toy; held if the grip is closed. The oldest toy goes if there are too many
 ## (BallWorld.MAX_BALLS, MAX_CUBES), never a held one.
 func _new_toy(i: int, cube: bool) -> void:
 	var st := state[i]

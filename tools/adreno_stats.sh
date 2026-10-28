@@ -55,7 +55,8 @@ grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -2
 # it twice (a generic "ubershader" first, then the one specialised for the scene, which runs from
 # then on); one line each, then ir3's own statistics lines with --full. A shader with more than
 # 100 vec4 of constants is compiled once more as prog N/2, reading them from memory; Turnip runs
-# that one only if the pipeline's stages need more than 512 vec4 in all (ours: ~200), so it is
+# that one only if the pipeline's stages need more than 512 vec4 in all (the ray tracer's fragment
+# programs: 60-72, the log's constlen with --full), so it is
 # marked "unused".
 python3 - "$LOG" "$DISASM" "$FULL" <<'EOF'
 import re, sys

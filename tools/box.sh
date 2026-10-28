@@ -12,7 +12,8 @@
 # The tools go there by themselves (tools/env.sh), so this is for commands of one's own.
 # Made on first use (~5 min) and kept, stopped or not; `podman rm -f wormhole-box` throws it away.
 set -euo pipefail
-if command -v apt-get >/dev/null || ! command -v podman >/dev/null; then exec "$@"; fi
+if command -v apt-get >/dev/null; then exec "$@"; fi
+command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04

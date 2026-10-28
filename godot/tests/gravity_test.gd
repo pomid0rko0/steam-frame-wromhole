@@ -122,7 +122,7 @@ func _math_checks(sp: WormholeSpace) -> void:
 			"on the fillet f / r within %s g, f' within %s; the joins with the cylinder and the flat part within %s" % [_e(perr), _e(derr), _e(join)])
 
 
-## x as "1.5e-05"
+## x as "1.5e-5"
 static func _e(x: float) -> String:
 	if x == 0.0:
 		return "0"
@@ -192,7 +192,7 @@ func _picture_checks() -> void:
 			"middle of the view %s" % far)
 	U.check("floor in the middle of the throat: dark purple, 0.2 g", thr.b > thr.g + 0.1 and thr.r > thr.g + 0.05 and thr.v < 0.7
 			and (thr - off).get_luminance() != 0.0, "middle of the view %s (without the view %s)" % [thr, off])
-	# from the start: the sky (top fifth) is the same in all views, the floor (bottom fifth) changes
+	# from the start: the sky (top fifth) is the same with the floor view and without, the floor (bottom fifth) changes
 	# with the floor view, and the arrows show only with view 2
 	var sky := _diff(pics.start_off, pics.start_floor, 0.0, 0.2)
 	var flo := _diff(pics.start_off, pics.start_floor, 0.8, 1.0)

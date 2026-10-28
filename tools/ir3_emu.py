@@ -38,7 +38,8 @@ class Operand:
 
     def __init__(self):
         self.kind = None      # 'r' (register), 'c' (const), 'i' (immediate), 'p' (predicate), 'l' (label),
-        self.num = 0          # 'a' (address reg), 'cr' (const relative c<a0.x + n>), 'cmem' (c[n] dword)
+        self.num = 0          # 'a' (address reg), 'cr' (const relative c<a0.x + n>), 'cmem' (c[n] dword),
+                              # 'cmem_a1' (c[a1.x]), 'rt' (render target), 'tex' (texture)
         self.half = False
         self.neg = False
         self.abs = False
@@ -424,7 +425,7 @@ class Stats:
         self.cycles = 0          # issue slots: instructions (with repeats) + nops
         self.instr = 0           # instructions issued (with repeats), without nops
         self.cat4 = 0            # transcendental instructions issued (with repeats)
-        self.cat5 = 0            # texture-unit instructions (derivatives)
+        self.cat5 = 0            # texture-unit instructions (derivatives, samples)
         self.lane_instr = 0      # instructions times active lanes (useful work)
         self.pc = None           # optional: cycles per instruction index (a numpy array)
         self.nops = 0            # issue slots of nops (nop instructions, nopN flags, their repeats)

@@ -6,8 +6,8 @@ program of each log must be in the other, instruction for instruction.
 Make the logs with a scene without toys (tools/adreno_stats.sh plain --shader res://shaders/X):
 with toys, Tracer.set_objects swaps in the toys' shader and the plain one after the first frame,
 and the log holds their programs too.
-Exit status 0: the same programs; 1: different; 2: a log can't be compared (no programs, or two
-programs' listings interleaved: Godot compiles in threads; compile again)."""
+Exit status 0: the same programs; 1: different; 2: a log can't be compared (no programs, or another
+program's listing or NIR printed into one: Godot compiles in threads; compile again)."""
 import hashlib
 import re
 import sys
@@ -15,6 +15,7 @@ import sys
 MIN_INSTR = 2000        # the ray tracers' programs; Godot's own shaders are far smaller
 PREFIX = 'MESA: info: '
 STATS = re.compile(r'; (\w+) prog (\d+/\d+): (\d+) instr')     # every stage's: each ends a listing
+NIR = re.compile(r'%\d+ = |\bblock b\d+:|^\s*decl_|^impl |^shader: ')   # NIR, never in a listing
 
 
 def programs(log):
@@ -38,6 +39,10 @@ def programs(log):
                       % (log, m.group(2), headers))
                 sys.exit(2)
             body = [y for y in lines[start + 1:i] if not y.startswith('NIR (')]
+            if any(NIR.search(y) for y in body):
+                print('%s: program %s: another program\'s NIR printed into its listing; compile again'
+                      % (log, m.group(2)))
+                sys.exit(2)
             code = [y for y in body if y.strip() and not y.startswith(('@', ';', 'SIMD'))]
             out[hashlib.sha1('\n'.join(code).encode()).hexdigest()] = '%s, %s instr' % (m.group(2), m.group(3))
         headers = 0

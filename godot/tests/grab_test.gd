@@ -16,7 +16,7 @@ extends SceneTree
 ##    it spins as the hand turned and moves as the hand did (not with the wrist's turn times its
 ##    lever to the cube's centre)
 ## 5. right B with the grip closed: a new ball in the right hand; the left hand takes it over
-## 6. the hand pushes a ball and a cube it meets, softly (a ball at most 1.3 times the hand's speed;
+## 6. the hand pushes a ball and a cube it meets, softly (a ball under 1.35 times the hand's speed;
 ##    one pressed into the floor is not flung); a held ball pushes a ball
 ## 7. a half-open grip keeps holding, more open lets go; a hand that loses its tracking leaves its
 ##    ball in the air, and let go then it falls from rest

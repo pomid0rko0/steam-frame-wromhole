@@ -32,8 +32,8 @@ import numpy as np  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ir3_emu as E  # noqa: E402
 
-# The estimate, fitted on the headset's speed check (main and three variants of edge-120hz, nine
-# poses each; rms 0.19 ms, the variants' means within 5%): per 64 pixels of a frame of both eyes at
+# The estimate, fitted on the headset's speed check of older ray tracers at nine poses (rms 0.19 ms,
+# the variants' means within 5%; not refitted for the current poses, PLACES in godot/bench.gd): per 64 pixels of a frame of both eyes at
 # 1728 x 1728, ms = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x
 # transcendental instructions + MS_CAT5 x texture-unit instructions (derivatives, samples). In waves
 # of 128 a 32-bit ALU op takes 2 cycles (Mesa's ir3.c) and a nop slot covers 128 pixels; a cat4 or
@@ -50,9 +50,7 @@ SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
 
 def ray_program(log):
     """The specialised ray tracer from an ir3 log: of the two big fragment programs, the smaller.
-    A shader with more than 100 vec4 of constants also gets a variant /2 that reads them from
-    memory ("safe constlen"); Turnip runs it only when the pipeline's stages need more than 512 in
-    all (ir3_trim_constlen), and ours need ~200, so the /1 runs."""
+    The /2 variants are not run (tools/adreno_stats.sh), so the /1 runs."""
     text = open(log, errors='replace').read().replace('MESA: info: ', '')
     progs = {}
     for m in re.finditer(r'; FRAG prog (\d+/1): (\d+) instr', text):

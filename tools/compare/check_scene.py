@@ -16,8 +16,8 @@ def green(a): return (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 80
 ok = True
 for eye in ('left', 'right'):
     R = img('ray', eye)
-    # the balls' red: green and blue both under 0.45 of red (the shaded balls reach 0.37, the
-    # gravity view's red and orange floor 0.6 and more)
+    # the balls' red: green and blue both under 0.45 of red (between the shaded balls and the
+    # gravity view's red and orange floor)
     gb = np.maximum(R[..., 1], R[..., 2])
     red = ((R[..., 0] - gb) > 60) & (gb < 0.45 * R[..., 0])
     gray = R.mean(axis=2)
@@ -53,7 +53,7 @@ for eye in ('left', 'right'):
             f'outline difference {bbd} px')
     ok &= wl.sum() > 1000 and u0 < 0.01 and nb >= 1 and out < 0.01 and bbd <= 2
     if os.path.exists(f'{pre}_cube_{eye}.png'):
-        # magenta, its dark edges too (~55), near Godot's cube (the gravity view's floor has purple)
+        # magenta, its dark edges too, near Godot's cube (the gravity view's floor has purple)
         Cg = green(img('cube', eye))
         near = np.zeros_like(Cg)
         if Cg.any():

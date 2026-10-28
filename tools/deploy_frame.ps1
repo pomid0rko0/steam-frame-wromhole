@@ -39,7 +39,7 @@ $bin = Get-ChildItem -Path $tmp -Recurse -Filter "*.arm64" | Select-Object -Firs
 if (-not $bin) { throw "В архиве нет файла .arm64" }
 
 try {
-    # 2. скопировать (рядом с домашней папкой, под временным именем)
+    # 2. скопировать (в домашнюю папку, под временным именем)
     Write-Host "Копирую на $Frame ..."
     scp $bin.FullName "${Frame}:$Name.new"
     if ($LASTEXITCODE -ne 0) { throw "Не удалось скопировать (scp вернул $LASTEXITCODE)" }

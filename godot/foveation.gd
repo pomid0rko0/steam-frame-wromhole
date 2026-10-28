@@ -26,7 +26,7 @@ extends RefCounted
 const LEVELS := 3                    # the runtime's levels: low, medium, high
 # Our own density maps (levels 4 and 5), each eye alike, centred: rings out from where the eyes
 # look, [radius, shading width, height in screen pixels]; the radius in each eye's picture, its
-# edge at 1 (about 52 degrees). Each step halves the pixels shaded, for a softer edge than the
+# edge at 1. Each step halves the pixels shaded, for a softer edge than the
 # runtime's maps: the width first, then the height (order 1 swaps them: 1x2, 2x4). 4: wide,
 # 5: narrow.
 const OWN_MAPS := {
@@ -42,7 +42,7 @@ var target: Viewport            # the XR viewport (the window's on the desktop)
 var xr: XRInterface             # null on the desktop
 var split_pass: CompositorEffect = preload("res://split_pass.gd").new()   # on the XR camera's compositor
 var level := 0
-var order := 0                  # our maps' steps: 0 the width first (2x1, 4x2), 1 the height (1x2, 2x4)
+var order := 0                  # our maps' order of steps (set_order)
 var maps := {}                  # OWN_MAPS made into textures, by level * 2 + order (_own_map)
 
 

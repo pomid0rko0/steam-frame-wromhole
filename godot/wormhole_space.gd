@@ -2,7 +2,8 @@ class_name WormholeSpace
 extends RefCounted
 ## Geometry of the wormhole space on the CPU side: moving the viewer along
 ## geodesics and parallel-transporting their frame. The space and its profile r(l) (Lc, L, th0,
-## Rout): docs/geometry.md; gravity: docs/gravity.md.
+## Rout): docs/geometry.md; gravity: docs/gravity.md. GDScript's Vector2/3/4 are single precision
+## (float is double): ODE states and tables here are plain floats or PackedFloat64Array.
 ## A point is (l, n): n is a unit Vector3 on the shared angular sphere.
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
@@ -152,7 +153,7 @@ static func combine(f: Array, c: Vector3) -> Vector4:
 ## The tangent vector at (l, n) whose geodesic, followed for its length, reaches (tl, tn): the
 ## inverse of geodesic, for points within a hand's reach. The chord of R^4 seen from (l, n) is a
 ## first guess (on the fillet it misses, the more the farther); two corrections by where its
-## geodesic lands leave micrometres.
+## geodesic lands (tests/grab_test.gd checks the hands to 1 mm).
 func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	var E := embed(l, n)
 	var T := embed(tl, tn)
@@ -246,16 +247,7 @@ func height_grad(l: float, n: Vector3) -> Vector4:
 
 
 # ---------------------------------------------------------------- gravity
-# Gravity through the wormhole as in optozorax's video about gravity and portals: the potential
-# obeys Poisson's equation on the curved space itself. There is no mass near the wormhole (the
-# field comes from far below, like the Earth's), so the potential is harmonic, and far away it
-# is ordinary uniform gravity, g z, in both universes. The space is SO(3)-symmetric, so with
-# phi = g f(l) n_z the equation separates exactly into (r^2 f')' = 2 f, f even, f = r + beta / r^2
-# in the flat universes (ref/gravity.py; ref/test_gravity.py checks it against a 2D solve of the full equation).
-# On the throat's cylinder f = a cosh(sqrt(2) l / rho0): the field is screened, and in the
-# middle of the long throat gravity on the floor is about 0.2 g.
-# Everything here is in plain floats (double precision): GDScript's Vector2/3/4 are single
-# precision, too coarse for an ODE or a table whose second derivative is used.
+# Gravity through the wormhole (docs/gravity.md): phi = g f(l) n_z with (r^2 f')' = 2 f, f even.
 
 ## Solve the ODE for the current profile: closed form on the cylinder, RK4 over the fillet into
 ## a table, then scale so that f = r + beta / r^2 outside.
@@ -302,7 +294,7 @@ func _build_gravity() -> void:
 
 ## [f, df/dl] at l: the potential is g f(l) n_z. f is even, f' odd. On the fillet a cubic Hermite
 ## interpolant of the table, and f' is its derivative, so the force is exactly minus the
-## gradient of the potential (energy is conserved). Plain floats, not a Vector2 (single precision).
+## gradient of the potential (energy is conserved). Plain floats, not a Vector2.
 func gravity_f(l: float) -> PackedFloat64Array:
 	var al := absf(l)
 	var sg := -1.0 if l < 0.0 else 1.0
@@ -463,7 +455,7 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 ## (rows 0, 1: rays that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots
 ## evenly spaced over the row. A factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which goes to
 ## zero like a square root at the shell's edge, is taken out (the shader puts it back): what is
-## left is smooth enough for linear interpolation (psi within 1e-5 rad).
+## left is smooth enough for linear interpolation.
 const TABLE_N := 256
 const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]
 const _A := [

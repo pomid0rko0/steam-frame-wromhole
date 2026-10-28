@@ -56,7 +56,7 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 3:
-		# then the head turns back to the start yaw: the view should face the throat
+		# then back at the start, turned to the head's yaw: the view should face the throat
 		main.place(main.START_POS, main.START_FORWARD)
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view

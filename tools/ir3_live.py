@@ -37,10 +37,8 @@ def components(o, reps, advance):
     out = []
     for k in range(reps):
         c = o.num + (k if advance else 0)
-        if o.half:
-            out.append(HALF + c)
-        elif c < 192:
-            out.append(c)
+        if c < 192:
+            out.append(HALF + c if o.half else c)
     return out
 
 

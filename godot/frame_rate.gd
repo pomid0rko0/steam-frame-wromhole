@@ -23,8 +23,9 @@ extends Node
 ## frames make it rarer.
 ##
 ## The log: every second a line starting with "refresh:", with where one stands and looks, the
-## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for every frame
-## that came a refresh late, with where and what the GPU and the CPU took for it (a GPU that lowers
+## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for each frame
+## that came a refresh late (at most LATE_LINES a second, none during the speed check), with where
+## and what the GPU and the CPU took for it (a GPU that lowers
 ## its clock makes the same frame take longer; on the Frame it stayed at its top clock while frames
 ## were too slow).
 
@@ -33,7 +34,7 @@ signal changed                  # the lines (status, notes) or the verdict chang
 const RateMeter := preload("res://rate_meter.gd")
 const JUDGE_SECONDS := 5        # the verdict judges up to the last 5 seconds
 const MIN_SECONDS := 2          # at a new rate, measure this long before judging
-const MISSED_OK := 0.01         # refreshes without a new frame that still count as keeping up
+const MISSED_OK := 0.01         # share of the refreshes without a new frame that still counts as keeping up
 const REQUEST_WAIT := 3.0       # s the headset gets to follow a request
 const LATE_LINES := 30          # late frames logged one by one per second, at most
 const NOTE_SECONDS := 8         # how long the answer to a choice stays
@@ -124,7 +125,7 @@ func _process(delta: float) -> void:
 		var period := api.get_next_frame_time() - now
 		var missed_before := meter.missed()
 		meter.add(now, period, reported)
-		# every late frame gets a line: where, and what the GPU and the CPU took for it
+		# a late frame gets a line: where, and what the GPU and the CPU took for it
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()

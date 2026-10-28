@@ -57,7 +57,7 @@ func _process(_d: float) -> bool:
 				check("the segment's stencil split", false, b.plan[b.step][1])
 				started = false
 			if main.foveation.level != v[2] or main.foveation.split_pass.enabled != (v[2] > 0 or v[3]):
-				check("the segment's foveation", false, "%d %s" % [main.foveation, main.foveation.split_pass.enabled])
+				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.split_pass.enabled])
 				started = false
 		if not b.running:
 			check("finished", true, "%d frames" % frames)

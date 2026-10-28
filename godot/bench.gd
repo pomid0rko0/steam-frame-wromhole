@@ -47,7 +47,7 @@ const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
 const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
-const PLACES := [   # the comparison's poses: [l, degrees to the right of the throat, degrees up]
+const PLACES := [   # the comparison's poses: [l, degrees to the right (place_on_axis), degrees up]
 	# (place_on_axis: at l < 0 the throat is behind at 0 degrees, ahead at 180)
 	[11.6, 0.0, 0.0],   # the start
 	[6.2, 0.0, 0.0],    # just outside the curved zone: the wormhole fills the view
@@ -88,7 +88,7 @@ var _next := ""                 # the phase after a rate request
 var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
 var variants: Array = []        # this run's [label, Shader, foveation, split, Tracer.toy_mode]:
                                 # others (of the kind this build runs: with toys or without),
-                                # then this build's (FOVEATIONS)
+                                # then this build's (FOVEATIONS), with toys also over the whole view
 var own := 0                    # the variant that is this build without foveation
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
@@ -163,7 +163,7 @@ func start() -> void:
 	own_shader = tracer.material.shader
 	variants = []
 	# others compared with the same kind: without toys, or with them (the demo's), theirs over the
-	# whole view: with the stencil test (since the stencil split) the whole view marked, without
+	# whole view: with the stencil test the whole view marked, without
 	# it no stencil at all; none with the gravity view on (theirs are without it)
 	for o in others if tracer.gravity_view == 0 else []:
 		if tracer.plain():

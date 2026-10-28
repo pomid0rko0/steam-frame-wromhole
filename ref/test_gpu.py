@@ -209,7 +209,7 @@ BOX = SCENE['boxes_B']
 
 
 def flat_hit(side, x, d, shell):
-    """Returns (t, kind): kind 0 sky, 1 floor, 2 object, 3 shell, 10 + j ball j."""
+    """Returns (t, kind): kind 0 sky, 1 floor, 2 object, 3 shell, 10 + j ball j, 10 + len(BALLS) + j cube j."""
     best, kind = 1e9, 0
     if d[2] < 0:
         t = -x[2] / d[2]
@@ -334,7 +334,7 @@ def reference(state, size, tan):
 
 
 def compare(gpu, ref, name):
-    """Sky: angular error of the final direction. Floor and balls: hit-position error in units of
+    """Sky: angular error of the final direction. Floor, balls and cubes: hit-position error in units of
     the pixel footprint (distance to the neighbouring pixels' hits in the reference), converted to
     an equivalent viewing angle. Errors well below a pixel are invisible."""
     n = gpu.shape[0]

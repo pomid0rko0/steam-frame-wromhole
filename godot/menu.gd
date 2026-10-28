@@ -108,7 +108,7 @@ var bench_unseen := false       # the line below shows it until the menu is open
 var was := {}                   # buttons down last frame (handle_input)
 var dir_held := Vector2i.ZERO   # the direction held (_direction)
 var held_for := 0.0             # s it has been held: then it repeats
-var armed := true               # nothing held since the menu opened (a stick out to walk does not act)
+var armed := true               # a direction let go once since the menu opened (a stick out to walk does not act)
 var stick_dir := Vector2i.ZERO  # the left stick as a D-pad, with hysteresis
 var menu: Node3D
 var strip: Node3D
@@ -293,8 +293,8 @@ func _pressed(key: String, down: bool) -> bool:
 	return down and not before
 
 
-## The direction held: the D-pad or arrow keys, else the left stick as a D-pad (out past 0.6 along
-## its main axis, let go under 0.3); y down is +1 (the next row).
+## The direction held: the D-pad or arrow keys, else the left stick as a D-pad (pushed out past 0.6,
+## let go under 0.3, its main axis the direction); y down is +1 (the next row).
 func _direction(left: XRController3D) -> Vector2i:
 	var d := Vector2i(int(Input.is_key_pressed(KEY_RIGHT)) - int(Input.is_key_pressed(KEY_LEFT)),
 			int(Input.is_key_pressed(KEY_DOWN)) - int(Input.is_key_pressed(KEY_UP)))
@@ -621,7 +621,7 @@ func _process(delta: float) -> void:
 
 
 ## The menu and the line hang in the room ahead of the head, turned to its bearing: they follow
-## its steps at once, and its turns once it has turned TURN away (or at once: snap).
+## its steps quickly, and its turns once it has turned TURN away (or at once: snap).
 func _follow(delta: float, snap := false) -> void:
 	var h := head.transform
 	var f := -h.basis.z
@@ -718,7 +718,7 @@ func _foveation_source() -> String:
 	return "по взгляду" if xr.is_eye_gaze_interaction_supported() else "по центру"
 
 
-## The XR viewport's render scale (the speed check sets 100% and puts it back).
+## The XR viewport's render scale.
 func set_render_scale(s: float) -> void:
 	render_scale = s if SCALES.has(s) else 1.0
 	target.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR

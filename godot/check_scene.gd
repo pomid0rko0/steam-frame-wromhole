@@ -53,7 +53,7 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
 		s.height = 2.0 * BALL_RADIUS
-		s.radial_segments = 48       # outline within 0.7 mm of a true sphere
+		s.radial_segments = 48       # its faces within 1.3 mm of the sphere (0.43% of the radius)
 		s.rings = 24
 		var m := MeshInstance3D.new()
 		m.name = "Ball%d" % pos.size()

@@ -18,7 +18,7 @@ extends RefCounted
 
 const PAUSE_NS := 500_000_000  # a longer gap is a pause (session not running), not missed frames
 const WHOLE := 0.03            # how close to a whole number a ratio of periods must be
-const MAX_PACE := 4            # the slowest pacing believed: every 4th refresh
+const MAX_PACE := 4            # the slowest pacing an expected rate is matched to: every 4th refresh
 
 var period := 0          # the display's refresh period, ns
 var paced := 0           # the period the runtime last predicted, ns

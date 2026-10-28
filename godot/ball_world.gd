@@ -28,8 +28,8 @@ const RESTITUTION_BALL := 0.85
 # curved zone's edge rolls in by itself (tests/physics_test.gd). A larger part that follows the
 # weight would hold such a ball still; a smaller one would let a thrown ball roll very far: the
 # part that follows the speed stops it. Air drag (as the square of the speed) slows fast balls, in
-# flight too, but hardly a slow roll. A 50 cm ball rolling at 4 m/s stops in 19 m, at 2 m/s in
-# 9.5 m, at 1 m/s in 4 m.
+# flight too, but hardly a slow roll. By these constants a 50 cm ball rolling at 4 m/s stops in
+# 19 m, at 2 m/s in 9.5 m, at 1 m/s in 4 m.
 const ROLLING_RESISTANCE := 0.005
 const ROLLING_DRAG := 0.1            # 1/s: the deceleration per m/s of rolling speed
 const AIR_DENSITY := 1.2             # kg/m^3
@@ -37,13 +37,13 @@ const TOY_DENSITY := 25.0            # kg/m^3: big rubber toys (a 50 cm ball 1.6
 const DRAG_BALL := 0.47              # drag coefficients of a sphere and of a cube
 const DRAG_CUBE := 1.05
 const MAX_BALLS := 8
-const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls nearby
+const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls and cubes nearby
 const MAX_CUBES := 6
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates at 0.5 g
-const BOUNCE_SPEED := 0.4            # slower impacts do not bounce (no endless micro-bounces)
+const BOUNCE_SPEED := 0.4            # slower cube impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
-const KINEMATIC := 1e9               # mass of held balls and hands
+const KINEMATIC := 1e9               # mass of a held toy against a free ball (hands push without one: _push)
 # a hand or a held toy against a free ball: it moves on regardless, so with the balls' 0.85 a ball
 # it meets would fly off at 1.85 times its speed, and one pressed against the floor or another ball
 # would gain speed from nothing; this is a soft hand's

@@ -224,8 +224,8 @@ class Wormhole:
 
     def fillet_table(self, N=256):
         """The shader's fillet table (WormholeSpace.fillet_table): the polynomial e by impact
-        parameter, 4 rows of N knots, one per span of b with one regime; e times sqrt(mx) (and
-        sqrt(mn) in regime 2). Returns (table (4, N, 4) float32, lo, inv, reg)."""
+        parameter, 4 rows of N knots, one per span of b with one regime; e times sqrt(mx) in
+        regimes 1 and 2 (and sqrt(mn) in regime 2). Returns (table (4, N, 4) float32, lo, inv, reg)."""
         sp = max(self.Rout - self.rmin, 1e-6 * self.R)
         alp = (self.rmin - self.rho0) / sp
         b1 = min(max(self.rmin - sp, 0.0), self.rmin)
