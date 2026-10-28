@@ -24,13 +24,13 @@ NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
 # SteamVR and the owner's view share this machine's memory and cores with the container: a stereo
 # test with five renders at once and no memory limit can crash SteamVR; with two at once and the
-# limits below it does not (the container's memory.peak since it started, over stereo tests,
-# test.sh and test_openxr.sh: 2.4 GB). So the container gets at most one core's time and MEM of
+# limits below it does not (the container's memory.peak over those runs and test_box.sh's since:
+# 2444328960 bytes). So the container gets at most one core's time and MEM of
 # memory, no swap (a run that needs more fails in here, not SteamVR), runs take JOBS renders at
 # once (default 2), and a run stops when the Frame has less than MIN_FREE left.
 CPUS=1
 MEM=4g
-MIN_FREE=1500   # MB
+MIN_FREE=1500   # MiB
 # what setup.sh and this script set up: a change to either sets the container up again
 SETUP=$(cat "$ROOT/tools/setup.sh" "$0" | sha1sum | cut -c1-12)
 # the tools' own settings go along (JOBS=3 tools/test_stereo.sh), nothing else of this machine's
@@ -74,7 +74,7 @@ inbox() {   # command...: runs it in the container, stopped with this script; it
 	run=$!
 	( while kill -0 $run 2>/dev/null; do
 		a=$(awk '/^MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
-		[ "$a" -ge $MIN_FREE ] || { echo "box.sh: $a MB of memory left on the Frame: stopping the run" >&2; kill -TERM $$; break; }
+		[ "$a" -ge $MIN_FREE ] || { echo "box.sh: $a MiB of memory left on the Frame: stopping the run" >&2; kill -TERM $$; break; }
 		sleep 2
 	  done ) &
 	local s=0

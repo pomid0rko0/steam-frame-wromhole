@@ -1,10 +1,9 @@
 class_name CheckScene
 extends RefCounted
-## The stereo check (README.md, the one-eye check). Godot's standard renderer draws green lines
-## on top of what the ray tracer draws: on the white lines of the flat floor, as a grid on three
-## red balls and along the edges of a magenta cube. Godot's
-## geometry is placed in chart A coordinates under main's overlay, which is fixed to the room: if
-## the ray-traced world drifted against the room, green would part from it.
+## The stereo check: Godot's standard renderer draws green lines on top of what the ray tracer
+## draws (what, and how to read it: README.md, the one-eye check). Godot's geometry is placed in
+## chart A coordinates under main's overlay, which is fixed to the room: if the ray-traced world
+## drifted against the room, green would part from it.
 
 # the balls in chart A, in front of the start position
 const BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
@@ -52,7 +51,7 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
 		s.height = 2.0 * BALL_RADIUS
-		s.radial_segments = 48       # its faces within 1.3 mm of the sphere (Tracer.PROXY_SLACK)
+		s.radial_segments = 48       # its faces inside the sphere by what Tracer.PROXY_SLACK says
 		s.rings = 24
 		var m := MeshInstance3D.new()
 		m.name = "Ball%d" % pos.size()

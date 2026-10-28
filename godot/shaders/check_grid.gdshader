@@ -1,6 +1,6 @@
 shader_type spatial;
 // Stereo check, drawn by Godot's standard renderer: green lines exactly where the ray-traced
-// floor of universe A has its white lines (1 m rings, 24 spokes). The mesh lives in chart
+// floor of universe A has its white lines. The mesh lives in chart
 // coordinates (its node maps chart -> play space). If each eye's ray math is right, the green
 // lines cover the white ones; if not, the viewer sees two grids.
 render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, fog_disabled, shadows_disabled;

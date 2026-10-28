@@ -19,8 +19,8 @@ const MAX_THROW_SPEED := 25.0    # m/s: a tracking glitch at the release flings 
 const MAX_THROW_SPIN := 40.0     # rad/s
 const SET_DOWN_SPEED := 0.15     # m/s and rad/s: a hand slower than this, turning slower than
 const SET_DOWN_SPIN := 1.0       # this, sets its toy down at rest
-const NEW_BALL_RADIUS := 0.2     # right B: a new ball in the right hand
-const NEW_CUBE_HALF := 0.15      # the D-pad down / left X: a new cube in the left hand
+const NEW_BALL_RADIUS := 0.2     # a new ball in the right hand (its button: README.md)
+const NEW_CUBE_HALF := 0.15      # a new cube in the left hand
 
 var space: WormholeSpace
 var world: BallWorld

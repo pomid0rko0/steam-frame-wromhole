@@ -45,7 +45,7 @@ const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
 const GRAVITY_VIEWS := ["выкл", "пол", "стрелки"]   # Tracer.gravity_view 0, 1, 2
-const TURNS := ["плавный", "рывком 30°"]           # main.smooth_turn true, false
+const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
 # the rows, top to bottom (those that make no sense here are left out: _layout)
@@ -480,7 +480,7 @@ func _value_text(k: String, i: int) -> String:
 		"order": return ORDERS[i]
 		"gaze": return OFF_ON[i]
 		"grav": return GRAVITY_VIEWS[i]
-		"turn": return TURNS[i]
+		"turn": return TURNS[i] if i == 0 else TURNS[i] % roundi(rad_to_deg(main.SNAP_ANGLE))
 		"strip": return ON_OFF[i]
 		"bench":
 			if main.bench.running:

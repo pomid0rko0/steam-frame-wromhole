@@ -3,18 +3,19 @@
 
 The Frame's compiler (Mesa's ir3 in Turnip, Adreno 750) compiles the shader (tools/adreno_stats.sh
 keeps its log with KEEP_LOG); this runs the specialised program it made on waves of 64 pixels
-(8x8 tiles of 2x2 quads), or 128 (16x8) where the program runs double width, at given poses, and sums what the waves issue. Divergent branches cost
-a wave both sides, as on the GPU. It is a model: no timings, no waits on transcendental or
-texture-unit results (counted apart: cat4, cat5), no memory.
+(8x8 tiles of 2x2 quads), or 128 (16x8) where the program runs double width, at given poses, and
+sums what the waves issue. Divergent branches cost a wave both sides, as on the GPU. What the model
+leaves out: tools/ir3_emu.py.
 
   python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--seed K] [--check] [--profile]
                                [--split PLAINLOG]
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
-headset, S x S pixels (default 1728) and F degrees of vertical field of view (default 104, as tracer.gd takes it),
-on N random tiles (default 300; the same tiles for every LOG with the same seed K). --profile:
-cycles per stretch of code.
+headset, S x S pixels (default 1728, as tools/fdm_check.sh) and F degrees of vertical field of view
+(default 104, as tracer.gd takes it),
+on N random tiles (default 300; the same tiles for every LOG of the same wave width with the same
+seed K). --profile: cycles per stretch of code.
 --split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
 toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
 (the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
@@ -33,12 +34,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ir3_emu as E  # noqa: E402
 
 # The estimate, fitted on speed checks in the headset of other ray tracers than this tree's, at
-# other poses than godot/bench.gd's PLACES (a model to compare variants, not a timing): per 64 pixels of a frame of
-# both eyes at 1728 x 1728, ms = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x
-# transcendental instructions + MS_CAT5 x texture-unit instructions (derivatives, samples). In waves
-# of 128 the issue cycles are ir3_emu.py's and a nop slot covers 128 pixels; a cat4 or
-# cat5 instruction's work is per pixel whatever the wave. By the constants transcendentals and
-# derivatives cost far more than their issue slots (16 and ~90 ALU cycles' worth).
+# other poses than godot/bench.gd's PLACES; the measurements are not in the repository. A model to
+# compare variants, not a timing: per 64 pixels of a frame of both eyes at 1728 x 1728, ms =
+# GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x transcendental instructions
+# + MS_CAT5 x texture-unit instructions (ir3_emu.py counts them). In waves of 128 the issue cycles
+# are ir3_emu.py's and a nop slot covers 128 pixels; a cat4 or cat5 instruction's work is per pixel
+# whatever the wave. By the constants transcendentals and derivatives cost far more than their issue
+# slots (16 and ~90 ALU cycles' worth).
 GODOT_MS = 0.8
 MS_ALU = 1.61e-3
 MS_NOP = 1.05e-3

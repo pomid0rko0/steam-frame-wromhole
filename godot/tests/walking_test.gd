@@ -8,7 +8,7 @@ extends SceneTree
 ## 4. R puts the viewer back at the start, facing the wormhole
 ## 5. Shift + W for six seconds runs 24 m: through the middle of the throat into universe B,
 ##    on the floor, still walking straight (chart B: x = -10.86)
-## tests/walking_xr_test.gd does the same with controllers.
+## Controllers: tests/walking_xr_test.gd.
 
 const U := preload("res://tests/util.gd")
 

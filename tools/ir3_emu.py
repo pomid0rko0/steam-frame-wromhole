@@ -425,11 +425,11 @@ class Stats:
         self.cycles = 0          # issue slots: instructions (with repeats) + nops
         self.instr = 0           # instructions issued (with repeats), without nops
         self.cat4 = 0            # transcendental instructions issued (with repeats)
-        self.cat5 = 0            # texture-unit instructions (derivatives, samples)
+        self.cat5 = 0            # texture-unit instructions: a sample one, a derivative one per component
         self.lane_instr = 0      # instructions times active lanes (useful work)
         self.pc = None           # optional: cycles per instruction index (a numpy array)
         self.nops = 0            # issue slots of nops (nop instructions, nopN flags, their repeats)
-        self.half = 0            # 16-bit ALU instructions issued (16-bit sources and destination)
+        self.half = 0            # 16-bit ALU instructions issued (a half destination and a half source)
 
 
 def run_wave(prog, start, wave, stats, max_steps=200000):

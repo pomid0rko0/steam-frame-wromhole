@@ -4,7 +4,7 @@ extends RefCounted
 ## scene. At rest in front of the wormhole: five balls and two cubes, a third cube in the throat. A
 ## moment after the start a cube and a ball are thrown from chest height; the ball rolls through
 ## the throat into universe B. Then two balls are dropped together from the same height: one beside
-## the wormhole, one in the middle of the throat, where gravity is about a fifth (docs/gravity.md).
+## the wormhole, one in the middle of the throat, where gravity is weaker (docs/gravity.md).
 ## A puts it all back and does it again.
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),

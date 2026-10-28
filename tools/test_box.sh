@@ -5,9 +5,10 @@
 # worktree under .wt/ runs the tests, with its files where the host sees them and git's status
 # clean; the container is set up by one box.sh at a time. Run it after a change to box.sh, env.sh
 # or the tools that use them; its worktree is made from HEAD, so commit first.
-#   tools/test_box.sh        (exit status 0 only if every check passes; ~3 min)
+#   tools/test_box.sh        (exit status 0 only if every check passes)
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+. "$ROOT/tools/repo.sh"
 if command -v apt-get >/dev/null || ! command -v podman >/dev/null; then
 	echo "tools/test_box.sh: only where box.sh uses its container (the Frame)"; exit 2
 fi
@@ -52,7 +53,7 @@ check "two runs at once pass, each with files of its own the host sees" \
 "$ROOT/tools/test_openxr.sh" > "$TMP/openxr.txt" 2>&1 &
 po=$!
 for i in $(seq 120); do
-	sock=$(find "$ROOT/.wt/.out" -maxdepth 2 -name monado_comp_ipc -newer "$TMP/a.txt" 2>/dev/null | head -1)
+	sock=$(find "$REPO/.wt/.out" -maxdepth 2 -name monado_comp_ipc -newer "$TMP/a.txt" 2>/dev/null | head -1)
 	[ -n "$sock" ] && break
 	sleep 1
 done
@@ -60,14 +61,14 @@ check "test_openxr.sh's Monado is in its own directory, not where any Godot look
 	'[ -n "$sock" ] && [ "$(podman exec $NAME sh -c "ls /tmp/monado_comp_ipc \${XDG_RUNTIME_DIR:-/nonexistent}/monado_comp_ipc 2>/dev/null" | wc -l)" = 0 ]'
 wait $po
 
-w=$ROOT/.wt/test-box-$$
-git -C "$ROOT" worktree add -q --detach "$w" HEAD
+w=$REPO/.wt/test-box-$$
+git -C "$REPO" worktree add -q --detach "$w" HEAD
 "$w/tools/test.sh" refresh_rate > "$TMP/w.txt" 2>&1
 rw=$?
 ow=$(sed -n 's/^logs: //p' "$TMP/w.txt")
 check "a fresh worktree runs the tests, its files where the host sees them" '[ $rw = 0 ] && [ -f "$ow/refresh_rate.log" ]'
 check "the worktree's git status is clean" '[ -z "$(git -C "$w" status --porcelain)" ]'
-git -C "$ROOT" worktree remove --force "$w"
+git -C "$REPO" worktree remove --force "$w"
 
 podman exec $NAME sh -c 'echo 0 > /box-ready'
 "$ROOT/tools/box.sh" true > "$TMP/s1.txt" 2>&1 &

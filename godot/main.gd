@@ -18,9 +18,9 @@ extends Node3D
 ## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
 ## hold, and last the toys and the head to the ray tracer: a toy let go now starts from the hand.
 ##
-## A new button: while the menu is open (menu_active, also the frame that closes it) A, B, the D-pad
-## and the left stick are the menu's; during the speed check (hold) the sticks, A and the hands do
-## nothing; the left stick's click, View and Menu open the menu. A new action goes into
+## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
+## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
+## the sticks, A and the hands do nothing. A new action goes into
 ## openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare them exactly), in
 ## the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a snap turn) call
 ## hands.forget_motion, or the jump would be a throw.
@@ -44,7 +44,7 @@ const SNAP_ANGLE := deg_to_rad(30.0)
 const SMOOTH_TURN_SPEED := deg_to_rad(90.0)   # per second at full stick
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
-const NEAR := 0.05                  # m: the camera's near plane (less than Tracer.PROXY_MARGIN)
+const NEAR := 0.05                  # m: the camera's near plane
 const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
 const CHECK_FLAG := "res://check"   # present in a build: the stereo check scene is on (not in git)
@@ -83,7 +83,7 @@ var view_pitch := 0.0           # degrees: the view turned up and about the line
 var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var desktop_yaw := 0.0
 var desktop_pitch := 0.0
-var smooth_turn := true         # false: 30-degree snaps; a right stick click switches
+var smooth_turn := true         # false: snaps of SNAP_ANGLE
 var snap_armed := true          # the right stick went back to the middle since the last turn
 var menu_active := false        # the menu was open this frame: A, B, the D-pad and the left stick are its
 var was := {}                   # buttons down last frame (_pressed)
@@ -210,8 +210,8 @@ func _process(delta: float) -> void:
 	var dt := minf(delta, 0.1)
 	menu_active = menu.handle_input(dt)
 	var moved := false if hold else _turn_and_reset(dt)
-	# the D-pad up, left or right (left Y on other controllers) / G: the next gravity view (not
-	# during the speed check: it times what it set up)
+	# its button (README.md, «Управление») / G: the next gravity view (not during the speed check:
+	# it times what it set up)
 	var grav_down := Input.is_key_pressed(KEY_G)
 	if in_xr:
 		for b in [&"by_button", &"dpad_up", &"dpad_left", &"dpad_right"]:
@@ -344,16 +344,16 @@ func gaze_text() -> String:
 	return "none" if g == null else "%.0f deg right %.0f deg up" % [g.x, g.y]
 
 
-## How gravity is shown (Tracer.set_gravity_view): the menu's row, the D-pad up, left or right, Y, G.
+## How gravity is shown (Tracer.set_gravity_view): the menu's row, its button, G.
 func set_gravity_view(view: int) -> void:
 	tracer.set_gravity_view(view)
 	menu.refresh()
 
 
-## Turns smoothly or in 30-degree snaps (the right stick's click switches, as does the menu).
+## Turns smoothly or in snaps of SNAP_ANGLE (the right stick's click switches, as does the menu).
 func set_smooth_turn(on: bool) -> void:
 	smooth_turn = on
-	print("right stick turns ", "smoothly" if smooth_turn else "in 30-degree snaps")
+	print("right stick turns ", "smoothly" if smooth_turn else "in %d-degree snaps" % roundi(rad_to_deg(SNAP_ANGLE)))
 	menu.refresh()
 
 
@@ -426,8 +426,8 @@ func _run_pressed() -> bool:
 
 
 ## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
-## in 30-degree snaps; a right stick click (Tab) switches between the two. Right A (R): back to
-## the start, the toys back in place and the hands empty (not while the menu is open: A is its).
+## in snaps of SNAP_ANGLE; a right stick click (Tab) switches between the two. Right A (R): back
+## to the start, the toys back in place and the hands empty (not while the menu is open: A is its).
 ## True if a turn moved the view against the room (the reset redoes the chart map itself).
 func _turn_and_reset(delta: float) -> bool:
 	var turn := 0.0

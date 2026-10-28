@@ -1,7 +1,7 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place,
 ## with the other ray tracers if res://shaders/ab/ holds some (tools/ab_shaders.sh), logs a line
-## per place, with this build's ray tracer also with the passes split and with each foveation level,
+## per place, with this build's ray tracer also with the passes split and with each of FOVEATIONS,
 ## and gives back the shader, the foveation and where the viewer stood. The menu has its row.
 ##   godot --path . -s res://tests/bench_test.gd
 

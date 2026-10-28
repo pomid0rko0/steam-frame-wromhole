@@ -54,7 +54,8 @@ trap restore EXIT
 others=()
 for s in "${srcs[@]}"; do [ "$s" = this ] || others+=("$s"); done
 if [ ${#others[@]} -gt 0 ]; then "$ROOT/tools/ab_shaders.sh" "${others[@]}" >/dev/null || exit 1; fi
-[ -n "$POSES" ] || POSES="11.6,0,0;6.2,0,0;6.2,60,0;5.0,0,0;5.0,90,0;5.0,180,0;5.0,0,-35;5.0,0,35;0,0,0;0,90,0;-5.0,180,0;-5.7,160,-5;-6.2,180,0"   # bench.gd PLACES
+# the speed check's poses, bench.gd's PLACES
+[ -n "$POSES" ] || POSES=$(sed -n '/^const PLACES/,/^]/p' "$ROOT/godot/bench.gd" | grep -o '\[[-0-9., ]*\]' | tr -d '[] ' | paste -sd ';')
 scene=$([ -n "$BALLS" ] && echo balls || ([ -n "$TOYS" ] && echo toys$HELD || echo plain))
 n=0
 for s in "${srcs[@]}"; do
@@ -64,7 +65,7 @@ for s in "${srcs[@]}"; do
 	if [ "$s" = this ] && [ -n "$TOYS" ]; then stsh=res://shaders/wormhole_balls.gdshader; fi
 	if [ "$s" = this ] && [ -n "$GRAV" ]; then
 		sc=$scene+gravity$GRAV
-		stsh=res://shaders/$([ -n "$TOYS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
+		stsh=res://shaders/$([ -n "$TOYS$BALLS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
 	fi
 	[ -n "$BALLS$TOYS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
 	[ -n "$sh" ] && stsh=$sh

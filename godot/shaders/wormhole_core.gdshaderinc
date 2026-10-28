@@ -20,7 +20,8 @@
 //                                           dot(centre, axis) for the four (one index base for the search);
 //                                           (rgb, half size). A point P is inside when |dot(P, axis) -
 //                                           dot(centre, axis)| < 1 for all four axes. wh_pix: a
-//                                           pixel's angle (the edge lines' width). ivec4 wh_cIdx:
+//                                           pixel's angle (the edge lines' soft edges).
+//                                           ivec4 wh_cIdx:
 //                                           the cubes sorted as the balls.
 //   vec4 wh_bound[4]                        bounding spheres of the balls in A, in B, of the cubes in
 //                                           A, in B (xyz of the centre, radius; < 0: none): a ray of a
@@ -36,9 +37,8 @@
 //   with WH_ARROWS defined too: float wh_pix   also the field's arrows (wh_arrow); wh_pix is a
 //                                           pixel's angle (the arrows' soft edges)
 //
-// The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md. Each ray
-// stays in a plane through the centre; its angle there is one integral: on the cylinder in closed
-// form, on the fillet by product integration, no loops (see "curved part").
+// The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md (here:
+// "curved part").
 //
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
@@ -163,7 +163,7 @@ float wh_chordInCube(int i, vec3 q, vec3 D, vec3 e1, vec3 e2, vec3 cb, float per
 }
 
 // A cube's colour at the point X (relative to its centre, in R^4): darker along the edges, lines
-// about as wide as a pixel at the path length dist
+// 0.07 of the half size wide, their edges soft over about a pixel at the path length dist
 vec3 wh_cubeLook(int i, vec4 X, float dist) {
     vec3 ad = abs(vec3(dot(X, wh_cubeE[5 * i]), dot(X, wh_cubeE[5 * i + 1]), dot(X, wh_cubeE[5 * i + 2])));
     float m1 = max(max(ad.x, ad.y), ad.z);

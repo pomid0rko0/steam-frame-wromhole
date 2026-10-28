@@ -5,12 +5,11 @@ extends SceneTree
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
 ## ray-traced white lines, red balls and magenta cube.
 ##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
-## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta;
-## 2: as 1, then the head walks 0.6 m and turns 35 degrees over ten frames before the capture;
-## 3: as 1, then the left stick walks forward and right (keys W, D), the right stick snaps
-## 30 degrees right (key E), and after a switch to smooth turns (Tab) turns 15 degrees left
-## while walking forward (Q, W): the overlay must follow the world. Run with --fixed-fps 60,
-## so every mode walks and turns the same.
+## case 0 and 1: util.gd's headset; 2: as 1, then the head walks 0.6 m and turns 35 degrees over ten
+## frames before the capture; 3: as 1, then the left stick walks forward and right (keys W, D), the
+## right stick snaps 30 degrees right (key E), and after a switch to smooth turns (Tab) turns 15
+## degrees left while walking forward (Q, W): the overlay must follow the world. Run with
+## --fixed-fps 60, so every mode walks and turns the same.
 ## plain: without the ray-traced balls and cube, i.e. with the shader the normal scene uses where
 ## no toy can be seen (no toys' code); only the floor lines can be compared then. gravity, arrows:
 ## the gravity view (main.set_gravity_view 1, 2: the floor coloured by gravity, also the field's

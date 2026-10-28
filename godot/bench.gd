@@ -47,8 +47,7 @@ const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
 const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
-const PLACES := [   # the comparison's poses: [l, degrees to the right (place_on_axis), degrees up]
-	# (place_on_axis: at l < 0 the throat is behind at 0 degrees, ahead at 180)
+const PLACES := [   # the comparison's poses: [l, degrees to the right, degrees up] (place_on_axis)
 	[11.6, 0.0, 0.0],   # the start
 	[6.2, 0.0, 0.0],    # just outside the curved zone: the wormhole fills the view
 	[6.2, 60.0, 0.0],
@@ -472,7 +471,7 @@ func _toured() -> void:
 		line = "%.0f Гц: пропуски, хуже всего %s (%d%%)" % [main.rate.rate, _ru(w[1], w[2], w[3]), roundi(100.0 * w[0])]
 	print("tour: done at %.0f Hz: %d of %d refreshes without a new frame (%.1f%%), %s"
 			% [main.rate.rate, total_r - total_f, total_r, 100.0 * (total_r - total_f) / maxi(total_r, 1),
-			"no second above 1%" if worst < 0 else "worst: " + tour[worst].what])
+			("no second above %d%%" % roundi(100.0 * FrameRate.MISSED_OK)) if worst < 0 else "worst: " + tour[worst].what])
 	_finish(line)
 
 

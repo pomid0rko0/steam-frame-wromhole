@@ -7,12 +7,13 @@ extends Node
 ## Choosing a rate. SteamVR on the Steam Frame accepts an app's own request
 ## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
 ## (ValveSoftware/SteamVR-for-Linux#1020). What it follows is the app's own SteamVR setting
-## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs;
-## on our Frame (SteamVR 2.18) the running app switches within a second, others report it only
-## from the next start. So when the app was started from the Steam library and vrcmd is there,
-## choosing a rate sets that (one vrcmd call on a worker thread; a choice made meanwhile is written
-## next), the display's own rate tells when it followed, and if it has not a few seconds after
-## the write the menu asks for a restart. Otherwise the choice asks the runtime directly.
+## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs; on
+## our Frame (SteamVR 2.18; the log's "refresh:" lines) the running app switches within a second,
+## others report it only from the next start. So when the app was started from the Steam library and
+## vrcmd is there, choosing a rate sets that (one vrcmd call on a worker thread; a choice made
+## meanwhile is written next), the display's own rate tells when it followed, and if it has not a
+## few seconds after the write the menu asks for a restart. Otherwise the choice asks the runtime
+## directly.
 ## Until a rate is stored for the app SteamVR runs it at 72 Hz. It has no
 ## XR_EXT_performance_settings.
 ##
@@ -25,10 +26,10 @@ extends Node
 ## The log: every second a line starting with "refresh:", with where one stands and looks, the
 ## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for each frame
 ## that came a refresh late (at most LATE_LINES a second, none during the speed check), with where
-## and what the GPU and the CPU took for it (a GPU that lowers
-## its clock makes the same frame take longer; on the Frame it stayed at its top clock while frames
-## were too slow). project.godot keeps application/run/flush_stdout_on_print on: an export otherwise
-## buffers print(), and an abort at exit loses the log's end.
+## and what the GPU and the CPU took for it (a GPU that lowers its clock makes the same frame take
+## longer; on the Frame, by those lines, it stayed at its top clock while frames were too slow).
+## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
+## print(), and an abort at exit loses the log's end.
 
 signal changed                  # the lines (status, notes) or the verdict changed
 
@@ -61,7 +62,7 @@ var reported := 0.0             # what the runtime says, Hz (read once a second)
 var vrcmd := VRCMD
 var vrsettings := ""
 var steam_key := ""             # "steam.app.<SteamAppId>": this app's section of SteamVR's settings
-var stored := 0.0               # this app's rate there; 0: not set (72 Hz)
+var stored := 0.0               # this app's rate there; 0: not set
 var stored_at_start := 0.0
 var writing := false            # vrcmd is setting it
 var desired := 0.0              # the rate last chosen; written after the one being written, if it differs
@@ -340,7 +341,7 @@ func status() -> Array:
 			"кадров %d из %d · %s" % [last[0], last[1], gpu_budget()]]
 
 
-## "GPU 4.1 из 8.3 мс": the GPU time against the time one frame may take.
+## "GPU <ms> из <ms> мс": the GPU time against the time one frame may take.
 func gpu_budget() -> String:
 	return "GPU %.1f из %.1f мс" % [gpu_ms(), 1000.0 / rate]
 

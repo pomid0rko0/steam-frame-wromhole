@@ -5,7 +5,7 @@ extends SceneTree
 ## (mode "ray": placed by walking from the feet along their play-space offset, a cube's axes carried
 ## along) or by Godot's standard renderer (mode "mesh"). In each eye the silhouettes must coincide.
 ##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix ray|mesh case balls|cubes
-## case 0: straight head, parallel eyes; 1: turned/tilted head, canted eyes, asymmetric frusta.
+## case: util.gd's headset.
 
 const U := preload("res://tests/util.gd")
 const RADIUS := 0.25
