@@ -24,14 +24,27 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
+# SteamVR and the owner's view share this machine's memory and cores with the container, and with
+# nothing to stop them, five renders at once took all the memory but 425 MB and SteamVR crashed.
+# So the container gets at most one core's time and MEM of memory, no swap (a run that needs
+# more fails in here, not SteamVR), and runs take JOBS renders at once (default 2).
+CPUS=1
+MEM=4g
+MIN_FREE=1500   # MB
 SETUP=3   # what the setup below makes; a container set up by an older one is set up again (one
           # set up by a newer box.sh, another branch's, already has all of it)
 if ! podman container exists $NAME; then
-	podman run -d --name $NAME --init -v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
+	podman run -d --name $NAME --init --cpus $CPUS --memory $MEM --memory-swap $MEM \
+		-v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
 fi
+podman update --cpus $CPUS --memory $MEM --memory-swap $MEM $NAME >/dev/null   # a container made without them
+[ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
+# podman update records the swap limit but leaves the cgroup's at max (podman 5.5): the Frame's
+# swap is zram, in the same memory
+cg=/sys/fs/cgroup$(podman inspect -f '{{.State.CgroupPath}}' $NAME)/memory.swap.max
+[ ! -w "$cg" ] || echo 0 > "$cg"
 podman inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' $NAME | grep -qx "$REPO" \
 	|| { echo "the $NAME container does not mount $REPO: podman rm -f $NAME makes it anew" >&2; exit 2; }
-[ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
 # a setup that stopped halfway runs again
 if [ "$(podman exec $NAME cat /box-ready 2>/dev/null || echo 0)" -lt $SETUP ]; then
 	echo "setting up the $NAME container"
@@ -46,6 +59,7 @@ envs=()
 for v in $(compgen -e); do
 	case $v in JOBS|OUT|GODOT|MESA|KEEP_LOG|WH_*) envs+=(-e "$v=${!v}") ;; esac
 done
+[ -n "${JOBS:-}" ] || envs+=(-e JOBS=2)
 case $PWD/ in "$ROOT"/*) dir=$PWD ;; *) dir=$ROOT ;; esac
 # A command stopped here (a timeout, Ctrl-C, a background task stopped) would go on running in the
 # container: podman exec does not pass the signal on. So it runs there as a process group of its
@@ -54,6 +68,13 @@ tag=/tmp/box-$$-$RANDOM
 podman exec -i "${envs[@]}" -w "$dir" $NAME setsid -w sh -c \
 	'echo $$ > "$0"; "$@"; s=$?; rm -f "$0"; exit $s' "$tag" "$@" <&0 &
 run=$!
+# and should the Frame still run low on memory (the owner's programs, other tasks), the run stops
+# before SteamVR does
+( while kill -0 $run 2>/dev/null; do
+	a=$(awk '/^MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
+	[ "$a" -ge $MIN_FREE ] || { echo "box.sh: $a MB of memory left on the Frame: stopping the run" >&2; kill -TERM $$; break; }
+	sleep 2
+  done ) &
 stop() {
 	podman exec $NAME sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$0" ] && break; sleep 0.2; done
 		g=$(cat "$0") && /bin/kill -TERM -- -"$g" && sleep 2 && /bin/kill -KILL -- -"$g" 2>/dev/null; rm -f "$0"' "$tag" 2>/dev/null
