@@ -44,6 +44,8 @@ one-eye check; its tag marks the commit), the others have not; each README descr
   `throw`, merged, below) are in it too: the hands as balls, grip takes a ball or a cube and lets
   it fly, right B a new ball, the D-pad down (left X without the Frame's profile) a new cube.
 - `walking` — merged into `main`; stick locomotion wishes start from `main` now.
+- `anywhere` — merged into `main`: the same commands in a cloud session and on the Frame (`tools/env.sh`,
+  `tools/box.sh`, `tools/test.sh`, `tools/export.sh`; «Running things»).
 - `throat` — throat knobs: the right stick up/down changes the throat length, with the right
   grip held the fillet; A resets (`tests/throat_test.gd`).
 - `physics` — balls with physics in the curved space (`ball_world.gd`, `tests/physics_test.gd`).
