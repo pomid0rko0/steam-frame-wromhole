@@ -21,7 +21,8 @@ const DT := 1.0 / 180.0
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
 # Rolling friction: a small part that follows the weight, and a part that follows the speed; air
-# drag on top. A ball at rest stays where the floor pulls along itself less than ROLLING_RESISTANCE g;
+# drag on top. A ball at rest stays where the floor pulls along itself less than ROLLING_RESISTANCE
+# times its weight there;
 # near the wormhole gravity pulls along the floor toward the throat, so a ball set down at the
 # curved zone's edge rolls in by itself (tests/physics_test.gd). A larger part that follows the
 # weight would hold such a ball still; a smaller one would let a thrown ball roll very far: the

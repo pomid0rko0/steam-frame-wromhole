@@ -5,7 +5,7 @@
 # for each render pass whether it rendered in tiles and with how many attachments. Turnip only
 # applies a density map in tiles. Four runs of tests/fdm_check.gd:
 #   off    the XR 3D pass without foveation: one pass with two subpasses, which Turnip renders
-#          without tiles (Godot 4.7.2's subpass dependency lacks BY_REGION, split_pass.gd)
+#          without tiles (split_pass.gd)
 #   split  the 3D scene in a pass of its own: in tiles
 #   on     foveation: in tiles, and with one attachment more than split (the density map)
 #   own    the same with our own density map (Foveation.OWN_MAPS)
@@ -26,7 +26,7 @@ TMP=$(mktemp -d)
 printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
 	"$LIB/libvulkan_freedreno.so" > "$TMP/icd.json"
 cd "$ROOT/godot"
-import_once
+import_scripts
 for m in off split on own; do
 	mkdir -p "$TMP/data_$m"
 	# TU_DEBUG=gmem: tiles wherever they are possible. Turnip's autotune would pick between tiles

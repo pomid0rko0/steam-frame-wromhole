@@ -43,7 +43,7 @@ ICD=$DATA/freedreno_icd.json
 printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
 	"$LIB/libvulkan_freedreno.so" > "$ICD"
 cd "$ROOT/godot"
-import_once
+import_scripts
 XDG_DATA_HOME=$DATA LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
 VK_ICD_FILENAMES=$ICD \
 MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=fs,nocache \

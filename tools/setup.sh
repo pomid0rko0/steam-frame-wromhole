@@ -132,7 +132,7 @@ get_adreno() {
 }
 
 # A cloud environment's setup script is a copy of this one, run outside the repo (ROOT is then
-# not the repo: `/` so far, so its BIN is /tools/.bin); the cloud keeps what it installed and
+# not the repo: `/`, so its BIN is /tools/.bin); the cloud keeps what it installed and
 # clones the repo afresh for each session. Take that install, found through the godot it put on
 # PATH, instead of downloading Godot and building Turnip again.
 reuse() {

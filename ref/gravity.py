@@ -60,7 +60,8 @@ class Gravity:
 def solve_2d(W, lmax=60.0, dl=0.05, m=128):
     """Independent check: Laplace's equation in (l, theta) on a grid, no separation of variables.
     sin(th) d/dl (r^2 dphi/dl) + d/dth (sin(th) dphi/dth) = 0, phi = r cos(th) at l = +-lmax
-    (the far field without its small r^-2 part). Returns l nodes and the cos(th) component of phi."""
+    (the far field without its small r^-2 part). Returns l nodes, the cos(th) component of phi and
+    the rest of the solution."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.linalg import spsolve
     n = int(round(2 * lmax / dl))

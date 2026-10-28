@@ -78,8 +78,8 @@ what it does and how to call it.
 | `tools/fdm_check.sh`, `adreno_stats.sh`, `ir3_live.py`, `same_programs.py`, `ab_shaders.sh` | seconds |
 | `tools/adreno_cost.sh` | ~1 min per source |
 
-- **After adding a `class_name`,** or before a Godot run of your own with `-s`:
-  `tools/box.sh godot --headless --path godot --import`.
+- **Before a Godot run of your own with `-s`** (the tools import by themselves when a script
+  changed): `tools/box.sh godot --headless --path godot --import` in the tree you run it from.
 - **Speed** is measured in the headset with the speed check (`godot/bench.gd`); the cost model
   (`tools/adreno_cost.sh`) only compares variants.
 - **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,

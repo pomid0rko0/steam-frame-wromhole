@@ -55,8 +55,7 @@ for name, (rho0, h, R) in PROFILES.items():
     check('2D Laplace solve agrees (floor g)', err < 2e-3,
           f'floor g at l = {np.round(probe, 2)}: ODE {np.round(fo / W.r(probe), 4)}, 2D {np.round(fx / W.r(probe), 4)}, '
           f'max diff {err:.1e}; non-cos(theta) part of the 2D solution {out[1][2]:.1e} m')
-    # 4. the size axiom of the video (a smaller portal disturbs the world less): scaling the
-    #    wormhole by k scales beta by k^3, so at a fixed distance the disturbance falls as k^3
+    # 4. the size axiom (docs/gravity.md, «Размер»)
     Gs = Gravity(Wormhole(rho0 / 10, h / 10, R / 10))
     check('size: beta scales as k^3', abs(Gs.beta * 1000 / G.beta - 1) < 1e-6,
           f'beta at 1/10 size x 1000 = {Gs.beta * 1000:+.5f}')
@@ -66,8 +65,8 @@ G = Gravity(W)
 print('\nnumbers for godot/tests/gravity_test.gd (video profile): beta = %.5f, floor g at l = 0, 2, 4, 5, L: %s'
       % (G.beta, np.array2string(G.floor_g(np.array([0.0, 2.0, 4.0, 5.0, W.L])), precision=5)))
 
-# numbers for docs/gravity.md: a point let go 2 m above the floor, the height as the app has it,
-# H = r(l) n_z (WormholeSpace.height; the demo drops its balls from H = 2 m)
+# numbers for docs/gravity.md: a point let go 2 m above the floor (its height as docs/gravity.md
+# gives it)
 from scipy.integrate import solve_ivp
 g = 9.81
 # in the middle of the throat it stays on the sphere l = 0 (f' = 0 there) and falls along a meridian:

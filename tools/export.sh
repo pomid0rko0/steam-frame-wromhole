@@ -14,14 +14,18 @@ BUILD=$ROOT/godot/build/wormhole_vr.arm64
 if [ "${1:-}" = --godot ]; then   # the export itself, in the container on the Frame
 	. "$ROOT/tools/env.sh"
 	[ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh"; exit 2; }
-	import_once
+	import_scripts
 	cd "$ROOT/godot"
 	mkdir -p build
 	exec "$GODOT" --headless --path . --export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64
 fi
 CHECK=""
 [ "${1:-}" = --check ] && { CHECK=1; shift; }
-LABEL=${1:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD | tr '/' '-')}${CHECK:+_check}
+# the label: the branch checked out, or the branch at this commit (a task's worktree is detached)
+LABEL=${1:-$(git -C "$ROOT" symbolic-ref --short -q HEAD || true)}
+[ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" branch --format='%(refname:short)' --points-at HEAD | head -1)
+[ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" rev-parse --short HEAD)
+LABEL=$(tr '/' '-' <<<"$LABEL")${CHECK:+_check}
 if [ -n "$CHECK" ]; then
 	touch "$ROOT/godot/check"
 	trap 'rm -f "$ROOT/godot/check"' EXIT

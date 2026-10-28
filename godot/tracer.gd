@@ -35,7 +35,8 @@ const MAX_CUBES := 6
 # sphere leaves the sphere at least this far beyond the hit, so it is marked even where the near
 # plane clips the sphere's near side.
 const PROXY_MARGIN := 0.08
-const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (by 0.4%): grown by this
+const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (a 48 x 24 SphereMesh's by
+                                # up to 0.41%: Godot's has rings + 1 latitude steps): grown by this
 # how the shader with toys gets its pixels: SPLIT by the stencil (the plain one elsewhere), WHOLE
 # the whole view marked, BARE no stencil at all (another source's shader in the speed check, which
 # has no stencil test)

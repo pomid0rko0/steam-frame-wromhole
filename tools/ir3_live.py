@@ -8,8 +8,8 @@ at once decides the waves. This finds it: backward liveness over the program's b
 on the components the register allocator assigned. The register file is shared: a half register
 hrN.c is half of the full component (4N + c) / 2, so the half registers (flags, small ints) count
 too, two per full component; the shared registers r48-r55 (values the same in every lane) and r63
-do not. It prints the peak, the instructions around it, and the uniform loads nearby (which tell
-where in the source it is).
+do not. It prints the peak and the instructions around it (their uniform loads tell where in the
+source it is).
 
   python3 tools/ir3_live.py LOG [--around N] [--top K]
 """

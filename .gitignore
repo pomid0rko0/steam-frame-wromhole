@@ -2,7 +2,7 @@
 godot/.godot/
 godot/build/
 # tools/setup.sh downloads
-tools/.bin/
+tools/.bin
 # generated
 ref/out/
 __pycache__/

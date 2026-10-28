@@ -1,7 +1,7 @@
 """Does Godot's green overlay sit on the ray-traced floor lines and balls, in each eye?
 Floor: share of ray-traced white line pixels (inside the area where green may be drawn,
-away from its edges) that green does NOT cover. With green 3-4 px wide over 1-2 px white,
-this is ~0 when aligned; shifting green by 2 px shows how fast it grows.
+away from its edges) that green does NOT cover. With green wider than the white lines, this is
+~0 when aligned; shifting green by 2 px shows how fast it grows.
 Balls: share of green ball-grid pixels outside the ray-traced red silhouette, and the
 difference of their outlines (bounding boxes). The cube (when its pictures are there): the same
 for Godot's green edges and the ray-traced magenta cube (searched near Godot's: the gravity view's floor is purple). With

@@ -9,6 +9,7 @@
 // the pixel's unprojected point. The eye's manifold state is obtained by following the
 // geodesic from the head to the eye. Without multiview EYE_OFFSET is zero.
 
+// The uniforms wormhole_core.gdshaderinc's top says the including file declares, and the head's.
 uniform float wh_rho0 = 3.0;
 uniform float wh_h = 5.0;
 uniform float wh_fillet = 1.0;
@@ -22,7 +23,6 @@ uniform float head_l = 10.0;
 uniform vec3 head_n = vec3(1.0, 0.0, 0.0);
 uniform vec4 head_f[3];
 uniform vec3 head_pos;
-// the fillet polynomials by impact parameter (WormholeSpace.fillet_table)
 uniform sampler2D wh_tab : filter_linear, repeat_disable;
 uniform vec4 wh_tabLo;
 uniform vec4 wh_tabInv;
@@ -32,7 +32,6 @@ uniform vec4 grav_cyl;
 uniform vec4 grav_g[2];
 uniform vec4 grav_d[2];
 #endif
-// a pixel's angle: the arrows' soft edges, the cubes' edge lines
 #ifndef WH_NO_BALLS
 #define WH_PIX
 #else
@@ -48,13 +47,9 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube = 0;
-// balls' and cubes' bounding spheres (R^4 xyz of the centre, radius; < 0: none) in universe A, B
-// (Tracer.set_objects): a ray of a flat universe that misses one tests none of them
 uniform vec4 wh_bound[4];
-// where in the sorted lists the balls and cubes of universe A, of the shell and of universe B are
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
-// each ball's sphere in the flat universe whose sheet cuts it, in its chart (centre, radius^2)
 uniform vec4 wh_fball[12];
 #endif
 

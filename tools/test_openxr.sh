@@ -13,9 +13,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
 command -v monado-service >/dev/null || { echo "no monado-service: run tools/setup.sh"; exit 2; }
 cd "$ROOT/godot"
-import_once
+import_scripts
 
-run=$(mktemp -d /tmp/wormhole-openxr.XXXXXX)
+run=$(mktemp -d "$OUTS/openxr.XXXXXX")
 export XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1 XDG_RUNTIME_DIR=$run
 # monado-service epolls its stdin and quits at once if stdin is /dev/null or a file: give it a
 # FIFO whose write end this shell holds (fd 3) until it exits

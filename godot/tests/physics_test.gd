@@ -10,8 +10,7 @@ extends SceneTree
 ##    rolling, a thrown cube comes to rest flat on a face, a cube slides on the curved floor of
 ##    the fillet and comes to rest on it, a ball pushes a cube, a cube pushes a cube, a pillar
 ##    stops a cube
-## 6. gravity through the wormhole: the field matches ref/gravity.py and solves its equation; a
-##    ball dropped in the middle of the throat falls as slowly as that field says, more than twice
+## 6. gravity through the wormhole (the field itself: tests/gravity_test.gd): a ball dropped in the middle of the throat falls as slowly as that field says, more than twice
 ##    as long as one dropped in front of the wormhole; above the throat's floor gravity pulls toward
 ##    the middle, where a ball rests; a ball set down at the shell's edge rolls in by itself and
 ##    rests in the middle (2-6 without air drag but that one: they check the motion itself)
@@ -327,26 +326,6 @@ func _first_touch(w: BallWorld, b: Dictionary, seconds: float) -> float:
 func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	w.balls.clear()
 	w.cubes.clear()
-
-	# 6a: the field against ref/gravity.py (python3 ref/test_gravity.py prints these numbers)
-	var ref_l := [0.0, 2.0, 4.0, 5.0, sp.L]
-	var ref_g := [0.20557, 0.30391, 0.69300, 0.91320, 0.94991]
-	var worst := absf(sp.grav_beta - (-3.20586)) / 3.20586
-	var got := []
-	for i in ref_l.size():
-		got.append(snappedf(sp.floor_gravity(ref_l[i]), 0.00001))
-		worst = maxf(worst, absf(sp.floor_gravity(ref_l[i]) - ref_g[i]))
-	U.check("gravity matches ref/gravity.py", worst < 2e-4, "floor g at l = 0, 2, 4, 5, L: %s (%s), beta %.5f (-3.20586)" % [str(got), str(ref_g), sp.grav_beta])
-
-	# 6b: the potential solves Laplace's equation: (r^2 f')' = 2 f, also on the fillet's table
-	var res := 0.0
-	var e := 0.01
-	for i in 120:
-		var l := -sp.L - 3.0 + (2.0 * sp.L + 6.0) * (i + 0.5) / 120.0
-		var flux := func(x: float) -> float: return sp.r(x) * sp.r(x) * sp.gravity_f(x)[1]
-		var lap: float = (flux.call(l + e) - flux.call(l - e)) / (2.0 * e) - 2.0 * sp.gravity_f(l)[0]
-		res = maxf(res, absf(lap))
-	U.check("gravity solves Laplace's equation", res < 2e-3, "max |(r^2 f')' - 2 f| %.5f m over the shell and around it" % res)
 
 	# 6c: two balls of the demo's size let go at its height: in front of the wormhole and in the
 	# middle of the throat
