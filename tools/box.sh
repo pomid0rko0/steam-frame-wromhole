@@ -10,7 +10,9 @@
 # Anywhere with apt (a cloud session, the container itself) it runs the command right here.
 #   tools/box.sh python3 ref/test_gpu.py       (any command, in the same directory there)
 # The tools go there by themselves (tools/env.sh), so this is for commands of one's own.
-# Made on first use (~5 min) and kept, stopped or not; `podman rm -f wormhole-box` throws it away.
+# Made on first use and kept, stopped or not; `podman rm -f wormhole-box` throws it away. It
+# mounts only the repository's folder: a git worktree for a run goes under .wt/ (git worktree add
+# .wt/run), or the container does not see it.
 set -euo pipefail
 if command -v apt-get >/dev/null; then exec "$@"; fi
 command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
