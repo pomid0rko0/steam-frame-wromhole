@@ -33,8 +33,8 @@ what was learnt about it: the comment at the top of its file.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
 - **"Done" after a cold read:** before calling docs done, have an agent without this chat's context
-  check every statement against the code; fix what it finds and repeat until a read finds nothing
-  substantive.
+  check every statement against the code; fix what it finds and repeat until a read finds nothing.
+  A finding that turns out wrong is not fixed but named, with the evidence.
 - **Don't anchor on what is here.** Look for the best way as if starting fresh and take it even if it
   replaces what exists, up to writing the project anew. Nothing is kept for compatibility: carry
   along everything that depends on a change in the same branch and migrate what is stored. The
