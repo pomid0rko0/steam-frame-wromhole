@@ -3,7 +3,7 @@
 Mesa's compiler made for the Frame (tools/adreno_stats.sh's log, KEEP_LOG=...).
 
 The compiler reserves a shader's registers for its heaviest point, whatever the other pixels run
-(CLAUDE.md, «Registers go to the heaviest point of the code, run or not»), so the point with the most values alive
+(godot/shaders/wormhole_core.gdshaderinc, «The compiler»), so the point with the most values alive
 at once decides the waves. This finds it: backward liveness over the program's branches and loops,
 on the components the register allocator assigned. The register file is shared: a half register
 hrN.c is half of the full component (4N + c) / 2, so the half registers (flags, small ints) count

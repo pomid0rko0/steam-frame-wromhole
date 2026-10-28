@@ -3,6 +3,8 @@ extends RefCounted
 ## <detail>", and it ends with "FAILURES: n" and exit status 1 on any (tools/test.sh shows the FAIL
 ## lines). Also: keys, the simulated headset and controllers, both eyes' pictures, Godot's own red
 ## geometry for the stereo tests to compare the ray tracer with.
+## In a test script main._ready has not run during _initialize: set main's fields there, touch its
+## nodes from _process, frame 2 or later.
 
 const FakeHmd := preload("res://tests/fake_hmd.gd")
 const FRAME := "/interaction_profiles/valve/frame_controller_valve"

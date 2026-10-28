@@ -13,6 +13,14 @@ extends Node
 ## choosing a rate sets that (one vrcmd call on a worker thread; a choice made meanwhile is written
 ## next), the display's own rate tells when it followed, and if it has not a few seconds after
 ## the write the menu asks for a restart. Otherwise the choice asks the runtime directly.
+## Until a rate is stored for the app SteamVR runs it at 72 Hz. It has no
+## XR_EXT_performance_settings.
+##
+## Half rate. One late frame sends SteamVR to every second refresh for 6-14 s (the log's
+## "refresh:" lines): it fills in the frames between on the same GPU, so our frame at the same pose
+## costs more, and it can stay there until the frame gets cheaper or the rate is switched there and
+## back. The Steam overlay and SteamVR's camera view do the same. The app can't stop it; cheaper
+## frames make it rarer.
 ##
 ## The log: every second a line starting with "refresh:", with where one stands and looks, the
 ## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for every frame

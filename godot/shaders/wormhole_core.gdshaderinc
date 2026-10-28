@@ -56,6 +56,32 @@
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
 // The floor is the totally geodesic equatorial surface n.z = 0 (z = 0 in both charts).
+//
+// Godot's shading language reserves E, PI and TAU: a local named so is a compile error that GLSL
+// (ref/) accepts. Constants reach the GPU printed with 14 decimals: 1e-20 becomes 0.0, 1e-12
+// survives. GPUs' max and min return the other operand for a NaN, which hides most NaNs.
+//
+// The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
+// - Registers go to the heaviest point of the code, run or not: code for something not in view
+//   still costs (hence a shader per combination: tracer.gd), and a loop with a constant bound and a
+//   break is unrolled. Registers per pixel decide how many waves run (adreno_stats.sh).
+// - An if becomes selects, even around a square root: every lane pays. A loop of one pass with a
+//   bound the compiler can't see (k < 1 + min(wh_nBall, 0)) stays a branch that waves skip; the
+//   same trick stops unrolling (k < 4 + min(wh_nCube, 0)).
+// - Loop-invariant code is not hoisted, equal expressions are merged: a value computed before a
+//   loop is held through it; computed again where it is used, from values held anyway, it is not.
+// - A branch that skips work loses when its divergence costs more than the work (a bounding ball
+//   before each box). Near the throat one group of pixels holds both skies, the floor and objects,
+//   and runs every branch of the shading.
+// - A screen derivative costs about 90 ALU cycles (tools/adreno_cost.py's fit).
+// - 16-bit math (mediump) runs at double rate in waves of 128, but for the sky's colours the
+//   conversions cost more than it saves; line coordinates need float32.
+//
+// A change here: ref/test_gpu.py prints errors, no verdict: compare with the same run on the code
+// before (WH_BALLS=0 too), and try a pose at an odd width (the middle column has vl = 0) and
+// viewpoints scanned around an object, which its poses may miss. Keep ref/wh.py's fast in step. A
+// change that should not touch the compiled shader must give the same programs
+// (tools/same_programs.py). Then tools/adreno_cost.sh --check. Speed: bench.gd.
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;

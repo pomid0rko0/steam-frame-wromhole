@@ -14,7 +14,12 @@ extends Node3D
 ## nothing, so with toys the frame is split: proxies drawn first (render priority -1,
 ## stencil_mark.gdshader) mark the pixels whose rays may meet a toy, the shader with toys runs only
 ## there (stencil equal 1), the plain one of the same view everywhere else (a second quad, stencil
-## not equal 1). Godot geometry drawn before the ray tracers must not write the stencil.
+## not equal 1). Godot geometry drawn before the ray tracers must not write the stencil. The
+## stencil (stencil_mode in a shader) works on Mobile, with multiview and on lavapipe; opaque draws
+## go by render_priority, lower first.
+##
+## A MeshInstance3D whose ShaderMaterial has no shader yet is drawn with Godot's default lit
+## material, a huge program: such a node is made only once its shader is known.
 
 # the ray tracers: [plain, gravity floor, gravity floor and arrows], without and with toys
 const SHADERS := [preload("res://shaders/wormhole.gdshader"), preload("res://shaders/wormhole_gravity.gdshader"),

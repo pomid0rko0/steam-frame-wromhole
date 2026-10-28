@@ -4,6 +4,9 @@
 # lavapipe, xvfb, Monado, EGL, the Python packages. It sees only this repository, at the same
 # path: no GPU, no display, no SteamVR, so a test can't reach the headset the owner is wearing, and
 # its renders run on the CPU cores Steam gives desktop apps (they inherit the editor's affinity).
+# On the Frame's host Godot takes SteamVR as its OpenXR runtime unless XR_RUNTIME_JSON points
+# elsewhere, and gamescope's Vulkan layer puts its swapchains on the owner's screen even under
+# xvfb-run; without the layer Turnip finds no queue that presents to Xvfb, and there is no lavapipe.
 # Anywhere with apt (a cloud session, the container itself) it runs the command right here.
 #   tools/box.sh python3 ref/test_gpu.py       (any command, in the same directory there)
 # The tools go there by themselves (tools/env.sh), so this is for commands of one's own.

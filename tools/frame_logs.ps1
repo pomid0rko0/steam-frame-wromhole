@@ -5,6 +5,8 @@
 #
 # Запуск: двойной щелчок по frame_logs.bat. Имя и адрес Фрейма берутся из deploy_frame.ps1.
 # Пароль Фрейма спросят один раз.
+# Лог полный, пока в project.godot включено application/run/flush_stdout_on_print: иначе экспорт
+# копит print() в буфере, и падение на выходе теряет конец лога.
 
 $ErrorActionPreference = "Stop"
 

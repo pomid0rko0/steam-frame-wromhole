@@ -24,6 +24,14 @@ extends Node3D
 ## openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare them exactly), in
 ## the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a snap turn) call
 ## hands.forget_motion, or the jump would be a throw.
+##
+## The controllers. Valve's page «Steam Frame Input» lists the Frame's paths: left
+## dpad_up/down/left/right, view, system, bumper; right a, b, x, y, menu, system, bumper; both
+## squeeze, trigger, thumbstick, grip/pose, aim/pose, output/haptic. SteamVR takes the Frame's
+## profile if the app offers it, else the generic one, else Touch remapped (Touch's menu is View,
+## its upper button all three upper buttons). One path a runtime rejects drops the whole profile
+## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
+## (_log_profiles); that it takes our Frame profile has not been seen in the headset yet.
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
@@ -383,7 +391,7 @@ func _on_session_focussed() -> void:
 
 
 ## The controllers' interaction profiles, to godot.log when they change: which bindings the
-## runtime took (CLAUDE.md, «Controllers»).
+## runtime took (the controllers: the top of this file).
 func _log_profiles() -> void:
 	for hand: XRController3D in [left_hand, right_hand]:
 		var tracker := XRServer.get_tracker(hand.tracker) as XRControllerTracker

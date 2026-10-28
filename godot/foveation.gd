@@ -19,6 +19,9 @@ extends RefCounted
 ## The ray tracer stays exact under it: each pixel's ray is interpolated from the screen's
 ## corners (shaders/wormhole_view.gdshaderinc), and a coarse pixel gets the ray through its
 ## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position.
+##
+## Subsampled images stay off (project.godot): SteamVR can't read them. verbose_stdout lists the
+## OpenXR extensions and what the driver supports (hundreds of lines: keep it off).
 
 const LEVELS := 3                    # the runtime's levels: low, medium, high
 # Our own density maps (levels 4 and 5), each eye alike, centred: rings out from where the eyes

@@ -15,7 +15,10 @@ extends Node
 ## checks made from the tree into res://shaders/ab/1, 2, ... before the export. Every pose is
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
-## makes SteamVR step in, and the GPU time then grows for reasons of its own.
+## makes SteamVR step in, and the GPU time then grows for reasons of its own: a variant over the
+## frame's budget reads dearer than it is, and so does the segment after it. Fewer instructions or
+## registers (tools/adreno_stats.sh) are not faster by themselves, and frame times from walking
+## around don't compare between builds (where one looks changes them): this part decides.
 ## This build's ray tracer is timed six ways (FOVEATIONS): as it always ran, with the 3D scene in
 ## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
 ## foveated rendering: SteamVR's map low and high, our own wide and narrow (foveation.gd); with the
@@ -29,7 +32,7 @@ extends Node
 ## (yaw, pitch, roll). Every frame gets a "tf" line: the time, the pose, the refreshes it took,
 ## and the GPU and CPU time; every second a "tour:" line. Before each place the viewer goes back
 ## to the start, a cheap pose, for TOUR_RECOVER s (not enough to undo SteamVR's half rate, which
-## lasts several seconds: CLAUDE.md, «Half rate»).
+## lasts several seconds: frame_rate.gd).
 ##
 ## The result, on the menu's line below and under its row, says whether 120 Hz held (and where it
 ## did worst), how this build's ray tracer compares with the first of the others, and what the

@@ -10,7 +10,8 @@
 #   loops            loops left after unrolling
 #   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: as
 #   tests/perf.gd, default near; plain, near and away without movable objects, check or balls with
-#   them; --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader)
+#   them; --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader; --disasm: the
+#   biggest program, the generic ubershader, not the one that runs)
 # KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is
 # no GPU, and software Vulkan's timings don't follow the Frame's.

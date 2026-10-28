@@ -6,6 +6,8 @@
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images,
 #                                    JOBS=n renders at once)
 # Exit status 0 only if every check passes.
+# Below 100% render scale the bilinear upscale shifts tools/compare's one-colour threshold by
+# tenths of a pixel: test such a scale with SCALING_3D_MODE_NEAREST.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
