@@ -14,7 +14,7 @@ extends Node3D
 ## nothing, so with toys the frame is split: proxies drawn first (render priority -1,
 ## stencil_mark.gdshader) mark the pixels whose rays may meet a toy, the shader with toys runs only
 ## there (stencil equal 1), the plain one of the same view everywhere else (a second quad, stencil
-## not equal 1). docs/rendering.md, «Трафарет».
+## not equal 1).
 
 # the ray tracers: [plain, gravity floor, gravity floor and arrows], without and with toys
 const SHADERS := [preload("res://shaders/wormhole.gdshader"), preload("res://shaders/wormhole_gravity.gdshader"),
@@ -303,7 +303,7 @@ static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: 
 	return [order, Vector4i(ends[0], ends[1], ends[2], ends[3])]
 
 
-## How gravity is shown (docs/physics.md, «Гравитация через червоточину»): 0 not at all, 1 the floor
+## How gravity is shown (docs/gravity.md): 0 not at all, 1 the floor
 ## coloured by its strength (optozorax's palette: dark is none, yellow 1 g), 2 also arrows of the
 ## field on the vertical surface through the wormhole that faces the start (x = 0 in both
 ## universes, through the throat).

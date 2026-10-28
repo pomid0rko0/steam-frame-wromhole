@@ -66,7 +66,7 @@ G = Gravity(W)
 print('\nnumbers for godot/tests/gravity_test.gd (video profile): beta = %.5f, floor g at l = 0, 2, 4, 5, L: %s'
       % (G.beta, np.array2string(G.floor_g(np.array([0.0, 2.0, 4.0, 5.0, W.L])), precision=5)))
 
-# numbers for docs/physics.md: a point let go 2 m above the floor, the height as the app has it,
+# numbers for docs/gravity.md: a point let go 2 m above the floor, the height as the app has it,
 # H = r(l) n_z (WormholeSpace.height; the demo drops its balls from H = 2 m)
 from scipy.integrate import solve_ivp
 g = 9.81

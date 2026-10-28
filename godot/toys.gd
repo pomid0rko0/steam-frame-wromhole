@@ -1,6 +1,6 @@
 class_name Toys
 extends RefCounted
-## The demo's balls and cubes (docs/physics.md, «Мячи и кубы»): the physics is BallWorld's, this sets the
+## The demo's balls and cubes: the physics is BallWorld's, this sets the
 ## scene. At rest in front of the wormhole: five balls and two cubes, a third cube in the throat. A
 ## moment after the start a cube and a ball are thrown from chest height; the ball rolls through
 ## the throat into universe B. Then two balls are dropped together from the same height: one beside

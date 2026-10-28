@@ -1,9 +1,10 @@
 # Notes for agents working on this repo
 
-README.md (Russian) says what the project is, what it does, the buttons and how to build and
-check it; `docs/` has the details by topic: `geometry.md`, `rendering.md`, `physics.md`,
-`menu.md`, `steam-frame.md`, `checks.md`, `wishlist.md`. This file is how to work here: the owner's rules, the
-branches, what a change has to fit, the commands, and facts that cost time to find.
+README.md (Russian) says what the project is, the buttons, how to run, install and check it, and
+the one-eye check. `docs/` holds what the code can't say: the method's maths (`geometry.md`), the
+gravity's (`gravity.md`) and the owner's wishes (`wishlist.md`). How each part works is in the
+comment at the top of its file. This file is how to work here: the owner's rules, the branches,
+what a change has to fit, the commands, and facts that cost time to find.
 
 ## The owner's rules
 
@@ -20,8 +21,7 @@ branches, what a change has to fit, the commands, and facts that cost time to fi
   installs it with `tools/deploy_frame.bat`. Say what to look at. **Never start the app, SteamVR,
   `vrcmd` or any window yourself:** it takes the view the owner is in.
 - **The owner can't judge test images or numbers.** Verifying is your job. Whatever they must check
-  in the headset is a simple yes/no they can see, like the one-eye check (`docs/rendering.md`,
-  «Сцена проверки стерео»).
+  in the headset is a simple yes/no they can see, like the one-eye check (README.md).
 - **Tests stay off the headset.** Its GPU, display and SteamVR are the owner's view: a Godot started
   on the Frame's host takes SteamVR as its OpenXR runtime and, through gamescope's Vulkan layer,
   opens windows on the owner's screen. On the Frame everything that runs Godot or opens a GPU runs
@@ -144,7 +144,7 @@ named. A tool you had to install goes into `setup.sh`.
 
 | command | what | time |
 |---|---|---|
-| `tools/test_stereo.sh` | the stereo suite (`docs/checks.md`); renders in parallel, one Godot per core | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
+| `tools/test_stereo.sh` | the stereo suite (its header); renders in parallel, one Godot per core | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
 | `tools/test.sh [name...]` | the Godot tests `godot/tests/<name>_test.gd`, `JOBS` at a time (one per core), each in its own xvfb; logs in `/tmp/wormhole-tests` | 1–3 min |
 | `tools/test_openxr.sh` | the app through OpenXR under Monado (`tests/openxr_smoke.gd`) | ~3 min |
 | `tools/fdm_check.sh` | foveation as the Frame's driver applies it | ~10 s |
@@ -194,8 +194,8 @@ named. A tool you had to install goes into `setup.sh`.
   the best in the headset. It knows no memory waits, and it underrates the toys' shaders and world
   B's outer edge. `--split` models the stencil split, `--hands` / `--held` give each pose its own
   uniforms; the UBO layout `adreno_cost.UNIFORMS` follows the view include's order.
-- **The headset's speed check** (`docs/menu.md`, «Замер скорости»): `bench:`, `tf` and
-  `tour:` lines in the log, `refresh:` every second. Frame times from walking around don't compare
+- **The headset's speed check** (`godot/bench.gd`): `bench:`, `tf` and `tour:` lines in the log,
+  `refresh:` every second. Frame times from walking around don't compare
   between builds: where one looks changes them several times.
 - **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,
   `gh auth setup-git`), commits as `Claude <noreply@anthropic.com>` (the repository's git config).
