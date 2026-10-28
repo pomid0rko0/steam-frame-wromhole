@@ -15,8 +15,7 @@
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/godot}
-[ -x "$GODOT" ] || GODOT=$(command -v godot || true)
+. "$ROOT/tools/env.sh"
 MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
 # setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not
 # this tree's tools/.bin
@@ -27,11 +26,14 @@ TMP=$(mktemp -d)
 printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
 	"$LIB/libvulkan_freedreno.so" > "$TMP/icd.json"
 cd "$ROOT/godot"
-[ -d .godot ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
+import_once
 for m in off split on own; do
 	mkdir -p "$TMP/data_$m"
+	# TU_DEBUG=gmem: tiles wherever they are possible. Turnip's autotune would pick between tiles
+	# and none by the samples the GPU counted in earlier frames, which the drm-shim makes up (zeros
+	# on the Frame: "Autotune selected sysmem"); the reasons tiles are impossible come first
 	XDG_DATA_HOME=$TMP/data_$m LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
-	VK_ICD_FILENAMES=$TMP/icd.json MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=$TMP/trace_$m.txt TU_DEBUG=perf \
+	VK_ICD_FILENAMES=$TMP/icd.json MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=$TMP/trace_$m.txt TU_DEBUG=perf,gmem \
 		timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . --rendering-method mobile \
 		--resolution 320x180 -s res://tests/fdm_check.gd -- $m 1728 > "$TMP/log_$m.txt" 2>&1
 	if grep -qE "SCRIPT ERROR|SHADER ERROR" "$TMP/log_$m.txt"; then

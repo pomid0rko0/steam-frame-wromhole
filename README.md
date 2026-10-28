@@ -200,7 +200,7 @@ XR рисуется в отдельный SubViewport, а в окно прило
 
 Зелёное привязано к комнате: соответствие «координаты мира A → комната» считается при старте, после recenter и после каждого шага стиком и поворота стиком. Пока ходишь ногами и крутишь головой, оно не меняется. Поэтому если трассированный мир поплывёт относительно комнаты, зелёное отойдёт от белого.
 
-Включается переменной `show_check = true` в `godot/main.gd`, а в сборке — файлом `godot/check` (не в git; пустой файл перед экспортом, после — удалить); по умолчанию выключена. На этой сцене держатся тесты стерео.
+Включается переменной `show_check = true` в `godot/main.gd`, а в сборке — файлом `godot/check` (не в git; его кладёт на время экспорта `tools/export.sh --check`); по умолчанию выключена. На этой сцене держатся тесты стерео.
 
 **Проверка в шлеме**, когда что-то в рендере менялось:
 1. Закрой один глаз.
@@ -420,7 +420,7 @@ gravity = −∇φ = −g (f' n_z,  (f/r)(e_z − n_z n))      на полу: р
 - **Фовеальный рендеринг** (края картинки рисуются грубее) — в меню, по умолчанию своя узкая карта (раздел «Фовеальный рендеринг»). SteamVR даёт карту плотности по `XR_FB_foveation` и сдвигает её по взгляду (`XR_META_foveation_eye_tracked`), отслеживание глаз — `XR_EXT_eye_gaze_interaction` (документация Valve для разработчиков под Frame).
 - **Лог** на шлеме: `~/.local/share/godot/app_userdata/Wormhole VR/logs/godot.log`.
 
-Сборка попадает в шлем с компьютера на Windows по SSH, по общей сети Wi-Fi:
+Сборку делает `tools/export.sh`. Если агент работает прямо на Фрейме, она сразу ложится в `~/wormhole-vr/wormhole_vr.arm64` — запускать из библиотеки Steam. Из облачной сессии приходит zip, и он попадает в шлем с компьютера на Windows по SSH, по общей сети Wi-Fi:
 1. Впиши имя пользователя и адрес Фрейма в начало `tools/deploy_frame.ps1`.
 2. Перетащи zip со сборкой на `tools/deploy_frame.bat`.
 
@@ -438,10 +438,16 @@ gravity = −∇φ = −g (f' n_z,  (f/r)(e_z − n_z n))      на полу: р
 
 ## Сборка и тесты
 
+Команды одни и те же в облачной сессии и на самом Фрейме. На Фрейме всё, что запускает Godot или открывает GPU, само уходит в контейнер `tools/box.sh` (Ubuntu под podman, без GPU, экрана и SteamVR): Godot, запущенный прямо на Фрейме, подключился бы к SteamVR и рисовал бы на экране и GPU шлема, а поставить нужное для тестов в SteamOS некуда (корень только для чтения, apt нет). Свою команду туда отправляет `tools/box.sh команда`; в облаке она просто выполняется.
+
 ```
 tools/setup.sh          # Godot 4.7.2 в tools/.bin, шаблоны экспорта, Python-пакеты, драйвер Adreno (Turnip) для adreno_stats.sh
                         # в облачной сессии всё это уже поставил скрипт настройки окружения (копия setup.sh): тогда он только ставит ссылки, 1–2 с
+                        # на Фрейме — в контейнере tools/box.sh (первый раз ~5 мин)
+tools/export.sh         # сборка для шлема: на Фрейме сразу в ~/wormhole-vr, в облаке — godot/build/wormhole_vr_<ветка>_steam_frame.zip
+tools/export.sh --check # то же со сценой проверки стерео (проверка одним глазом)
 tools/test_stereo.sh    # стерео на программном Vulkan, ~5 мин (рендеры параллельно, по одному на ядро)
+tools/test.sh           # тесты Godot (godot/tests/*_test.gd), все сразу; tools/test.sh grab walking — только названные
 tools/test_openxr.sh    # main через настоящий OpenXR под Monado: замер частоты, строки меню с подменённым vrcmd, замер скорости, ~3 мин
 tools/adreno_stats.sh   # шейдер глазами компилятора Adreno 750: код, регистры, волны (сцены tests/perf.gd: near, plain, check)
 tools/fdm_check.sh      # доходит ли фовеация до драйвера шлема: проход XR тайлами и с картой плотности, ~10 с
@@ -452,16 +458,15 @@ tools/adreno_cost.sh --toys --split main this   # демонстрация: ше
 tools/adreno_cost.sh --toys --held --split this  # то же, с руками и мячом в правой руке у груди в каждой позе (--hands: только руки)
 tools/adreno_cost.sh --toys --poses "0,90,0;0,135,0" --profile this   # свои позы (l, градусы от горла, вверх) и такты по участкам кода
 tools/ab_shaders.sh 6390474 dir/   # другие варианты трассировщика для замера скорости в шлеме (godot/shaders/ab, не в git)
-cd godot && godot --path . -s res://tests/bench_test.gd   # замер скорости проходит все места и всё возвращает
-cd godot && godot --headless --xr-mode off --path . -s res://tests/refresh_rate_test.gd   # счёт кадров и выбор частоты
-cd godot && godot --path . --rendering-method mobile --resolution 320x240 --fixed-fps 60 -s res://tests/gravity_test.gd   # гравитация и её показ (нужен дисплей: xvfb-run)
-cd godot && godot --path . --fixed-fps 60 -s res://tests/physics_test.gd   # мячи и кубы: покой, энергия, столкновения, падение в горле, демонстрация
-cd godot && godot --path . --fixed-fps 60 -s res://tests/grab_test.gd   # руки: взять, нести, бросить, B и X (имитация шлема и контроллеров; xvfb-run)
-cd godot && ../tools/.bin/Godot_v4.7.2-stable_linux.x86_64 --headless \
-    --export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64
+tools/test.sh bench     # замер скорости проходит все места и всё возвращает
+tools/test.sh refresh_rate   # счёт кадров и выбор частоты
+tools/test.sh gravity   # гравитация и её показ
+tools/test.sh physics   # мячи и кубы: покой, энергия, столкновения, падение в горле, демонстрация
+tools/test.sh grab      # руки: взять, нести, бросить, B и X (имитация шлема и контроллеров)
+tools/test.sh walking walking_xr   # ходьба и повороты: с клавиш и с контроллеров
 ```
 
-Сборку для шлема кладут в zip с одним файлом `.arm64`. Имя архива — `wormhole_vr_<метка>_steam_frame.zip` — такое ищет скрипт установки, запущенный без аргумента. Сборка для проверки одним глазом — с файлом `godot/check` (раздел «Сцена проверки стерео»).
+Каждый тест запускается с ключами из строки запуска в его заголовке (`##   godot <ключи> -s res://tests/<имя>_test.gd`). Архив из облака — zip с одним файлом `.arm64`, имя `wormhole_vr_<метка>_steam_frame.zip` — такое ищет скрипт установки, запущенный без аргумента. Сборка для проверки одним глазом — `tools/export.sh --check` (раздел «Сцена проверки стерео»).
 
 ## Хотелки
 
@@ -620,7 +625,8 @@ godot/                         проект Godot 4.7.2
   tests/                       тесты в Godot (в сборку не попадают); emu_dump.gd — входы шейдера для модели цены
 ref/                           эталонная математика и тесты точности (Python)
 preview/                       веб-превью (WebGL 2): tools/build_preview.py → preview/wormhole.html
-tools/                         установка инструментов, тесты стерео и OpenXR, установка сборки на Frame, логи с него;
+tools/                         установка инструментов, тесты (test.sh, стерео, OpenXR), сборка (export.sh) и установка на Frame,
+                               логи с него; box.sh и env.sh — на самом Фрейме всё это идёт в контейнере;
                                ir3_emu.py, adreno_cost.py/.sh — модель цены кадра на Adreno 750; ir3_live.py — где шейдеру
                                нужны регистры; fdm_check.sh — фовеация в драйвере
 ```

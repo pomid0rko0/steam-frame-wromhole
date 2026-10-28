@@ -5,12 +5,11 @@
 # Exit status 0 only if the smoke test passes and no script error was printed.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/godot}
-[ -x "$GODOT" ] || GODOT=$(command -v godot || true)
+. "$ROOT/tools/env.sh"
 [ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
 command -v monado-service >/dev/null || { echo "no monado-service: apt install monado-service"; exit 2; }
 cd "$ROOT/godot"
-[ -d .godot ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
+import_once
 
 export XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1
 pkill -x monado-service 2>/dev/null; sleep 0.5
