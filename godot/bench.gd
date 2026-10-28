@@ -54,9 +54,9 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right of the th
 	[5.0, 0.0, -35.0],  # down at the floor
 	[5.0, 0.0, 35.0],   # up
 	[0.0, 0.0, 0.0],    # in the throat
-	[0.0, 90.0, 0.0],   # in the throat, looking sideways round it: the demo's dearest
-	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat: its boxes cost more than A's pillars
-	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat: where 144 Hz fell to 72
+	[0.0, 90.0, 0.0],   # in the throat, looking sideways round it
+	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat (its static objects are boxes)
+	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
 ]
 const RATE := 72.0
