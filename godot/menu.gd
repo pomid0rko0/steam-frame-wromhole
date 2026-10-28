@@ -1,6 +1,6 @@
 class_name Menu
 extends Node3D
-## The menu, drawn by Godot itself, and the line under it (docs/steam-frame.md, «Частота кадров и меню»).
+## The menu, drawn by Godot itself, and the line under it (docs/menu.md).
 ##
 ## The menu is hidden until the menu button opens it (handle_input: Menu on the right controller,
 ## View on the left, or a click of the left stick; M on the desktop) and is worked with buttons:

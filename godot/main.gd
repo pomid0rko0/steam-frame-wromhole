@@ -376,7 +376,7 @@ func _on_session_focussed() -> void:
 
 
 ## The controllers' interaction profiles, to godot.log when they change: which bindings the
-## runtime took (docs/steam-frame.md, «Что надо знать о SteamVR на Фрейме»).
+## runtime took (docs/steam-frame.md, «Что надо знать о SteamVR на шлеме»).
 func _log_profiles() -> void:
 	for hand: XRController3D in [left_hand, right_hand]:
 		var tracker := XRServer.get_tracker(hand.tracker) as XRControllerTracker

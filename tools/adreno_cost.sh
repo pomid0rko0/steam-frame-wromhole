@@ -2,7 +2,7 @@
 # What the speed check's poses cost on the Steam Frame's GPU, by a model: Mesa's compiler for the
 # Frame (tools/adreno_stats.sh) compiles each ray tracer, and tools/adreno_cost.py runs the program
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
-# included. Calibrated on the headset's speed check (docs/steam-frame.md, «Замер скорости»); a model, not a
+# included. Calibrated on the headset's speed check (docs/menu.md, «Замер скорости»); a model, not a
 # timing: compare variants with it, then measure the best in the headset (tools/ab_shaders.sh).
 #   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile] [--split] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or

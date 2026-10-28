@@ -2,7 +2,7 @@
 
 README.md (Russian) says what the project is, what it does, the buttons and how to build and
 check it; `docs/` has the details by topic: `geometry.md`, `rendering.md`, `physics.md`,
-`steam-frame.md`, `checks.md`, `wishlist.md`. This file is how to work here: the owner's rules,
+`menu.md`, `steam-frame.md`, `checks.md`, `wishlist.md`. This file is how to work here: the owner's rules,
 the branches, what a change has to fit, the commands, and facts that cost time to find.
 
 ## The owner's rules
@@ -42,6 +42,8 @@ the branches, what a change has to fit, the commands, and facts that cost time t
   even if it replaces what exists, up to writing the project anew. Break and migrate freely: nothing
   is kept for compatibility; carry along everything that depends on a change in the same branch and
   migrate whatever is stored. The checks below still apply.
+- **A rule in the way:** if one of these rules gets in the way of the work, say so to the owner and
+  propose a replacement; don't work around it silently, and don't change a rule without them.
 - **Long runs in the background, the build at once.** The owner checks builds while the tests run
   and doesn't wait for them, not even for the stereo test. Once the code for a build is in place:
   start `tools/test_stereo.sh` in the background, export and deliver the build, say the tests still
@@ -183,7 +185,7 @@ named. A tool you had to install goes into `setup.sh`.
   the best in the headset. It knows no memory waits, and it underrates the toys' shaders and world
   B's outer edge. `--split` models the stencil split, `--hands` / `--held` give each pose its own
   uniforms; the UBO layout `adreno_cost.UNIFORMS` follows the view include's order.
-- **The headset's speed check** (`docs/steam-frame.md`, «Замер скорости»): `bench:`, `tf` and
+- **The headset's speed check** (`docs/menu.md`, «Замер скорости»): `bench:`, `tf` and
   `tour:` lines in the log, `refresh:` every second. Frame times from walking around don't compare
   between builds: where one looks changes them several times.
 - **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,
