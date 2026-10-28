@@ -1,0 +1,9 @@
+this: the compiler's log did not parse (interleaved listings?), compiling again
+this: prog 100/1: 5802 instr (2093 nops), 24 full regs, 8 waves of 64, 158 cat4, 13 loops
+this, the plain part: prog 100/1: 2517 instr (793 nops), 12 full regs, 8 waves of 128, 70 cat4, 1 loops
+this: pose l  11.6 yaw    0 pitch  -20:  3.10 ms; per 64 pixels   644 ALU cycles,  289 nops, 14.2 transcendental, 4.1 texture unit; lanes busy  86%; marked 29%
+this: pose l   6.2 yaw    0 pitch  -20:  6.03 ms; per 64 pixels  1561 ALU cycles,  965 nops, 38.6 transcendental, 4.9 texture unit; lanes busy  88%; marked 97%
+this: pose l   5.0 yaw    0 pitch  -20:  5.47 ms; per 64 pixels  1148 ALU cycles,  719 nops, 51.7 transcendental, 5.0 texture unit; lanes busy  94%; marked 100%
+this: pose l   5.0 yaw   90 pitch  -20:  5.80 ms; per 64 pixels  1368 ALU cycles,  840 nops, 45.9 transcendental, 5.0 texture unit; lanes busy  90%; marked 100%
+this: pose l   0.0 yaw   90 pitch  -20:  4.29 ms; per 64 pixels   835 ALU cycles,  461 nops, 36.1 transcendental, 5.0 texture unit; lanes busy  95%; marked 100%
+this: mean 4.94 ms (100/1, waves of 64, split by the stencil)

@@ -31,6 +31,14 @@ func _process(_dt: float) -> bool:
 	if frame % 120 == 0 and times.size() >= 100:
 		var a: Array = times.slice(-100)
 		a.sort()
-		print("t %4.1f s: balls %d cubes %d | main._process median %.2f ms, p90 %.2f, max %.2f"
-			% [frame / 120.0, main.world.balls.size(), main.world.cubes.size(), a[50], a[90], a[99]])
-	return frame >= 120 * 12
+		var moving := 0
+		for b in main.world.balls:
+			if (b["U"] as Vector4).length() > 0.01:
+				moving += 1
+		var awake := 0
+		for c in main.world.cubes:
+			if c["still"] <= main.world.SLEEP_TIME:
+				awake += 1
+		print("t %4.1f s: balls %d (moving %d) cubes %d (awake %d) | main._process median %.2f ms, p90 %.2f, max %.2f"
+			% [frame / 120.0, main.world.balls.size(), moving, main.world.cubes.size(), awake, a[50], a[90], a[99]])
+	return frame >= 120 * 40
