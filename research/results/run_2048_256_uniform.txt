@@ -1,0 +1,21 @@
+tables: 2048 alpha rows, 256 psi columns; filter fraction bits exact
+start, at the throat                       l  11.70  build  0.20 s; curved px  10978 (near ac 10000); kind mismatch    0, edges    9
+    floor n  10772: p50 0.0005 p99 0.0918 p99.9 0.096 max 0.136 px | sky n    197: p50 0.0001 p99 0.0002 max 0.000 px | near ac: p99 0.092 max 0.136
+outside the edge, at the throat            l   7.97  build  0.20 s; curved px  13572 (near ac 10000); kind mismatch    0, edges   12
+    floor n  12551: p50 0.0008 p99 0.0585 p99.9 0.185 max 0.295 px | sky n   1009: p50 0.0001 p99 0.0004 max 0.001 px | near ac: p99 0.058 max 0.295
+outside the edge, 60 deg aside             l   7.97  build  0.19 s; curved px  12221 (near ac 10000); kind mismatch    0, edges    9
+    floor n  11888: p50 0.0018 p99 0.0933 p99.9 0.200 max 0.301 px | sky n    324: p50 0.0001 p99 0.0003 max 0.000 px | near ac: p99 0.092 max 0.301
+on the fillet l=5, at the throat           l   5.00  build  0.12 s; curved px  20000 (near ac 10000); kind mismatch    0, edges   16
+    floor n  19073: p50 0.0052 p99 0.6569 p99.9 1.406 max 1.848 px | sky n    911: p50 0.0001 p99 0.0004 max 0.001 px | near ac: p99 0.991 max 1.848
+on the fillet l=5, sideways                l   5.00  build  0.11 s; curved px  20000 (near ac 10000); kind mismatch    0, edges   10
+    floor n  16528: p50 0.0020 p99 0.5460 p99.9 1.172 max 1.415 px | sky n   3462: p50 0.0001 p99 0.0032 max 0.007 px | near ac: p99 0.690 max 1.415
+on the fillet l=5, away                    l   5.00  build  0.11 s; curved px  10000 (near ac     0); kind mismatch    0, edges    8
+    floor n   3835: p50 0.0001 p99 0.0006 p99.9 0.001 max 0.001 px | sky n   6157: p50 0.0000 p99 0.0003 max 0.000 px | near ac: p99 NaN max NaN
+throat middle, along                       l   0.00  build  0.07 s; curved px  10000 (near ac     0); kind mismatch    0, edges   12
+    floor n   7197: p50 0.0006 p99 0.0319 p99.9 0.048 max 0.056 px | sky n   2791: p50 0.0002 p99 0.0008 max 0.001 px | near ac: p99 NaN max NaN
+throat middle, sideways                    l   0.00  build  0.07 s; curved px  20000 (near ac 10000); kind mismatch    0, edges  356
+    floor n  19517: p50 0.0001 p99 0.0862 p99.9 0.308 max 0.339 px | sky n    127: p50 0.0005 p99 0.0010 max 0.001 px | near ac: p99 0.190 max 0.339
+throat l=2, sideways down                  l   2.00  build  0.06 s; curved px  20000 (near ac 10000); kind mismatch    0, edges    2
+    floor n  19998: p50 0.0001 p99 0.3664 p99.9 0.721 max 0.874 px | sky n      0: p50 NaN p99 NaN max NaN px | near ac: p99 0.510 max 0.874
+world B outside the edge, at the throat    l  -7.97  build  0.22 s; curved px  13690 (near ac 10000); kind mismatch    0, edges   15
+    floor n  12600: p50 0.0008 p99 0.0583 p99.9 0.192 max 0.325 px | sky n   1075: p50 0.0001 p99 0.0004 max 0.106 px | near ac: p99 0.058 max 0.325

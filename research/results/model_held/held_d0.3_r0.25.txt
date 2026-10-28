@@ -1,0 +1,8 @@
+this: prog 100/1: 5802 instr (2093 nops), 24 full regs, 8 waves of 64, 158 cat4, 13 loops
+this, the plain part: prog 100/1: 2517 instr (793 nops), 12 full regs, 8 waves of 128, 70 cat4, 1 loops
+this: pose l  11.6 yaw    0 pitch  -20:  3.15 ms; per 64 pixels   664 ALU cycles,  308 nops, 14.3 transcendental, 4.1 texture unit; lanes busy  86%; marked 34%
+this: pose l   6.2 yaw    0 pitch  -20:  6.48 ms; per 64 pixels  1699 ALU cycles, 1092 nops, 42.2 transcendental, 4.8 texture unit; lanes busy  88%; marked 97%
+this: pose l   5.0 yaw    0 pitch  -20:  7.73 ms; per 64 pixels  1686 ALU cycles, 1150 nops, 88.3 transcendental, 5.0 texture unit; lanes busy  94%; marked 100%
+this: pose l   5.0 yaw   90 pitch  -20:  6.19 ms; per 64 pixels  1457 ALU cycles,  921 nops, 52.0 transcendental, 5.0 texture unit; lanes busy  90%; marked 100%
+this: pose l   0.0 yaw   90 pitch  -20:  4.55 ms; per 64 pixels   902 ALU cycles,  519 nops, 39.6 transcendental, 5.0 texture unit; lanes busy  96%; marked 100%
+this: mean 5.62 ms (100/1, waves of 64, split by the stencil)

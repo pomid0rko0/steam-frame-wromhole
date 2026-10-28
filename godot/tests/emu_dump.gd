@@ -8,7 +8,8 @@ extends SceneTree
 ## check's), toys (the demo after the throw and the drop, everything at rest: 8 balls, 4 cubes),
 ## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2; with
 ## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
-## right one in front of the chest (what the hands and grabbing add to a frame);
+## right one in front of the chest (what the hands and grabbing add to a frame; HELD_DIST and HELD_R in
+## the environment: its distance from the hand and its radius, 0.3 and 0.25 m by default);
 ## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
@@ -125,8 +126,10 @@ func _hold_ball() -> void:
 		var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
 		main.hand_state[k] = {"on": true, "l": at[0], "n": at[1], "F": at[2], "U": Vector4.ZERO, "ready": k == 1}
 		if k == 1 and held:
-			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
-			var b: Dictionary = main.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97))
+			var hd := float(OS.get_environment("HELD_DIST")) if OS.has_environment("HELD_DIST") else 0.3
+			var hr := float(OS.get_environment("HELD_R")) if OS.has_environment("HELD_R") else 0.25
+			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], hd, at[2])
+			var b: Dictionary = main.world.add(g[0], g[1], Vector4.ZERO, hr, Color(0.95, 0.95, 0.97))
 			b["held"] = &"right_hand"
 	main._upload_toys()
 

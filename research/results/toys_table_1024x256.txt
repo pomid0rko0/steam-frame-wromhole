@@ -1,0 +1,12 @@
+held ball 25 cm at 35 cm, eye on the fillet l=5
+    candidates 13696, hits 4091, lost 0, false 0; evaluations per candidate: mean 9.7, p99 13, max 16; on hits: mean 8.7 max 16; hit point error (rays 0.5 px or more inside) p99 0.089 max 0.093 px; lost rays go in at most 0.000 px
+held ball 50 cm at 45 cm, eye near the outer edge l=5.5
+    candidates 15000, hits 4623, lost 0, false 0; evaluations per candidate: mean 9.9, p99 13, max 18; on hits: mean 9.1 max 17; hit point error (rays 0.5 px or more inside) p99 0.104 max 0.106 px; lost rays go in at most 0.000 px
+ball 70 cm at 2.5 m, eye in the throat looking sideways
+    candidates 8832, hits 4357, lost 0, false 0; evaluations per candidate: mean 7.8, p99 14, max 20; on hits: mean 9.3 max 20; hit point error (rays 0.5 px or more inside) p99 0.010 max 0.012 px; lost rays go in at most 0.000 px
+hand 4 cm at 40 cm, eye on the fillet l=4.6
+    candidates 8791, hits 4292, lost 0, false 0; evaluations per candidate: mean 10.2, p99 13, max 19; on hits: mean 8.1 max 19; hit point error (rays 0.5 px or more inside) p99 0.054 max 0.057 px; lost rays go in at most 0.000 px
+held cube 30 cm at 40 cm, eye on the fillet l=5
+    candidates 15000, hits 2267, lost 0, false 4; evaluations per candidate: mean 11.2, p99 15, max 17; on hits: mean 10.1 max 17; hit point error (rays 0.5 px or more inside) p99 0.129 max 0.141 px; lost rays go in at most 0.000 px
+cube 50 cm at 3 m, eye in the throat, along
+    candidates 9265, hits 1898, lost 0, false 0; evaluations per candidate: mean 6.7, p99 13, max 19; on hits: mean 9.1 max 19; hit point error (rays 0.5 px or more inside) p99 0.007 max 0.008 px; lost rays go in at most 0.000 px
