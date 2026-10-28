@@ -5,7 +5,7 @@
 # worktree under .wt/ runs the tests, with its files where the host sees them and git's status
 # clean; the container is set up by one box.sh at a time. Run it after a change to box.sh, env.sh
 # or the tools that use them; its worktree is made from HEAD, so commit first.
-#   tools/test_box.sh        (exit status 0 only if every check passes; about five minutes)
+#   tools/test_box.sh        (exit status 0 only if every check passes; ~3 min)
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 if command -v apt-get >/dev/null || ! command -v podman >/dev/null; then
