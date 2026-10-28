@@ -14,7 +14,7 @@ extends Node3D
 ## nothing, so with toys the frame is split: proxies drawn first (render priority -1,
 ## stencil_mark.gdshader) mark the pixels whose rays may meet a toy, the shader with toys runs only
 ## there (stencil equal 1), the plain one of the same view everywhere else (a second quad, stencil
-## not equal 1).
+## not equal 1). Godot geometry drawn before the ray tracers must not write the stencil.
 
 # the ray tracers: [plain, gravity floor, gravity floor and arrows], without and with toys
 const SHADERS := [preload("res://shaders/wormhole.gdshader"), preload("res://shaders/wormhole_gravity.gdshader"),
@@ -109,7 +109,7 @@ static func _screen_quad(mat: ShaderMaterial) -> MeshInstance3D:
 	return q
 
 
-## A uniform both ray tracers read.
+## A uniform both ray tracers read (the toys' own, wh_ball..., go only to material: set_objects).
 func param(name: StringName, value: Variant) -> void:
 	material.set_shader_parameter(name, value)
 	plain_material.set_shader_parameter(name, value)
@@ -175,8 +175,9 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 ## orthonormal axes divided by the half size (axes: three body axes tangent to the space, then its
 ## normal; four per cube), (rgb, half size) (ccol). The shader gets each cube's axes and then
 ## dot(centre, axis) for the four, five vectors per cube, all sorted by where they are
-## (region_order): the flat universes' rays and the shell's look only at their own. The shader is
-## chosen here: with no toys it is the one without their code.
+## (region_order): the flat universes' rays and the shell's look only at their own, so a ball's
+## index in the shader is not its index in the caller's list. The shader is chosen here: with no
+## toys it is the one without their code.
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:
 	var n := pos.size()

@@ -97,47 +97,9 @@ Where the wishes (`docs/wishlist.md`) start:
 
 ## What a change has to fit
 
-The scripts (`godot/`): `main.gd` the scene and the viewer (feet on the floor, the room's axes
-carried there, the head above them), walking, turning, the reset, the order of each frame;
-`tracer.gd` the ray tracer's quads, shader variants, uniforms, toys and stencil split; `toys.gd` the
-demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass.gd`; `menu.gd`;
-`frame_rate.gd` with `rate_meter.gd`; `bench.gd` the speed check; `check_scene.gd`;
-`wormhole_space.gd` the geometry and gravity on the CPU; `scene.json` the static objects.
-
-- **Buttons.** The grip grabs; right B and left X (the Frame's D-pad down) make a new ball / cube;
-  left Y (the D-pad up, left, right) steps the gravity view; A resets everything (a new reset joins
-  it); the left trigger runs; the right stick's x turns, its click switches smooth/snap. Nothing is
-  pointed at with the triggers.
-- **The action map** (`openxr_action_map.tres`) binds what the app reads (and the right trigger, which nothing reads), in the Frame's
-  profile, KHR generic, Touch and eye gaze; `tests/util.gd` `BINDINGS` is the same table and the
-  tests compare them exactly. A new action goes into both, in the Frame profile with Valve's paths.
-  Left X / Y of the other profiles are the Frame's D-pad down / up, left, right.
-- **The menu.** While it is open (`main.menu_active`, including the frame that closes it) A, B, the
-  D-pad and the left stick are its; a new button checks it and stays off the left stick's click,
-  View and Menu. A setting is a row: `Menu.ROWS`, `NAMES`, `_count`, `_current`, `_apply`, `_enabled`,
-  `_value_text`.
-- **The speed check** sets the viewer's pose itself: while it runs (`main.hold`) the sticks, A and
-  the hands do nothing, and a new button stays out too; the menu greys the rows it sets.
-- **The hands** take two of the shader's 12 ball slots (`Tracer.MAX_BALLS`); the toys' balls take
-  at most 8 (`BallWorld.MAX_BALLS`). Each frame the free toys step first (pushed from the hands'
-  last places), then the hands and what they hold are placed (`Hands.update`), then everything is
-  drawn: a toy let go starts from the hand. Jumps of
-  the viewer (`place`, `set_pose`, a snap turn) call `Hands.forget_motion`, or the jump is a throw.
-- **A throat change** (`space.set_profile`; only `WormholeSpace._init` calls it) must rebuild
-  what is built for the shape: the shader's `wh_rho0`, `wh_h`, `wh_fillet` (`tracer.param`, set once
-  in `Tracer._ready`), `tracer.upload_fillet_table()` (slow in GDScript: not per frame),
-  `tracer.upload_gravity()`, `set_objects` (its sorting and proxies use `space.h`, `space.Rout`) and
-  the stereo check grid's `rout`, `lsh` (`check_scene.gd`). The feet and the balls should keep their
-  distance to the curved zone's edge; nothing does that.
-- **Foveation and the render scale:** one of them at a time (the eye-tracked offsets are in
-  full-size pixels). The split pass sits on the XR camera's compositor: an effect added there
-  splits the pass too.
-- **The stencil split:** two materials, `tracer.material` with the toys and `plain_material`
-  without. A uniform both read goes through `tracer.param`; the toys' own (`wh_ball`…) only to
-  `material` (`set_objects`). A ball's shader index is not its index in `world.balls`
-  (`set_objects` sorts them). Godot geometry drawn before the ray tracers must not write the
-  stencil. Toys in the hand are fine: a ray that meets a toy leaves its proxy at least the margin
-  (8 cm, more than the near plane's 5 cm) beyond the hit.
+The comment at the top of each file says what it does and what a change to it must keep; read it
+for every file you change, and main.gd's: the parts, the order of a frame, the rules for a new
+button. The buttons themselves are README's table.
 
 ## Commands
 
@@ -216,18 +178,14 @@ Godot, SteamVR and the Frame:
 - **Multiview.** `INV_VIEW_MATRIX` is a camera shared by the eyes; each eye's offset and rotation
   are in its `PROJECTION_MATRIX`; `EYE_OFFSET` is the eye in that view space. Rays start at the eye:
   from the head's centre the eyes look in different directions.
-- **A pixel's ray comes from the screen's corners,** never from its screen position: exact under
-  any density map (a coarse pixel gets the ray through its centre).
-- **The stereo check's chart → room map** is computed at placement, recentre and stick moves and
-  turns, never every frame from the feet: so it is fixed to the room and drift shows.
 - **SteamVR on the Frame** shows a non-Steam app's window on a virtual screen in the headset: XR
   renders into a SubViewport and the window shows only a notice. While its dashboard is open the
   app gets no input.
-- **Refresh rate.** The app starts at 72 Hz until the menu stores a rate for it. SteamVR answers `XR_FB_display_refresh_rate` with
-  success and ignores it; it follows `steam.app.<SteamAppId>.preferredRefreshRate`, set by
-  `/opt/steamvr/bin/linuxarm64/vrcmd`, and the running app switches within a second (SteamVR
-  2.18.2). No `XR_EXT_performance_settings`. The GPU stays at its top clock (903 MHz) while frames
-  are late.
+- **Refresh rate.** The app starts at 72 Hz until the menu stores a rate for it. SteamVR answers
+  `XR_FB_display_refresh_rate` with success and ignores it; it follows
+  `steam.app.<SteamAppId>.preferredRefreshRate`, set by `/opt/steamvr/bin/linuxarm64/vrcmd`, and the
+  running app switches within a second (SteamVR 2.18.2). No `XR_EXT_performance_settings`. The GPU
+  stays at its top clock (903 MHz) while frames are late.
 - **Half rate.** One late frame sends SteamVR to every 2nd refresh for 6–14 s; it fills in frames
   on the same GPU, our frame at the same pose costs more, and it can stay there until the frame
   gets cheaper or the rate is switched there and back. The Steam overlay and SteamVR's camera view
@@ -282,10 +240,9 @@ The Adreno 750 and its compiler (ir3):
   Compare variants with the speed check at 72 Hz: a variant over the frame's budget halves the
   rate and reads dearer than it is, and so does the segment after it.
 - **Registers go to the heaviest point of the code, run or not:** code for something not in view
-  still costs. Hence one shader per combination (`WH_NO_BALLS`, `WH_GRAVITY`, `WH_ARROWS`), loops
-  over objects bounded by `wh_nBall` (a constant bound with `break` is unrolled), candidates as bit
-  masks. Registers per pixel set the waves: 48 → 4, 24 → 8, 16 → 12; at 12 or fewer the waves are
-  128 pixels wide.
+  still costs (hence a shader per combination: tracer.gd); a loop with a constant bound and `break`
+  is unrolled. Registers per pixel set the waves: 48 → 4, 24 → 8, 16 → 12; at 12 or fewer the
+  waves are 128 pixels wide.
 - **ir3 turns an `if` into selects,** even around a square root: every lane pays. A loop of one pass
   with a bound it can't see (`k < 1 + min(wh_nBall, 0)`) stays a branch that waves skip; the same
   trick stops unrolling (`k < 4 + min(wh_nCube, 0)`).
@@ -293,9 +250,8 @@ The Adreno 750 and its compiler (ir3):
   a loop is held through it; computed again where it is used, from values held anyway, it is not.
 - **Branches that skip work lose** when their divergence costs more than the work (a bounding ball
   before each box).
-- **Derivatives** exist only in uniform control flow: `wh_renderE` computes the lines' coordinates
-  for every pixel and their derivatives once, after the trace. A screen derivative costs about as
-  much as 90 ALU cycles.
+- **Derivatives** exist only in uniform control flow. A screen derivative costs about as much as
+  90 ALU cycles (the cost model's fit).
 - **Near the throat** one group of pixels holds both skies, the floor and objects, and runs every
   branch of the shading.
 - **16-bit math** (`mediump`) runs at double rate in waves of 128, but conversions cost more than it
@@ -308,28 +264,13 @@ The Adreno 750 and its compiler (ir3):
   `adreno_stats.sh --disasm` dumps the biggest program, the generic ubershader, not the one that runs.
 - **Software-Vulkan timings** are good for ratios only, not for the shader's inner costs.
 
-The ray tracer's numerics:
-- **The fillet table** has 4 rows, one per span of b, each in one regime of the moments (the row
-  gives the regime, so the moments match the table). In regimes 1 and 2 e has a factor
-  1/sqrt(mx) (and 1/sqrt(mn) in regime 2) that goes to zero like a square root at b → Rout, which
-  interpolation misses: those rows store e with it taken out, and the pixel multiplies it back
-  (`inversesqrt`). Sample the table with `textureLod`.
-- **Rays that go round the throat** (|vl| tiny on the cylinder, looking sideways inside it) lose
-  float32 digits: 1 - wc² is (rho0 - b)(rho0 + b) with rho0 - b from vl², and hit keys carry no large
-  offsets. Test such rays with a pose at an odd width (the middle column at vl = 0).
-- **A turning ray's turning point** has t = z = zlo = 0 in `wh_filMom`: the expression there
-  must stay finite (`z - zlo`), here and in `ref/wh.py`; a NaN poisons the rest of the ray. Scan
-  viewpoints around an object when a test's poses may miss a corner case.
-- **`inversesqrt` rounding** gives |w| above 1 for rays along the cylinder (b = rho0): clamp
-  `min(dot(w, e2), 1.0)`.
-- **The path length in the curved region** is an estimate, r²/b × psi with r at the weight's mean
-  tau, used by the fog, the cubes' edge lines, the arrows and the toys' sample step. The toys' hits
-  are ordered by place on the path (piece + fraction), not by length.
-- **Moving objects in the curved region: chords, not samples.** Between two samples the chord in
-  R⁴ is tested against each object, and the path's point at the chord's entry is the hit if it lies
-  within the chord's sag. Objects cost per ray: each is searched only where the path is within
-  reach in r and w, and in its psi window (on a fillet `wh_filSolve`, on the cylinder too); a ball at the eye or in the
-  throat is a candidate for many rays, a ball far from the throat must not be one.
+The ray tracer's numerics: the lessons sit in the shader's and wormhole_space.gd's comments where
+they apply (float32 cancellation round the throat, the turning point's 0/0, `inversesqrt` above
+1, the table's square-root factor, chords not samples, the path length's estimate). Cases a test's
+poses may miss: a pose at an odd width (the middle column has vl = 0) and viewpoints scanned
+around an object.
+
+Tests:
 - **Render scale and the stereo test:** below 100% the bilinear upscale shifts `tools/compare`'s
   one-colour threshold by tenths of a pixel: test a scale with `SCALING_3D_MODE_NEAREST`.
 - **The one-eye check in the headset** catches what only the real device shows: ask for it after

@@ -14,7 +14,8 @@ extends Node3D
 ## (frame_rate.gd), on a plate green while the display gets a new frame from us at (nearly) every
 ## refresh, red when it does not, grey while it is measuring; under it what came of a choice.
 ##
-## Its rows: the refresh rate, the 3D render scale, foveated rendering (off, SteamVR's density map
+## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text. Its rows: the
+## refresh rate, the 3D render scale, foveated rendering (off, SteamVR's density map
 ## low or high, our own softer ones wide or narrow), which way our maps coarsen first (the width or
 ## the height, to compare by eye), the gaze dot where SteamVR's eye tracking says the eyes look, how
 ## gravity is shown (off, the floor coloured by it, also arrows of its field), smooth or snap turns,

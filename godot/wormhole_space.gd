@@ -36,6 +36,11 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float) -> vo
 	set_profile(throat_radius, half_length, fillet_radius)
 
 
+## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
+## the shape: the shader's wh_rho0, wh_h, wh_fillet (Tracer.param, set once in Tracer._ready),
+## Tracer.upload_fillet_table (slow in GDScript: not per frame), Tracer.upload_gravity,
+## Tracer.set_objects (its sorting and proxies use h and Rout) and the stereo check grid's rout and
+## lsh (check_scene.gd). Nothing keeps the feet's and the balls' distance to the curved zone's edge.
 func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length

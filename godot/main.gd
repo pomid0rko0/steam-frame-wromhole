@@ -17,6 +17,13 @@ extends Node3D
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
 ## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
 ## hold, and last the toys and the head to the ray tracer: a toy let go now starts from the hand.
+##
+## A new button: while the menu is open (menu_active, also the frame that closes it) A, B, the D-pad
+## and the left stick are the menu's; during the speed check (hold) the sticks, A and the hands do
+## nothing; the left stick's click, View and Menu open the menu. A new action goes into
+## openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare them exactly), in
+## the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a snap turn) call
+## hands.forget_motion, or the jump would be a throw.
 
 # optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
 const THROAT_RADIUS := 3.0
