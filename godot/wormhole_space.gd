@@ -1,13 +1,8 @@
 class_name WormholeSpace
 extends RefCounted
 ## Geometry of the wormhole space on the CPU side: moving the viewer along
-## geodesics and parallel-transporting their frame. Same metric as the shader
-## (optozorax's SDF world: planes w = +-h, extruded sphere rho0, union_round fillet R):
-##   ds^2 = dl^2 + r(l)^2 dOmega^2
-##   cylinder |l| <= Lc:      r = rho0
-##   fillet   Lc <= |l| <= L: r = rho0 + R (1 - cos th),  th = th0 + (|l| - Lc) / R
-##   flat     |l| >= L:       r = |l| - L + Rout
-##   Lc = max(h - R, 0), th0 = asin(max(1 - h/R, 0)), L = Lc + R (pi/2 - th0), Rout = rho0 + R
+## geodesics and parallel-transporting their frame. The space and its profile r(l) (Lc, L, th0,
+## Rout): docs/geometry.md; gravity: docs/gravity.md.
 ## A point is (l, n): n is a unit Vector3 on the shared angular sphere.
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.

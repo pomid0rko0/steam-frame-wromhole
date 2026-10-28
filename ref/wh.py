@@ -1,17 +1,8 @@
 """
 Reference math for the wormhole renderer (float64, NumPy).
 
-Geometry (optozorax's SDF construction, generalised):
-    world = surface of  union_round(min(plane(w=-h), plane(w=+h)), extrude_w(sphere(rho0), h), R)
-in R^4. It is SO(3)-symmetric, so its induced metric is exactly
-    ds^2 = dl^2 + r(l)^2 dOmega^2
-with the profile (l = arc length along the (rho, w) profile curve from the middle):
-    cylinder  |l| <= Lc               r = rho0
-    fillet    Lc <= |l| <= L          r = rho0 + R (1 - cos th),  th = th0 + (|l| - Lc)/R
-    flat      |l| >= L                r = |l| - L + Rout
-    Lc = max(h - R, 0),  th0 = asin(max(1 - h/R, 0)),  L = Lc + R (pi/2 - th0),  Rout = rho0 + R
-For h < R the two fillets meet at a crease (r'(0+-) = +-sin th0): no cylinder, no photon sphere.
-Static spacetime -dt^2 + ds^2 (Morris-Thorne, zero redshift): light = geodesics of ds^2.
+The space, its profile r(l) and the method: docs/geometry.md. For h < R the fillets meet at a
+crease, where r'(0+-) = +-sin th0.
 
 Point on the manifold: (l, n), n a unit 3-vector. Tangent: (vl, w), w orthogonal to n.
 Flat charts: side A (l >= L): x = r n;  side B (l <= -L): x = P r n,  P = diag(-1, 1, 1).

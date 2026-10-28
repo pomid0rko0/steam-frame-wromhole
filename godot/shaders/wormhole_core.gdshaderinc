@@ -41,17 +41,9 @@
 //                                           n.x = 0 through the wormhole; wh_pix is a pixel's
 //                                           angle (the arrows' soft edges)
 //
-// Geometry: optozorax's SDF world, union_round(planes w = +-h, extrude_w(sphere rho0, h), fillet) in R^4.
-// It is SO(3)-symmetric, so its induced metric is exactly
-//   ds^2 = dl^2 + r(l)^2 dOmega^2      (l = arc length of the profile curve from the middle)
-//   cylinder |l| <= Lc:      r = rho0,                         w = l
-//   fillet   Lc <= |l| <= L: r = rho0 + R (1 - cos th),        w = +-(h - R + R sin th),  th = th0 + (|l| - Lc) / R
-//   flat     |l| >= L:       r = |l| - L + Rout   (Euclidean), w = +-h
-//   Lc = max(h - R, 0), th0 = asin(max(1 - h/R, 0)), L = Lc + R (pi/2 - th0), Rout = rho0 + R.
-//   h < R: the two fillets meet at a crease, there is no cylinder and no photon sphere.
-// Static spacetime -dt^2 + ds^2, so light rays are geodesics of ds^2. Each ray stays in a plane
-// through the centre; its angle in that plane is  dpsi = b dl / (r sqrt(r^2 - b^2)):
-//   cylinder: closed form;  fillet: product integration, no loops (see "curved part").
+// The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md. Each ray
+// stays in a plane through the centre; its angle there is one integral: on the cylinder in closed
+// form, on the fillet by product integration, no loops (see "curved part").
 //
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).

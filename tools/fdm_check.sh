@@ -4,7 +4,7 @@
 # is drawn), the XR view through the simulated headset, and the driver's trace (u_trace) says
 # for each render pass whether it rendered in tiles and with how many attachments. Turnip only
 # applies a density map in tiles. Four runs of tests/fdm_check.gd:
-#   off    the XR 3D pass as it always ran: one pass with two subpasses, which Turnip renders
+#   off    the XR 3D pass without foveation: one pass with two subpasses, which Turnip renders
 #          without tiles (Godot 4.7.2's subpass dependency lacks BY_REGION, split_pass.gd)
 #   split  the 3D scene in a pass of its own: in tiles
 #   on     foveation: in tiles, and with one attachment more than split (the density map)

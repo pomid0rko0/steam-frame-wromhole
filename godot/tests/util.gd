@@ -10,10 +10,8 @@ const FakeHmd := preload("res://tests/fake_hmd.gd")
 const FRAME := "/interaction_profiles/valve/frame_controller_valve"
 const GENERIC := "/interaction_profiles/khr/generic_controller"
 const TOUCH := "/interaction_profiles/oculus/touch_controller"
-# action name -> the binding paths openxr_action_map.tres has for it, per profile, exactly (one
-# path a runtime rejects drops the profile's bindings, so nothing the app does not read): the Steam
-# Frame's own (paths from Valve's page «Steam Frame Input»), the KHR generic controller (SteamVR's
-# fallback when an app offers no Frame profile), Touch (SteamVR's next fallback), the eyes
+# action name -> the binding paths openxr_action_map.tres has for it, per profile, exactly: nothing
+# the app does not read (the profiles and why: main.gd's top, «The controllers»)
 const L := "/user/hand/left/"
 const R := "/user/hand/right/"
 const POSES := {"aim_pose": [L + "input/aim/pose", R + "input/aim/pose"],

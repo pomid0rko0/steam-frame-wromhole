@@ -12,16 +12,13 @@ what was learnt about it: the comment at the top of its file.
 - **You run** on the Frame, in a VSCodium outside Flatpak (`~/Applications/VSCodium`; inside the
   Flatpak `flatpak-spawn --host` is refused), or in a cloud session (an Ubuntu container, no
   headset), while the owner wears the headset. The tools find out where they run.
-- **Builds:** `tools/export.sh` puts the build where the headset takes it: on the Frame in place, one
-  entry in the Steam library the owner starts; in a cloud session a zip in `godot/build/` to attach
-  to the chat, installed by the owner with `tools/deploy_frame.bat`. Say what to look at. **Never
-  start the app, SteamVR, `vrcmd` or any window yourself:** it takes the view the owner is in.
+- **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session attach
+  its zip to the chat. Say what to look at. **Never start the app, SteamVR, `vrcmd` or any window
+  yourself:** it takes the view the owner is in.
 - **The owner can't judge test images or numbers:** verifying is your job. What they check in the
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
-- **Tests stay off the headset.** On the Frame whatever runs Godot or opens a GPU runs in
-  `tools/box.sh`'s container (it says why). The tools go there by themselves; a command of your own
-  goes through `tools/box.sh`, which in a cloud session runs it in place. Never start
-  `tools/.bin/godot` on the Frame without it.
+- **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
+  `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
 - **One wish per chat,** on a branch you name yourself, a short English word (`throat`, `grab`),
   started from `main` or the branch `docs/wishlist.md` gives for the wish; not the session's
   `claude/…` branch. The owner allows pushing to the branch you name.

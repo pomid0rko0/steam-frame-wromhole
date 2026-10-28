@@ -1,31 +1,10 @@
 """
-Gravity through the wormhole, as in optozorax's video about gravity and portals: the
-gravitational potential obeys Poisson's equation on the curved space itself. Near the wormhole
-there is no mass (the field comes from far away, like the Earth's), so the potential is harmonic:
-
-    Laplacian_g phi = 0,   phi -> g z  far away in both universes
-
-(z is the chart height in universe A and in universe B; the floor is z = 0). The video solves
-this with finite elements in 2D. The wormhole is SO(3)-symmetric, so here it separates exactly:
-with phi = g f(l) n_z (n_z = cos of the polar angle, an l = 1 spherical harmonic) the Laplacian
-of ds^2 = dl^2 + r(l)^2 dOmega^2 gives one ODE for f:
-
-    (r^2 f')' = 2 f,      f even in l,      f = r + beta / r^2 in the flat universes
-
-(a + b / r^2 is the general solution where r = |l| - L + Rout; the r^-2 part is the dipole the
-wormhole adds). On the throat's cylinder r = rho0 and f = A cosh(sqrt(2) l / rho0): the field is
-screened there and gravity in the middle of a long throat is weak.
+Gravity through the wormhole (docs/gravity.md): the even solution f of (r^2 f')' = 2 f with SciPy's
+DOP853, a reference for WormholeSpace's solver, and solve_2d, the full Laplace equation on an
+(l, theta) grid without the separation, for ref/test_gravity.py.
 
 The field is g_vec = -grad phi, in the (U_l, u) representation of a tangent vector at (l, n):
     grad phi = g (f' n_z,  (f / r) (e_z - n_z n))
-On the floor (n_z = 0) it points straight down with strength g f / r.
-
-The simple field -g grad(r n_z) is the same with f = r: conservative, but
-not harmonic in the shell (as if mass sat in the throat: Laplacian = (r'' + 2 (r'^2 - 1) / r) n_z).
-
-The odd solution (the l = 0 mode, phi' = C / r^2) would make the two universes' potentials differ
-at infinity and the throat look like a positive mass from one side and a negative one from the
-other; both universes have the same field at infinity, so it is absent.
 """
 import numpy as np
 from scipy.integrate import solve_ivp

@@ -19,7 +19,7 @@ extends Node
 ## frame's budget reads dearer than it is, and so does the segment after it. Fewer instructions or
 ## registers (tools/adreno_stats.sh) are not faster by themselves, and frame times from walking
 ## around don't compare between builds (where one looks changes them): this part decides.
-## This build's ray tracer is timed six ways (FOVEATIONS): as it always ran, with the 3D scene in
+## This build's ray tracer is timed six ways (FOVEATIONS): without foveation, with the 3D scene in
 ## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
 ## foveated rendering: SteamVR's map low and high, our own wide and narrow (foveation.gd); with the
 ## demo's toys a seventh, the ray tracer with toys over the whole view, not only where the stencil
@@ -89,7 +89,7 @@ var others: Array = []          # [label, Shader, the Shader with balls or null]
 var variants: Array = []        # this run's [label, Shader, foveation, split, Tracer.toy_mode]:
                                 # others (of the kind this build runs: with toys or without),
                                 # then this build's (FOVEATIONS)
-var own := 0                    # the variant that is this build as it always ran
+var own := 0                    # the variant that is this build without foveation
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
 var step := -1                  # the segment or tour step running
@@ -360,7 +360,7 @@ func _compared() -> void:
 			var pct := roundi(absf(1.0 - m) * 100.0)
 			parts.append("новый и прежний одинаковы" if absf(1.0 - m) <= 0.02 else
 					("новый %s прежнего на %d%%" % ["быстрее" if m < 1.0 else "медленнее", pct]))
-		# the foveation against this build as it always ran
+		# the foveation against this build without it
 		summary.clear()
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
