@@ -9,7 +9,8 @@ branched further ahead wait there and rejoin. Predicated regions (predt/predf/pr
 whole wave. So a wave pays once for every piece of code any of its pixels needs.
 
 This is a model, not a timing: it does not know the cost of waits on transcendental (cat4) and
-texture-unit (cat5: dsx, dsy, samples) results, or memory. Those are counted separately.
+texture-unit (cat5: dsx, dsy, samples) results, or of memory; cat4 and cat5 instructions are counted
+apart.
 
 Only what the wormhole's ray tracer uses is implemented; anything else stops with an error.
 """

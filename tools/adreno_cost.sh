@@ -2,8 +2,9 @@
 # What the speed check's poses cost on the Steam Frame's GPU, by a model: Mesa's compiler for the
 # Frame (tools/adreno_stats.sh) compiles each ray tracer, and tools/adreno_cost.py runs the program
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
-# included. Its constants: tools/adreno_cost.py; a model, not a timing.
-#   tools/adreno_cost.sh [--tiles N] [--check] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile] [--split] [source]...
+# included (what the model is: tools/adreno_cost.py).
+#   tools/adreno_cost.sh [--tiles N] [--check] [--toys [--hands|--held] [--split]] [--gravity 1|2]
+#                        [--poses P] [--profile] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
 # (lavapipe) picture on 256 random tiles a pose (under 0.2% of pixels off by more than 4/255).
@@ -15,7 +16,7 @@
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
 # --split: "this" with toys as the app draws it, split by the stencil: the ray tracer with toys
 # where they may be seen, the plain one elsewhere (adreno_cost.py --split); other sources are
-# timed over the whole view, as the speed check times them.
+# costed over the whole view, as the speed check times them.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
@@ -68,15 +69,17 @@ for s in "${srcs[@]}"; do
 	[ -n "$TOYS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
 	[ -n "$sh" ] && stsh=$sh
 	log=$WORK/$n.log
-	# Godot compiles the ubershader and the specialised program on two threads, and their listings
-	# can come out interleaved in the log: compile again until the program parses
+	# a log whose listings came out interleaved (tools/same_programs.py) is compiled again, up to
+	# three times
+	parsed=""
 	for try in 1 2 3; do
-		# of its two programs, the one that runs: the smaller (as adreno_cost.py picks it)
+		# of its two programs, the one that runs: the smaller /1 (as adreno_cost.py picks it)
 		stats=$(KEEP_LOG=$log "$ROOT/tools/adreno_stats.sh" plain ${stsh:+--shader $stsh} \
-			| grep '^prog ' | sort -n -k3 | head -1)
-		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', set())" 2>/dev/null && break
-		echo "$s: the compiler's log did not parse (interleaved listings?), compiling again"
+			| grep '^prog [0-9]*/1' | sort -n -k3 | head -1)
+		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', set())" 2>/dev/null && { parsed=1; break; }
+		echo "$s: the compiler's log did not parse, compiling again"
 	done
+	[ -n "$parsed" ] || { echo "$s: the compiler's log did not parse three times"; exit 1; }
 	echo "$s: $stats"
 	# the poses' inputs (and pictures, for --check), from Godot itself
 	d=$(x_display 970)

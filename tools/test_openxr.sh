@@ -10,7 +10,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
-[ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
+[ -x "$GODOT" ] || { echo "no Godot: run tools/setup.sh or set GODOT"; exit 2; }
 command -v monado-service >/dev/null || { echo "no monado-service: run tools/setup.sh"; exit 2; }
 cd "$ROOT/godot"
 import_scripts

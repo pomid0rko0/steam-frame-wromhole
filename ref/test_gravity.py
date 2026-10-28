@@ -79,7 +79,8 @@ fall = solve_ivp(lambda t, y: [y[1], -g * f0 / W.rho0 * np.cos(y[0] / W.rho0)], 
                  events=down, rtol=1e-10, atol=1e-12).t_events[0][0]
 print('a point let go 2 m above the floor: %.2f s to the floor in the middle of the throat, %.2f s far away'
       % (fall, np.sqrt(2 * 2.0 / g)))
-# outside the shell, phi = g z (1 + beta / |x|^3) in the chart: the r^-2 part pulls toward the throat
+# outside the shell, in the chart (docs/gravity.md's f with n_z = z / |x|): the beta part pulls
+# toward the throat
 def flat(t, y):
     x = y[:3]
     r = np.linalg.norm(x)

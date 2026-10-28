@@ -11,8 +11,7 @@ extends Node
 ##
 ## 1. Comparison, at 72 Hz. The viewer is put at fixed poses (PLACES), with the feet held there,
 ## and the ray tracer is timed on the GPU (the median frame of each segment). A build can carry
-## other ray tracers: tools/ab_shaders.sh copies them from earlier commits, directories or cost
-## checks made from the tree into res://shaders/ab/1, 2, ... before the export. Every pose is
+## other ray tracers in res://shaders/ab/1, 2, ... (tools/ab_shaders.sh). Every pose is
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
 ## sends SteamVR to half rate (frame_rate.gd), and the GPU time then grows: a variant over the

@@ -1,8 +1,7 @@
 # Notes for agents working on this repo
 
-How to work here. What the project is and how to run, install and check it: README.md (Russian).
-The maths and the owner's wishes: `docs/`. How each part works, what a change to it must keep and
-what was learnt about it: the comment at the top of its file.
+How to work here. What is where: README.md (Russian), «Устройство». What a change to a part must
+keep and what was learnt about it: the comment at the top of its file.
 
 ## The owner's rules
 
@@ -64,8 +63,7 @@ to ray-traced things must line up the same way, and the stereo test must check i
 In a cloud session run `tools/setup.sh` once at the start: it only links `tools/.bin` to the
 environment's install; if it starts downloading or building, tell the owner which step the
 environment lacks. On the Frame there is nothing to run: `tools/box.sh` sets its container up by
-itself. Install nothing by hand: what the work needs goes into `setup.sh`. Each tool's top says
-what it does and how to call it.
+itself. Install nothing by hand: what the work needs goes into `setup.sh`.
 
 | command | time in the cloud; on the Frame where given |
 |---|---|
@@ -75,14 +73,13 @@ what it does and how to call it.
 | `tools/export.sh [--check] [label]` | ~40 s |
 | `python3 ref/test_gpu.py`, `ref/test_eye.py` | ~4 min, ~1.5 min |
 | `python3 ref/test_fast.py`, `test_slice.py`, `test_gravity.py` | seconds to 2 min |
-| `tools/fdm_check.sh`, `adreno_stats.sh`, `ir3_live.py`, `same_programs.py`, `ab_shaders.sh` | seconds |
+| `tools/fdm_check.sh`, `adreno_stats.sh`, `ab_shaders.sh`; `python3 tools/ir3_live.py`, `same_programs.py` | seconds |
 | `tools/adreno_cost.sh` | ~1 min per source |
 | `tools/test_box.sh` | ~3 min on the Frame (only there) |
 
 - **Before a Godot run of your own with `-s`** (the tools import by themselves when a script
   changed): `tools/box.sh godot --headless --path godot --import` in the tree you run it from.
-- **Speed** is measured in the headset with the speed check (`godot/bench.gd`); the cost model
-  (`tools/adreno_cost.sh`) only compares variants.
+- **Speed** is measured in the headset with the speed check (`godot/bench.gd`).
 - **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,
   `gh auth setup-git`) and commits as `Claude <noreply@anthropic.com>`. In a cloud session branch
   pushes go through the session's proxy and tag pushes are refused.

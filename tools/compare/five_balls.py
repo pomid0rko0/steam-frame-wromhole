@@ -2,7 +2,7 @@
 offsets. Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...). PASS:
 in each eye at least MIN_CHECKED objects lie wholly in the picture (a turned head can lose one or
 two past its edge), each of them has a ray-traced silhouette within 0.5 px of Godot's, and the
-union IoU is above MIN_IOU (no ray-traced object where Godot drew none)."""
+union IoU is at least MIN_IOU (no ray-traced object where Godot drew none)."""
 import sys, numpy as np
 from PIL import Image
 from scipy import ndimage

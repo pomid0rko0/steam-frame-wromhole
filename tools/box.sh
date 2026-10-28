@@ -22,12 +22,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/repo.sh"
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
-# SteamVR and the owner's view share this machine's memory and cores with the container: a stereo
-# test with five renders at once and no memory limit can crash SteamVR; with two at once and the
-# limits below it does not (the container's memory.peak over those runs and test_box.sh's since:
-# 2444328960 bytes). So the container gets at most one core's time and MEM of
-# memory, no swap (a run that needs more fails in here, not SteamVR), runs take JOBS renders at
-# once (default 2), and a run stops when the Frame has less than MIN_FREE left.
+# SteamVR and the owner's view share this machine's memory and cores with the container, so the
+# container gets at most one core's time and MEM of memory, no swap (a run that needs more fails
+# in here, not SteamVR), runs take JOBS renders at once (default 2), and a run stops when the
+# Frame has less than MIN_FREE left.
 CPUS=1
 MEM=4g
 MIN_FREE=1500   # MiB
@@ -91,7 +89,7 @@ if ! podman container exists $NAME; then
 	podman run -d --name $NAME --init --cpus $CPUS --memory $MEM --memory-swap $MEM \
 		-v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
 fi
-podman update --cpus $CPUS --memory $MEM --memory-swap $MEM $NAME >/dev/null   # a container made without them
+podman update --cpus $CPUS --memory $MEM --memory-swap $MEM $NAME >/dev/null   # also when they change
 [ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
 # podman update records the swap limit but leaves the cgroup's at max (podman 5.5): the Frame's
 # swap is zram, in the same memory
@@ -102,6 +100,7 @@ podman inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' $NAME | gre
 # all of setup.sh; one stopped halfway runs again (dpkg first finishes what it was doing)
 if [ "$(podman exec $NAME cat /box-ready 2>/dev/null)" != "$SETUP" ]; then
 	echo "setting up the $NAME container"
+	# what setup.sh itself needs to run, then setup.sh
 	inbox sh -c 'dpkg --configure -a && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 		curl unzip xauth python3-pip git >/dev/null'
 	inbox "$ROOT/tools/setup.sh"

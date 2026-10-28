@@ -459,7 +459,7 @@ func _turn_and_reset(delta: float) -> bool:
 		if toys.enabled:
 			hands.empty()
 			toys.spawn()
-			print("toys: back in place, throwing again")
+			print("toys: back in place", ", throwing again" if toys.demo else "")
 	return moved
 
 

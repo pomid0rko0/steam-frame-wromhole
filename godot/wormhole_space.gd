@@ -20,8 +20,8 @@ var Lc: float
 var th0: float
 var L: float
 var Rout: float
-# gravity (see gravity_f): f = grav_a cosh(grav_k l) on the cylinder, a table on the fillet,
-# r + grav_beta / r^2 in the flat universes
+# gravity (see gravity_f): docs/gravity.md's f is grav_a cosh(grav_k l) on the cylinder, a table on
+# the fillet, r + grav_beta / r^2 in the flat universes
 var grav_a := 1.0
 var grav_k := 1.0
 var grav_beta := 0.0
@@ -292,7 +292,7 @@ func _build_gravity() -> void:
 		_grav_tab.append(v / a)
 
 
-## [f, df/dl] at l: the potential is g f(l) n_z. f is even, f' odd. On the fillet a cubic Hermite
+## [f, df/dl] at l (docs/gravity.md's f). f is even, f' odd. On the fillet a cubic Hermite
 ## interpolant of the table, and f' is its derivative, so the force is exactly minus the
 ## gradient of the potential (energy is conserved). Plain floats, not a Vector2.
 func gravity_f(l: float) -> PackedFloat64Array:
@@ -449,14 +449,13 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 
 
 # ---------------------------------------------------------------- the fillet table
-## The ray tracer's fillet polynomials (wormhole_core.gdshaderinc, "curved part") depend on the
-## ray's impact parameter b alone: the shader samples them from this table instead of working them
-## out per ray. Four rows of TABLE_N knots, one per span of b with one regime of the moments
-## (rows 0, 1: rays that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots
-## evenly spaced over the row. In rows of regimes 1 and 2 a factor 1 / sqrt(mx) (times 1 / sqrt(mn)
-## in regime 2), which goes to zero like a square root at the shell's edge, is taken out (the
-## shader puts it back): what is
-## left is smooth enough for linear interpolation.
+## The ray tracer's fillet polynomials (wormhole_core.gdshaderinc, "curved part") by the ray's
+## impact parameter b: the shader samples them from this table instead of working them out per ray.
+## Four rows of TABLE_N knots, one per span of b with one regime of the moments (rows 0, 1: rays
+## that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots evenly spaced over the
+## row. In rows of regimes 1 and 2 a factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which
+## goes to zero like a square root at the shell's edge, is taken out (the shader puts it back): what
+## is left is smooth enough for linear interpolation.
 const TABLE_N := 256
 const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]
 const _A := [

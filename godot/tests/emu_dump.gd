@@ -3,13 +3,13 @@ extends SceneTree
 ## the ray tracer gets (the head's point and frame, the camera) and the picture, so the emulated
 ## shader can be fed the same inputs and checked against the picture.
 ##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch;..." [fov] [scene] [shader]
-## Each pose gives out_<i>.png and an entry in out.json with the ray tracer's path and its
-## uniforms. fov: vertical, degrees (default 90); scene: plain (default), balls (the stereo
-## check's), toys (the demo after the throw and the drop, everything at rest: 8 balls, 4 cubes),
-## with +gravity1 or +gravity2 the gravity view (main.set_gravity_view), e.g. toys+gravity2; with
-## +hands also both hands' balls where hands are at every pose, with +held also a ball held in the
-## right one in front of the chest (what the hands and grabbing add to a frame);
-## shader: another ray tracer's path (res://shaders/ab/1/wormhole.gdshader).
+## Each pose gives out_<i>.png and an entry in out.json with the ray tracer's path and its uniforms.
+## fov: vertical, degrees (default 90); scene: plain (default), toys (the demo after the throw and
+## the drop, everything at rest: 8 balls, 4 cubes), with +gravity1 or +gravity2 the gravity view
+## (main.set_gravity_view), e.g. toys+gravity2; with +hands also both hands' balls where hands are
+## at every pose, with +held also a ball held in the right one in front of the chest (what the hands
+## and grabbing add to a frame); shader: another ray tracer's path
+## (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
 var frames := 0
@@ -38,7 +38,6 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
 	var scene: String = a[3] if a.size() > 3 else "plain"
-	main.show_check = scene.begins_with("balls")
 	main.toys.enabled = scene.begins_with("toys")
 	main.toys.demo = false
 	toys = main.toys.enabled

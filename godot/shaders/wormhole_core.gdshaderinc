@@ -42,7 +42,7 @@
 //
 // Manifold point: (l, n), n unit 3-vector. Tangent vector: (vl, w), w orthogonal to n.
 // Point in R^4: E = (r n, w(l)). Flat charts: side A (l >= L): x = r n;  side B: x = P r n, P = diag(-1,1,1).
-// The floor is the totally geodesic equatorial surface n.z = 0 (z = 0 in both charts).
+// The floor: n.z = 0 (z = 0 in both charts).
 //
 // Godot's shading language reserves E, PI and TAU: a local named so is a compile error that GLSL
 // (ref/) accepts. Constants reach the GPU printed with 14 decimals: 1e-20 becomes 0.0, 1e-12
@@ -243,11 +243,11 @@ vec3 wh_gravFloor(vec2 q, vec2 fw) {
 #ifdef WH_ARROWS
 const float WH_ARROW_REACH = 4.5;     // arrows up to this far outside the shell
 
-// The arrows of the field on the surface n.x = 0 (x = 0 in both charts, through the throat; totally
-// geodesic, as the floor is), above the floor (0 < a < pi). At the point (l, n), n = (0, cos a, sin a): the arrow
-// of the nearest node, on the rings l = k (1 m apart), spaced about 1 m along each half circle; the
-// surface's metric there is dl^2 + r(l)^2 da^2. Length 0.6 m at 1 g, colour the palette. foot: a
-// pixel's size there (m), for soft edges. Returns colour and coverage.
+// The arrows of the field on the surface n.x = 0 (x = 0 in both charts, through the throat), above
+// the floor (0 < a < pi). At the point (l, n), n = (0, cos a, sin a): the arrow of the nearest
+// node, on the rings l = k (1 m apart), spaced about 1 m along each half circle; the surface's
+// metric there is dl^2 + r(l)^2 da^2. Length 0.6 m at 1 g, colour the palette. foot: a pixel's size
+// there (m), for soft edges. Returns colour and coverage.
 vec4 wh_arrow(float l, float a, float foot) {
     if (a <= 0.0 || abs(l) > wh_Lsh() + WH_ARROW_REACH) return vec4(0.0);
     float lk = round(l);
@@ -294,8 +294,8 @@ vec4 wh_arrow(float l, float a, float foot) {
 // the integral up to any point is the same closed form: the floor crossing is a Newton solve on it.
 // z is the variable in which that solve and the toys' search run: z = int w dt in regime 0,
 // sqrt(t + mn) in regimes 1 and 2. The method's accuracy: docs/geometry.md, «Точность».
-// The polynomial depends on b alone: WormholeSpace.fillet_table works it out (its nodes and the
-// matrix to the coefficients: _TAU, _A) and the shader samples it.
+// WormholeSpace.fillet_table works the polynomial out by b (its nodes and the matrix to the
+// coefficients: _TAU, _A) and the shader samples it.
 const float WH_TABN = 256.0;     // knots per row of wh_tab (WormholeSpace.TABLE_N)
 
 struct WhFil {

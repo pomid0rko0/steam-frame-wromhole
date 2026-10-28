@@ -14,7 +14,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD=$ROOT/godot/build/wormhole_vr.arm64
 if [ "${1:-}" = --godot ]; then   # the export itself, in the container on the Frame
 	. "$ROOT/tools/env.sh"
-	[ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh"; exit 2; }
+	[ -x "$GODOT" ] || { echo "no Godot: run tools/setup.sh"; exit 2; }
 	import_scripts
 	cd "$ROOT/godot"
 	mkdir -p build

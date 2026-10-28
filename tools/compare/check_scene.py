@@ -4,7 +4,7 @@ away from its edges) that green does NOT cover. With green wider than the white 
 ~0 when aligned; shifting green by 2 px shows how fast it grows.
 Balls: share of green ball-grid pixels outside the ray-traced red silhouette, and the
 difference of their outlines (bounding boxes). The cube (when its pictures are there): the same
-for Godot's green edges and the ray-traced magenta cube (searched near Godot's: the gravity view's floor is purple). With
+for Godot's green edges and the ray-traced magenta cube. With
 --floor-only (the scene without ray-traced balls) only the floor is compared."""
 import os, sys, numpy as np
 from PIL import Image

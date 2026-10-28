@@ -221,7 +221,8 @@ def wh_eye(l, rho0=3.0, h=5.0, R=1.0):
 
 def varyings_for(entry, xs, ys, W, H, tan_x, tan_y, sh=None):
     """The shader's inputs per lane: v_ray (the pixel's unnormalised ray, as (U_l, u)) and the flat
-    v_l, v_n and (where the shader has it) v_eye, packed into the slots in the order declared."""
+    v_l, v_n and (where the shader has it) v_eye, packed into the slots in the order Mesa packed them
+    (find_flat_order)."""
     B = np.array(entry['cam_basis'], float).T    # columns: camera axes in play space
     f = np.array(entry['head_f'], float)
     vx = (2.0 * (xs + 0.5) / W - 1.0) * tan_x

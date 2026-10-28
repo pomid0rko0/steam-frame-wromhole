@@ -1,10 +1,8 @@
 #!/bin/bash
 # Other ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of each
 # source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the one
-# with movable balls where the source has it (the speed check times that one while the demo's
-# toys are on: the normal scene). In the headset the menu's last row, the speed check, then times
-# this build's ray tracer and these at the same places, one after the other, and says how this
-# build's compares with the first.
+# with movable balls where the source has it; the speed check (godot/bench.gd) times them against
+# this build's.
 #   tools/ab_shaders.sh <source>...   a source: a commit, or a directory holding wormhole.gdshader,
 #                                     wormhole_view.gdshaderinc, wormhole_core.gdshaderinc
 #                                     (optionally a file "label" naming it), or one of the cost
@@ -16,7 +14,7 @@
 #                                       nogrid   no grid lines: no atan, asin or derivatives
 #                                       nosky    one colour per sky, the grid lines kept
 #   tools/ab_shaders.sh --auto <source>...   the same, and the build runs the check by itself
-#                                     shortly after it starts (a build for measuring)
+#                                     (bench.gd says when: a build for measuring)
 #   tools/ab_shaders.sh --remove      a build without them
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -43,7 +41,7 @@ def patch(name, old, new, label):
     p = d + '/' + name
     s = open(p).read()
     if old not in s:
-        sys.exit('the ray tracer changed: ' + kind + ' does not apply to ' + name)
+        sys.exit(kind + ' does not apply to ' + name + ': it lacks the text the check replaces')
     open(p, 'w').write(s.replace(old, new))
     open(d + '/label', 'w').write(label + '\n')
 if kind == 'empty':
@@ -66,7 +64,7 @@ elif kind in ('noderiv', 'nogrid', 'nosky'):
     s = open(core).read()
     def cut(s, start, end, new):
         if start not in s or end not in s[s.index(start):]:
-            sys.exit('the ray tracer changed: ' + kind + ' does not apply')
+            sys.exit(kind + ' does not apply: the ray tracer lacks the text the check cuts')
         a = s.index(start)
         b = s.index(end, a) + len(end)
         return s[:a] + new + s[b:]
@@ -114,8 +112,7 @@ PY
 		> "$out/wormhole.gdshader"
 	grep -q "res://shaders/ab/$n/" "$out/wormhole.gdshader" && grep -q "res://shaders/ab/$n/" "$out/wormhole_view.gdshaderinc" \
 		|| { echo "unexpected include paths in $src"; rm -rf "$DIR"; exit 1; }
-	# the one with movable balls too, where the source has it: the speed check times it when the
-	# scene has them (the demo's toys)
+	# the one with movable balls too, where the source has it
 	if get wormhole_balls.gdshader >/dev/null 2>&1; then
 		{ echo "// $label"; get wormhole_balls.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
 			> "$out/wormhole_balls.gdshader"
