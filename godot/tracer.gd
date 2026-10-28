@@ -177,9 +177,10 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 ## distance in R^4 (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES:
 ## the centre as a point of R^4 (cpos), four
 ## orthonormal axes divided by the half size (axes: three body axes tangent to the space, then its
-## normal; four per cube), (rgb, half size) (ccol). The shader gets them as wormhole_core.gdshaderinc's
-## top says, sorted by where they are (region_order): the flat universes' rays and the shell's look only at their own, so a ball's
-## index in the shader is not its index in the caller's list. The shader is chosen here: with no
+## normal; four per cube), (rgb, half size) (ccol). The shader gets them as
+## wormhole_core.gdshaderinc's top says, sorted by where they are (region_order): the flat
+## universes' rays and the shell's look only at their own, so a ball's index in the shader is not
+## its index in the caller's list. The shader is chosen here: with no
 ## toys it is the one without their code.
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:

@@ -31,8 +31,8 @@ extends Node3D
 ##
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. It and foveation don't go
-## together (foveation.gd says why): one of them is chosen, the other goes back to 100% / off. Both, our maps' order and the line below are kept
-## in user://settings.cfg.
+## together (foveation.gd says why): one of them is chosen, the other goes back to 100% / off.
+## Both, our maps' order and the line below are kept in user://settings.cfg.
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 # names of Foveation.set_level's levels

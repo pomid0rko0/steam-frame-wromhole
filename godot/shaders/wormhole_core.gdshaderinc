@@ -13,7 +13,8 @@
 //                                           sheet cuts from it, in that universe's chart (centre,
 //                                           radius squared)
 //   vec4 wh_cube[6], wh_cubeE[5 * 6], wh_cubeCol[6], int wh_nCube, float wh_pix
-//                                           movable cubes (BallWorld's). Centre as a point of R^4; per cube five
+//                                           movable cubes (BallWorld's). Centre as a point of R^4;
+//                                           per cube five
 //                                           vectors: four orthonormal axes of R^4 divided by the half size
 //                                           (three body axes tangent to the space, then its normal), then
 //                                           dot(centre, axis) for the four (one index base for the search);
