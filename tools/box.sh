@@ -19,8 +19,7 @@ set -euo pipefail
 if command -v apt-get >/dev/null; then exec "$@"; fi
 command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-# the repository's own folder, which holds .wt/, also when this runs from a worktree
-REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
+. "$ROOT/tools/repo.sh"
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
 # SteamVR and the owner's view share this machine's memory and cores with the container: a stereo

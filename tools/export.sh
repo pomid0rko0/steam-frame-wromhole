@@ -10,6 +10,7 @@
 # while it exports: main.CHECK_FLAG).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+. "$ROOT/tools/repo.sh"
 BUILD=$ROOT/godot/build/wormhole_vr.arm64
 if [ "${1:-}" = --godot ]; then   # the export itself, in the container on the Frame
 	. "$ROOT/tools/env.sh"

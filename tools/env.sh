@@ -7,7 +7,7 @@
 # (in the repository: the host sees them too), import_scripts and x_display.
 # A task's worktree (.wt/<branch>, tools/box.sh) takes the repository's own tools/.bin, which git
 # does not hold.
-REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
+. "$ROOT/tools/repo.sh"
 if [ "$REPO" != "$ROOT" ] && [ ! -e "$ROOT/tools/.bin" ]; then
 	mkdir -p "$REPO/tools/.bin"
 	ln -sfn "$REPO/tools/.bin" "$ROOT/tools/.bin"
