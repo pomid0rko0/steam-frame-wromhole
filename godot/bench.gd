@@ -15,7 +15,7 @@ extends Node
 ## checks made from the tree into res://shaders/ab/1, 2, ... before the export. Every pose is
 ## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
 ## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
-## makes SteamVR step in, and the GPU time then grows for reasons of its own: a variant over the
+## sends SteamVR to half rate (frame_rate.gd), and the GPU time then grows: a variant over the
 ## frame's budget reads dearer than it is, and so does the segment after it. Fewer instructions or
 ## registers (tools/adreno_stats.sh) are not faster by themselves, and frame times from walking
 ## around don't compare between builds (where one looks changes them): this part decides.

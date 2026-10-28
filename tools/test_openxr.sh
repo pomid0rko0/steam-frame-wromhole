@@ -4,8 +4,8 @@
 #   tools/test_openxr.sh            (GODOT=path/to/godot to override the binary)
 # Monado's socket goes into XDG_RUNTIME_DIR, here a directory of this run's own (also its logs,
 # printed on failure): any Godot that finds the socket takes Monado as its headset, so other runs'
-# Godots must not find it. Alone, though: beside test_stereo.sh its frames missed the 20 Hz display's
-# refreshes for the load, and the check that frames keep up failed.
+# Godots must not find it; its Godot's user data is there too. Run it alone: beside other runs its
+# frames miss the 20 Hz display's refreshes under the load, and the check that frames keep up fails.
 # Exit status 0 only if the smoke test passes and no script error was printed.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -29,7 +29,7 @@ for i in $(seq 40); do [ -S "$run/monado_comp_ipc" ] && break; sleep 0.5; done
 [ -S "$run/monado_comp_ipc" ] || { echo "monado-service did not start:"; tail -5 "$run/monado-service.log"; exit 2; }
 sleep 2
 
-log=$(timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
+log=$(XDG_DATA_HOME=$run/data timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
 	-s res://tests/openxr_smoke.gd 2>&1)
 code=$?
 kill $monado 2>/dev/null

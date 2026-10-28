@@ -22,8 +22,8 @@ extends Node3D
 ## stepped to with left and right takes effect once it has stayed SETTLE seconds, or at once with
 ## A, on going to another row or on closing: stepping through the rates does not switch the headset
 ## at every step, nor the foveations rebuild the buffers. A on a value that is in effect steps to
-## the next one at once (a switch: on, off). Yellow: chosen, not (yet) in effect; grey: nothing to
-## change here now (during the speed check, which sets these).
+## the next one at once (a switch: on, off), except on the rate row (press). Yellow: chosen, not
+## (yet) in effect; grey: nothing to change here now (during the speed check, which sets these).
 ##
 ## While the menu is closed, a line low in the view shows the rate, whether frames keep up and the
 ## GPU time on the same colours, and what came of a choice; also the speed check while it runs and

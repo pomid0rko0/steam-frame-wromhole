@@ -20,7 +20,7 @@ failed=0
 import_once
 
 # The renders are independent Godot runs: they go in parallel, JOBS at a time (default: one per
-# core), each with its own X display and its own user data (Godot's shader cache), then the
+# core; 2 on the Frame, tools/box.sh), each with its own X display and its own user data (Godot's shader cache), then the
 # comparisons run in order. A render that does not exit 0 within 10 minutes fails the suite.
 JOBS=${JOBS:-$(nproc)}
 LOGS=$(mktemp -d)

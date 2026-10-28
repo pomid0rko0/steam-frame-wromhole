@@ -10,7 +10,7 @@
 # Anywhere with apt (a cloud session, the container itself) it runs the command right here.
 #   tools/box.sh python3 ref/test_gpu.py       (any command, in the same directory there)
 # The tools go there by themselves (tools/env.sh), so this is for commands of one's own.
-# Made on first use, with the export templates (a 1.3 GB download), and kept, stopped or not;
+# Made on first use, with the export templates (setup.sh's templates step), and kept, stopped or not;
 # `podman rm -f wormhole-box` throws it away. It
 # mounts only the repository's folder, and every task's runs share it: a task's git worktree goes
 # under .wt/, one per task (git worktree add --detach .wt/<branch> <branch>), and each run of the
@@ -24,9 +24,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
-# SteamVR and the owner's view share this machine's memory and cores with the container: SteamVR
-# crashed two minutes into a stereo test with five renders at once and no memory limit, and did
-# not with two at once and the limits below (the container took 2.3 GB at most). So the container
+# SteamVR and the owner's view share this machine's memory and cores with the container: a stereo
+# test with five renders at once and no memory limit can crash SteamVR; with two at once and the
+# limits below it does not (the container's memory.peak: 2.3 GB). So the container
 # gets at most one core's time and MEM of memory, no swap (a run that needs more fails in here, not
 # SteamVR), and runs take JOBS renders at once (default 2).
 CPUS=1
@@ -50,7 +50,7 @@ podman inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' $NAME | gre
 if [ "$(podman exec $NAME cat /box-ready 2>/dev/null || echo 0)" -lt $SETUP ]; then
 	echo "setting up the $NAME container"
 	podman exec $NAME sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-		curl unzip xauth python3-pip git >/dev/null'
+		curl unzip xauth python3-pip git procps >/dev/null'
 	podman exec -w "$ROOT" $NAME tools/setup.sh apt pip templates
 	podman exec $NAME sh -c "echo $SETUP > /box-ready"
 fi
@@ -77,8 +77,9 @@ run=$!
 	sleep 2
   done ) &
 stop() {
+	# by session, not process group: timeout puts each Godot in a group of its own
 	podman exec $NAME sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$0" ] && break; sleep 0.2; done
-		g=$(cat "$0") && /bin/kill -TERM -- -"$g" && sleep 2 && /bin/kill -KILL -- -"$g" 2>/dev/null; rm -f "$0"' "$tag" 2>/dev/null
+		g=$(cat "$0") && pkill -TERM -s "$g"; sleep 2; pkill -KILL -s "$g"; rm -f "$0"' "$tag" 2>/dev/null
 	wait $run
 	exit "$1"
 }

@@ -51,7 +51,7 @@
 //
 // Godot's shading language reserves E, PI and TAU: a local named so is a compile error that GLSL
 // (ref/) accepts. Constants reach the GPU printed with 14 decimals: 1e-20 becomes 0.0, 1e-12
-// survives. GPUs' max and min return the other operand for a NaN, which hides most NaNs.
+// survives (this file's 1e-30 and 1e-20 guards are max(x, 0.0) there: they guard only in ref/). GPUs' max and min return the other operand for a NaN, which hides most NaNs.
 //
 // The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
 // - Registers go to the heaviest point of the code, run or not: code for something not in view
@@ -66,7 +66,7 @@
 //   before each of world B's static boxes; their one test is the boxes' top, wh_traceFlat). Near
 //   the throat one group of pixels holds both skies, the floor and objects, and runs every branch
 //   of the shading.
-// - A screen derivative costs about 90 ALU cycles (tools/adreno_cost.py's fit, on older ray tracers).
+// - A screen derivative costs far more than an ALU op (tools/adreno_cost.py's constants).
 // - 16-bit math (mediump) runs at double rate in waves of 128, but for the sky's colours the
 //   conversions cost more than it saves; line coordinates need float32.
 //

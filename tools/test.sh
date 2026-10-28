@@ -1,6 +1,7 @@
 #!/bin/bash
 # The Godot tests, godot/tests/<name>_test.gd, each with the flags its header gives (its line
-# "##   godot <flags> -s res://tests/<name>_test.gd"), JOBS at a time (default: one per core), each
+# "##   godot <flags> -s res://tests/<name>_test.gd"), JOBS at a time (default: one per core; 2 on the
+# Frame, tools/box.sh), each
 # with its own X display and user data; then a line per test, with what failed.
 #   tools/test.sh                  all of them
 #   tools/test.sh grab walking_xr  those named

@@ -9,7 +9,7 @@ extends RefCounted
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 
 const STEP := 0.02  # metres per RK4 step
-const GRAV_NODES := 256  # nodes of the gravity table on the fillet: 6 mm apart here
+const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes): 6 mm here
 const GRAV_SUB := 2      # RK4 steps between nodes
 const GRAV_DEG := 7      # the shader's polynomials on the fillet (gravity_shader)
 

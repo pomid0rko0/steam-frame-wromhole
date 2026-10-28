@@ -19,8 +19,8 @@ what was learnt about it: the comment at the top of its file.
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
-- **One wish per chat,** on a branch you name yourself, a short English word (`throat`, `grab`),
-  started from `main` or the branch `docs/wishlist.md` gives for the wish; not the session's
+- **One wish per chat,** on a branch you name yourself, a short English word no branch in origin
+  has yet, started from `main` or the branch `docs/wishlist.md` gives for the wish; not the session's
   `claude/…` branch. The owner allows pushing to the branch you name.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are git tags
   the owner sets on such a commit.
@@ -39,14 +39,16 @@ what was learnt about it: the comment at the top of its file.
   replaces what exists, up to writing the project anew. Nothing is kept for compatibility: carry
   along everything that depends on a change in the same branch and migrate what is stored. The
   checks still apply.
+- **Make slow frames cheaper without giving anything up,** and without counting on anything
+  staying as it is now.
 - **A rule in the way:** say so to the owner and propose a replacement; don't work around it
   silently, and don't change a rule without them.
 - **Long runs in the background, the build at once.** The owner checks builds without waiting for
   the tests, the stereo test included: once the code for a build is in place, start
   `tools/test_stereo.sh` in the background, export and deliver the build, say the tests still run.
   Every run of minutes goes to the background; report and fix what it finds afterwards. A run reads
-  the code from disk while it goes: commit first or run it from a `git worktree`, and don't edit
-  `godot/` under it.
+  the code from disk while it goes: run it from your task's worktree in `.wt/<branch>` (`tools/box.sh`
+  says how), never from the tree you edit.
 - **Read the comment at the top of every file you change, and main.gd's:** the parts, the order of
   a frame, the rules for a new button.
 
@@ -60,15 +62,16 @@ to ray-traced things must line up the same way, and the stereo test must check i
 ## Commands
 
 In a cloud session run `tools/setup.sh` once at the start: it only links `tools/.bin` to the
-environment's install. Install nothing by hand: if `setup.sh` starts downloading or building, tell
-the owner which step the environment lacks; a tool you had to install goes into `setup.sh`. Each
-tool's top says what it does and how to call it.
+environment's install; if it starts downloading or building, tell the owner which step the
+environment lacks. On the Frame there is nothing to run: `tools/box.sh` sets its container up by
+itself. Install nothing by hand: what the work needs goes into `setup.sh`. Each tool's top says
+what it does and how to call it.
 
-| command | time |
+| command | time in the cloud; on the Frame where given |
 |---|---|
-| `tools/test_stereo.sh` | ~5 min alone in the cloud, more beside other runs, ~11 min on the Frame |
-| `tools/test.sh [name...]` | 1–3 min |
-| `tools/test_openxr.sh` | ~3 min, alone: beside other runs its frames miss refreshes and it fails |
+| `tools/test_stereo.sh` | ~5 min alone, more beside other runs; ~11 min on the Frame |
+| `tools/test.sh [name...]` | 1–3 min; ~2 min on the Frame |
+| `tools/test_openxr.sh` | ~3 min, alone (its top says why) |
 | `tools/export.sh [--check] [label]` | ~40 s |
 | `python3 ref/test_gpu.py`, `ref/test_eye.py` | ~4 min, ~1.5 min |
 | `python3 ref/test_fast.py`, `test_slice.py`, `test_gravity.py` | seconds to 2 min |

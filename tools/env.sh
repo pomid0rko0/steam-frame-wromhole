@@ -4,6 +4,10 @@
 # arguments, in tools/box.sh's container (box.sh says why; without podman it stops), and the script
 # goes on there past this line. Elsewhere (a cloud session, the container) it only sets GODOT,
 # the Godot the tools run, and import_once.
+# a task's worktree (.wt/<branch>, tools/box.sh) takes the repository's own tools/.bin, which git
+# does not hold
+REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
+[ "$REPO" = "$ROOT" ] || [ -e "$ROOT/tools/.bin" ] || ln -s "$REPO/tools/.bin" "$ROOT/tools/.bin"
 if ! command -v apt-get >/dev/null; then
 	exec "$ROOT/tools/box.sh" "$(readlink -f "$0")" "$@"
 fi

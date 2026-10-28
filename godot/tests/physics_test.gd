@@ -15,6 +15,8 @@ extends SceneTree
 ##    as long as one dropped in front of the wormhole; above the throat's floor gravity pulls toward
 ##    the middle, where a ball rests; a ball set down at the shell's edge rolls in by itself and
 ##    rests in the middle (2-6 without air drag but that one: they check the motion itself)
+## 7. the demo as the headset shows it: the thrown ball rolls through to universe B, the dropped
+##    balls stay on their spots, all come to rest
 ## Then, with a screenshot path given, saves one with a ball and a cube inside the throat.
 
 const U := preload("res://tests/util.gd")
