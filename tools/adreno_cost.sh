@@ -2,8 +2,7 @@
 # What the speed check's poses cost on the Steam Frame's GPU, by a model: Mesa's compiler for the
 # Frame (tools/adreno_stats.sh) compiles each ray tracer, and tools/adreno_cost.py runs the program
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
-# included. Its constants: tools/adreno_cost.py; a model, not a
-# timing: compare variants with it, then measure the best in the headset (tools/ab_shaders.sh).
+# included. Its constants: tools/adreno_cost.py; a model, not a timing.
 #   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile] [--split] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
@@ -81,9 +80,11 @@ for s in "${srcs[@]}"; do
 	done
 	echo "$s: $stats"
 	# the poses' inputs (and pictures, for --check), from Godot itself
-	(cd "$ROOT/godot" && XDG_DATA_HOME=$WORK/data timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
+	d=$(x_display 970)
+	(cd "$ROOT/godot" && XDG_DATA_HOME=$WORK/data timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
 		--resolution 128x128 -s res://tests/emu_dump.gd -- "$WORK/d$n.json" "$POSES" 90 $sc "$sh" \
-		> "$WORK/dump.log" 2>&1) || { echo "emu_dump failed"; tail "$WORK/dump.log"; exit 1; }
+		> "$WORK/dump.log" 2>&1) || { free_display $d; echo "emu_dump failed"; tail "$WORK/dump.log"; exit 1; }
+	free_display $d
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS$BALLS" ]; then

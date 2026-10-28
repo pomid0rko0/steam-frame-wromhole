@@ -1,29 +1,24 @@
 // Wormhole renderer core: plain GLSL that is also valid Godot shading language (single source for both).
 // The including file declares the uniforms:
 //   float wh_rho0, wh_h, wh_fillet          geometry (see below)
-//   vec4 wh_sph[6], wh_pil[4], wh_box[4]    static objects: spheres 0-2 in universe A, 3-5 in B
-//                                           (xyz centre, w radius); pillars in A (xy, radius, height);
-//                                           boxes in B (centre, half size). Chart coordinates.
+//   vec4 wh_sph[6], wh_pil[4], wh_box[4]    static objects as godot/scene.json has them: spheres
+//                                           0-2 A's, 3-5 B's; pillars A's; boxes B's
 //   vec4 wh_ball[WH_MAXB], wh_ballCol[WH_MAXB], int wh_nBall
 //                                           movable balls: centre as a point of R^4 (xyz, w) and
 //                                           (rgb, radius). A ball is every point of space whose chord
 //                                           distance in R^4 to the centre is below the radius.
-//   ivec4 wh_bIdx                          the balls sorted by where they are (Tracer.set_objects):
-//                                           those a flat universe's sheet cuts, A's first and B's
-//                                           last, those within reach of the shell between them:
-//                                           A 0 .. y, the shell x .. w, B z .. wh_nBall
+//   ivec4 wh_bIdx                          the balls sorted by where they are: the index ranges
+//                                           Tracer.region_order gives
 //   vec4 wh_fball[WH_MAXB]                  the same balls in a flat universe: the sphere the
 //                                           sheet cuts from it, in that universe's chart (centre,
 //                                           radius squared)
 //   vec4 wh_cube[6], wh_cubeE[5 * 6], wh_cubeCol[6], int wh_nCube, float wh_pix
-//                                           movable cubes: a 4D box of R^4 cut by the space, as a box
-//                                           of a 4D SDF scene. Centre as a point of R^4; per cube five
+//                                           movable cubes (BallWorld's). Centre as a point of R^4; per cube five
 //                                           vectors: four orthonormal axes of R^4 divided by the half size
 //                                           (three body axes tangent to the space, then its normal), then
 //                                           dot(centre, axis) for the four (one index base for the search);
 //                                           (rgb, half size). A point P is inside when |dot(P, axis) -
-//                                           dot(centre, axis)| < 1 for all four axes.
-//                                           In a flat universe this is an ordinary cube. wh_pix: a
+//                                           dot(centre, axis)| < 1 for all four axes. wh_pix: a
 //                                           pixel's angle (the edge lines' width). ivec4 wh_cIdx:
 //                                           the cubes sorted as the balls.
 //   vec4 wh_bound[4]                        bounding spheres of the balls in A, in B, of the cubes in
@@ -37,9 +32,8 @@
 //   with WH_GRAVITY defined: vec4 grav_cyl, grav_g[2], grav_d[2]
 //                                           the gravity view (WormholeSpace.gravity_shader): the
 //                                           floor coloured by the strength of gravity
-//   with WH_ARROWS defined too: float wh_pix   also arrows of the field on the vertical surface
-//                                           n.x = 0 through the wormhole; wh_pix is a pixel's
-//                                           angle (the arrows' soft edges)
+//   with WH_ARROWS defined too: float wh_pix   also the field's arrows (wh_arrow); wh_pix is a
+//                                           pixel's angle (the arrows' soft edges)
 //
 // The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md. Each ray
 // stays in a plane through the centre; its angle there is one integral: on the cylinder in closed
@@ -67,8 +61,8 @@
 //   the throat one group of pixels holds both skies, the floor and objects, and runs every branch
 //   of the shading.
 // - A screen derivative costs far more than an ALU op (tools/adreno_cost.py's constants).
-// - 16-bit math (mediump) runs at double rate in waves of 128, but for the sky's colours the
-//   conversions cost more than it saves; line coordinates need float32.
+// - 16-bit math (mediump) is cheaper in waves of 128 (tools/ir3_emu.py), but for the sky's colours
+//   the conversions cost more than it saves; line coordinates need float32.
 //
 // A change here: ref/test_gpu.py prints errors, no verdict: compare with the same run on the code
 // before (WH_BALLS=0 too), and try a pose at an odd width (the middle column has vl = 0) and
@@ -101,8 +95,7 @@ float wh_r(float l) { return wh_prof(l).x; }
 vec3 wh_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
 
 // atan(y, x) for arguments of order 1 (components of unit vectors): one range reduction and a
-// minimax polynomial, error below 2e-6 rad. The built-in atan reduces twice and guards against
-// huge arguments.
+// minimax polynomial. The built-in atan reduces twice and guards against huge arguments.
 float wh_atan2(float y, float x) {
     float ax = abs(x);
     float ay = abs(y);
@@ -117,7 +110,7 @@ float wh_atan2(float y, float x) {
     return y < 0.0 ? -p : p;
 }
 
-// asin, for the sky's latitude lines: pi/2 - sqrt(1 - |x|) P(|x|), no division, error 5e-6 rad
+// asin, for the sky's latitude lines: pi/2 - sqrt(1 - |x|) P(|x|), no division
 float wh_asin(float x) {
     float a = min(abs(x), 1.0);
     float p = (1.57079153 - 0.214280613 * a) + a * a * ((0.0856383856 - 0.0376182282 * a) + 0.00973297445 * a * a);

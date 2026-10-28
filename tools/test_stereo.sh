@@ -3,7 +3,7 @@
 # in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
 # draws at the same place. Run it on every headset build's source (CLAUDE.md, the hard rule).
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images:
-#                                    default a new one under .wt/out each run, printed at the end; JOBS=n renders
+#                                    default a new one under .wt/.out each run, printed at the end; JOBS=n renders
 #                                    at once)
 # Exit status 0 only if every check passes.
 # Below 100% render scale the bilinear upscale shifts where tools/compare's one-colour threshold
@@ -12,7 +12,7 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
 [ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
-OUT=${OUT:-$(mktemp -d "$OUTS/stereo.XXXXXX")}; mkdir -p "$OUT"
+OUT=${OUT:-$(mktemp -d "$OUTS/stereo.XXXXXX")}; mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 rm -f "$OUT"/*.png      # a render that fails must not leave the last run's picture to be judged
 CMP=$ROOT/tools/compare
 cd "$ROOT/godot"
@@ -30,12 +30,12 @@ render() {   # a Godot test script, in the background
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
 	local i=$n
 	mkdir -p "$LOGS/data$i"
-	# its own X display; one some other X server holds (say, a stray Xvfb) would fail this render: then 1000 further on, where no other render of this run is
-	local d=$((90 + i))
-	while [ -e /tmp/.X$d-lock ] || [ -e /tmp/.X11-unix/X$d ]; do d=$((d + 1000)); done
+	local d
+	d=$(x_display 90)   # its own X display
 	( XDG_DATA_HOME=$LOGS/data$i timeout 600 xvfb-run -n $d -s "-screen 0 1280x720x24" \
 		"$GODOT" --path . "$@" > "$LOGS/$i.log" 2>&1
-	  echo "$? $*" > "$LOGS/$i.status" ) &
+	  echo "$? $*" > "$LOGS/$i.status"
+	  free_display $d ) &
 }
 verdict() {   # name, comparison command...
 	local name=$1; shift
@@ -53,8 +53,7 @@ for c in 0 1; do
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/cub$c" $m $c cubes
 	done
 done
-# the stereo check scene; case 3 walks and turns with the sticks' keys: --fixed-fps 60, so every
-# mode moves the same
+# the stereo check scene
 for c in 0 1 2 3; do
 	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done

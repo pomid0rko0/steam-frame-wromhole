@@ -29,9 +29,11 @@ for i in $(seq 40); do [ -S "$run/monado_comp_ipc" ] && break; sleep 0.5; done
 [ -S "$run/monado_comp_ipc" ] || { echo "monado-service did not start:"; tail -5 "$run/monado-service.log"; exit 2; }
 sleep 2
 
-log=$(XDG_DATA_HOME=$run/data timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
+d=$(x_display 900)
+log=$(XDG_DATA_HOME=$run/data timeout 600 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
 	-s res://tests/openxr_smoke.gd 2>&1)
 code=$?
+free_display $d
 kill $monado 2>/dev/null
 echo "$log" > "$run/godot.log"
 grep -E "^(in_xr|runtime|measured|menu|refresh|bench|PASS |FAIL )" <<<"$log"

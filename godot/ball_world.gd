@@ -27,8 +27,7 @@ const RESTITUTION_BALL := 0.85
 # curved zone's edge rolls in by itself (tests/physics_test.gd). A larger part that follows the
 # weight would hold such a ball still; a smaller one would let a thrown ball roll very far: the
 # part that follows the speed stops it. Air drag (as the square of the speed) slows fast balls, in
-# flight too, but hardly a slow roll. By these constants a 50 cm ball rolling at 4 m/s stops in
-# 19 m, at 2 m/s in 9.5 m, at 1 m/s in 4 m.
+# flight too, but hardly a slow roll.
 const ROLLING_RESISTANCE := 0.005
 const ROLLING_DRAG := 0.1            # 1/s: the deceleration per m/s of rolling speed
 const AIR_DENSITY := 1.2             # kg/m^3

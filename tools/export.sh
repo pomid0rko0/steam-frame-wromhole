@@ -21,9 +21,9 @@ if [ "${1:-}" = --godot ]; then   # the export itself, in the container on the F
 fi
 CHECK=""
 [ "${1:-}" = --check ] && { CHECK=1; shift; }
-# the label: the branch checked out, or the branch at this commit (a task's worktree is detached)
+# the label: the branch checked out, else the task's (its worktree, .wt/<branch>, is detached)
 LABEL=${1:-$(git -C "$ROOT" symbolic-ref --short -q HEAD || true)}
-[ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" for-each-ref --points-at HEAD --format='%(refname:short)' refs/heads | head -1)
+case $ROOT in "$REPO"/.wt/*) [ -n "$LABEL" ] || LABEL=${ROOT#"$REPO"/.wt/} ;; esac
 [ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" rev-parse --short HEAD)
 LABEL=$(tr '/' '-' <<<"$LABEL")${CHECK:+_check}
 if [ -n "$CHECK" ]; then

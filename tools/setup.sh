@@ -47,7 +47,7 @@ get_godot() {
 
 get_templates() {
 	[ ! -f "$TPL/linux_release.arm64" ] || return 0
-	echo "downloading export templates (1.3 GB)"
+	echo "downloading export templates (1.3 GB, the release file)"
 	fetch "$REL/Godot_v$V-stable_export_templates.tpz" "$BIN/templates.tpz"
 	# one unzip per core, into a side folder: an interrupted run leaves no half-filled $TPL
 	rm -rf "$TPL.part"
@@ -95,8 +95,9 @@ get_apt() {
 	check_apt
 	if [ -n "$missing" ] && command -v apt-get >/dev/null; then
 		echo "installing:$missing"
-		# a fresh container has empty package lists: without update, install finds nothing
-		{ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $missing; } || true
+		# a fresh container has empty package lists: without update, install finds nothing; dpkg
+		# first finishes an install a stopped run left
+		{ dpkg --configure -a && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $missing; } || true
 		check_apt
 	fi
 	[ -z "$missing" ] || { echo "still missing:$missing (lavapipe = mesa-vulkan-drivers)"; return 1; }
@@ -179,7 +180,7 @@ for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}";
 # after apt: it needs the packages that step installs
 [ $adreno = 0 ] || get_adreno 2>&1 | prefix adreno
 
-# also on PATH: the tests fall back to it when this script ran outside the repo,
-# e.g. piped from curl in an environment setup script (then ROOT is not the repo)
+# also on PATH: the tests fall back to it when this script ran outside the repo (a cloud
+# environment's copy: reuse above)
 ln -sf "$(readlink -f "$BIN/$GODOT")" /usr/local/bin/godot 2>/dev/null || true
 echo "ok: $BIN/$GODOT, $MESA_OUT"

@@ -1,8 +1,8 @@
 extends Node3D
 ## Real-time wormhole for VR (README.md, docs/). Every pixel is ray traced along a geodesic of
 ## the wormhole space in the shader (tracer.gd); this script builds the scene and tracks where the
-## viewer is in that curved space: walking in the room, the left stick walks, the right stick
-## turns, smoothly or in 30-degree snaps, A goes back to the start (README.md, «Управление»).
+## viewer is in that curved space: walking in the room and with the sticks (the buttons: README.md,
+## «Управление»).
 ##
 ## Body model: the feet stay on the floor (n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,

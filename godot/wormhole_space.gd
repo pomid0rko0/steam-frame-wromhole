@@ -167,8 +167,8 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	return D
 
 
-## Chart of the flat region on one side: side A (l >= L) x = r n, side B x = P r n,
-## P = diag(-1, 1, 1). Converts a chart position to a manifold point.
+## A chart position of the flat region on one side (the charts: wormhole_core.gdshaderinc's top) to
+## a manifold point.
 func point_from_chart(side: float, x: Vector3) -> Array:
 	var rr := x.length()
 	var n := x / rr

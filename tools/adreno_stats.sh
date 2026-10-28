@@ -12,16 +12,13 @@
 #   tests/perf.gd, default near; plain, near and away without movable objects, check or balls with
 #   them; --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader; --disasm: the
 #   biggest program, the generic ubershader, not the one that runs)
-# KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it).
+# KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it; on the Frame a file in
+# the repository, which the host sees too).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is
 # no GPU, and software Vulkan's timings don't follow the Frame's.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
-MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
-# setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not
-# this tree's tools/.bin
-[ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
 LIB=$MESA/lib/$(uname -m)-linux-gnu
 [ -f "$LIB/libfreedreno_noop_drm_shim.so" ] || { echo "no Turnip build in $MESA: run tools/setup.sh"; exit 2; }
 VARIANT=near
@@ -36,6 +33,9 @@ while [ $# -gt 0 ]; do
 		*) VARIANT=$1; shift ;;
 	esac
 done
+# files given relative to where it was called, before the cd into godot/
+[ -z "${KEEP_LOG:-}" ] || KEEP_LOG=$(realpath -m "$KEEP_LOG")
+[ -z "$DISASM" ] || DISASM=$(realpath -m "$DISASM")
 LOG=$(mktemp)
 DATA=$(mktemp -d)    # a fresh user:// each run: Godot's pipeline cache would skip the compiler
 # the driver's manifest, pointing at the library where it is now (the installed one has the build's path)
@@ -44,11 +44,13 @@ printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_vers
 	"$LIB/libvulkan_freedreno.so" > "$ICD"
 cd "$ROOT/godot"
 import_scripts
+d=$(x_display 950)
 XDG_DATA_HOME=$DATA LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
 VK_ICD_FILENAMES=$ICD \
 MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=fs,nocache \
-	timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" "$GODOT" --path . \
+	timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
 	--resolution 320x180 -s res://tests/perf.gd -- "$VARIANT" $SHADER > "$LOG" 2>&1
+free_display $d
 if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; rm -rf "$LOG" "$DATA"; exit 1; fi
 grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -20 "$LOG"; rm -rf "$LOG" "$DATA"; exit 1; }
 # The ray tracer: the fragment programs of more than half the biggest one's size. Godot compiles

@@ -68,7 +68,7 @@ func _process(_delta: float) -> bool:
 				"%d cubes, moved %.5f m, tilt %.5f rad, lowest corner %.5f m from the floor" % [w.cubes.size(), cube_moved, cube_tilt, cube_floor])
 		w.balls.clear()
 		w.cubes.clear()
-		w.air = false          # 2-6d check the motion itself: no air drag (6e turns it on)
+		w.air = false          # 2-6b check the motion itself: no air drag (6c turns it on)
 		# 2: a ball flying through the throat without touching anything (no floor contact: high up)
 		var p := sp.point_from_chart(1.0, Vector3(9.0, 0.3, 2.2))
 		var d := WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-1.0, 0.0, 0.45).normalized())
@@ -327,7 +327,7 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	w.balls.clear()
 	w.cubes.clear()
 
-	# 6c: two balls of the demo's size let go at its height: in front of the wormhole and in the
+	# 6a: two balls of the demo's size let go at its height: in front of the wormhole and in the
 	# middle of the throat
 	var rad: float = Toys.DROP_RADIUS
 	var hgt: float = Toys.DROP_HEIGHT
@@ -355,7 +355,7 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	U.check("dropped balls: slow fall in the throat", absf(ta - ta_e) < 0.02 and absf(tt - te) < 0.02 and tt > 2.0 * ta and lmax < 1e-6,
 			"in front of the wormhole %.3f s (%.3f), in the middle of the throat %.3f s (%.3f), %.2f times longer; stays at l = 0 (|l| %.7f)" % [ta, ta_e, tt, te, tt / ta, lmax])
 
-	# 6d: on the floor of the throat a ball is pulled toward the middle and rests there
+	# 6b: on the floor of the throat a ball is pulled toward the middle and rests there
 	var z := 0.25 / sp.r(2.5)
 	var side_ball := w.add(2.5, Vector3(0.0, sqrt(1.0 - z * z), z), Vector4.ZERO, 0.25, Color.WHITE)
 	var z0 := 0.25 / sp.r(0.0)
@@ -368,8 +368,8 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 			"ball from l = 2.5 at l = %.3f after 0.5 s (U_l %.3f m/s); ball in the middle at %.4f m/s, l = %.4f" % [l_half, ul_half, mid_ball["U"].length(), mid_ball["l"]])
 	w.balls.clear()
 
-	# 6e (with air, as in the headset): a ball set down at rest at the shell's edge rolls into the
-	# throat by itself (gravity pulls along the floor toward it, 0.01 g there) and comes to rest in
+	# 6c (with air, as in the headset): a ball set down at rest at the shell's edge rolls into the
+	# throat by itself (gravity pulls along the floor toward it there) and comes to rest in
 	# its middle
 	w.air = true
 	var ze := 0.25 / sp.r(sp.L)

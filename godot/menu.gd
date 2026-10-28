@@ -31,9 +31,7 @@ extends Node3D
 ##
 ## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
 ## headset's size): fewer pixels to ray trace, a softer picture. It and foveation don't go
-## together: one of them is chosen, the other goes back to 100% / off (Godot asks for the
-## eye-tracked density map's offsets in the headset's full-size pixels, so at a lower scale the
-## sharp spot would sit beside where one looks). Both, our maps' order and the line below are kept
+## together (foveation.gd says why): one of them is chosen, the other goes back to 100% / off. Both, our maps' order and the line below are kept
 ## in user://settings.cfg.
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
@@ -236,13 +234,10 @@ static func _line(size: int) -> float:
 
 # ---------------------------------------------------------------- the buttons
 
-## Each frame, before anything else reads the controllers. Menu on the right controller or View on
-## the left (the Steam Frame's own profile; Touch: the left menu button), or a click of the left
-## stick (every profile: the KHR generic one has no menu button), M on the desktop, opens and
-## closes the menu. While it is open: the D-pad or the left stick (arrow keys) up and down picks a
-## row, left and right change its value, held they repeat; A (Enter) presses, B (Backspace)
-## closes. True if the menu was open at any point of this frame: then those buttons and the left
-## stick do nothing else (a B that closes it makes no ball).
+## Each frame, before anything else reads the controllers: opens, works and closes the menu with
+## its buttons (README.md, «Управление»; held, a direction repeats). True if the menu was open at
+## any point of this frame: then its buttons and the left stick do nothing else (main.gd's rules for
+## a new button).
 func handle_input(dt: float) -> bool:
 	var was_open := open
 	var left: XRController3D = main.left_hand

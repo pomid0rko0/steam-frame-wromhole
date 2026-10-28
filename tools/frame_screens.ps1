@@ -5,7 +5,6 @@
 #
 # Запуск: двойной щелчок по frame_screens.bat (за 30 дней: frame_screens.bat 30).
 # Имя и адрес Фрейма берутся из deploy_frame.ps1. Пароль Фрейма спросят один раз.
-# Скриншот — JPEG 1920×1080.
 
 $ErrorActionPreference = "Stop"
 

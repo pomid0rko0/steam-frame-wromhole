@@ -3,18 +3,25 @@
 # On a machine without apt (the Frame's SteamOS) it runs the calling script again, with its
 # arguments, in tools/box.sh's container (box.sh says why; without podman it stops), and the script
 # goes on there past this line. Elsewhere (a cloud session, the container) it sets GODOT, the
-# Godot the tools run, OUTS, where runs keep their files (in the repository: the host sees them
-# too), and import_scripts.
+# Godot the tools run, MESA, the Frame's driver setup.sh builds, OUTS, where runs keep their files
+# (in the repository: the host sees them too), import_scripts and x_display.
 # A task's worktree (.wt/<branch>, tools/box.sh) takes the repository's own tools/.bin, which git
 # does not hold.
 REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
-[ "$REPO" = "$ROOT" ] || [ -e "$ROOT/tools/.bin" ] || ln -s "$REPO/tools/.bin" "$ROOT/tools/.bin"
+if [ "$REPO" != "$ROOT" ] && [ ! -e "$ROOT/tools/.bin" ]; then
+	mkdir -p "$REPO/tools/.bin"
+	ln -sfn "$REPO/tools/.bin" "$ROOT/tools/.bin"
+fi
 if ! command -v apt-get >/dev/null; then
 	exec "$ROOT/tools/box.sh" "$(readlink -f "$0")" "$@"
 fi
 GODOT=${GODOT:-$ROOT/tools/.bin/godot}
 [ -x "$GODOT" ] || GODOT=$(command -v godot || true)
-OUTS=$REPO/.wt/out
+# setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not
+# this tree's tools/.bin
+MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
+[ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
+OUTS=$REPO/.wt/.out
 mkdir -p "$OUTS"
 # A Godot run with -s knows the project's script classes (WormholeSpace...) only from an import:
 # import when there was none or a script changed since.
@@ -24,3 +31,13 @@ import_scripts() {
 	"$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1
 	touch "$stamp"
 }
+# An X display no other run holds, also another task's: from $1 on, the first without an X server
+# whose reservation (a directory: mkdir makes it or fails, never both for two runs) this run gets.
+x_display() {
+	local d=$1
+	while [ -e "/tmp/.X$d-lock" ] || [ -e "/tmp/.X11-unix/X$d" ] || ! mkdir "/tmp/.wormhole-X$d" 2>/dev/null; do
+		d=$((d + 1))
+	done
+	echo "$d"
+}
+free_display() { rmdir "/tmp/.wormhole-X$1" 2>/dev/null || true; }

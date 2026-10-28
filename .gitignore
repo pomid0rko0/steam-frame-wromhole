@@ -9,5 +9,5 @@ __pycache__/
 *.zip
 godot/shaders/ab/
 godot/check
-# git worktrees for a run (tools/box.sh)
+# tasks' worktrees, runs' files, box.sh's lock (tools/box.sh)
 .wt/

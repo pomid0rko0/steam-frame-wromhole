@@ -25,15 +25,69 @@ NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
 # SteamVR and the owner's view share this machine's memory and cores with the container: a stereo
 # test with five renders at once and no memory limit can crash SteamVR; with two at once and the
-# limits below it does not (the container's memory.peak after a stereo test, test.sh and
-# test_openxr.sh: 2.4 GB). So the container
-# gets at most one core's time and MEM of memory, no swap (a run that needs more fails in here, not
-# SteamVR), and runs take JOBS renders at once (default 2).
+# limits below it does not (the container's memory.peak since it started, over stereo tests,
+# test.sh and test_openxr.sh: 2.4 GB). So the container gets at most one core's time and MEM of
+# memory, no swap (a run that needs more fails in here, not SteamVR), runs take JOBS renders at
+# once (default 2), and a run stops when the Frame has less than MIN_FREE left.
 CPUS=1
 MEM=4g
 MIN_FREE=1500   # MB
-SETUP=4   # what the setup below makes; a container set up by an older one is set up again (one
-          # set up by a newer box.sh, another branch's, already has all of it)
+# what setup.sh and this script set up: a change to either sets the container up again
+SETUP=$(cat "$ROOT/tools/setup.sh" "$0" | sha1sum | cut -c1-12)
+# the tools' own settings go along (JOBS=3 tools/test_stereo.sh), nothing else of this machine's
+# environment: Steam's and the session's would point Godot at SteamVR and the owner's screen
+envs=()
+for v in $(compgen -e); do
+	case $v in JOBS|OUT|GODOT|MESA|KEEP_LOG|WH_*) envs+=(-e "$v=${!v}") ;; esac
+done
+[ -n "${JOBS:-}" ] || envs+=(-e JOBS=2)
+case $PWD/ in "$ROOT"/*) dir=$PWD ;; *) dir=$ROOT ;; esac
+# A command stopped here (a timeout, Ctrl-C, a background task stopped) would go on running in the
+# container: podman exec does not pass the signal on. So it runs there in a session of its own,
+# its id in a file, and a signal here stops every process of that session (timeout gives each
+# Godot a process group of its own; found through /proc, no procps needed).
+tag=""
+run=""
+stop() {
+	[ -z "$tag" ] || podman exec $NAME sh -c '
+		for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$0" ] && break; sleep 0.2; done
+		g=$(cat "$0" 2>/dev/null) || exit 0
+		for sig in TERM KILL; do
+			for s in /proc/[0-9]*/stat; do
+				read -r l 2>/dev/null < "$s" || continue
+				set -- ${l##*) }
+				p=${s#/proc/}
+				[ "$4" != "$g" ] || kill -s $sig ${p%/stat} 2>/dev/null
+			done
+			[ $sig = KILL ] || sleep 2
+		done
+		rm -f "$0"' "$tag" 2>/dev/null
+	[ -z "$run" ] || wait $run
+	exit "$1"
+}
+trap 'stop 130' INT
+trap 'stop 143' TERM
+trap 'stop 129' HUP
+inbox() {   # command...: runs it in the container, stopped with this script; its exit status
+	tag=/tmp/box-$$-$RANDOM
+	podman exec -i "${envs[@]}" -w "$dir" $NAME setsid -w sh -c \
+		'echo $$ > "$0"; "$@"; s=$?; rm -f "$0"; exit $s' "$tag" "$@" <&0 &
+	run=$!
+	( while kill -0 $run 2>/dev/null; do
+		a=$(awk '/^MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
+		[ "$a" -ge $MIN_FREE ] || { echo "box.sh: $a MB of memory left on the Frame: stopping the run" >&2; kill -TERM $$; break; }
+		sleep 2
+	  done ) &
+	local s=0
+	wait $run || s=$?
+	tag=""
+	run=""
+	return $s
+}
+# Making, starting and setting up the container, one box.sh at a time (another task's waits)
+mkdir -p "$REPO/.wt"
+exec 9>"$REPO/.wt/.box.lock"
+flock 9
 if ! podman container exists $NAME; then
 	podman run -d --name $NAME --init --cpus $CPUS --memory $MEM --memory-swap $MEM \
 		-v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
@@ -46,56 +100,11 @@ cg=/sys/fs/cgroup$(podman inspect -f '{{.State.CgroupPath}}' $NAME)/memory.swap.
 [ ! -w "$cg" ] || echo 0 > "$cg"
 podman inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' $NAME | grep -qx "$REPO" \
 	|| { echo "the $NAME container does not mount $REPO: podman rm -f $NAME makes it anew" >&2; exit 2; }
-# the tools' own settings go along (JOBS=3 tools/test_stereo.sh), nothing else of this machine's
-# environment: Steam's and the session's would point Godot at SteamVR and the owner's screen
-envs=()
-for v in $(compgen -e); do
-	case $v in JOBS|OUT|GODOT|MESA|KEEP_LOG|WH_*) envs+=(-e "$v=${!v}") ;; esac
-done
-[ -n "${JOBS:-}" ] || envs+=(-e JOBS=2)
-case $PWD/ in "$ROOT"/*) dir=$PWD ;; *) dir=$ROOT ;; esac
-# A command stopped here (a timeout, Ctrl-C, a background task stopped) would go on running in the
-# container: podman exec does not pass the signal on. So it runs there in a session of its own
-# (timeout gives each Godot a process group of its own), its id in a file, and a signal here stops
-# that session.
-tag=""
-run=""
-stop() {
-	[ -z "$tag" ] || podman exec $NAME sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$0" ] && break; sleep 0.2; done
-		g=$(cat "$0") && pkill -TERM -s "$g"; sleep 2; pkill -KILL -s "$g"; rm -f "$0"' "$tag" 2>/dev/null
-	[ -z "$run" ] || wait $run
-	exit "$1"
-}
-trap 'stop 130' INT
-trap 'stop 143' TERM
-trap 'stop 129' HUP
-inbox() {   # command...: runs it in the container, stopped with this script; its exit status
-	tag=/tmp/box-$$-$RANDOM
-	podman exec -i "${envs[@]}" -w "$dir" $NAME setsid -w sh -c \
-		'echo $$ > "$0"; "$@"; s=$?; rm -f "$0"; exit $s' "$tag" "$@" <&0 &
-	run=$!
-	# and should the Frame still run low on memory (the owner's programs, other tasks), the run
-	# stops before SteamVR does
-	( while kill -0 $run 2>/dev/null; do
-		a=$(awk '/^MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
-		[ "$a" -ge $MIN_FREE ] || { echo "box.sh: $a MB of memory left on the Frame: stopping the run" >&2; kill -TERM $$; break; }
-		sleep 2
-	  done ) &
-	local s=0
-	wait $run || s=$?
-	tag=""
-	run=""
-	return $s
-}
-# all of setup.sh, once; a setup that stopped halfway runs again; one at a time (another task's
-# box.sh waits for it)
-mkdir -p "$REPO/.wt"
-exec 9>"$REPO/.wt/box-setup.lock"
-flock 9
-if [ "$(podman exec $NAME cat /box-ready 2>/dev/null || echo 0)" -lt $SETUP ]; then
+# all of setup.sh; one stopped halfway runs again (dpkg first finishes what it was doing)
+if [ "$(podman exec $NAME cat /box-ready 2>/dev/null)" != "$SETUP" ]; then
 	echo "setting up the $NAME container"
-	inbox sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-		curl unzip xauth python3-pip git procps >/dev/null'
+	inbox sh -c 'dpkg --configure -a && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+		curl unzip xauth python3-pip git >/dev/null'
 	inbox "$ROOT/tools/setup.sh"
 	podman exec $NAME sh -c "echo $SETUP > /box-ready"
 fi
