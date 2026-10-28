@@ -20,6 +20,7 @@
 #   tools/ab_shaders.sh --remove      a build without them
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+. "$ROOT/tools/env.sh"
 DIR=$ROOT/godot/shaders/ab
 rm -rf "$DIR"
 [ "${1:-}" = "--remove" ] && exit 0
@@ -124,5 +125,4 @@ PY
 done
 [ -n "$AUTO" ] && echo "run by itself" > "$DIR/auto" && echo "godot/shaders/ab/auto: the check runs by itself"
 # Godot needs to have seen the new files before a script loads them
-GODOT=${GODOT:-$(command -v godot)}
 "$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 || true

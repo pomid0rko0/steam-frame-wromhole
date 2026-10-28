@@ -16,8 +16,7 @@
 # no GPU, and software Vulkan's timings don't follow the Frame's.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/godot}
-[ -x "$GODOT" ] || GODOT=$(command -v godot || true)
+. "$ROOT/tools/env.sh"
 MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
 # setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not
 # this tree's tools/.bin
@@ -43,7 +42,7 @@ ICD=$DATA/freedreno_icd.json
 printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
 	"$LIB/libvulkan_freedreno.so" > "$ICD"
 cd "$ROOT/godot"
-[ -d .godot ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
+import_once
 XDG_DATA_HOME=$DATA LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
 VK_ICD_FILENAMES=$ICD \
 MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=fs,nocache \

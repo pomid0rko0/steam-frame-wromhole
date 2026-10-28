@@ -8,15 +8,13 @@
 # Exit status 0 only if every check passes.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/godot}
-[ -x "$GODOT" ] || GODOT=$(command -v godot || true)
+. "$ROOT/tools/env.sh"
 [ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
 OUT=${OUT:-/tmp/wormhole-stereo}; mkdir -p "$OUT"
 CMP=$ROOT/tools/compare
 cd "$ROOT/godot"
 failed=0
-# a fresh clone has no .godot/ yet: import once so Godot knows the project's script classes
-[ -d .godot ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
+import_once
 
 # The renders are independent Godot runs: they go in parallel, JOBS at a time (default: one per
 # core), each with its own X display and its own user data (Godot's shader cache), then the

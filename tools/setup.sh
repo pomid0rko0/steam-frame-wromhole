@@ -8,10 +8,11 @@
 # its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
 # is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's
 # shader compiler makes of the ray tracer. No package has it for x86 (~10 min, once).
-# On the Steam Frame itself (SteamOS: no apt, a read-only root) Godot and the templates come here
-# and the rest goes into tools/box.sh's Ubuntu container, where the tests run.
+# On the Steam Frame all of it goes into tools/box.sh's container, where the tools run (tools/env.sh).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# not there when a cloud environment's setup script, a copy of this one alone, runs it (below)
+[ ! -f "$ROOT/tools/env.sh" ] || . "$ROOT/tools/env.sh"
 V=4.7.2
 BIN=$ROOT/tools/.bin
 REL=https://github.com/godotengine/godot/releases/download/$V-stable
@@ -75,8 +76,6 @@ MESA_DEBS="ninja-build python3-mako python3-yaml python3-pycparser flex bison pk
 	libxcb-sync-dev libxcb-shm0-dev libxcb-xfixes0-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev"
 MESA_OUT=$BIN/mesa-fd
 SHIM=$MESA_OUT/lib/$(uname -m)-linux-gnu/libfreedreno_noop_drm_shim.so
-# SteamOS: no apt-get, but podman for the container
-frame() { ! command -v apt-get >/dev/null && command -v podman >/dev/null; }
 
 check_apt() {   # sets $missing to the apt packages still needed
 	missing=""
@@ -95,7 +94,6 @@ check_apt() {   # sets $missing to the apt packages still needed
 	{ grep -q "libEGL.so.1 " <<<"$libs" && grep -q libEGL_mesa <<<"$libs"; } || missing="$missing libegl1 libegl-mesa0"
 }
 get_apt() {
-	if frame; then "$ROOT/tools/box.sh" true; return; fi
 	check_apt
 	if [ -n "$missing" ] && command -v apt-get >/dev/null; then
 		echo "installing:$missing"
@@ -110,7 +108,6 @@ get_apt() {
 # The source comes from mesa3d.org, or from Ubuntu's archive where mesa3d.org is unreachable.
 get_adreno() {
 	[ ! -f "$SHIM" ] || return 0
-	if frame; then "$ROOT/tools/box.sh" tools/setup.sh adreno; return; fi
 	# Mesa wants meson 1.4 or newer; Ubuntu 24.04 has 1.3
 	python3 -c "import mesonbuild.coredata as c, sys; sys.exit(tuple(map(int, c.version.split('.')[:2])) < (1, 4))" 2>/dev/null \
 		|| pip install --quiet --break-system-packages "meson>=1.4,<1.9" 2>/dev/null || pip install --quiet "meson>=1.4,<1.9"
@@ -139,11 +136,9 @@ get_adreno() {
 # A cloud environment's setup script is a copy of this one, run outside the repo (ROOT is then
 # not the repo: `/` so far, so its BIN is /tools/.bin); the cloud keeps what it installed and
 # clones the repo afresh for each session. Take that install, found through the godot it put on
-# PATH, instead of downloading Godot and building Turnip again. Not on the Frame: box.sh mounts
-# only the repo, a link out of it leads nowhere there.
+# PATH, instead of downloading Godot and building Turnip again.
 reuse() {
 	local g d
-	if frame; then return 0; fi
 	g=$(readlink -f "$(command -v godot)" 2>/dev/null) || return 0
 	d=$(dirname "$g")
 	[ "$d" != "$BIN" ] || return 0

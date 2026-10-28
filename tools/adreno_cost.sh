@@ -19,8 +19,7 @@
 # timed over the whole view, as the speed check times them.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-GODOT=${GODOT:-$ROOT/tools/.bin/godot}
-[ -x "$GODOT" ] || GODOT=$(command -v godot || true)
+. "$ROOT/tools/env.sh"
 TILES=150
 CHECK=""
 BALLS=""

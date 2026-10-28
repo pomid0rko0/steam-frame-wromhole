@@ -1,5 +1,10 @@
 """Compile and run the preview's GLSL ES 3.00 shader on Mesa (EGL, GLES 3) and save a frame."""
-import os, re, sys, ctypes, json, subprocess
+import os, re, sys, ctypes, json, shutil, subprocess
+# On a machine without apt (the Steam Frame's SteamOS) this runs in tools/box.sh's container: EGL
+# there is software, here it would be the headset's GPU (tools/env.sh)
+if not shutil.which('apt-get') and shutil.which('podman'):
+    BOX = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools', 'box.sh')
+    os.execv(BOX, [BOX, 'python3', os.path.abspath(sys.argv[0])] + sys.argv[1:])
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ.setdefault('EGL_PLATFORM', 'surfaceless')
 import numpy as np

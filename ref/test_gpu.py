@@ -1,7 +1,12 @@
 """Render the GLSL core headless (EGL/llvmpipe) and compare its per-pixel
 geometry against an independent float64 reference that integrates every
 curved ray with brute-force RK4 (no symmetry reduction)."""
-import sys, os
+import sys, os, shutil
+# On a machine without apt (the Steam Frame's SteamOS) this runs in tools/box.sh's container: EGL
+# there is software, here it would be the headset's GPU (tools/env.sh)
+if not shutil.which('apt-get') and shutil.which('podman'):
+    BOX = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools', 'box.sh')
+    os.execv(BOX, [BOX, 'python3', os.path.abspath(sys.argv[0])] + sys.argv[1:])
 import numpy as np
 import moderngl
 from PIL import Image
