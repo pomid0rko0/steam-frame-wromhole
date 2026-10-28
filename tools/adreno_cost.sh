@@ -2,12 +2,12 @@
 # What the speed check's poses cost on the Steam Frame's GPU, by a model: Mesa's compiler for the
 # Frame (tools/adreno_stats.sh) compiles each ray tracer, and tools/adreno_cost.py runs the program
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
-# included. Calibrated on the headset's speed check (godot/bench.gd); a model, not a
+# included. Calibrated on headset measurements (tools/adreno_cost.py says which); a model, not a
 # timing: compare variants with it, then measure the best in the headset (tools/ab_shaders.sh).
 #   tools/adreno_cost.sh [--tiles N] [--check] [--balls] [--toys [--hands|--held]] [--gravity 1|2] [--poses P] [--profile] [--split] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
-# "this": the tree's own ray tracer. --check: also checks that the emulated colours are Godot's
-# (lavapipe) picture, pixel for pixel. --balls: the shader with movable balls (the stereo check's).
+# "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
+# (lavapipe) picture on 256 random tiles a pose (under 0.2% of pixels off by more than 4/255). --balls: the shader with movable balls (the stereo check's).
 # --toys: the demo's balls and cubes, after the throw and the drop, at rest (the shader with balls;
 # other sources' shader with balls too, as tools/ab_shaders.sh copies it). --hands: with them both
 # hands' balls where hands are at every pose; --held: and a ball held in the right one (emu_dump.gd).

@@ -3,7 +3,7 @@ extends RefCounted
 ## Geometry of the wormhole space on the CPU side: moving the viewer along
 ## geodesics and parallel-transporting their frame. The space and its profile r(l) (Lc, L, th0,
 ## Rout): docs/geometry.md; gravity: docs/gravity.md. GDScript's Vector2/3/4 are single precision
-## (float is double): ODE states and tables here are plain floats or PackedFloat64Array.
+## (float is double): the gravity ODE and its table are plain floats and PackedFloat64Array.
 ## A point is (l, n): n is a unit Vector3 on the shared angular sphere.
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
@@ -247,7 +247,7 @@ func height_grad(l: float, n: Vector3) -> Vector4:
 
 
 # ---------------------------------------------------------------- gravity
-# Gravity through the wormhole (docs/gravity.md): phi = g f(l) n_z with (r^2 f')' = 2 f, f even.
+# Gravity through the wormhole: docs/gravity.md.
 
 ## Solve the ODE for the current profile: closed form on the cylinder, RK4 over the fillet into
 ## a table, then scale so that f = r + beta / r^2 outside.

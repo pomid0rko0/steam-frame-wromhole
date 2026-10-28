@@ -2,17 +2,16 @@ class_name Menu
 extends Node3D
 ## The menu, drawn by Godot itself, and the line under it.
 ##
-## The menu is hidden until the menu button opens it (handle_input: Menu on the right controller,
-## View on the left, or a click of the left stick; M on the desktop) and is worked with buttons:
-## the D-pad (or the left stick) up and down picks a row, left and right change its value, A
-## presses, B closes. It opens 1.1 m in front of where the head looks, a little below the eyes, and
+## The menu is hidden until its button opens it and is worked with buttons (handle_input; which:
+## README.md, «Управление»). It opens 1.1 m in front of where the head looks, a little below the eyes, and
 ## follows: as the head walks, quickly; as it turns, only once it has turned well away, then
 ## smoothly. So it is there at the wormhole and inside it, without being glued to the view.
 ##
 ## Its head: the refresh rate the headset really runs at and whether frames keep up, the frames of
 ## the refreshes in the last second and the GPU time against the time one frame may take
 ## (frame_rate.gd), on a plate green while the display gets a new frame from us at (nearly) every
-## refresh, red when it does not, grey while it is measuring; under it what came of a choice.
+## refresh, red when it does not, the panel's own colour while it is measuring; under it what came
+## of a choice.
 ##
 ## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text. Its rows: the
 ## refresh rate, the 3D render scale, foveated rendering (off, SteamVR's density map
@@ -491,7 +490,7 @@ func _value_text(k: String, i: int) -> String:
 		"bench":
 			if main.bench.running:
 				return "идёт"
-			return "сравнить с прежним" if main.bench.has_ab() else "замерить"
+			return "сравнить с другими" if main.bench.has_ab() else "замерить"
 	return ""
 
 

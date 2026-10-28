@@ -358,8 +358,8 @@ func _compared() -> void:
 		if own > 0:
 			var m := _ratio(own, 0)
 			var pct := roundi(absf(1.0 - m) * 100.0)
-			parts.append("новый и прежний одинаковы" if absf(1.0 - m) <= 0.02 else
-					("новый %s прежнего на %d%%" % ["быстрее" if m < 1.0 else "медленнее", pct]))
+			parts.append(("этот и %s одинаковы" % variants[0][0]) if absf(1.0 - m) <= 0.02 else
+					("этот %s, чем %s, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", variants[0][0], pct]))
 		# the foveation against this build without it
 		summary.clear()
 		for v in range(own + 1, variants.size()):

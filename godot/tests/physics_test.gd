@@ -344,7 +344,7 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 		var flux := func(x: float) -> float: return sp.r(x) * sp.r(x) * sp.gravity_f(x)[1]
 		var lap: float = (flux.call(l + e) - flux.call(l - e)) / (2.0 * e) - 2.0 * sp.gravity_f(l)[0]
 		res = maxf(res, absf(lap))
-	U.check("gravity solves Laplace's equation", res < 2e-3, "max |(r^2 f')' - 2 f| %.5f m^-1 over the shell and around it" % res)
+	U.check("gravity solves Laplace's equation", res < 2e-3, "max |(r^2 f')' - 2 f| %.5f m over the shell and around it" % res)
 
 	# 6c: two balls of the demo's size let go at its height: in front of the wormhole and in the
 	# middle of the throat

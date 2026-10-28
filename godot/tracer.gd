@@ -308,7 +308,7 @@ static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: 
 
 
 ## How gravity is shown (docs/gravity.md, «Показ»): 0 not at all, 1 the floor coloured by its
-## strength, 2 also arrows of the field on the vertical surface x = 0 through the throat.
+## strength, 2 also arrows of the field.
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	param("wh_pix", _pixel_angle())

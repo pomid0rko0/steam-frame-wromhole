@@ -81,7 +81,7 @@ func _math_checks(sp: WormholeSpace) -> void:
 		var l := -sp.L - 3.0 + (2.0 * sp.L + 6.0) * (i + 0.5) / 400.0
 		var lap := (_flux(sp, l + e) - _flux(sp, l - e)) / (2.0 * e) - 2.0 * sp.gravity_f(l)[0]
 		res = maxf(res, absf(lap))
-	U.check("gravity solves Laplace's equation", res < 1e-4, "max |(r^2 f')' - 2 f| %s 1/m over the shell and 3 m around it (2 f is 2..20)" % _e(res))
+	U.check("gravity solves Laplace's equation", res < 1e-4, "max |(r^2 f')' - 2 f| %s m over the shell and 3 m around it (2 f is 1.2..14 m)" % _e(res))
 
 	# 3: the gradient against differences of the potential, at points above the floor
 	var gerr := 0.0

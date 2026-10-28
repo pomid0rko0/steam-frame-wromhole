@@ -1,4 +1,4 @@
-"""The gravity arrows' surface (n.x = 0 through the wormhole, wormhole_core's WH_GRAVITY): where
+"""The gravity arrows' surface (n.x = 0 through the wormhole, wormhole_core's WH_ARROWS): where
 the shader's rays first cross it, against brute-force RK4 rays (ref/wh.py) through flat and curved
 space, as test_gpu.py does for the floor. The shader runs as the gravity view with arrows does
 (wormhole_arrows.gdshader: no movable balls, the fillet table). Exit status 1 on failure.

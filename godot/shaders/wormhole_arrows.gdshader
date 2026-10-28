@@ -4,7 +4,7 @@ render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip
 stencil_mode read, compare_not_equal, 1;
 
 // The gravity view with arrows (main.set_gravity_view 2): wormhole_gravity.gdshader and arrows of
-// the field on the vertical surface through the wormhole that faces the start (x = 0).
+// the field (wormhole_core.gdshaderinc, WH_ARROWS).
 #define WH_NO_BALLS
 #define WH_GRAVITY
 #define WH_ARROWS

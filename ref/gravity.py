@@ -2,9 +2,6 @@
 Gravity through the wormhole (docs/gravity.md): the even solution f of (r^2 f')' = 2 f with SciPy's
 DOP853, a reference for WormholeSpace's solver, and solve_2d, the full Laplace equation on an
 (l, theta) grid without the separation, for ref/test_gravity.py.
-
-The field is g_vec = -grad phi, in the (U_l, u) representation of a tangent vector at (l, n):
-    grad phi = g (f' n_z,  (f / r) (e_z - n_z n))
 """
 import numpy as np
 from scipy.integrate import solve_ivp

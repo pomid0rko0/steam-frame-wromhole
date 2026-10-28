@@ -533,8 +533,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     float wc = b / rho0;
     // 1 / the radial velocity on the cylinder, 1 / sqrt(1 - wc^2), with rho0^2 - b^2 as
     // (rho0 - b)(rho0 + b) and rho0 - b = rs vl^2 / (1 + wn) - (rs - rho0): 1 - wc^2 itself cancels
-    // for a ray that goes round the throat (at vl ~ 1e-4 it is wrong by half, and so would be the
-    // floor's point of such rays). rs - rho0 is eye.y (rmin = rho0 when there is a cylinder), R from the edge.
+    // for a ray that goes round the throat (small vl), and so would the floor's point of such
+    // rays. rs - rho0 is eye.y (rmin = rho0 when there is a cylinder), R from the edge.
     float omb = rs * vl * vl / (1.0 + wn) - (fromEdge ? R : eye.y);
     float ivlc = rho0 * inversesqrt(max(omb * (rho0 + b), 1e-14 * rho0 * rho0));
     float kc = wc / rho0 * ivlc;

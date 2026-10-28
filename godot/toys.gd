@@ -78,8 +78,7 @@ func throw() -> void:
 
 
 ## Two white balls let go at the same moment from the same height: one beside the wormhole,
-## where gravity is ordinary, and one in the middle of the throat, where it is about a fifth of
-## that. The second is straight ahead in the throat (azimuth 0): from the start it is seen in the
+## where gravity is ordinary, and one in the middle of the throat. The second is straight ahead in the throat (azimuth 0): from the start it is seen in the
 ## middle of the wormhole against universe B's sky, and falls and bounces in slow motion.
 func drop() -> void:
 	var p := space.point_from_chart(1.0, DROP_SPOT_A)

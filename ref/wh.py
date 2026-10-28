@@ -144,14 +144,8 @@ class Wormhole:
         return out
 
     # ---------- fast method: one ray at a time, mirrors the shader ----------
-    # Fillet in u = s^2 = (r - rho0) / 2R, s = sin(th/2), sig = (b - rho0) / 2R:
-    #   dpsi = F(u) dv, dlength = G(u) dv, dv = du / (2 sqrt(u (u - sig))),
-    #   F = b sqrt(2R) / (r sqrt((1 - u)(r + b))), G = r^2 / b F.
-    # Product integration: F, G interpolated in tau = (u - ua) / (0.5 - ua) at 4 nodes (squares of
-    # the Gauss-Legendre nodes on [0, 1]); moments of tau^k against the exact weight
-    # w = 1 / (2 sqrt((tau + al)(tau + ga))) are elementary. A factor 1/sqrt(tau + c) with c >= 1 is
-    # smooth and goes into the interpolated part instead (regimes 1, 2), where the moment
-    # recursion would be unstable. z: int w (regime 0), sqrt(tau + mn) (regimes 1, 2).
+    # The fillet as the shader's "curved part" (wormhole_core.gdshaderinc), with G, the path length,
+    # interpolated as F is.
     _X = (np.polynomial.legendre.leggauss(4)[0] + 1) / 2
     TAU = _X * _X
     A = np.linalg.inv(np.vander(TAU, 4, increasing=True))
@@ -223,9 +217,7 @@ class Wormhole:
         return side * (self.Lc + self.R * (2 * np.arcsin(s) - self.th0))
 
     def fillet_table(self, N=256):
-        """The shader's fillet table (WormholeSpace.fillet_table): the polynomial e by impact
-        parameter, 4 rows of N knots, one per span of b with one regime; e times sqrt(mx) in
-        regimes 1 and 2 (and sqrt(mn) in regime 2). Returns (table (4, N, 4) float32, lo, inv, reg)."""
+        """The shader's fillet table, as WormholeSpace.fillet_table makes it. Returns (table (4, N, 4) float32, lo, inv, reg)."""
         sp = max(self.Rout - self.rmin, 1e-6 * self.R)
         alp = (self.rmin - self.rho0) / sp
         b1 = min(max(self.rmin - sp, 0.0), self.rmin)

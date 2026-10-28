@@ -38,9 +38,8 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://settings.cfg"))
 	main = load("res://main.tscn").instantiate()
 	# the toys at rest, without the throw and the drop: after the drop, frames on software Vulkan
-	# (sharing four cores with Monado) miss a tenth of the 50 ms refreshes, and here frames that keep
-	# up are judged. The physics is not it (a step costs about 0.25 ms); what else is, is not known.
-	# The throw and the drop themselves: physics_test.gd.
+	# (sharing the cores with Monado) miss refreshes, for a reason not found, and here frames that
+	# keep up are judged. The throw and the drop themselves: physics_test.gd.
 	main.toys.demo = false
 	root.add_child(main)
 

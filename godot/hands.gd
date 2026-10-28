@@ -4,8 +4,8 @@ extends RefCounted
 ## placed in the curved space as the shader places each eye: by the geodesic from the head along
 ## the hand's offset in the room, with the room's axes carried along it. It pushes the toys; the
 ## grip takes the nearest one within reach and carries it at its offset and turn in the hand's
-## axes; let go, it flies with the hand's velocity and spin. Right B and the D-pad down (left X on
-## other controllers) put a new ball or cube in the hand.
+## axes; let go, it flies with the hand's velocity and spin. Buttons put a new ball or cube in the
+## hand (README.md, «Управление»).
 
 const RADIUS := 0.04             # m: the ball drawn at each hand's grip; it pushes the toys
 const REACH := 0.12              # m from the hand's centre to a toy's surface: the grip takes it

@@ -3,7 +3,7 @@
 
 The Frame's compiler (Mesa's ir3 in Turnip, Adreno 750) compiles the shader (tools/adreno_stats.sh
 keeps its log with KEEP_LOG); this runs the specialised program it made on waves of 64 pixels
-(8x8 tiles of 2x2 quads) at given poses, and sums what the waves issue. Divergent branches cost
+(8x8 tiles of 2x2 quads), or 128 (16x8) where the program runs double width, at given poses, and sums what the waves issue. Divergent branches cost
 a wave both sides, as on the GPU. It is a model: no timings, no waits on transcendental or
 texture-unit results (counted apart: cat4, cat5), no memory.
 
