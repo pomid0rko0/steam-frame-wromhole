@@ -66,7 +66,7 @@ tool's top says what it does and how to call it.
 
 | command | time |
 |---|---|
-| `tools/test_stereo.sh` | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
+| `tools/test_stereo.sh` | ~5 min alone in the cloud, more beside other runs, ~11 min on the Frame |
 | `tools/test.sh [name...]` | 1–3 min |
 | `tools/test_openxr.sh` | ~3 min, alone: beside other runs its frames miss refreshes and it fails |
 | `tools/export.sh [--check] [label]` | ~40 s |

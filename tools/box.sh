@@ -24,10 +24,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
-# SteamVR and the owner's view share this machine's memory and cores with the container, and with
-# nothing to stop them, five renders at once took all the memory but 425 MB and SteamVR crashed.
-# So the container gets at most one core's time and MEM of memory, no swap (a run that needs
-# more fails in here, not SteamVR), and runs take JOBS renders at once (default 2).
+# SteamVR and the owner's view share this machine's memory and cores with the container: SteamVR
+# crashed two minutes into a stereo test with five renders at once and no memory limit, and did
+# not with two at once and the limits below (the container took 2.3 GB at most). So the container
+# gets at most one core's time and MEM of memory, no swap (a run that needs more fails in here, not
+# SteamVR), and runs take JOBS renders at once (default 2).
 CPUS=1
 MEM=4g
 MIN_FREE=1500   # MB
