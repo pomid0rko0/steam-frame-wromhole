@@ -2,8 +2,9 @@
 # Stereo correctness through Godot's real multiview path (the one OpenXR uses), no headset:
 # in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
 # draws at the same place. Run it on every headset build's source (CLAUDE.md, the hard rule).
-#   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images,
-#                                    JOBS=n renders at once)
+#   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images:
+#                                    default a new one each run, printed at the end; JOBS=n renders
+#                                    at once)
 # Exit status 0 only if every check passes.
 # Below 100% render scale the bilinear upscale shifts tools/compare's one-colour threshold by
 # tenths of a pixel: test such a scale with SCALING_3D_MODE_NEAREST.
@@ -11,7 +12,7 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
 [ -x "$GODOT" ] || { echo "no Godot 4.7.2: run tools/setup.sh or set GODOT"; exit 2; }
-OUT=${OUT:-/tmp/wormhole-stereo}; mkdir -p "$OUT"
+OUT=${OUT:-$(mktemp -d /tmp/wormhole-stereo.XXXXXX)}; mkdir -p "$OUT"
 rm -f "$OUT"/*.png      # a render that fails must not leave the last run's picture to be judged
 CMP=$ROOT/tools/compare
 cd "$ROOT/godot"
@@ -122,5 +123,6 @@ done
 verdict "foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk:fov pln:fpl
 
 echo
+echo "images: $OUT"
 if [ $failed -eq 0 ]; then echo "ALL PASS"; else echo "FAILED"; fi
 exit $failed

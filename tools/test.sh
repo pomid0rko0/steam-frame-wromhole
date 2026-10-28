@@ -5,9 +5,8 @@
 #   tools/test.sh                  all of them
 #   tools/test.sh grab walking_xr  those named
 # Exit status 0 only if each one exits 0 with no script or shader error. Whole logs in
-# $OUT/<name>.log (OUT default /tmp/wormhole-tests). The stereo and OpenXR tests are
-# tools/test_stereo.sh and tools/test_openxr.sh; not beside test_openxr.sh: a Godot started while
-# its Monado runs connects to it.
+# $OUT/<name>.log (OUT default: a new directory each run, printed at the end). The stereo and
+# OpenXR tests are tools/test_stereo.sh and tools/test_openxr.sh.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
@@ -16,7 +15,7 @@ cd "$ROOT/godot"
 import_once
 names=("$@")
 [ ${#names[@]} -gt 0 ] || names=($(ls tests/*_test.gd | sed 's#^tests/##; s#_test\.gd$##'))
-OUT=${OUT:-/tmp/wormhole-tests}; mkdir -p "$OUT"
+OUT=${OUT:-$(mktemp -d /tmp/wormhole-tests.XXXXXX)}; mkdir -p "$OUT"
 JOBS=${JOBS:-$(nproc)}
 DATA=$(mktemp -d)
 i=0

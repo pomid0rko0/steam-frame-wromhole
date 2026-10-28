@@ -2,8 +2,7 @@
 <dir>/<b><rest>.png against <dir>/<a><rest>.png: the largest difference of any colour channel
 of any pixel, in 1/255, and how many pixels differ by more than 1/255. Passes when in every pair
 the pixels off by more than 1/255 (the GPU may round a colour either way) are fewer than 1 in
-10 000. Used for foveation on against off (tools/test_stereo.sh): on software Vulkan
-there is no density map, so only the split render pass could change anything.
+10 000. tools/test_stereo.sh compares foveation on against off with it.
    python3 same_images.py dir a:b [a:b ...]"""
 import sys, glob, os
 import numpy as np

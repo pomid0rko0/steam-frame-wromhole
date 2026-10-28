@@ -4,8 +4,8 @@ extends RefCounted
 ## scene. At rest in front of the wormhole: five balls and two cubes, a third cube in the throat. A
 ## moment after the start a cube and a ball are thrown from chest height; the ball rolls through
 ## the throat into universe B. Then two balls are dropped together from the same height: one beside
-## the wormhole, one in the middle of the throat, where gravity is about a fifth (docs/gravity.md). A puts it all
-## back and does it again.
+## the wormhole, one in the middle of the throat, where gravity is about a fifth (docs/gravity.md).
+## A puts it all back and does it again.
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
@@ -78,8 +78,9 @@ func throw() -> void:
 
 
 ## Two white balls let go at the same moment from the same height: one beside the wormhole,
-## where gravity is ordinary, and one in the middle of the throat. The second is straight ahead in the throat (azimuth 0): from the start it is seen in the
-## middle of the wormhole against universe B's sky, and falls and bounces in slow motion.
+## where gravity is ordinary, and one in the middle of the throat. The second is straight ahead in
+## the throat (azimuth 0): from the start it is seen in the middle of the wormhole against universe
+## B's sky, and falls and bounces in slow motion.
 func drop() -> void:
 	var p := space.point_from_chart(1.0, DROP_SPOT_A)
 	world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)

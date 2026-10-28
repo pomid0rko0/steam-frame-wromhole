@@ -6,7 +6,7 @@
 # The four steps don't depend on each other and run at once; each line of output starts with
 # its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
 # is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's
-# shader compiler makes of the ray tracer. No package has it for x86 (~10 min, once).
+# shader compiler makes of the ray tracer. No package has it for x86 (built once).
 # On the Steam Frame all of it goes into tools/box.sh's container, where the tools run (tools/env.sh).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,8 +19,7 @@ GODOT=Godot_v$V-stable_linux.$(uname -m | sed 's/^aarch64$/arm64/')   # x86_64 i
 TPL=${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$V.stable
 mkdir -p "$BIN"
 
-# One connection to GitHub's release storage gives ~25 MB/s; eight pieces (-r) at once are
-# several times faster.
+# GitHub's release storage gives one connection a fraction of the line: eight pieces (-r) at once.
 fetch() {   # url file
 	local url size i n=8 pids="" ok=1
 	url=$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$1")   # the signed link GitHub redirects to
@@ -53,15 +52,15 @@ get_templates() {
 	# one unzip per core, into a side folder: an interrupted run leaves no half-filled $TPL
 	rm -rf "$TPL.part"
 	mkdir -p "$TPL.part" "$TPL"
-	unzip -Z1 "$BIN/templates.tpz" | grep -v '/$' \
+	# only what the one export preset (Linux arm64) takes
+	unzip -Z1 "$BIN/templates.tpz" | grep -E '/(linux_(debug|release)\.arm64|version\.txt|icudt[^/]*)$' \
 		| xargs -P "$(nproc)" -n 1 unzip -ojq "$BIN/templates.tpz" -d "$TPL.part"
 	mv -f "$TPL.part"/* "$TPL/"
 	rmdir "$TPL.part"
 	rm "$BIN/templates.tpz"
 }
 
-# One pip for all four: PyPI through the cloud session's proxy swings between 0.1 and 35 MB/s
-# per connection.
+# One pip for all four: PyPI through the cloud session's proxy is slow per connection.
 get_pip() {
 	pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/null \
 		|| pip install --quiet numpy scipy pillow moderngl
@@ -147,7 +146,7 @@ reuse() {
 	fi
 	if [ ! -f "$SHIM" ] && [ -f "$d/mesa-fd/${SHIM#"$MESA_OUT"/}" ]; then
 		rm -rf "$MESA_OUT"
-		ln -sfn "$d/mesa-fd" "$MESA_OUT"   # a link, not a copy: its Vulkan ICD names absolute paths
+		ln -sfn "$d/mesa-fd" "$MESA_OUT"
 		echo "reuse: $d/mesa-fd"
 	fi
 }

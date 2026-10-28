@@ -4,7 +4,7 @@ extends Node3D
 ## viewer is in that curved space: walking in the room, the left stick walks, the right stick
 ## turns, smoothly or in 30-degree snaps, A goes back to the start (README.md, «Управление»).
 ##
-## Body model: the feet stay on the floor (the totally geodesic equatorial surface n.z = 0).
+## Body model: the feet stay on the floor (n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,
 ## parallel-transporting the play-space axes; stick turns rotate those axes; the head sits
 ## head-height above the feet along the floor normal. Each eye is derived in the shader from that
@@ -31,9 +31,9 @@ extends Node3D
 ## profile if the app offers it, else the generic one, else Touch remapped (Touch's menu is View,
 ## its upper button all three upper buttons). One path a runtime rejects drops the whole profile
 ## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
-## (_log_profiles); that it takes our Frame profile has not been seen in the headset yet.
+## (_log_profiles); that it takes our Frame profile is not confirmed in the headset.
 
-# optozorax's SDF (sphere 0.3, planes +-0.5, union_round 0.1) at 1 unit = 10 m
+# the video's throat (docs/geometry.md, «Пространство»)
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
@@ -290,7 +290,7 @@ func place(pos: Vector3, forward: Vector3) -> void:
 ## Put the feet at l on the axis through the throat (n = +x), looking yaw degrees to the right of
 ## the direction of falling l (toward the throat at l > 0, away from it at l < 0; the head's own yaw
 ## is taken out), and turn the view pitch degrees up and roll
-## degrees about the line of sight (right side down) on top of the head's own: the speed check.
+## degrees about the line of sight (right side up) on top of the head's own: the speed check.
 func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	foot_l = l
 	foot_n = Vector3(1.0, 0.0, 0.0)

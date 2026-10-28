@@ -10,26 +10,33 @@
 # Anywhere with apt (a cloud session, the container itself) it runs the command right here.
 #   tools/box.sh python3 ref/test_gpu.py       (any command, in the same directory there)
 # The tools go there by themselves (tools/env.sh), so this is for commands of one's own.
-# Made on first use and kept, stopped or not; `podman rm -f wormhole-box` throws it away. It
-# mounts only the repository's folder: a git worktree for a run goes under .wt/ (git worktree add
-# .wt/run), or the container does not see it.
+# Made on first use, with the export templates (a 1.3 GB download), and kept, stopped or not;
+# `podman rm -f wormhole-box` throws it away. It
+# mounts only the repository's folder, and every task's runs share it: a task's git worktree goes
+# under .wt/, one per task (git worktree add --detach .wt/<branch> <branch>), and each run of the
+# tests keeps its files and its Monado in a directory of its own (test.sh, test_stereo.sh,
+# test_openxr.sh).
 set -euo pipefail
 if command -v apt-get >/dev/null; then exec "$@"; fi
 command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# the repository's own folder, which holds .wt/, also when this runs from a worktree
+REPO=$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd) || REPO=$ROOT
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
-SETUP=2   # what the setup below makes; a container set up by an older one is set up again
+SETUP=3   # what the setup below makes; a container set up by an older one is set up again
 if ! podman container exists $NAME; then
-	podman run -d --name $NAME --init -v "$ROOT:$ROOT" -w "$ROOT" $IMAGE sleep infinity >/dev/null
+	podman run -d --name $NAME --init -v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
 fi
+podman inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' $NAME | grep -qx "$REPO" \
+	|| { echo "the $NAME container does not mount $REPO: podman rm -f $NAME makes it anew" >&2; exit 2; }
 [ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
 # a setup that stopped halfway runs again
 if [ "$(podman exec $NAME cat /box-ready 2>/dev/null)" != $SETUP ]; then
 	echo "setting up the $NAME container"
 	podman exec $NAME sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 		curl unzip xauth python3-pip git >/dev/null'
-	podman exec -w "$ROOT" $NAME tools/setup.sh apt pip
+	podman exec -w "$ROOT" $NAME tools/setup.sh apt pip templates
 	podman exec $NAME sh -c "echo $SETUP > /box-ready"
 fi
 # the tools' own settings go along (JOBS=3 tools/test_stereo.sh), nothing else of this machine's

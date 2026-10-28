@@ -3,10 +3,8 @@ extends RefCounted
 ## Balls and cubes moving through the wormhole space.
 ##
 ## A ball is a point (l, n) with velocity U = (U_l, u) and a radius. Free motion follows
-## geodesics (zero redshift: no gravity from the metric itself) plus gravity, -g grad phi.
-## phi is the potential Laplace's equation gives on the curved space itself, as in optozorax's
-## video about gravity and portals: ordinary uniform gravity far away in both universes, bent
-## through the wormhole and weaker in the throat (WormholeSpace.potential, ref/gravity.py).
+## geodesics (zero redshift: no gravity from the metric itself) plus gravity, -g grad phi
+## (docs/gravity.md; WormholeSpace.potential).
 ## Collisions use chord distances in R^4, the same definition of a
 ## ball the shader renders: the points within `radius` of the centre, measured in R^4.
 ##

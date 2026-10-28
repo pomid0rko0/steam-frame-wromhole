@@ -453,8 +453,9 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 ## ray's impact parameter b alone: the shader samples them from this table instead of working them
 ## out per ray. Four rows of TABLE_N knots, one per span of b with one regime of the moments
 ## (rows 0, 1: rays that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots
-## evenly spaced over the row. A factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which goes to
-## zero like a square root at the shell's edge, is taken out (the shader puts it back): what is
+## evenly spaced over the row. In rows of regimes 1 and 2 a factor 1 / sqrt(mx) (times 1 / sqrt(mn)
+## in regime 2), which goes to zero like a square root at the shell's edge, is taken out (the
+## shader puts it back): what is
 ## left is smooth enough for linear interpolation.
 const TABLE_N := 256
 const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]

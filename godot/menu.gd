@@ -37,11 +37,11 @@ extends Node3D
 ## in user://settings.cfg.
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
-# Foveation.set_level's levels: 0 off, 1..3 SteamVR's map, 4 and 5 our own (Foveation.OWN_MAPS)
+# names of Foveation.set_level's levels
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the menu's: off, SteamVR low and high, our own wide and narrow
-# until one is chosen: our narrow map, the width first (in the headset its border was not to be seen)
+# until one is chosen: our narrow map, the width first (its border is not seen in the headset)
 const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"

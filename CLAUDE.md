@@ -68,7 +68,7 @@ tool's top says what it does and how to call it.
 |---|---|
 | `tools/test_stereo.sh` | ~5 min alone in the cloud, more beside other runs, ~half an hour on the Frame |
 | `tools/test.sh [name...]` | 1–3 min |
-| `tools/test_openxr.sh` | ~3 min; never beside `test_stereo.sh` or `test.sh`: while Monado runs, any Godot here connects to it as a headset |
+| `tools/test_openxr.sh` | ~3 min, alone: beside other runs its frames miss refreshes and it fails |
 | `tools/export.sh [--check] [label]` | ~40 s |
 | `python3 ref/test_gpu.py`, `ref/test_eye.py` | ~4 min, ~1.5 min |
 | `python3 ref/test_fast.py`, `test_slice.py`, `test_gravity.py` | seconds to 2 min |

@@ -12,7 +12,7 @@ texture-unit results (counted apart: cat4, cat5), no memory.
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
-headset, S x S pixels (default 1728) and F degrees of vertical field of view (default 104),
+headset, S x S pixels (default 1728) and F degrees of vertical field of view (default 104, as tracer.gd takes it),
 on N random tiles (default 300; the same tiles for every LOG with the same seed K). --profile:
 cycles per stretch of code.
 --split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
@@ -37,7 +37,7 @@ import ir3_emu as E  # noqa: E402
 # both eyes at 1728 x 1728, ms = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x
 # transcendental instructions + MS_CAT5 x texture-unit instructions (derivatives, samples). In waves
 # of 128 a 32-bit ALU op takes 2 cycles (Mesa's ir3.c) and a nop slot covers 128 pixels; a cat4 or
-# cat5 instruction's work is per pixel whatever the wave. The fit says transcendentals and
+# cat5 instruction's work is per pixel whatever the wave. By the constants transcendentals and
 # derivatives cost far more than their issue slots (16 and ~90 ALU cycles' worth).
 GODOT_MS = 0.8
 MS_ALU = 1.61e-3

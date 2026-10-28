@@ -63,8 +63,9 @@
 // - Loop-invariant code is not hoisted, equal expressions are merged: a value computed before a
 //   loop is held through it; computed again where it is used, from values held anyway, it is not.
 // - A branch that skips work loses when its divergence costs more than the work (a bounding ball
-//   before each box). Near the throat one group of pixels holds both skies, the floor and objects,
-//   and runs every branch of the shading.
+//   before each of world B's static boxes; their one test is the boxes' top, wh_traceFlat). Near
+//   the throat one group of pixels holds both skies, the floor and objects, and runs every branch
+//   of the shading.
 // - A screen derivative costs about 90 ALU cycles (tools/adreno_cost.py's fit, on older ray tracers).
 // - 16-bit math (mediump) runs at double rate in waves of 128, but for the sky's colours the
 //   conversions cost more than it saves; line coordinates need float32.
@@ -212,7 +213,7 @@ vec3 wh_grav(float l) {
     return vec3(g, dg * is * sg, fp * sg);
 }
 
-// optozorax's palette: dark is no gravity, yellow 1 g, then red and white at 10 g; bands of 0.1 g
+// optozorax's palette (docs/gravity.md, «Показ»); bands of 0.1 g
 // below 1 g and of a tenth of a decade above. wh_gravBand(g) is the band coordinate.
 float wh_gravBand(float g) {
     return g < 1.0 ? 10.0 * g : 10.0 + 4.342944819 * log(g);
@@ -286,12 +287,8 @@ vec4 wh_arrow(float l, float a, float foot) {
 #endif
 
 // ---------------------------------------------------------------- curved part
-// A fillet in u = s^2 = (r - rho0) / 2R, s = sin(th/2):  dl = 2R ds / sqrt(1 - s^2), and with
-// sig = (b - rho0) / 2R
-//   dpsi = F(u) dv,  dlength = G(u) dv,   dv = ds / sqrt(s^2 - sig) = du / (2 sqrt(u (u - sig)))
-//   F = b sqrt(2R) / (r sqrt((1 - u)(r + b))),  G = r^2 / b F.
-// F and G are smooth on the fillet; all the trouble (the turning point, the log at b -> rmin) is in
-// dv. So the integral is "product integration": F is interpolated by a polynomial in
+// A fillet in u, sig, F and dv as docs/geometry.md («Почему луч считается быстро», 3) has them;
+// the path length is dlength = G dv with G = r^2 / b F. F is interpolated by a polynomial in
 // tau = (u - ua) / (0.5 - ua) in [0, 1] (4 nodes: squares of the Gauss-Legendre nodes on [0, 1]),
 // and its moments against the exact weight, int t^k w(t) dt, are elementary (G, the path length,
 // is estimated instead: wh_filLen; ref/wh.py integrates G as F):

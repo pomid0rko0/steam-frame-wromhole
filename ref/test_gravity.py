@@ -7,7 +7,7 @@ import numpy as np
 from wh import Wormhole
 from gravity import Gravity, solve_2d
 
-PROFILES = {                      # (rho0, h, R) in metres, 1 unit of the video = 10 m
+PROFILES = {                      # (rho0, h, R) in metres
     'video (3, 5, 1)': (3.0, 5.0, 1.0),
     'h = R (3, 1, 1)': (3.0, 1.0, 1.0),
     'h < R, crease (3, 0.4, 1)': (3.0, 0.4, 1.0),

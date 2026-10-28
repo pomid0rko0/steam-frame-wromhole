@@ -4,8 +4,8 @@ extends Node3D
 ## geodesic of the wormhole space (shaders/wormhole_core.gdshaderinc), and what it needs: its
 ## uniforms, the shader for what is shown, the movable balls and cubes, and the stencil split.
 ##
-## Shaders. Code costs registers even where no pixel runs it, and registers decide how many pixels
-## the GPU runs at once, so each combination is a shader of its own: without movable objects
+## Shaders. Code costs registers even where no pixel runs it (wormhole_core.gdshaderinc, «The
+## compiler»), so each combination is a shader of its own: without movable objects
 ## (wormhole.gdshader) or with them (wormhole_balls), each also with the gravity view's floor
 ## colours (_gravity) or the floor and the field's arrows (_arrows). Switching costs a hitch while
 ## the GPU compiles the other one, so the shader changes only when what is shown changes.
@@ -173,8 +173,8 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 
 
 ## Movable balls and cubes. Balls: centres as points of R^4 (pos), colours with the radius, a chord
-## distance in R^4 (col: rgb, radius), at most MAX_BALLS. Cubes, at most MAX_CUBES: a 4D box of R^4
-## cut by the space, as a box of a 4D SDF scene: the centre as a point of R^4 (cpos), four
+## distance in R^4 (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES:
+## the centre as a point of R^4 (cpos), four
 ## orthonormal axes divided by the half size (axes: three body axes tangent to the space, then its
 ## normal; four per cube), (rgb, half size) (ccol). The shader gets each cube's axes and then
 ## dot(centre, axis) for the four, five vectors per cube, all sorted by where they are
