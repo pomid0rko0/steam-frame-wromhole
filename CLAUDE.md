@@ -2,8 +2,8 @@
 
 README.md (Russian) says what the project is, what it does, the buttons and how to build and
 check it; `docs/` has the details by topic: `geometry.md`, `rendering.md`, `physics.md`,
-`menu.md`, `steam-frame.md`, `checks.md`, `wishlist.md`. This file is how to work here: the owner's rules,
-the branches, what a change has to fit, the commands, and facts that cost time to find.
+`menu.md`, `steam-frame.md`, `checks.md`, `wishlist.md`. This file is how to work here: the owner's rules, the
+branches, what a change has to fit, the commands, and facts that cost time to find.
 
 ## The owner's rules
 
@@ -110,8 +110,9 @@ demo over `ball_world.gd`'s physics; `hands.gd`; `foveation.gd` with `split_pass
 - **The speed check** sets the viewer's pose itself: while it runs (`main.hold`) the sticks, A and
   the hands do nothing, and a new button stays out too; the menu greys the rows it sets.
 - **The hands** take two of the shader's 12 ball slots (`Tracer.MAX_BALLS`); the toys' balls take
-  at most 8 (`BallWorld.MAX_BALLS`). Each frame the free toys step first (pushed from the hands' last places), then the hands and what they hold
-  are placed (`Hands.update`), then everything is drawn: a toy let go starts from the hand. Jumps of
+  at most 8 (`BallWorld.MAX_BALLS`). Each frame the free toys step first (pushed from the hands'
+  last places), then the hands and what they hold are placed (`Hands.update`), then everything is
+  drawn: a toy let go starts from the hand. Jumps of
   the viewer (`place`, `set_pose`, a snap turn) call `Hands.forget_motion`, or the jump is a throw.
 - **A throat change** (`space.set_profile`) rebuilds what is built for the shape:
   `tracer.upload_fillet_table()` (slow in GDScript: not per frame), `tracer.upload_gravity()`,
@@ -177,15 +178,15 @@ named. A tool you had to install goes into `setup.sh`.
   with `tools/same_programs.py`, one variant at a time. Use a scene without toys: with toys
   `Tracer.set_objects` swaps in `wormhole_balls` and the plain shader after the first frame, the log
   holds their programs too, and `adreno_cost.ray_program` (the smallest `/1` program of at least
-  half the biggest) then picks `wormhole_balls`'s. After every change
-  to the shader or the emulator run `tools/adreno_cost.sh --check`. Pictures against another commit:
+  half the biggest) then picks `wormhole_balls`'s. After every change to the shader or the
+  emulator run `tools/adreno_cost.sh --check`. Pictures against another commit:
   `tests/emu_dump.gd` at many poses, then diff the PNGs.
 - **Driver tools without a GPU** (`adreno_stats.sh`, `adreno_cost.sh`, `fdm_check.sh`): Godot on
   Turnip over Mesa's noop drm-shim (`tools/.bin/mesa-fd`). Godot compiles the ray tracer twice, a
   generic ubershader and then the specialised program that runs (`adreno_cost.ray_program` picks
   it from a log of one shader). Turnip's tiling autotune picks by samples the drm-shim makes up:
-  `TU_DEBUG=gmem` tiles wherever possible. `ir3_live.py` counts half registers two to a full component and leaves out the
-  shared ones (r48-r55).
+  `TU_DEBUG=gmem` tiles wherever possible. `ir3_live.py` counts half registers two to a full
+  component and leaves out the shared ones (r48-r55).
 - **The cost model** is fitted on the headset's speed check: compare variants with it, then measure
   the best in the headset. It knows no memory waits, and it underrates the toys' shaders and world
   B's outer edge. `--split` models the stencil split, `--hands` / `--held` give each pose its own
