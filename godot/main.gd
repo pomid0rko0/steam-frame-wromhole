@@ -31,7 +31,7 @@ extends Node3D
 ## profile if the app offers it, else the generic one, else Touch remapped (Touch's menu is View,
 ## its upper button all three upper buttons). One path a runtime rejects drops the whole profile
 ## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
-## (_log_profiles); that it takes our Frame profile is not confirmed in the headset.
+## (_log_profiles): in the headset it is our Frame profile.
 
 # the video's throat (docs/geometry.md, «Пространство»)
 const THROAT_RADIUS := 3.0
