@@ -34,8 +34,8 @@ const MAX_CUBES := 6
 # m around each proxy sphere at least. A ray that meets a toy inside its sphere leaves the proxy at
 # least the margin beyond the hit; it is marked if that is beyond the near plane, which lies
 # Main.NEAR along the view axis and up to near_reach along the frustum's corners. So a proxy (the
-# shell's too) whose sphere comes so near the eyes that this margin would leave such a ray short of
-# near_reach gets a larger one (_margin): the rest keep this one.
+# shell's too) whose sphere comes so near the eyes that this margin would leave such a ray less than
+# 5 mm beyond near_reach gets a larger one (_margin): the rest keep this one.
 const PROXY_MARGIN := 0.08
 # m from the head to either eye that _margin allows for (half an IPD: about 0.032)
 const EYE_REACH := 0.05

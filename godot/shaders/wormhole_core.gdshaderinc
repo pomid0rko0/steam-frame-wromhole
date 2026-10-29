@@ -27,8 +27,8 @@
 //
 // Godot's shading language reserves E, PI and TAU: a local named so is a compile error that GLSL
 // (ref/) accepts. Constants reach the GPU as Godot's shader compiler prints them, with 14 decimals
-// (rtos in f2sp0, servers/rendering/shader_compiler.cpp): 1e-20 becomes 0.0, the smallest that
-// survives is 1e-14, so a guard against dividing by zero is at least that (ref/ compiles this file
+// (rtos in f2sp0, servers/rendering/shader_compiler.cpp): 1e-20 becomes 0.0, the smallest non-zero
+// it prints is 1e-14, so a guard against dividing by zero is at least that (ref/ compiles this file
 // as GLSL, where a smaller one would still guard). GPUs' max and min return the other operand for a
 // NaN, which hides most NaNs.
 //
