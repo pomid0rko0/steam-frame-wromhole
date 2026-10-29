@@ -16,6 +16,20 @@ def app_table_n():
     return int(re.search(r'^const TABLE_N := (\d+)', src, re.M).group(1))
 
 
+def app_max_cubes():
+    """The shader's cube slots: godot/tracer.gd's MAX_CUBES."""
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'tracer.gd')).read()
+    return int(re.search(r'^const MAX_CUBES := (\d+)', src, re.M).group(1))
+
+
+def app_scene_sizes():
+    """The shader's static object arrays, (wh_sph, wh_pil, wh_box) lengths: godot/scene.json's, as
+    Tracer gives them."""
+    import json
+    s = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'scene.json')))
+    return len(s['spheres_A']) + len(s['spheres_B']), len(s['pillars_A']), len(s['boxes_B'])
+
+
 def app_profile():
     """The app's throat, (rho0, h, R) in metres: godot/main.gd's THROAT_RADIUS, HALF_LENGTH, FILLET."""
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()

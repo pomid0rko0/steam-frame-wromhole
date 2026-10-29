@@ -154,7 +154,7 @@ static func check_bindings() -> void:
 
 
 ## Both eyes' pictures of the XR view: <prefix>_<mode>_left.png and _right.png.
-static func save_eyes(main: Node, prefix: String, mode: String) -> void:
+static func save_eyes(main: Main, prefix: String, mode: String) -> void:
 	var rid: RID = main.xr_view.get_texture().get_rid()
 	for i in 2:
 		var img: Image = RenderingServer.texture_2d_layer_get(rid, i)

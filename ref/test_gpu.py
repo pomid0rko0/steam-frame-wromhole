@@ -6,7 +6,7 @@ import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from PIL import Image
-from wh import Wormhole, app_profile
+from wh import Wormhole, app_profile, app_max_cubes, app_scene_sizes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
@@ -35,7 +35,8 @@ def test_balls():
 
 
 BALLS = test_balls() if os.environ.get('WH_BALLS', '1') == '1' else []
-MAXC = 6
+MAXC = app_max_cubes()       # the shader's cube slots
+N_SPH, N_PIL, N_BOX = app_scene_sizes()
 
 
 def test_cubes():
@@ -90,15 +91,15 @@ uniform vec4 wh_tabReg;
 uniform float wh_rho0;
 uniform float wh_h;
 uniform float wh_fillet;
-uniform vec4 wh_sph[6];
-uniform vec4 wh_pil[4];
-uniform vec4 wh_box[4];
+uniform vec4 wh_sph[""" + str(N_SPH) + """];
+uniform vec4 wh_pil[""" + str(N_PIL) + """];
+uniform vec4 wh_box[""" + str(N_BOX) + """];
 uniform vec4 wh_ball[""" + str(MAXB) + """];
 uniform vec4 wh_ballCol[""" + str(MAXB) + """];
 uniform int wh_nBall;
-uniform vec4 wh_cube[6];
-uniform vec4 wh_cubeE[30];
-uniform vec4 wh_cubeCol[6];
+uniform vec4 wh_cube[""" + str(MAXC) + """];
+uniform vec4 wh_cubeE[""" + str(5 * MAXC) + """];
+uniform vec4 wh_cubeCol[""" + str(MAXC) + """];
 uniform int wh_nCube;
 uniform vec4 wh_bound[4];
 uniform ivec4 wh_bIdx;
@@ -401,7 +402,6 @@ if __name__ == '__main__':
         n0 = np.asarray(n0, float); n0 /= np.linalg.norm(n0)
         tz = np.array([0, 0, 1.0]) - n0 * n0[2]; tz /= np.linalg.norm(tz)
         ty = np.cross(tz, n0)
-        to3 = lambda V: np.array([V[0], V[1:] @ ty, V[1:] @ tz])
         from3 = lambda c: np.r_[c[0], c[1] * ty + c[2] * tz]
         F = np.asarray(fwd, float) / np.linalg.norm(fwd)
         up = np.array([0, 0, 1.0]) - F * F[2]; up /= np.linalg.norm(up)

@@ -410,8 +410,8 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     float x = clamp((b - rw.x) * rw.y, 0.0, WH_TABN - 1.0);
     vec4 et = textureLod(wh_tab, vec2((x + 0.5) / WH_TABN, (float(row) + 0.5) * 0.25), 0.0);
     f.e = f.reg == 0 ? et : et * inversesqrt(f.mx * (f.reg == 2 ? f.mn : 1.0));
-    // b is 0 for a ray along the radius exactly: then f.e is 0 and so is the fillet's length (not
-    // 0 times infinity)
+    // b is 0 for a ray along the radius exactly: f.e is 0 then, and the fillet's length estimate
+    // (wh_filLen) comes out 0, short by the fillet's arc, instead of 0 times infinity
     f.ib = 1.0 / max(b, 1e-12);
     f.zlo = f.reg == 0 ? 0.0 : min(sal, sga);    // sqrt(mn)
     vec4 m;

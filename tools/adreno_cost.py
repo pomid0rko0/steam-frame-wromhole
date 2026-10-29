@@ -363,8 +363,8 @@ def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=No
             col, st = sh.run(varyings_for(e, xs, ys, size, size, tan_x, tan_y, sh), prof)
             if profile is not None:
                 profile += w * prof
-            for k in ('cycles', 'instr', 'cat4', 'cat5', 'lane_instr', 'nops', 'half'):
-                setattr(tot, k, getattr(tot, k) + w * getattr(st, k))
+            for name in ('cycles', 'instr', 'cat4', 'cat5', 'lane_instr', 'nops', 'half'):
+                setattr(tot, name, getattr(tot, name) + w * getattr(st, name))
         res.append((e['pose'], tot))
     return res
 

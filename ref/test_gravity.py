@@ -29,7 +29,7 @@ for name, (rho0, h, R) in PROFILES.items():
     print(f'--- {name}: beta = {G.beta:+.4f} m^3, floor g at the middle {G.floor_g(0.0):.4f}, '
           f'at the mouth (l = L) {G.floor_g(W.L):.4f}')
     # 1. the ODE holds: (r^2 f')' - 2 f = 0, by finite differences of the solution
-    ls = np.concatenate([np.linspace(-W.L - 6, W.L + 6, 401)])
+    ls = np.linspace(-W.L - 6, W.L + 6, 401)
     ls = ls[np.min(np.abs(ls[:, None] - np.array([-W.L, -W.Lc, 0, W.Lc, W.L])[None]), axis=1) > 2e-3]
     e = 1e-4
     flux = lambda l: W.r(l) ** 2 * G.f(l)[1]

@@ -15,7 +15,6 @@ apart.
 Only what the wormhole's ray tracer uses is implemented; anything else stops with an error.
 """
 import re
-import struct
 import numpy as np
 
 F32 = np.float32

@@ -1,20 +1,21 @@
 """wh_geodesic (the GPU move from the head to an eye) vs a float64 fine-step reference:
 eye position and transported frame for random heads and offsets, on three profiles."""
-import os, re, sys
+import os, re
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
-from wh import Wormhole
+from wh import Wormhole, app_scene_sizes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
 MAXB = re.search(r'const int WH_MAXB = (\d+);', CORE).group(1)     # the shader's ball slots
+SPH, PIL, BOX = app_scene_sizes()
 N = 64
 
 FRAG = """#version 330
 #define WH_NO_BALLS
 uniform float wh_rho0; uniform float wh_h; uniform float wh_fillet;
-uniform vec4 wh_sph[6]; uniform vec4 wh_pil[4]; uniform vec4 wh_box[4];
+uniform vec4 wh_sph[""" + str(SPH) + """]; uniform vec4 wh_pil[""" + str(PIL) + """]; uniform vec4 wh_box[""" + str(BOX) + """];
 uniform vec4 wh_ball[""" + MAXB + """]; uniform vec4 wh_ballCol[""" + MAXB + """]; uniform int wh_nBall;
 uniform sampler2D wh_tab; uniform vec4 wh_tabLo; uniform vec4 wh_tabInv; uniform vec4 wh_tabReg;
 uniform sampler2D uIn;    // rows: (l, n.xyz) (off.xyz, 0) f0 f1 f2
