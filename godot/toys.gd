@@ -1,11 +1,11 @@
 class_name Toys
 extends RefCounted
-## The demo's balls and cubes: the physics is BallWorld's, this sets the
-## scene. At rest in front of the wormhole: five balls and two cubes, a third cube in the throat. A
-## moment after the start a cube and a ball are thrown from chest height; the ball rolls through
-## the throat into universe B. Then two balls are dropped together from the same height: one beside
-## the wormhole, one in the middle of the throat, where gravity is weaker (docs/gravity.md).
-## A puts it all back and does it again.
+## The demo's balls and cubes: the physics is BallWorld's, this sets the scene. At rest in front of
+## the wormhole: five balls and two cubes, a third cube in the throat. A moment after the start a
+## cube and a ball are thrown from chest height; the ball rolls through the throat into universe B.
+## Then two balls are dropped together from the same height: one beside the wormhole, one in the
+## middle of the throat, where gravity is weaker (docs/gravity.md). A puts it all back and does it
+## again.
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
@@ -88,7 +88,8 @@ func drop() -> void:
 	print("toys: two balls dropped")
 
 
-## The direction n at height H = r(0) n.z above the floor in the middle of the throat, at azimuth phi.
+## The direction n at height H = r(0) n.z above the floor in the middle of the throat, at azimuth
+## phi.
 func throat_point(phi: float, height: float) -> Vector3:
 	var z := height / space.r(0.0)
 	return Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)

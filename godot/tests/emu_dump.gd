@@ -134,7 +134,7 @@ func _hold_ball() -> void:
 
 func _proxies() -> Array:
 	var out := []
-	if main.tracer.toys > 0:
+	if main.tracer.toy_count > 0:
 		for s in main.tracer.proxy_spheres(m_head_l()):
 			out.append(_v4(s))
 	return out

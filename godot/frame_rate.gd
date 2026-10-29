@@ -1,8 +1,8 @@
 class_name FrameRate
 extends Node
 ## The refresh rate the headset really runs at and whether our frames keep up, measured from
-## OpenXR's frame timing (rate_meter.gd) rather than taken from what the runtime reports; choosing
-## a rate; the "refresh:" lines in the log. The menu shows it (menu.gd: its head and the line below).
+## OpenXR's frame timing (rate_meter.gd) rather than taken from what the runtime reports; choosing a
+## rate; the "refresh:" lines in the log. The menu shows it (menu.gd: its head and the line below).
 ##
 ## Choosing a rate. SteamVR on the Steam Frame accepts an app's own request
 ## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
@@ -47,7 +47,7 @@ const SETTING := "preferredRefreshRate"
 const DEVFREQ := "/sys/class/devfreq"                             # the kernel's clock-scaled devices
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
 
-var main: Node                  # main.gd: where the feet are and the head looks, for the log
+var main: Main                  # where the feet are and the head looks, for the log
 var target: Viewport            # the viewport the scene is rendered into
 var xr: OpenXRInterface         # null on the desktop
 var api: OpenXRAPIExtension     # the frame timing OpenXR predicts
@@ -120,7 +120,7 @@ func find_app_setting() -> void:
 
 
 func _process(delta: float) -> void:
-	var bench: Node = main.bench
+	var bench := main.bench
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
 		# predicted display time of the next frame minus this one's: the period the runtime paces us at

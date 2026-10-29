@@ -258,7 +258,7 @@ func _gravity(p: Menu) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_VIEWS[v]])
+		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_NAMES[v]])
 	# the demo's balls and cubes are there: the ray tracers with them
 	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
 			[0, "wormhole_balls.gdshader", true]]

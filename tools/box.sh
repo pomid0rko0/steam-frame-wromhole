@@ -1,9 +1,9 @@
 #!/bin/bash
 # Runs a command where the tests run: on the Steam Frame (SteamOS: no apt, a read-only root, no
 # lavapipe, no Monado) in an Ubuntu container (podman), set up once with all of tools/setup.sh. It
-# sees only this repository, at the same
-# path: no GPU, no display, no SteamVR, so a test can't reach the headset the owner is wearing, and
-# its renders run on the CPU cores Steam gives desktop apps (they inherit the editor's affinity).
+# sees only this repository, at the same path: no GPU, no display, no SteamVR, so a test can't reach
+# the headset the owner is wearing, and its renders run on the CPU cores Steam gives desktop apps
+# (they inherit the editor's affinity).
 # On the Frame's host Godot takes SteamVR as its OpenXR runtime unless XR_RUNTIME_JSON points
 # elsewhere, and gamescope's Vulkan layer puts its swapchains on the owner's screen even under
 # xvfb-run; without the layer Turnip finds no queue that presents to Xvfb, and there is no lavapipe.

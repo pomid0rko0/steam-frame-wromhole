@@ -3,8 +3,8 @@
 # in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
 # draws at the same place. Run it on every headset build's source (CLAUDE.md, the hard rule).
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images:
-#                                    default a new one under .wt/.out each run, printed at the end; JOBS=n renders
-#                                    at once)
+#                                    default a new one under .wt/.out each run, printed at the end;
+#                                    JOBS=n renders at once)
 # Exit status 0 only if every check passes.
 # Below 100% render scale the bilinear upscale shifts where tools/compare's one-colour threshold
 # falls: test such a scale with SCALING_3D_MODE_NEAREST.
@@ -20,8 +20,9 @@ failed=0
 import_scripts
 
 # The renders are independent Godot runs: they go in parallel, JOBS at a time (default: one per
-# core; on the Frame tools/box.sh sets it), each with its own X display and its own user data (Godot's shader cache), then the
-# comparisons run in order. A render that does not exit 0 within 10 minutes fails the suite.
+# core; on the Frame tools/box.sh sets it), each with its own X display and its own user data
+# (Godot's shader cache), then the comparisons run in order. A render that does not exit 0 within
+# 10 minutes fails the suite.
 JOBS=${JOBS:-$(nproc)}
 LOGS=$(mktemp -d)
 n=0

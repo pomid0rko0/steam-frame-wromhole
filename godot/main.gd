@@ -1,3 +1,4 @@
+class_name Main
 extends Node3D
 ## Real-time wormhole for VR (README.md, docs/). Every pixel is ray traced along a geodesic of
 ## the wormhole space in the shader (tracer.gd); this script builds the scene and tracks where the
@@ -21,10 +22,9 @@ extends Node3D
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
 ## the feet stay, and the sticks, A, the gravity view's button, the hands and the toys do nothing. A
-## new action goes into
-## openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare them exactly), in
-## the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a snap turn) call
-## hands.forget_motion, or the jump would be a throw.
+## new action goes into openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare
+## them exactly), in the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a
+## snap turn) call hands.forget_motion, or the jump would be a throw.
 ##
 ## The controllers. Valve's page «Steam Frame Input» lists the Frame's paths: left
 ## dpad_up/down/left/right, view, system, bumper; right a, b, x, y, menu, system, bumper; both

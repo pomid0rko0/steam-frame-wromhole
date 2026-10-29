@@ -1,11 +1,10 @@
 class_name Hands
 extends RefCounted
-## The hands: each a small ball at the controller's grip pose,
-## placed in the curved space as the shader places each eye: by the geodesic from the head along
-## the hand's offset in the room, with the room's axes carried along it. It pushes the toys; the
-## grip takes the nearest one within reach and carries it at its offset and turn in the hand's
-## axes; let go, it flies with the hand's velocity and spin. Buttons put a new ball or cube in the
-## hand (README.md, «Управление»).
+## The hands: each a small ball at the controller's grip pose, placed in the curved space as the
+## shader places each eye: by the geodesic from the head along the hand's offset in the room, with
+## the room's axes carried along it. It pushes the toys; the grip takes the nearest one within reach
+## and carries it at its offset and turn in the hand's axes; let go, it flies with the hand's
+## velocity and spin. Buttons put a new ball or cube in the hand (README.md, «Управление»).
 
 const RADIUS := 0.04             # m: the ball drawn at each hand's grip; it pushes the toys
 const REACH := 0.12              # m from the hand's centre to a toy's surface: the grip takes it
@@ -25,8 +24,8 @@ const NEW_CUBE_HALF := 0.15      # a new cube in the left hand
 var space: WormholeSpace
 var world: BallWorld
 var grips: Array[XRController3D] = []   # left, right at their grip pose; none on the desktop
-# per hand: where it is in the curved space (on, l, n, F: its axes, U: its velocity), the grip,
-# what it holds (held, off, rel), its recent places (hist, thist), ready (a toy within reach, or held)
+# per hand: where it is in the curved space (on, l, n, F: its axes, U: its velocity), the grip, what
+# it holds (held, off, rel), its recent places (hist, thist), ready (a toy within reach, or held)
 var state: Array[Dictionary] = [{}, {}]
 var clock := 0.0                # s: the recent places' times
 

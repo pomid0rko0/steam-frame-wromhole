@@ -1,7 +1,8 @@
 class_name Bench
 extends Node
 ## The speed check, the menu's last row ("замер скорости"), in two parts. The eyes are best kept
-## closed throughout: the world is turned and moved to the head, and some pictures are no proper ones.
+## closed throughout: the world is turned and moved to the head, and some pictures are no proper
+## ones.
 ##
 ## What a frame costs depends on the pose: how far from the throat one stands (l), where one looks
 ## (degrees from the throat along the floor, degrees up) and how the head is tilted (roll: it
@@ -36,10 +37,10 @@ extends Node
 ## The result, on the menu's line below and under its row, says whether 120 Hz held (and where it
 ## did worst), how this build's ray tracer compares with the first of the others, and what the
 ## foveation and the stencil save. Render scale 100% throughout, the tour with the foveation chosen
-## in the menu; afterwards the rate,
-## the scale, the shader, the foveation and where one stood come back. A build made for measuring
-## (tools/ab_shaders.sh --auto) runs it by itself once the headset has tracked the head for
-## AUTO_AFTER seconds: start it, put the headset on, close the eyes, send the log afterwards.
+## in the menu; afterwards the rate, the scale, the shader, the foveation and where one stood come
+## back. A build made for measuring (tools/ab_shaders.sh --auto) runs it by itself once the headset
+## has tracked the head for AUTO_AFTER seconds: start it, put the headset on, close the eyes, send
+## the log afterwards.
 
 const RateMeter := preload("res://rate_meter.gd")
 const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
@@ -75,7 +76,7 @@ const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, t
 	["this build, SteamVR low", 1, false], ["this build, SteamVR high", 3, false],
 	["this build, own wide", 4, false], ["this build, own narrow", 5, false]]
 
-var main: Node                  # main.gd
+var main: Main
 var menu: Menu                  # the result goes there; its render scale
 var warm := 0.3                 # s after each switch, not timed
 var time := 0.8                 # s timed per segment

@@ -23,6 +23,8 @@ MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
 [ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
 OUTS=$REPO/.wt/.out
 mkdir -p "$OUTS"
+# runs' folders a day old go: nothing else deletes them (a run takes less than an hour)
+find "$OUTS" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
 # A Godot run with -s knows the project's script classes (WormholeSpace...) only from an import:
 # import when there was none or a script changed since.
 import_scripts() {

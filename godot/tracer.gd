@@ -53,7 +53,7 @@ var plain_quad: MeshInstance3D
 var proxies: MultiMeshInstance3D   # spheres around the shell and this universe's toys (play space)
 var mark_all: MeshInstance3D       # the whole view marked instead
 var toy_mode := SPLIT
-var toys := 0                   # balls and cubes the shader has (set_objects)
+var toy_count := 0              # balls and cubes the shader has (set_objects)
 var toy_spheres := [PackedVector4Array(), PackedVector4Array()]   # per universe A, B: the toys' chart spheres
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var pixel_angle := 0.0          # the pixel angle set_head last saw: wh_pix goes again when it changes
@@ -135,11 +135,11 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	if pix != pixel_angle:
 		pixel_angle = pix
 		param("wh_pix", pix)
-	var split := toys > 0 and toy_mode == SPLIT and absf(l) > space.L
+	var split := toy_count > 0 and toy_mode == SPLIT and absf(l) > space.L
 	proxies.visible = split
 	if plain_quad:
 		plain_quad.visible = split
-	mark_all.visible = toys > 0 and not split and toy_mode != BARE
+	mark_all.visible = toy_count > 0 and not split and toy_mode != BARE
 	if not split:
 		return
 	var side := 1.0 if l > 0.0 else -1.0
@@ -166,7 +166,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 ## split with these).
 func proxy_spheres(l: float) -> PackedVector4Array:
 	var out := PackedVector4Array()
-	if toys == 0 or toy_mode != SPLIT or absf(l) <= space.L:
+	if toy_count == 0 or toy_mode != SPLIT or absf(l) <= space.L:
 		return out
 	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + PROXY_MARGIN) * PROXY_SLACK))
 	for s in toy_spheres[0 if l > 0.0 else 1]:
@@ -175,14 +175,13 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 
 
 ## Movable balls and cubes. Balls (BallWorld's): centres as points of R^4 (pos), colours with the
-## radius (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES:
-## the centre as a point of R^4 (cpos), four
-## orthonormal axes divided by the half size (axes: three body axes tangent to the space, then its
-## normal; four per cube), (rgb, half size) (ccol). The shader gets them as
-## wormhole_core.gdshaderinc's top says, sorted by where they are (region_order): the flat
+## radius (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES: the centre
+## as a point of R^4 (cpos), four orthonormal axes divided by the half size (axes: three body axes
+## tangent to the space, then its normal; four per cube), (rgb, half size) (ccol). The shader gets
+## them as wormhole_core.gdshaderinc's top says, sorted by where they are (region_order): the flat
 ## universes' rays and the shell's look only at their own, so a ball's index in the shader is not
-## its index in the caller's list. The shader is chosen here: with no
-## toys it is the one without their code.
+## its index in the caller's list. The shader is chosen here: with no toys it is the one without
+## their code.
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:
 	var n := pos.size()
@@ -226,9 +225,9 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		cc.append(Vector4.ZERO)
 	while ax.size() < 5 * MAX_CUBES:
 		ax.append(Vector4.ZERO)
-	var had := toys > 0
-	toys = n + nc
-	if (toys > 0) != had:
+	var had := toy_count > 0
+	toy_count = n + nc
+	if (toy_count > 0) != had:
 		_pick_shader()
 	material.set_shader_parameter("wh_ball", p)
 	material.set_shader_parameter("wh_ballCol", c)
@@ -321,7 +320,7 @@ func set_gravity_view(view: int) -> void:
 ## The ray tracer for what is shown. With toys, the plain one of the same view draws where none can
 ## be seen.
 func _pick_shader() -> void:
-	if toys > 0:
+	if toy_count > 0:
 		material.shader = SHADERS_TOYS[gravity_view]
 		plain_material.shader = SHADERS[gravity_view]
 		if plain_quad == null:
@@ -334,11 +333,12 @@ func _pick_shader() -> void:
 
 ## Whether the shader runs without movable objects (the speed check compares like with like).
 func plain() -> bool:
-	return toys == 0
+	return toy_count == 0
 
 
 ## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the
-## cubes' edge lines): the headset's vertical field of view taken as 104 degrees (not asked of the runtime).
+## cubes' edge lines): the headset's vertical field of view taken as 104 degrees (not asked of the
+## runtime).
 func _pixel_angle() -> float:
 	if xr:
 		return 2.0 * tan(0.5 * deg_to_rad(104.0)) / maxf(xr.get_render_target_size().y * xr_view.scaling_3d_scale, 1.0)

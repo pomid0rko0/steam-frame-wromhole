@@ -3,9 +3,9 @@ extends Node3D
 ## The menu, drawn by Godot itself, and the line under it.
 ##
 ## The menu is hidden until its button opens it and is worked with buttons (handle_input; which:
-## README.md, «Управление»). It opens 1.1 m in front of where the head looks, a little below the eyes, and
-## follows: as the head walks, quickly; as it turns, only once it has turned well away, then
-## smoothly. So it is there at the wormhole and inside it, without being glued to the view.
+## README.md, «Управление»). It opens 1.1 m in front of where the head looks, a little below the
+## eyes, and follows: as the head walks, quickly; as it turns, only once it has turned well away,
+## then smoothly. So it is there at the wormhole and inside it, without being glued to the view.
 ##
 ## Its head: the refresh rate the headset really runs at and whether frames keep up, the frames of
 ## the refreshes in the last second and the GPU time against the time one frame may take
@@ -44,7 +44,7 @@ const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
-const GRAVITY_VIEWS := ["выкл", "пол", "стрелки"]   # Tracer.gravity_view 0, 1, 2
+const GRAVITY_NAMES := ["выкл", "пол", "стрелки"]   # Tracer.gravity_view 0, 1, 2
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
@@ -82,7 +82,7 @@ const COLOR_OK := Color(0.05, 0.33, 0.12, 0.92)
 const COLOR_BAD := Color(0.45, 0.06, 0.05, 0.92)
 const COLOR_WAIT := Color(0.05, 0.06, 0.09, 0.9)
 
-var main: Node                  # main.gd: the settings the rows change
+var main: Main                  # the settings the rows change
 var rate: FrameRate
 var target: Viewport            # the viewport the scene is rendered into (its render scale)
 var xr: OpenXRInterface         # null on the desktop
@@ -416,7 +416,7 @@ func _count(k: String) -> int:
 		"rate": return rate_options.size()
 		"scale": return SCALES.size()
 		"fov": return FOV_CHOICES.size()
-		"grav": return GRAVITY_VIEWS.size()
+		"grav": return GRAVITY_NAMES.size()
 		"bench": return 1
 	return 2
 
@@ -479,7 +479,7 @@ func _value_text(k: String, i: int) -> String:
 		"fov": return FOVEATIONS[FOV_CHOICES[i]]
 		"order": return ORDERS[i]
 		"gaze": return OFF_ON[i]
-		"grav": return GRAVITY_VIEWS[i]
+		"grav": return GRAVITY_NAMES[i]
 		"turn": return TURNS[i] if i == 0 else TURNS[i] % roundi(rad_to_deg(main.SNAP_ANGLE))
 		"strip": return ON_OFF[i]
 		"bench":

@@ -1,13 +1,14 @@
 #!/bin/bash
 # The Godot tests, godot/tests/<name>_test.gd, each with the flags its header gives (its line
 # "##   godot <flags> -s res://tests/<name>_test.gd"), JOBS at a time (default: one per core; on the
-# Frame tools/box.sh sets it), each
-# with its own X display and user data; then a line per test, with what failed.
+# Frame tools/box.sh sets it), each with its own X display and user data; then a line per test,
+# with what failed.
 #   tools/test.sh                  all of them
 #   tools/test.sh grab walking_xr  those named
 # Exit status 0 only if each one exits 0 with no script or shader error. Whole logs in
-# $OUT/<name>.log (OUT default: a new directory under .wt/.out each run, printed at the end). The stereo and
-# OpenXR tests are tools/test_stereo.sh and tools/test_openxr.sh.
+# $OUT/<name>.log (OUT default: a new directory under .wt/.out each run, printed at the end; env.sh
+# deletes it a day later). The stereo and OpenXR tests are tools/test_stereo.sh and
+# tools/test_openxr.sh.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
