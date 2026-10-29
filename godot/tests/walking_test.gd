@@ -69,7 +69,7 @@ func _check_tilt() -> void:
 		var up_p: Vector4 = cos(pitch) * f[1] - sin(pitch) * flat
 		var want_right: Vector4 = cos(roll) * flat_r + sin(roll) * up_p
 		worst = maxf(worst, maxf((look - want_look).length(), (right - want_right).length()))
-	U.check("the speed check's tilt turns about the head's own axes", worst < 1e-6, "off by %.2e" % worst)
+	U.check("the speed check's tilt turns about the head's own axes", worst < 1e-6, "off by %.9f" % worst)
 
 
 func _process(_delta: float) -> bool:

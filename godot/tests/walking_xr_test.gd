@@ -237,4 +237,4 @@ func _check_feet(name: String, x: float) -> void:
 
 
 func _keys() -> Array:
-	return main.menu.rows.map(func(r: Dictionary) -> String: return r.key)
+	return main.menu.rows.map(func(r: Menu.Row) -> String: return r.key)

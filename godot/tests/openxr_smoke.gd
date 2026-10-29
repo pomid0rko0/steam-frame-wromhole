@@ -269,20 +269,20 @@ func _gravity(p: Menu) -> void:
 		print("  ", seen)
 
 
-func _row(p: Menu, key: String) -> Dictionary:
-	for r: Dictionary in p.rows:
+func _row(p: Menu, key: String) -> Menu.Row:
+	for r in p.rows:
 		if r.key == key:
 			return r
-	return {}
+	return null
 
 
 ## The menu row's value as shown, and its colour.
 func _value(p: Menu, key: String) -> String:
-	return _row(p, key).value.text
+	return _row(p, key).value_label.text
 
 
 func _color(p: Menu, key: String) -> Color:
-	return _row(p, key).value.modulate
+	return _row(p, key).value_label.modulate
 
 
 ## A stand-in for SteamVR: its settings file with this app at 90 Hz, and a vrcmd that keeps the

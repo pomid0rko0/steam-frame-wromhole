@@ -6,13 +6,10 @@ extends Node3D
 ## head loosely (_follow): there at the wormhole and inside it, without being glued to the view.
 ## Its head is frame_rate.gd's lines on a plate in the colour of its verdict.
 ##
-## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text, and where it
-## is left out _layout; one kept for the next start, SETTINGS: loaded in _ready, written by _save. A value
-## stepped to takes effect only after SETTLE (or with A, another row, closing): stepping through
-## the rates must not switch the headset at every step, nor the foveations rebuild the buffers.
-##
-## The render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly). It and
-## foveation don't go together (foveation.gd says why): one is chosen, the other goes back.
+## A setting is a row: a subclass of Row (the end of this file) in _make_rows; one kept for the
+## next start also in SETTINGS: loaded in _ready, written by _save. A value stepped to takes effect
+## only after SETTLE (or with A, another row, closing): stepping through the rates must not switch
+## the headset at every step, nor the foveations rebuild the buffers.
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 # names of Foveation.set_level's levels
@@ -28,21 +25,6 @@ const GRAVITY_NAMES := ["выкл", "пол", "пол и стрелки"]   # Tr
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
-# the rows, top to bottom (those that make no sense here are left out: _layout)
-const ROWS := [
-	"rate",         # the refresh rate (frame_rate.gd)
-	"scale",        # the 3D render scale
-	"fov",          # foveated rendering (foveation.gd)
-	"order",        # which way our maps coarsen first: the width or the height, to compare by eye
-	"gaze",         # the dot where SteamVR's eye tracking says the eyes look
-	"grav",         # how gravity is shown (docs/gravity.md)
-	"turn",         # smooth or snap turns
-	"strip",        # the line below
-	"bench",        # the speed check (bench.gd; its result under its row)
-]
-const NAMES := {"rate": "частота", "scale": "разрешение", "fov": "фовеация", "order": "плавная грубее",
-	"gaze": "точка взгляда", "grav": "гравитация", "turn": "поворот", "strip": "строка частоты",
-	"bench": "замер скорости"}
 const HINT := "крестовина или левый стик: выбрать, менять\nA — нажать · B — закрыть"
 const SETTLE := 0.5             # s a value stepped to waits before it takes effect
 const REPEAT_AFTER := 0.4       # s a direction is held before it repeats
@@ -90,7 +72,7 @@ var strip_on := true            # the line below is shown while the menu is clos
 var cursor := 0                 # the row picked
 var pending := -1               # the picked row's value stepped to, not yet in effect; -1 none
 var pending_t := 0.0
-var rows: Array = []            # {key, name: Label3D, value: Label3D, y}
+var rows: Array[Row] = []       # those shown, top to bottom
 var rate_options: Array = []
 var bench_text := ""            # the speed check's line: how it goes, what came out
 var bench_unseen := false       # the line below shows it until the menu is opened
@@ -342,33 +324,28 @@ func move(step: int) -> void:
 func change(step: int) -> void:
 	if not open or rows.is_empty():
 		return
-	var k: String = rows[cursor].key
-	if not _enabled(k):
+	var r := rows[cursor]
+	if not r.enabled():
 		return
-	var from := pending if pending >= 0 else _current(k)
-	var to := clampi(from + step, 0, _count(k) - 1)
+	var from := pending if pending >= 0 else r.current()
+	var to := clampi(from + step, 0, r.count() - 1)
 	if to == from:
 		return
-	pending = -1 if to == _current(k) else to
+	pending = -1 if to == r.current() else to
 	pending_t = 0.0
 	refresh()
 
 
-## A: the picked row's action (the speed check), or the value stepped to in effect now, or else
-## the next value at once (round at the end: a switch goes on and off; not the rate, whose next
-## one is a switch of the display nobody asked for).
+## A: the picked row's action (Row.act), or the value stepped to in effect now, or else the next
+## value at once (Row.steps_on_a; round at the end: a switch goes on and off).
 func press() -> void:
 	if not open or rows.is_empty():
 		return
-	var k: String = rows[cursor].key
-	if not _enabled(k):
+	var r := rows[cursor]
+	if not r.enabled() or r.act():
 		return
-	if k == "bench":
-		main.bench.start()
-		set_open(false)         # eyes closed now: the line below says how it goes
-		return
-	if pending < 0 and _count(k) > 1 and k != "rate":
-		pending = posmod(_current(k) + 1, _count(k))
+	if pending < 0 and r.steps_on_a():
+		pending = posmod(r.current() + 1, r.count())
 	_apply_pending()
 
 
@@ -394,131 +371,31 @@ func picked() -> String:
 func _apply_pending() -> void:
 	if pending < 0 or rows.is_empty():
 		return
-	var k: String = rows[cursor].key
+	var r := rows[cursor]
 	var i := pending
 	pending = -1
-	if _enabled(k):
-		_apply(k, i)
+	if r.enabled():
+		r.apply(i)
 	refresh()
-
-
-## How many values a row has (the speed check's: one, its action).
-func _count(k: String) -> int:
-	match k:
-		"rate": return rate_options.size()
-		"scale": return SCALES.size()
-		"fov": return FOV_CHOICES.size()
-		"grav": return Tracer.GRAVITY_VIEWS.size()
-		"bench": return 1
-	return 2
-
-
-## The value in effect (the rate: the one chosen, in effect or not yet).
-func _current(k: String) -> int:
-	match k:
-		"rate":
-			var chosen := rate.chosen()
-			for i in rate_options.size():
-				if absf(rate_options[i] - chosen) < 0.5:
-					return i
-			return -1
-		"scale": return maxi(SCALES.find(render_scale), 0)
-		"fov":
-			var i := FOV_CHOICES.size() - 1
-			while i > 0 and FOV_CHOICES[i] > foveation:
-				i -= 1
-			return i
-		"order": return main.foveation.order
-		"gaze": return 1 if main.gaze_dot.visible else 0
-		"grav": return main.tracer.gravity_view
-		"turn": return 0 if main.smooth_turn else 1
-		"strip": return 0 if strip_on else 1
-	return 0
-
-
-func _apply(k: String, i: int) -> void:
-	match k:
-		"rate": rate.choose(rate_options[i])
-		"scale": choose_scale(SCALES[i])
-		"fov": choose_foveation(FOV_CHOICES[i])
-		"order": choose_order(i)
-		"gaze": show_gaze(i == 1)
-		"grav": main.set_gravity_view(i)
-		"turn": main.set_smooth_turn(i == 0)
-		"strip": set_strip(i == 0)
-
-
-## Whether the row can be changed now: the headset's rows need OpenXR, and while the speed check
-## holds the viewer (main.hold) the settings it times or reads stay as they are.
-func _enabled(k: String) -> bool:
-	var held: bool = main.hold
-	match k:
-		"rate": return xr != null and rate_options.size() > 1 and not held
-		"scale", "fov", "order": return xr != null and not held
-		"grav": return not held
-		"bench": return not main.bench.running and not held
-	return true
-
-
-func _value_text(k: String, i: int) -> String:
-	if i < 0:
-		return "%.0f Гц" % rate.rate if k == "rate" and rate.rate > 0.0 else "—"
-	match k:
-		"rate": return "%.0f Гц" % rate_options[i]
-		"scale":
-			# and the pixels of each eye's picture at that scale
-			var px := Vector2i((xr.get_render_target_size() * SCALES[i]).round()) if xr else Vector2i.ZERO
-			var pct := roundi(SCALES[i] * 100.0)
-			return "%d%% (%d×%d)" % [pct, px.x, px.y] if px.x > 0 else "%d%%" % pct
-		"fov": return FOVEATIONS[FOV_CHOICES[i]]
-		"order": return ORDERS[i]
-		"gaze": return OFF_ON[i]
-		"grav": return GRAVITY_NAMES[i]
-		"turn": return TURNS[i] if i == 0 else TURNS[i] % roundi(rad_to_deg(main.SNAP_ANGLE))
-		"strip": return ON_OFF[i]
-		"bench":
-			if main.bench.running:
-				return "идёт"
-			return "сравнить с другими" if main.bench.has_ab() else "замерить"
-	return ""
-
-
-func _name_text(k: String) -> String:
-	if k == "fov" and _foveation_source() != "":
-		return NAMES[k] + " · " + _foveation_source()
-	return NAMES[k]
-
-
-## A value chosen but not (yet) in effect: the rate the display has not followed.
-func _waiting(k: String) -> bool:
-	if k == "rate":
-		var i := _current(k)
-		return i >= 0 and rate.rate > 0.0 and absf(rate_options[i] - rate.rate) > 0.5
-	return false
 
 
 ## Built again when the rate choices change.
 func _layout() -> void:
 	for r in rows:
-		r.name.queue_free()
-		r.value.queue_free()
+		r.name_label.queue_free()
+		r.value_label.queue_free()
 	rows.clear()
 	rate_options = rate.options()
-	var keys := []
-	for k: String in ROWS:
-		var here := true
-		match k:
-			"rate", "scale", "fov", "order": here = xr != null
-			"gaze": here = main.gaze_dot != null
-		if here:
-			keys.append(k)
+	for r in _make_rows():
+		if r.shown():
+			rows.append(r)
 	# the widest name and value make the columns
 	var name_w := 0.0
 	var val_w := 0.0
-	for k: String in keys:
-		name_w = maxf(name_w, _width(_name_text(k), FONT_ROW))
-		for i in _count(k):
-			val_w = maxf(val_w, _width(_value_text(k, i), FONT_ROW))
+	for r in rows:
+		name_w = maxf(name_w, _width(r.name_text(), FONT_ROW))
+		for i in r.count():
+			val_w = maxf(val_w, _width(r.text(i), FONT_ROW))
 	val_w = maxf(val_w, _width("100% (8888×8888)", FONT_ROW) if xr else 0.0)
 	var arrow_w := ARROW
 	menu_w = 2.0 * PAD + name_w + 2.0 * GAP + 2.0 * (arrow_w + GAP) + val_w
@@ -529,10 +406,9 @@ func _layout() -> void:
 	value_x = 0.5 * menu_w - PAD - arrow_w - GAP - value_half
 	arrows[0].position.x = value_x - value_half - GAP - 0.5 * arrow_w
 	arrows[1].position.x = value_x + value_half + GAP + 0.5 * arrow_w
-	for k: String in keys:
-		rows.append({"key": k, "y": 0.0,
-				"name": _text(menu, _name_text(k), FONT_ROW, HORIZONTAL_ALIGNMENT_LEFT, VERTICAL_ALIGNMENT_CENTER),
-				"value": _text(menu, "", FONT_ROW, HORIZONTAL_ALIGNMENT_CENTER, VERTICAL_ALIGNMENT_CENTER)})
+	for r in rows:
+		r.name_label = _text(menu, r.name_text(), FONT_ROW, HORIZONTAL_ALIGNMENT_LEFT, VERTICAL_ALIGNMENT_CENTER)
+		r.value_label = _text(menu, "", FONT_ROW, HORIZONTAL_ALIGNMENT_CENTER, VERTICAL_ALIGNMENT_CENTER)
 	cursor = clampi(cursor, 0, maxi(rows.size() - 1, 0))
 	pending = -1
 	bench_label.width = (menu_w - 2.0 * PAD) / PIXEL
@@ -561,8 +437,8 @@ func _place() -> void:
 	var y := top - head_h - GAP
 	for r in rows:
 		r.y = y - 0.5 * ROW_H
-		r.name.position = Vector3(name_x, r.y, 0.0)
-		r.value.position = Vector3(value_x, r.y, 0.0)
+		r.name_label.position = Vector3(name_x, r.y, 0.0)
+		r.value_label.position = Vector3(value_x, r.y, 0.0)
 		y -= ROW_H
 	bench_label.position = Vector3(name_x, y - 0.5 * GAP, 0.0)
 	y -= bench_h
@@ -575,22 +451,20 @@ func refresh() -> void:
 	if rows.is_empty():
 		return
 	for i in rows.size():
-		var r: Dictionary = rows[i]
-		var k: String = r.key
+		var r := rows[i]
 		var here := i == cursor and pending >= 0
-		r.value.text = _value_text(k, pending if here else _current(k))
-		r.value.modulate = COLOR_OFF if not _enabled(k) else (COLOR_PENDING if here or _waiting(k) else COLOR_TEXT)
-		r.name.text = _name_text(k)
-		r.name.modulate = COLOR_TEXT if _enabled(k) else COLOR_OFF
-	var r: Dictionary = rows[cursor]
-	var k: String = r.key
+		r.value_label.text = r.text(pending if here else r.current())
+		r.value_label.modulate = COLOR_OFF if not r.enabled() else (COLOR_PENDING if here or r.waiting() else COLOR_TEXT)
+		r.name_label.text = r.name_text()
+		r.name_label.modulate = COLOR_TEXT if r.enabled() else COLOR_OFF
+	var r := rows[cursor]
 	cursor_quad.position = Vector3(0.0, r.y, -0.001)
-	var at := pending if pending >= 0 else _current(k)
-	var movable := _enabled(k) and _count(k) > 1
+	var at := pending if pending >= 0 else r.current()
+	var movable := r.enabled() and r.count() > 1
 	for a: MeshInstance3D in arrows:
 		a.position.y = r.y
 	arrows[0].visible = movable and at > 0
-	arrows[1].visible = movable and at < _count(k) - 1
+	arrows[1].visible = movable and at < r.count() - 1
 
 
 func _show() -> void:
@@ -703,7 +577,7 @@ func _set_foveation(level: int) -> void:
 ## Where SteamVR's density map is: where the eyes look, the middle, or none (Godot's own then).
 ## Where the eyes look means Godot asked for that (foveation.gd says when): OpenXRInterface doesn't
 ## tell whether the runtime gives it.
-func _foveation_source() -> String:
+func foveation_source() -> String:
 	if xr == null:
 		return ""
 	if not xr.is_foveation_supported():
@@ -778,3 +652,249 @@ func _update_strip() -> void:
 			strip_label.width, FONT_STRIP) * PIXEL
 	(strip_plate.mesh as QuadMesh).size = size + Vector2(2.0 * GAP, GAP)
 	strip_plate.position = Vector3(0.0, 0.0, -0.002)
+
+
+# ---------------------------------------------------------------- the rows
+
+## Every row, top to bottom; _layout leaves out those not shown here.
+func _make_rows() -> Array[Row]:
+	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
+			FovRow.new(self, "fov", "фовеация"), OrderRow.new(self, "order", "плавная грубее"),
+			GazeRow.new(self, "gaze", "точка взгляда"), GravRow.new(self, "grav", "гравитация"),
+			TurnRow.new(self, "turn", "поворот"), StripRow.new(self, "strip", "строка частоты"),
+			BenchRow.new(self, "bench", "замер скорости")]
+
+
+## A setting: its values 0 .. count() - 1, current() the one in effect.
+class Row:
+	var menu: Menu
+	var key: String                 # its name for the tests and the log
+	var title: String               # and in the menu
+	var name_label: Label3D
+	var value_label: Label3D
+	var y := 0.0                    # m: its line in the menu
+
+	func _init(p_menu: Menu, p_key: String, p_title: String) -> void:
+		menu = p_menu
+		key = p_key
+		title = p_title
+
+	## It makes sense here (else it is left out).
+	func shown() -> bool:
+		return true
+
+	func count() -> int:
+		return 2
+
+	## -1: none of them.
+	func current() -> int:
+		return 0
+
+	func apply(_i: int) -> void:
+		pass
+
+	func text(_i: int) -> String:
+		return ""
+
+	func name_text() -> String:
+		return title
+
+	## It can be changed now. While the speed check holds the viewer (main.hold), what it times or
+	## reads stays as it is.
+	func enabled() -> bool:
+		return true
+
+	## Chosen, not (yet) in effect.
+	func waiting() -> bool:
+		return false
+
+	## A with nothing stepped to sets the next value.
+	func steps_on_a() -> bool:
+		return count() > 1
+
+	## A's own action instead of a value: true if there is one (done).
+	func act() -> bool:
+		return false
+
+
+## The refresh rate (frame_rate.gd).
+class RateRow extends Row:
+	func shown() -> bool:
+		return menu.xr != null
+
+	func count() -> int:
+		return menu.rate_options.size()
+
+	## The one chosen, in effect or not yet.
+	func current() -> int:
+		var chosen := menu.rate.chosen()
+		for i in menu.rate_options.size():
+			if absf(menu.rate_options[i] - chosen) < 0.5:
+				return i
+		return -1
+
+	func apply(i: int) -> void:
+		menu.rate.choose(menu.rate_options[i])
+
+	func text(i: int) -> String:
+		if i < 0:
+			return "%.0f Гц" % menu.rate.rate if menu.rate.rate > 0.0 else "—"
+		return "%.0f Гц" % menu.rate_options[i]
+
+	func enabled() -> bool:
+		return menu.rate_options.size() > 1 and not menu.main.hold
+
+	## The display has not followed the rate chosen.
+	func waiting() -> bool:
+		var i := current()
+		return i >= 0 and menu.rate.rate > 0.0 and absf(menu.rate_options[i] - menu.rate.rate) > 0.5
+
+	## The next rate on A would be a switch of the display nobody asked for.
+	func steps_on_a() -> bool:
+		return false
+
+
+## The 3D render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly). It
+## and foveation don't go together (foveation.gd says why): one is chosen, the other goes back.
+class ScaleRow extends Row:
+	func shown() -> bool:
+		return menu.xr != null
+
+	func count() -> int:
+		return SCALES.size()
+
+	func current() -> int:
+		return maxi(SCALES.find(menu.render_scale), 0)
+
+	func apply(i: int) -> void:
+		menu.choose_scale(SCALES[i])
+
+	## With the pixels of each eye's picture at that scale.
+	func text(i: int) -> String:
+		var px := Vector2i((menu.xr.get_render_target_size() * SCALES[i]).round())
+		var pct := roundi(SCALES[i] * 100.0)
+		return "%d%% (%d×%d)" % [pct, px.x, px.y] if px.x > 0 else "%d%%" % pct
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+
+## Foveated rendering (foveation.gd).
+class FovRow extends Row:
+	func shown() -> bool:
+		return menu.xr != null
+
+	func count() -> int:
+		return FOV_CHOICES.size()
+
+	func current() -> int:
+		var i := FOV_CHOICES.size() - 1
+		while i > 0 and FOV_CHOICES[i] > menu.foveation:
+			i -= 1
+		return i
+
+	func apply(i: int) -> void:
+		menu.choose_foveation(FOV_CHOICES[i])
+
+	func text(i: int) -> String:
+		return FOVEATIONS[FOV_CHOICES[i]]
+
+	func name_text() -> String:
+		return title + " · " + menu.foveation_source()
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+
+## Which way our own maps coarsen first: the width or the height, to compare by eye.
+class OrderRow extends Row:
+	func shown() -> bool:
+		return menu.xr != null
+
+	func current() -> int:
+		return menu.main.foveation.order
+
+	func apply(i: int) -> void:
+		menu.choose_order(i)
+
+	func text(i: int) -> String:
+		return ORDERS[i]
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+
+## The dot where SteamVR's eye tracking says the eyes look.
+class GazeRow extends Row:
+	func shown() -> bool:
+		return menu.main.gaze_dot != null
+
+	func current() -> int:
+		return 1 if menu.main.gaze_dot.visible else 0
+
+	func apply(i: int) -> void:
+		menu.show_gaze(i == 1)
+
+	func text(i: int) -> String:
+		return OFF_ON[i]
+
+
+## How gravity is shown (docs/gravity.md).
+class GravRow extends Row:
+	func count() -> int:
+		return Tracer.GRAVITY_VIEWS.size()
+
+	func current() -> int:
+		return menu.main.tracer.gravity_view
+
+	func apply(i: int) -> void:
+		menu.main.set_gravity_view(i)
+
+	func text(i: int) -> String:
+		return GRAVITY_NAMES[i]
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+
+## Smooth or snap turns.
+class TurnRow extends Row:
+	func current() -> int:
+		return 0 if menu.main.smooth_turn else 1
+
+	func apply(i: int) -> void:
+		menu.main.set_smooth_turn(i == 0)
+
+	func text(i: int) -> String:
+		return TURNS[i] if i == 0 else TURNS[i] % roundi(rad_to_deg(Main.SNAP_ANGLE))
+
+
+## The line below the menu.
+class StripRow extends Row:
+	func current() -> int:
+		return 0 if menu.strip_on else 1
+
+	func apply(i: int) -> void:
+		menu.set_strip(i == 0)
+
+	func text(i: int) -> String:
+		return ON_OFF[i]
+
+
+## The speed check (bench.gd); its result goes under this row.
+class BenchRow extends Row:
+	func count() -> int:
+		return 1
+
+	func text(_i: int) -> String:
+		if menu.main.bench.running:
+			return "идёт"
+		return "сравнить с другими" if menu.main.bench.has_ab() else "замерить"
+
+	func enabled() -> bool:
+		return not menu.main.bench.running and not menu.main.hold
+
+	func act() -> bool:
+		menu.main.bench.start()
+		menu.set_open(false)        # eyes closed now: the line below says how it goes
+		return true
