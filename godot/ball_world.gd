@@ -18,6 +18,10 @@ extends RefCounted
 
 const GRAVITY := 9.81
 const DT := 1.0 / 180.0
+# the most substeps one step takes. A longer frame's rest is dropped: the toys fall behind for once
+# instead of a long frame's many substeps making the next frame late as well (72 Hz at SteamVR's
+# half rate is 5 substeps a frame)
+const MAX_SUBSTEPS := 6
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
 # Rolling friction: a small part that follows the weight, and a part that follows the speed; air
@@ -65,6 +69,8 @@ class Body:
 	# kinematic: it pushes the others and is not pushed back.
 	var held := &""
 	var ghost := &""                 # the hand that let it go, until they are apart (_ghosted)
+	# s at rest (a ball held by friction, a cube hardly moving): asleep past SLEEP_TIME (asleep)
+	var still := 0.0
 
 
 class Ball extends Body:
@@ -75,7 +81,6 @@ class Cube extends Body:
 	var F: Array = []                # 3 body axes (tangent vectors)
 	var w := Vector3.ZERO            # angular velocity, body coordinates (rad/s)
 	var half := 0.0                  # half the edge length
-	var still := 0.0                 # s it has hardly moved: asleep past SLEEP_TIME
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary) -> void:
@@ -141,14 +146,26 @@ func distance_to(b: Body, P: Vector4) -> float:
 
 ## Advance by delta seconds with fixed substeps. hands: the hands' balls (Hands.balls). A held
 ## ball or cube is kinematic like them: the hand places it and sets its U (and w) before each step.
+## A ball the floor's friction has held for SLEEP_TIME, or a cube that has hardly moved for as
+## long, is asleep (asleep): not moved until something wakes it.
 func step(delta: float, hands: Array[Ball]) -> void:
-	_acc = minf(_acc + delta, 0.1)
-	while _acc >= DT:
-		_acc -= DT
+	# counted with a little room: subtracting DT while _acc >= DT would in floating point now and
+	# then leave a whole DT to the next frame
+	_acc += delta
+	var count := floori(_acc / DT + 1e-6)
+	if count > MAX_SUBSTEPS:
+		count = MAX_SUBSTEPS
+		_acc = 0.0
+	else:
+		_acc = maxf(_acc - count * DT, 0.0)
+	for _sub in count:
 		for b in balls:
 			if b.held != &"":
+				b.still = 0.0                 # let go, it falls at once
 				continue
-			var before: Array = [b.l, b.n, b.U]
+			if asleep(b):
+				continue
+			var before: Array = [b.l, b.n, b.U, b.still]
 			var s := space.dynamics_step(b.l, b.n, b.U, DT, GRAVITY)
 			b.l = s[0]
 			b.n = s[1]
@@ -160,7 +177,8 @@ func step(delta: float, hands: Array[Ball]) -> void:
 				_integrate_cube(c)
 		for i in balls.size():
 			for j in range(i + 1, balls.size()):
-				_pair(balls[i], balls[j], RESTITUTION_BALL)
+				if not (asleep(balls[i]) and asleep(balls[j])):
+					_pair(balls[i], balls[j], RESTITUTION_BALL)
 		for hand in hands:
 			for b in balls:
 				if b.held == &"":
@@ -169,15 +187,25 @@ func step(delta: float, hands: Array[Ball]) -> void:
 			_solve_cubes(hands)
 
 
+## Asleep: not held and at rest past SLEEP_TIME, so step does not move it. A ball's count is kept
+## by its floor contact (_floor) and ended by a push (_move) or by a velocity it is given (another
+## body's impulse, a hand's throw; a held toy's count is 0). A cube's is kept by the contacts'
+## solver, which gives a sleeping cube no impulse, and ended by a touching body that moves (_wake).
+static func asleep(b: Body) -> bool:
+	return b.held == &"" and b.still > SLEEP_TIME and b.U == Vector4.ZERO
+
+
 ## A step of air drag, -k |U| U (k: drag / mass per metre), integrated implicitly: stable at any speed.
 func _air(U: Vector4, k: float) -> Vector4:
 	return U / (1.0 + k * U.length() * DT) if air else U
 
 
-## Bounce, rolling friction and the floor's push. before: [l, n, U] before this step's motion.
+## Bounce, rolling friction and the floor's push; a ball the friction holds counts toward its sleep.
+## before: [l, n, U, still] before this step's motion.
 func _floor(b: Ball, before: Array) -> void:
 	var H := space.height(b.l, b.n)
 	var rad: float = b.radius
+	b.still = 0.0
 	if H >= rad:
 		return
 	var g := space.height_grad(b.l, b.n)
@@ -201,6 +229,7 @@ func _floor(b: Ball, before: Array) -> void:
 			b.l = before[0]
 			b.n = before[1]
 			b.U = Vector4.ZERO
+			b.still = before[3] + DT
 			return
 		U -= Ut * (minf(stop, speed) / speed)
 	b.U = U
@@ -320,9 +349,12 @@ func _ghosted(b: Body, hand: Ball) -> bool:
 	return false
 
 
+## A push of b along dir by dist; a ball pushed wakes (a cube's sleep is the contacts' solver's).
 func _move(b: Body, dir: Vector4, dist: float) -> void:
 	if dist <= 0.0 or dir.length() < 1e-9:
 		return
+	if b is Ball:
+		b.still = 0.0
 	var c := b as Cube
 	var carried: Array = [b.U]
 	if c:
@@ -439,8 +471,8 @@ class Contact:
 				bc.w += (j * iib) * arm_b[i]
 
 
-## Inverse mass and inverse moment of inertia; 0 for the floor, statics, hands, held and
-## sleeping things.
+## Inverse mass and inverse moment of inertia; 0 for the floor, statics, hands, held things and
+## sleeping cubes (a sleeping ball takes an impulse, which wakes it).
 func _inverse_mass(b: Body) -> Vector2:
 	if b == null or b.held != &"":
 		return Vector2.ZERO
@@ -514,13 +546,15 @@ func _solve_cubes(hands: Array[Ball]) -> void:
 			_floor_contacts(c, "f%d" % i, contacts)
 			_static_contacts(c, "s%d" % i, contacts)
 		for j in balls.size():
-			if free or balls[j].held == &"":
+			if (free or balls[j].held == &"") and not (asleep(c) and asleep(balls[j])):
 				_ball_contacts(c, boxes[i], balls[j], RESTITUTION_CUBE, "b%d_%d" % [i, j], contacts)
 		if free:
 			for j in hands.size():
 				if not _ghosted(c, hands[j]):
 					_ball_contacts(c, boxes[i], hands[j], RESTITUTION_CUBE, "h%d_%d" % [i, j], contacts)
 		for j in range(i + 1, cubes.size()):
+			if asleep(c) and asleep(cubes[j]):
+				continue
 			if (boxes[i][0] - boxes[j][0]).length() < 2.0 * (c.half + cubes[j].half):
 				_points_in_box(c, boxes[i], cubes[j], boxes[j], "c%d_%d" % [i, j], contacts)
 				_points_in_box(cubes[j], boxes[j], c, boxes[i], "c%d_%d" % [i, j], contacts)
