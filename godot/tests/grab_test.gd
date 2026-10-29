@@ -34,7 +34,7 @@ const SIZE := 160                    # each eye's picture
 const FRUSTUM := U.FRUSTUM_0         # util.gd's headset, case 0
 const IPD := U.IPD
 const HEAD := U.HEAD_0
-var main: Node3D
+var main: Main
 var spawned: Array                   # [balls, cubes] the demo's spawn makes
 var hmd
 var left: XRControllerTracker
@@ -45,7 +45,7 @@ func _initialize() -> void:
 	hmd = U.headset(0, 0.0, Vector2i(SIZE, SIZE))
 	left = U.controller(&"left_hand")
 	right = U.controller(&"right_hand")
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.toys.demo = false
 	root.add_child(main)
@@ -80,19 +80,19 @@ static func _chart_dir(v: Vector3) -> Vector3:
 	return Vector3(v.z, v.x, v.y)
 
 
-func _at(b: Dictionary) -> Vector3:
-	return main.space.chart_position(b["l"], b["n"])
+func _at(b: BallWorld.Body) -> Vector3:
+	return main.space.chart_position(b.l, b.n)
 
 
-func _vel(b: Dictionary) -> Vector3:
-	return WormholeSpace.vector_to_chart(signf(b["l"]), b["n"], b["U"])
+func _vel(b: BallWorld.Body) -> Vector3:
+	return WormholeSpace.vector_to_chart(signf(b.l), b.n, b.U)
 
 
-func _hand(i: int) -> Dictionary:
-	return main.hands.state[i]
+func _hand(i: int) -> Hands.Hand:
+	return main.hands.list[i]
 
 
-func _ball_at(c: Vector3, radius: float) -> Dictionary:
+func _ball_at(c: Vector3, radius: float) -> BallWorld.Ball:
 	var p: Array = main.space.point_from_chart(1.0, c)
 	return main.toys.world.add(p[0], p[1], Vector4.ZERO, radius, Color(0.9, 0.2, 0.2))
 
@@ -147,11 +147,11 @@ func _hands() -> void:
 	await _step(3)
 	var hr := _hand(1)
 	var hl := _hand(0)
-	var ok: bool = hr.get("on", false) and hl.get("on", false)
+	var ok := hr.on and hl.on
 	var detail := ""
 	if ok:
-		var cr: Vector3 = main.space.chart_position(hr["l"], hr["n"])
-		var cl: Vector3 = main.space.chart_position(hl["l"], hl["n"])
+		var cr: Vector3 = main.space.chart_position(hr.ball.l, hr.ball.n)
+		var cl: Vector3 = main.space.chart_position(hl.ball.l, hl.ball.n)
 		ok = cr.distance_to(_chart(pr)) < 1e-4 and cl.distance_to(_chart(pl)) < 1e-4
 		detail = "right at %s (%s), left at %s (%s)" % [cr, _chart(pr), cl, _chart(pl)]
 	U.check("each hand where its grip is, on the curved space", ok, detail)
@@ -201,11 +201,11 @@ func _grab_and_throw() -> void:
 	_pose(right, p0)
 	await _step(3)
 	var cols := _hand_colors()
-	U.check("near a ball the hand turns green", _hand(1)["ready"] and cols.has(Hands.COLOR_READY),
-			"ready %s, hand colours %s" % [_hand(1)["ready"], cols])
+	U.check("near a ball the hand turns green", _hand(1).ready and cols.has(Hands.COLOR_READY),
+			"ready %s, hand colours %s" % [_hand(1).ready, cols])
 	right.set_input(&"grip", 1.0)
 	await _step(1)
-	U.check("the grip takes the ball", ball["held"] == &"right_hand" and _hand(1).has("held"), "held by '%s'" % ball["held"])
+	U.check("the grip takes the ball", ball.held == &"right_hand" and _hand(1).held != null, "held by '%s'" % ball.held)
 	# up and away, 1 cm a frame: the ball keeps 25 cm below the hand
 	var worst := 0.0
 	var p := p0
@@ -214,7 +214,7 @@ func _grab_and_throw() -> void:
 		_pose(right, p)
 		await _step(1)
 		var h := _hand(1)
-		var hc: Vector3 = main.space.chart_position(h["l"], h["n"])
+		var hc: Vector3 = main.space.chart_position(h.ball.l, h.ball.n)
 		worst = maxf(worst, _at(ball).distance_to(hc + Vector3(0.0, 0.0, -0.25)))
 	U.check("the held ball follows the hand", worst < 1e-3, "farthest from its place under the hand %.5f m" % worst)
 	# a straight throw: 4 m/s forward, 2 m/s up, let go on the 8th frame
@@ -227,7 +227,7 @@ func _grab_and_throw() -> void:
 		await _step(1)
 	var got := _vel(ball)
 	var want := _chart_dir(v)
-	U.check("let go, the ball flies off with the hand's velocity", ball["held"] == &"" and got.distance_to(want) < 0.02,
+	U.check("let go, the ball flies off with the hand's velocity", ball.held == &"" and got.distance_to(want) < 0.02,
 			"chart velocity %s, expected %s" % [got, want])
 	var before := _at(ball)
 	await _step(12)
@@ -245,9 +245,9 @@ func _grab_and_throw() -> void:
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
-	var held: Dictionary = _hand(1).get("held", {})
-	U.check("right B with the grip closed: a new ball in the right hand", not held.is_empty() and not held.has("F")
-			and held["radius"] == Hands.NEW_BALL_RADIUS, "held %s" % [held.keys()])
+	var held := _hand(1).held as BallWorld.Ball
+	U.check("right B with the grip closed: a new ball in the right hand", held != null
+			and held.radius == Hands.NEW_BALL_RADIUS, "held %s" % [_hand(1).held])
 	for k in 9:
 		th = -1.2 + (k + 1) * w / 60.0          # 0 at the last
 		_pose(right, c + 0.5 * Vector3(0.0, sin(th), -cos(th)))
@@ -271,9 +271,9 @@ func _cube_and_spin() -> void:
 	left.set_input(&"ax_button", true)
 	await _step(1)
 	left.set_input(&"ax_button", false)
-	var cube: Dictionary = _hand(0).get("held", {})
+	var cube := _hand(0).held as BallWorld.Cube
 	var reach: float = Hands.NEW_CUBE_HALF + Hands.RADIUS + 0.01
-	var ok: bool = not cube.is_empty() and cube.has("F") and cube["held"] == &"left_hand"
+	var ok := cube != null and cube.held == &"left_hand"
 	U.check("left X with the grip closed: a new cube in the left hand", ok and _at(cube).distance_to(_chart(pl + Vector3(0.0, 0.0, -reach))) < 1e-3,
 			"cube at %s, expected %s" % [_at(cube) if ok else Vector3.ZERO, _chart(pl + Vector3(0.0, 0.0, -reach))])
 	if not ok:
@@ -293,11 +293,11 @@ func _cube_and_spin() -> void:
 		if k < 15:
 			worst = maxf(worst, _at(cube).distance_to(_chart(pl + b * Vector3(0.0, 0.0, -reach))))
 			for a in 3:
-				var A: Vector3 = WormholeSpace.vector_to_chart(1.0, cube["n"], cube["F"][a])
+				var A: Vector3 = WormholeSpace.vector_to_chart(1.0, cube.n, cube.F[a])
 				worst_ax = maxf(worst_ax, A.distance_to(_chart_dir(b[a])))
 	U.check("the held cube turns with the hand", worst < 1e-3 and worst_ax < 1e-3,
 			"centre off by %.5f m, axes by %.5f" % [worst, worst_ax])
-	var spin: Vector3 = cube["w"]
+	var spin: Vector3 = cube.w
 	var got_v := _vel(cube)
 	# with the hand's velocity, not its own: the hand turned in place, so the cube only spins (its
 	# centre moved round the hand at the wrist's turn times the lever, which no throw gets)
@@ -316,28 +316,28 @@ func _hand_over() -> void:
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
-	var ball: Dictionary = _hand(1).get("held", {})
+	var ball := _hand(1).held
 	# the left hand at the ball's left side, 5 cm from its surface
 	var c := _play(_at(ball))
 	_pose(left, c + Vector3(-(Hands.NEW_BALL_RADIUS + 0.05), 0.0, 0.0))
 	await _step(2)
 	left.set_input(&"grip", 1.0)
 	await _step(1)
-	U.check("the left hand takes the ball over from the right", ball["held"] == &"left_hand"
-			and is_same(_hand(0).get("held"), ball) and not _hand(1).has("held"), "held by '%s'" % ball["held"])
+	U.check("the left hand takes the ball over from the right", ball.held == &"left_hand"
+			and _hand(0).held == ball and _hand(1).held == null, "held by '%s'" % ball.held)
 	right.set_input(&"grip", 0.0)
 	await _step(2)
-	U.check("... and the right grip, let go, throws nothing", ball["held"] == &"left_hand", "held by '%s'" % ball["held"])
+	U.check("... and the right grip, let go, throws nothing", ball.held == &"left_hand", "held by '%s'" % ball.held)
 	left.set_input(&"grip", 0.0)
 	await _step(2)
-	U.check("the left lets it go", ball["held"] == &"", "held by '%s'" % ball["held"])
+	U.check("the left lets it go", ball.held == &"", "held by '%s'" % ball.held)
 
 
 # 6
 func _pushes() -> void:
 	_clear()
 	var ball := _ball_at(Vector3(9.0, 0.0, 0.2), 0.2)
-	var cube: Dictionary = main.toys.cube_on_floor(Vector2(9.0, -1.2), 0.15, 0.0, Color.WHITE)
+	var cube: BallWorld.Cube = main.toys.cube_on_floor(Vector2(9.0, -1.2), 0.15, 0.0, Color.WHITE)
 	_pose(left, Vector3(-2.0, 1.0, 0.5))          # out of the way
 	# the right hand sweeps along +y (room +x) at 2 m/s through the ball's centre height
 	var p := Vector3(-0.5, 0.2, -1.0)
@@ -403,10 +403,10 @@ func _grip_and_tracking() -> void:
 	await _step(1)
 	right.set_input(&"grip", 0.6)
 	await _step(3)
-	var kept: bool = ball["held"] == &"right_hand"
+	var kept: bool = ball.held == &"right_hand"
 	right.set_input(&"grip", 0.4)
 	await _step(1)
-	U.check("a half-open grip keeps the ball, more open lets go", kept and ball["held"] == &"", "kept %s, then held by '%s'" % [kept, ball["held"]])
+	U.check("a half-open grip keeps the ball, more open lets go", kept and ball.held == &"", "kept %s, then held by '%s'" % [kept, ball.held])
 	right.set_input(&"grip", 1.0)
 	await _step(1)
 	for k in 10:
@@ -418,17 +418,17 @@ func _grip_and_tracking() -> void:
 	var at := _at(ball)
 	await _step(10)
 	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
-	U.check("a hand that loses its tracking leaves its ball where it was", ball["held"] == &"right_hand"
+	U.check("a hand that loses its tracking leaves its ball where it was", ball.held == &"right_hand"
 			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
 	# at rest there: a ball set on it is not flung with the velocity the hand last had
 	var other := _ball_at(at + Vector3(0.0, 0.0, 0.39), 0.2)
 	await _step(3)
-	U.check("... at rest: it pushes nothing with the hand's last velocity", ball["U"] == Vector4.ZERO
-			and _vel(other).length() < 0.5, "its velocity %s, the ball on it %s" % [ball["U"], _vel(other)])
+	U.check("... at rest: it pushes nothing with the hand's last velocity", ball.U == Vector4.ZERO
+			and _vel(other).length() < 0.5, "its velocity %s, the ball on it %s" % [ball.U, _vel(other)])
 	main.toys.world.balls.erase(other)
 	right.set_input(&"grip", 0.0)
 	await _step(1)
-	U.check("... and let go then, it falls from rest", ball["held"] == &"" and _vel(ball).length() < 0.2, "chart velocity %s" % _vel(ball))
+	U.check("... and let go then, it falls from rest", ball.held == &"" and _vel(ball).length() < 0.2, "chart velocity %s" % _vel(ball))
 	_pose(right, p)
 
 
@@ -449,8 +449,8 @@ func _hold_and_reset() -> void:
 	left.set_input(&"ax_button", false)
 	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
 	U.check("during the speed check: no hands drawn, no grab, B and X make nothing",
-			nb == 1 and ball["held"] == &"" and main.toys.world.balls.size() == 1 and main.toys.world.cubes.is_empty(),
-			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball["held"], main.toys.world.balls.size(), main.toys.world.cubes.size()])
+			nb == 1 and ball.held == &"" and main.toys.world.balls.size() == 1 and main.toys.world.cubes.is_empty(),
+			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball.held, main.toys.world.balls.size(), main.toys.world.cubes.size()])
 	main.hold = false
 	# the menu open: B, X and the D-pad down are its, and A; B closes it and makes no ball
 	_pose(left, _play(Vector3(9.5, -0.6, 0.45)))
@@ -478,21 +478,21 @@ func _hold_and_reset() -> void:
 	left.set_input(&"dpad_down", false)
 	await _step(1)
 	U.check("menu closed: the D-pad down puts a new cube in the left hand", main.toys.world.cubes.size() == 1
-			and _hand(0).has("held") and _hand(0)["held"].has("F"), "%d cubes" % main.toys.world.cubes.size())
+			and _hand(0).held is BallWorld.Cube, "%d cubes" % main.toys.world.cubes.size())
 	right.set_input(&"grip", 0.0)
 	left.set_input(&"grip", 0.0)
 	await _step(2)
 	right.set_input(&"grip", 1.0)
 	await _step(2)
-	var took: bool = ball["held"] == &"right_hand"
+	var took: bool = ball.held == &"right_hand"
 	right.set_input(&"ax_button", true)
 	await _step(1)
 	right.set_input(&"ax_button", false)
 	await _step(1)
 	var free := true
 	for b in main.toys.world.balls + main.toys.world.cubes:
-		free = free and b["held"] == &""
-	U.check("A puts everything back and empties the hands", took and free and not _hand(1).has("held")
+		free = free and b.held == &""
+	U.check("A puts everything back and empties the hands", took and free and _hand(1).held == null
 			and [main.toys.world.balls.size(), main.toys.world.cubes.size()] == spawned,
 			"took %s, %d balls, %d cubes, all free %s" % [took, main.toys.world.balls.size(), main.toys.world.cubes.size(), free])
 	right.set_input(&"grip", 0.0)
@@ -512,19 +512,19 @@ func _throat() -> void:
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
-	var ball: Dictionary = _hand(1).get("held", {})
-	if ball.is_empty():
+	var ball := _hand(1).held
+	if ball == null:
 		U.check("a new ball in the hand in the throat", false, "none")
 		return
 	# hand and head: the geodesic between them is as long as the hand is from the head in the room
 	var h := _hand(1)
 	var head_l: float = main.tracer.material.get_shader_parameter("head_l")
 	var head_n: Vector3 = main.tracer.material.get_shader_parameter("head_n")
-	var gap := sp.toward(head_l, head_n, h["l"], h["n"]).length()
+	var gap := sp.toward(head_l, head_n, h.ball.l, h.ball.n).length()
 	U.check("in the throat the hand is the room's distance from the head along the space", absf(gap - (p - HEAD).length()) < 1e-3,
 			"%.4f m (%.4f)" % [gap, (p - HEAD).length()])
 	# round and turning, 30 frames: the ball keeps its offset in the hand's axes
-	var off: Vector3 = h["off"]
+	var off := h.off
 	var worst := 0.0
 	var p0 := p
 	for k in 30:
@@ -534,8 +534,8 @@ func _throat() -> void:
 		_pose(right, p, b)
 		await _step(1)
 		h = _hand(1)
-		var D := sp.toward(h["l"], h["n"], ball["l"], ball["n"])
-		worst = maxf(worst, BallWorld.to_body(h["F"], D).distance_to(off))
+		var D := sp.toward(h.ball.l, h.ball.n, ball.l, ball.n)
+		worst = maxf(worst, BallWorld.to_body(h.F, D).distance_to(off))
 	U.check("in the throat the held ball keeps its offset in the hand's axes", worst < 1e-3,
 			"off by %.5f m at most (offset %.3f m)" % [worst, off.length()])
 	# a straight move at constant speed, let go: the ball leaves the hand smoothly
@@ -547,10 +547,10 @@ func _throat() -> void:
 		if k == 7:
 			right.set_input(&"grip", 0.0)
 		await _step(1)
-		E.append(sp.embed(ball["l"], ball["n"]))
+		E.append(sp.embed(ball.l, ball.n))
 	var before: Vector4 = (E[7] - E[6]) * 60.0
 	var after: Vector4 = (E[8] - E[7]) * 60.0
-	U.check("in the throat the ball leaves the hand smoothly", ball["held"] == &"" and (after - before).length() < 0.1,
+	U.check("in the throat the ball leaves the hand smoothly", ball.held == &"" and (after - before).length() < 0.1,
 			"%.3f m/s in the hand, %.3f m/s just after, apart by %.3f" % [before.length(), after.length(), (after - before).length()])
 	main.place(main.START_POS, main.START_FORWARD)
 	await _step(1)
@@ -566,7 +566,7 @@ func _into_b() -> void:
 	right.set_input(&"by_button", true)
 	await _step(1)
 	right.set_input(&"by_button", false)
-	var ball: Dictionary = _hand(1).get("held", {})
+	var ball := _hand(1).held
 	var v := Vector3(-0.15, 1.0, -8.0)
 	for k in 8:
 		p += v / 60.0
@@ -577,7 +577,7 @@ func _into_b() -> void:
 	_pose(right, Vector3(0.25, 1.0, -0.3))
 	await _step(240)
 	U.check("a ball thrown from the start toward the wormhole ends up in universe B",
-			not ball.is_empty() and ball["l"] < -main.space.L, "l = %.2f (universe B: below %.2f)" % [ball.get("l", 0.0), -main.space.L])
+			ball != null and ball.l < -main.space.L, "l = %.2f (universe B: below %.2f)" % [ball.l if ball else 0.0, -main.space.L])
 
 
 # 11
@@ -593,11 +593,11 @@ func _set_down() -> void:
 	# a ball whose centre is 10 cm in front of the hand: the hand is inside it
 	var rad := 0.2
 	var c: Array = sp.point_from_chart(1.0, Vector3(sp.Rout, 0.0, 0.8))
-	var ball: Dictionary = main.toys.world.add(c[0], c[1], Vector4.ZERO, rad, Color(0.95, 0.95, 0.97))
+	var ball: BallWorld.Ball = main.toys.world.add(c[0], c[1], Vector4.ZERO, rad, Color(0.95, 0.95, 0.97))
 	right.set_input(&"grip", 1.0)
 	await _step(1)
-	if ball["held"] != &"right_hand":
-		U.check("a ball at the shell's edge taken", false, "held by '%s'" % ball["held"])
+	if ball.held != &"right_hand":
+		U.check("a ball at the shell's edge taken", false, "held by '%s'" % ball.held)
 		return
 	# down at 0.3 m/s until the ball is 1 cm above the floor, still for half a second, let go
 	while p.y > rad + 0.01:
@@ -607,16 +607,16 @@ func _set_down() -> void:
 	await _step(30)
 	right.set_input(&"grip", 0.0)
 	await _step(1)
-	var E0: Vector4 = sp.embed(ball["l"], ball["n"])
+	var E0: Vector4 = sp.embed(ball.l, ball.n)
 	var v0 := _vel(ball).length()
-	U.check("let go with the hand still, the ball is set down at rest", ball["held"] == &"" and v0 < 1e-3,
-			"%.4f m/s, at l = %.3f (the edge %.3f)" % [v0, ball["l"], sp.L])
+	U.check("let go with the hand still, the ball is set down at rest", ball.held == &"" and v0 < 1e-3,
+			"%.4f m/s, at l = %.3f (the edge %.3f)" % [v0, ball.l, sp.L])
 	await _step(20)
-	var moved: float = (sp.embed(ball["l"], ball["n"]) - E0).length()
+	var moved: float = (sp.embed(ball.l, ball.n) - E0).length()
 	U.check("the hand that let it go, still inside it, does not push it", moved < 0.01,
 			"moved %.4f m in 1/3 s, %.3f m/s" % [moved, _vel(ball).length()])
-	var l0: float = ball["l"]
+	var l0: float = ball.l
 	_pose(right, Vector3(0.6, 1.2, -0.3))
 	await _step(8 * 60)
-	U.check("set down at the shell's edge, the ball rolls toward the throat by itself", l0 - ball["l"] > 0.2,
-			"l %.3f -> %.3f in 8 s, %.3f m/s" % [l0, ball["l"], _vel(ball).length()])
+	U.check("set down at the shell's edge, the ball rolls toward the throat by itself", l0 - ball.l > 0.2,
+			"l %.3f -> %.3f in 8 s, %.3f m/s" % [l0, ball.l, _vel(ball).length()])

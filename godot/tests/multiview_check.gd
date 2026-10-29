@@ -30,7 +30,7 @@ const KEYS := [[5, KEY_W, true], [5, KEY_D, true], [15, KEY_W, false], [15, KEY_
 		[16, KEY_E, true], [18, KEY_E, false], [19, KEY_TAB, true], [20, KEY_TAB, false],
 		[21, KEY_Q, true], [21, KEY_W, true], [31, KEY_Q, false], [31, KEY_W, false]]
 
-var main: Node3D
+var main: Main
 var hmd
 var frames := 0
 var mode: String
@@ -48,7 +48,7 @@ func _initialize() -> void:
 	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
 	fov = args.slice(3).has("fov")
 	hmd = U.headset(mini(case, 1), -25.0)
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = true
 	if case == 3:

@@ -8,7 +8,7 @@ extends SceneTree
 ## another ray tracer's path (res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), set before
 ## anything is drawn, so only it is compiled.
 
-var main: Node3D
+var main: Main
 var frames := 0
 var scene: String
 var shader_path := ""
@@ -18,7 +18,7 @@ func _initialize() -> void:
 	scene = OS.get_cmdline_user_args()[0]
 	if OS.get_cmdline_user_args().size() > 1:
 		shader_path = OS.get_cmdline_user_args()[1]
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.toys.enabled = false           # the scenes set their own
 	main.xr_name = "none"
 	main.show_check = scene == "check"

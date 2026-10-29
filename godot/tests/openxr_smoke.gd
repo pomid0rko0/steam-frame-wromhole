@@ -23,7 +23,7 @@ extends SceneTree
 const U := preload("res://tests/util.gd")
 const APP_ID := "4242"
 
-var main: Node3D
+var main: Main
 var frames := 0
 var fake: String
 var bench_stored := 0.0
@@ -36,7 +36,7 @@ const GREEN_WAIT := 400         # frames (20 s at Monado's 20 Hz) to see the fra
 
 func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://settings.cfg"))
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	# the toys at rest, without the throw and the drop: after the drop, frames on software Vulkan
 	# (sharing the cores with Monado) miss refreshes, for a reason not found, and here frames that
 	# keep up are judged. The throw and the drop themselves: physics_test.gd.
@@ -111,7 +111,7 @@ func _process(_delta: float) -> bool:
 	if j == 0:
 		var oxr := main.xr as OpenXRInterface
 		print("in_xr ", main.in_xr, "  session state ", oxr.get_session_state() if oxr else -1,
-				"  hands ", main.hands.grips.size(), "  await_pose ", main.await_pose)
+				"  hands ", main.hands.list.size(), "  await_pose ", main.await_pose)
 		print("runtime: rates ", oxr.get_available_display_refresh_rates() if oxr else [],
 				"  current ", oxr.display_refresh_rate if oxr else 0.0)
 		print("measured %.3f Hz, seconds %s" % [r.rate, r.seconds])

@@ -13,7 +13,7 @@ extends SceneTree
 ## MAX_BALLS there, in the oldest's place); shader: another ray tracer's path
 ## (res://shaders/ab/1/wormhole.gdshader).
 
-var main: Node3D
+var main: Main
 var frames := 0
 var out := ""
 var poses: Array = []
@@ -37,7 +37,7 @@ func _initialize() -> void:
 		poses.append([v[0] if v[0] == "START" else float(v[0]), float(v[1]), float(v[2])])     # START: bench.gd's
 	if a.size() > 2:
 		fov = float(a[2])
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "none"
 	var scene: String = a[3] if a.size() > 3 else "plain"
 	main.toys.enabled = scene.begins_with("toys")
@@ -115,22 +115,29 @@ func _process(_d: float) -> bool:
 	return false
 
 
-## Both hands as the app has them (main.hands.state), and with +held a ball (radius 0.25) held by the
-## right one, 0.3 m in front of it: placed from the head as Hands.update does, in the room's axes.
+## Both hands as the app draws them (Hands.Hand without a controller: placed here), and with +held a
+## ball (radius 0.25) held by the right one, 0.3 m in front of it: placed from the head as
+## Hands.update does, in the room's axes.
 func _hold_ball() -> void:
 	var sp: WormholeSpace = main.space
 	var hp: Array = sp.geodesic(main.foot_l, main.foot_n, main.frame[1], main.DESKTOP_HEAD_HEIGHT, main.frame)
-	if main.toys.world.balls.size() > 0 and main.toys.world.balls.back()["held"] == &"right_hand":
+	if main.toys.world.balls.size() > 0 and main.toys.world.balls.back().held == &"right_hand":
 		main.toys.world.balls.pop_back()
+	while main.hands.list.size() < 2:
+		main.hands.list.append(Hands.Hand.new())
 	for k in 2:
 		var off := Vector3(0.22 if k == 1 else -0.22, -0.35, -0.3)
 		var dir := WormholeSpace.combine(hp[2], off)
 		var at: Array = sp.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
-		main.hands.state[k] = {"on": true, "l": at[0], "n": at[1], "F": at[2], "U": Vector4.ZERO, "ready": k == 1}
+		var h: Hands.Hand = main.hands.list[k]
+		h.on = true
+		h.ready = k == 1
+		h.ball.l = at[0]
+		h.ball.n = at[1]
+		h.F = at[2]
 		if k == 1 and held:
 			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
-			var b: Dictionary = main.toys.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97))
-			b["held"] = &"right_hand"
+			main.toys.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97)).held = &"right_hand"
 	main.draw_toys()
 
 

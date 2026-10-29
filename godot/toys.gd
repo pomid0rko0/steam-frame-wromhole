@@ -50,7 +50,7 @@ func spawn() -> void:
 
 
 ## The throw and the drop when due, then the physics (hands: the hands' balls, which push).
-func step(delta: float, hands: Array) -> void:
+func step(delta: float, hands: Array[BallWorld.Ball]) -> void:
 	if launch_in >= 0.0:
 		launch_in -= delta
 		if launch_in < 0.0:
@@ -82,9 +82,9 @@ func throw() -> void:
 ## where gravity is ordinary, and one in the middle of the throat. The second is straight ahead in
 ## the throat (azimuth 0): from the start it is seen in the middle of the wormhole against universe
 ## B's sky, and falls and bounces in slow motion.
-func drop() -> Array:
+func drop() -> Array[BallWorld.Ball]:
 	var p := space.point_from_chart(1.0, DROP_SPOT_A)
-	var balls := [world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR),
+	var balls: Array[BallWorld.Ball] = [world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR),
 			world.add(0.0, throat_point(0.0, DROP_HEIGHT), Vector4.ZERO, DROP_RADIUS, DROP_COLOR)]
 	print("toys: two balls dropped")
 	return balls
@@ -98,7 +98,7 @@ func throat_point(phi: float, height: float) -> Vector3:
 
 
 ## A cube resting on the floor of universe A at chart position pos, turned by yaw.
-func cube_on_floor(pos: Vector2, half: float, yaw: float, color: Color) -> Dictionary:
+func cube_on_floor(pos: Vector2, half: float, yaw: float, color: Color) -> BallWorld.Cube:
 	var p := space.point_from_chart(1.0, Vector3(pos.x, pos.y, half))
 	var F := []
 	for ax in [Vector3(cos(yaw), sin(yaw), 0.0), Vector3(-sin(yaw), cos(yaw), 0.0), Vector3(0.0, 0.0, 1.0)]:
@@ -107,7 +107,7 @@ func cube_on_floor(pos: Vector2, half: float, yaw: float, color: Color) -> Dicti
 
 
 ## A cube resting on the floor inside the throat, at l and azimuth phi.
-func cube_in_throat(l: float, phi: float, half: float, color: Color) -> Dictionary:
+func cube_in_throat(l: float, phi: float, half: float, color: Color) -> BallWorld.Cube:
 	var z := half / space.r(l)
 	var n := Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)
 	var up := space.height_grad(l, n).normalized()
@@ -121,9 +121,8 @@ func draw(tracer: Tracer, hands: Array) -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
 	for b in world.balls:
-		pos.append(space.embed(b["l"], b["n"]))
-		var c: Color = b["color"]
-		col.append(Vector4(c.r, c.g, c.b, b["radius"]))
+		pos.append(space.embed(b.l, b.n))
+		col.append(Vector4(b.color.r, b.color.g, b.color.b, b.radius))
 	for h in hands:
 		pos.append(h[0])
 		col.append(h[1])
@@ -132,10 +131,8 @@ func draw(tracer: Tracer, hands: Array) -> void:
 	var ccol := PackedVector4Array()
 	for c in world.cubes:
 		var box := world.box4(c)
-		var half: float = c["half"]
 		cpos.append(box[0])
 		for k in 4:
-			axes.append(box[1 + k] / half)
-		var cc: Color = c["color"]
-		ccol.append(Vector4(cc.r, cc.g, cc.b, half))
+			axes.append(box[1 + k] / c.half)
+		ccol.append(Vector4(c.color.r, c.color.g, c.color.b, c.half))
 	tracer.set_objects(pos, col, cpos, axes, ccol)

@@ -177,7 +177,7 @@ func _add_controllers() -> void:
 		g.tracker = t
 		g.pose = &"grip"           # where the hand holds the controller: what it grabs with
 		origin.add_child(g)
-		hands.grips.append(g)
+		hands.add(g)
 		if t == &"left_hand":
 			left_hand = c
 		else:

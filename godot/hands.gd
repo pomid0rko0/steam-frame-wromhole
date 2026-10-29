@@ -23,16 +23,40 @@ const NEW_CUBE_HALF := 0.15      # m: a new cube in the left hand
 
 var space: WormholeSpace
 var world: BallWorld
-var grips: Array[XRController3D] = []   # left, right at their grip pose; none on the desktop
-# per hand: where it is in the curved space (on, l, n, F: its axes, U: its velocity), the grip, what
-# it holds (held, off, rel), its recent places (hist, thist), ready (a toy within reach, or held)
-var state: Array[Dictionary] = [{}, {}]
+var list: Array[Hand] = []      # left, right; none on the desktop
 var clock := 0.0                # s: the recent places' times
+
+
+## One hand.
+class Hand:
+	var grip: XRController3D           # the controller at its grip pose
+	# where the hand is in the curved space (l, n) and its velocity U: what it pushes the toys with;
+	# held is its own tracker (kinematic)
+	var ball := BallWorld.Ball.new()
+	var F: Array = []                  # its axes there
+	var on := false                    # tracked and active this frame
+	var tracked := false
+	var closed := false                # the grip, with the gap between GRIP_ON and GRIP_OFF
+	var ready := false                 # a toy within reach, or held: drawn in COLOR_READY
+	var held: BallWorld.Body           # the toy it holds, or null
+	var off := Vector3.ZERO            # the held toy's offset, in the hand's axes
+	var rel: Array = []                # a held cube's axes in the hand's axes carried to it
+	var hist: Array = []               # the hand's recent places [t, l, n]
+	var thist: Array = []              # the held toy's [t, l, n, F]
 
 
 func _init(p_space: WormholeSpace, p_world: BallWorld) -> void:
 	space = p_space
 	world = p_world
+
+
+## A hand at a controller's grip pose (main adds the left one first).
+func add(grip: XRController3D) -> void:
+	var h := Hand.new()
+	h.grip = grip
+	h.ball.radius = RADIUS
+	h.ball.held = grip.tracker
+	list.append(h)
 
 
 ## Each frame, after the free toys moved: each hand where the controller is, the toy it holds with
@@ -41,20 +65,22 @@ func _init(p_space: WormholeSpace, p_world: BallWorld) -> void:
 ## Not active (the speed check, no tracking yet, no toys): the hands are not drawn and do nothing.
 func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: bool, new_cube: bool) -> void:
 	clock += delta
-	for i in grips.size():
-		var c := grips[i]
-		var st := state[i]
-		st["on"] = false
+	for i in list.size():
+		var h := list[i]
+		var c := h.grip
+		if c == null:
+			continue                       # placed by its maker and only drawn (tests/emu_dump.gd)
+		h.on = false
 		if not active:
-			_hold_still(i)
-			st["tracked"] = false
+			_hold_still(h)
+			h.tracked = false
 			continue
 		var tracked := c.get_has_tracking_data()
-		if tracked and not st.get("tracked", false):
+		if tracked and not h.tracked:
 			# back from a gap in tracking: the places before it are no motion
-			st.erase("hist")
-			st.erase("thist")
-		st["tracked"] = tracked
+			h.hist.clear()
+			h.thist.clear()
+		h.tracked = tracked
 		if tracked:
 			var xf := c.transform
 			var off := xf.origin - head.origin
@@ -63,78 +89,75 @@ func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: 
 				var dir := WormholeSpace.combine(hp[2], off)
 				at = space.geodesic(hp[0], hp[1], dir / dir.length(), dir.length(), hp[2])
 			var b := xf.basis.orthonormalized()
-			st["l"] = at[0]
-			st["n"] = at[1]
-			st["F"] = [WormholeSpace.combine(at[2], b.x), WormholeSpace.combine(at[2], b.y),
+			h.ball.l = at[0]
+			h.ball.n = at[1]
+			h.F = [WormholeSpace.combine(at[2], b.x), WormholeSpace.combine(at[2], b.y),
 					WormholeSpace.combine(at[2], b.z)]
-			_remember(st, "hist", [clock, at[0], at[1]])
-			st["U"] = _velocity(st["hist"])[0]
-			st["on"] = true
+			_remember(h.hist, [clock, at[0], at[1]])
+			h.ball.U = _velocity(h.hist)[0]
+			h.on = true
 		# the held toy where the hand is now, also in the frame it lets go
-		if st["on"]:
-			_carry(i)
+		if h.on:
+			_carry(h)
 		else:
-			_hold_still(i)
+			_hold_still(h)
 		# the grip, with a gap between grabbing and letting go
 		var g := c.get_float(&"grip")
-		var was: bool = st.get("grip", false)
-		var grip := g > GRIP_OFF if was else g > GRIP_ON
-		st["grip"] = grip
-		if grip and not was and st["on"]:
-			var toy := _nearest(i)
-			if not toy.is_empty():
+		var was := h.closed
+		h.closed = g > GRIP_OFF if was else g > GRIP_ON
+		if h.closed and not was and h.on:
+			var toy := _nearest(h)
+			if toy:
 				_take(i, toy)
-		elif was and not grip:
+		elif was and not h.closed:
 			_release(i)
-		if st["on"] and ((i == 1 and new_ball) or (i == 0 and new_cube)):
+		if h.on and ((i == 1 and new_ball) or (i == 0 and new_cube)):
 			_new_toy(i, i == 0)
-		var ready: bool = st.has("held") or (st["on"] and not _nearest(i).is_empty())
-		if ready and not st.get("ready", false) and not st.has("held"):
+		var ready := h.held != null or (h.on and _nearest(h) != null)
+		if ready and not h.ready and h.held == null:
 			c.trigger_haptic_pulse(&"haptic", 0.0, 0.15, 0.02, 0.0)    # a tick: within reach
-		st["ready"] = ready
+		h.ready = ready
 
 
 ## The hands as kinematic balls for the physics: they push the toys.
-func balls() -> Array:
-	var out := []
-	for i in grips.size():
-		var st := state[i]
-		if st.get("on", false):
-			out.append({"l": st["l"], "n": st["n"], "U": st["U"], "radius": RADIUS, "tracker": grips[i].tracker})
+func balls() -> Array[BallWorld.Ball]:
+	var out: Array[BallWorld.Ball] = []
+	for h in list:
+		if h.on and h.grip:
+			out.append(h.ball)
 	return out
 
 
 ## The hands to draw: [centre as a point of R^4, colour with the radius] (Toys.draw).
 func drawn() -> Array:
 	var out := []
-	for st in state:
-		if st.get("on", false):
-			var c: Color = COLOR_READY if st["ready"] else COLOR
-			out.append([space.embed(st["l"], st["n"]), Vector4(c.r, c.g, c.b, RADIUS)])
+	for h in list:
+		if h.on:
+			var c := COLOR_READY if h.ready else COLOR
+			out.append([space.embed(h.ball.l, h.ball.n), Vector4(c.r, c.g, c.b, RADIUS)])
 	return out
 
 
 ## Both hands empty (the toys put back).
 func empty() -> void:
-	for st in state:
-		st.erase("held")
+	for h in list:
+		h.held = null
 
 
 ## The viewer was put somewhere else: the hands' and held toys' places before are no motion.
 func forget_motion() -> void:
-	for st in state:
-		st.erase("hist")
-		st.erase("thist")
+	for h in list:
+		h.hist.clear()
+		h.thist.clear()
 
 
-## The toy nearest to hand i's centre within REACH of its surface (not one it holds), or {}.
-func _nearest(i: int) -> Dictionary:
-	var st := state[i]
-	var P := space.embed(st["l"], st["n"])
-	var best := {}
+## The toy nearest to hand h's centre within REACH of its surface (not one it holds), or null.
+func _nearest(h: Hand) -> BallWorld.Body:
+	var P := space.embed(h.ball.l, h.ball.n)
+	var best: BallWorld.Body = null
 	var best_d := REACH
-	for b in world.balls + world.cubes:
-		if b["held"] == grips[i].tracker:
+	for b: BallWorld.Body in world.balls + world.cubes:
+		if b.held == h.ball.held:
 			continue
 		var d := world.distance_to(b, P)
 		if d < best_d:
@@ -146,69 +169,65 @@ func _nearest(i: int) -> Dictionary:
 ## Hand i takes the toy where it is: from now on it keeps its place and its turn against the
 ## hand, as an offset in the hand's axes (the geodesic from the hand that reaches it) and, for a
 ## cube, its axes in the hand's axes carried there. Taken from the other hand, that one lets go.
-func _take(i: int, toy: Dictionary) -> void:
-	var st := state[i]
-	var other := state[1 - i]
-	if other.has("held") and is_same(other["held"], toy):
-		other.erase("held")
+func _take(i: int, toy: BallWorld.Body) -> void:
+	var h := list[i]
+	var other := list[1 - i]
+	if other.held == toy:
+		other.held = null
 	_release(i)
-	toy["held"] = grips[i].tracker
-	toy.erase("ghost")
-	var D := space.toward(st["l"], st["n"], toy["l"], toy["n"])
-	var F: Array = st["F"]
-	st["held"] = toy
-	st["off"] = BallWorld.to_body(F, D)
-	st["thist"] = []
-	if toy.has("F"):
-		var at := _hold_point(st)
-		var rel := []
-		for A: Vector4 in toy["F"]:
-			rel.append(BallWorld.to_body(at[2], A))
-		st["rel"] = rel
-	grips[i].trigger_haptic_pulse(&"haptic", 0.0, 0.6, 0.06, 0.0)
-	print("grab: %s hand takes a %s (%.2f m from the hand)" % [_name(i), "cube" if toy.has("F") else "ball", D.length()])
+	toy.held = h.ball.held
+	toy.ghost = &""
+	var D := space.toward(h.ball.l, h.ball.n, toy.l, toy.n)
+	h.held = toy
+	h.off = BallWorld.to_body(h.F, D)
+	h.thist = []
+	if toy is BallWorld.Cube:
+		var at := _hold_point(h)
+		h.rel = []
+		for A: Vector4 in (toy as BallWorld.Cube).F:
+			h.rel.append(BallWorld.to_body(at[2], A))
+	h.grip.trigger_haptic_pulse(&"haptic", 0.0, 0.6, 0.06, 0.0)
+	print("grab: %s hand takes a %s (%.2f m from the hand)" % [_name(i), _kind(toy), D.length()])
 
 
-## Where hand st holds its toy: the end of the geodesic of its offset, with the hand's axes there.
-func _hold_point(st: Dictionary) -> Array:
-	var D := WormholeSpace.combine(st["F"], st["off"])
+## Where hand h holds its toy: the end of the geodesic of its offset, with the hand's axes there.
+func _hold_point(h: Hand) -> Array:
+	var D := WormholeSpace.combine(h.F, h.off)
 	if D.length() < 1e-7:
-		return [st["l"], st["n"], st["F"]]
-	return space.geodesic(st["l"], st["n"], D / D.length(), D.length(), st["F"])
+		return [h.ball.l, h.ball.n, h.F]
+	return space.geodesic(h.ball.l, h.ball.n, D / D.length(), D.length(), h.F)
 
 
-## The held toy follows hand i; its velocity (and a cube's spin) from its recent places: what it
+## The held toy follows hand h; its velocity (and a cube's spin) from its recent places: what it
 ## pushes others with.
-func _carry(i: int) -> void:
-	var st := state[i]
-	if not st.has("held"):
+func _carry(h: Hand) -> void:
+	if h.held == null:
 		return
-	var toy: Dictionary = st["held"]
-	var at := _hold_point(st)
-	toy["l"] = at[0]
-	toy["n"] = at[1]
+	var toy := h.held
+	var cube := toy as BallWorld.Cube
+	var at := _hold_point(h)
+	toy.l = at[0]
+	toy.n = at[1]
 	var F := []
-	if toy.has("F"):
-		var rel: Array = st["rel"]
-		F = WormholeSpace.orthonormalize([WormholeSpace.combine(at[2], rel[0]),
-				WormholeSpace.combine(at[2], rel[1]), WormholeSpace.combine(at[2], rel[2])])
-		toy["F"] = F
-	_remember(st, "thist", [clock, at[0], at[1], F])
-	var v := _velocity(st["thist"])
-	toy["U"] = v[0]
-	if toy.has("F"):
-		toy["w"] = v[1]
+	if cube:
+		F = WormholeSpace.orthonormalize([WormholeSpace.combine(at[2], h.rel[0]),
+				WormholeSpace.combine(at[2], h.rel[1]), WormholeSpace.combine(at[2], h.rel[2])])
+		cube.F = F
+	_remember(h.thist, [clock, at[0], at[1], F])
+	var v := _velocity(h.thist)
+	toy.U = v[0]
+	if cube:
+		cube.w = v[1]
 
 
-## With hand i not tracked its toy stays where it was, at rest: it would push the others with the
+## With hand h not tracked its toy stays where it was, at rest: it would push the others with the
 ## velocity it last had.
-func _hold_still(i: int) -> void:
-	var toy: Dictionary = state[i].get("held", {})
-	if toy.is_empty():
+func _hold_still(h: Hand) -> void:
+	if h.held == null:
 		return
-	toy["U"] = Vector4.ZERO
-	if toy.has("F"):
-		toy["w"] = Vector3.ZERO
+	h.held.U = Vector4.ZERO
+	if h.held is BallWorld.Cube:
+		(h.held as BallWorld.Cube).w = Vector3.ZERO
 
 
 ## Hand i lets its toy go: it flies off with the hand's velocity and turns as the hand turned. Not
@@ -216,50 +235,50 @@ func _hold_still(i: int) -> void:
 ## its centre), it also moves with the turn of the wrist times that lever, and a flick of the wrist
 ## would throw it far too fast.
 func _release(i: int) -> void:
-	var st := state[i]
-	if not st.has("held"):
+	var h := list[i]
+	if h.held == null:
 		return
-	var toy: Dictionary = st["held"]
-	st.erase("held")
-	toy["held"] = &""
-	var v := _velocity(st.get("thist", []))
-	var U: Vector4 = _velocity(st.get("hist", []))[0]
-	var D := WormholeSpace.combine(st["F"], st["off"])
+	var toy := h.held
+	var cube := toy as BallWorld.Cube
+	h.held = null
+	toy.held = &""
+	var v := _velocity(h.thist)
+	var U: Vector4 = _velocity(h.hist)[0]
+	var D := WormholeSpace.combine(h.F, h.off)
 	if D.length() > 1e-7 and U != Vector4.ZERO:
-		U = space.geodesic(st["l"], st["n"], D / D.length(), D.length(), [U])[2][0]    # carried to the toy
+		U = space.geodesic(h.ball.l, h.ball.n, D / D.length(), D.length(), [U])[2][0]    # carried to the toy
 	if U.length() > MAX_THROW_SPEED:
 		U *= MAX_THROW_SPEED / U.length()
 	# a hand held still sets its toy down at rest: the tracking's tremble would push it
-	var gentle := U.length() < SET_DOWN_SPEED and (v[1] as Vector3).length() < SET_DOWN_SPIN
-	toy["U"] = Vector4.ZERO if gentle else U
-	if toy.has("F"):
-		toy["w"] = Vector3.ZERO if gentle else (v[1] as Vector3).limit_length(MAX_THROW_SPIN)
-		toy["still"] = 0.0
-	toy["ghost"] = grips[i].tracker      # this hand does not push it until they are apart
+	var spin: Vector3 = v[1]
+	var gentle := U.length() < SET_DOWN_SPEED and spin.length() < SET_DOWN_SPIN
+	toy.U = Vector4.ZERO if gentle else U
+	if cube:
+		cube.w = Vector3.ZERO if gentle else spin.limit_length(MAX_THROW_SPIN)
+		cube.still = 0.0
+	toy.ghost = h.ball.held      # this hand does not push it until they are apart
 	print("%s: %s hand lets a %s go at %.2f m/s%s" % ["set down" if gentle else "throw", _name(i),
-			"cube" if toy.has("F") else "ball", toy["U"].length(),
-			(", spin %.1f rad/s" % toy["w"].length()) if toy.has("F") else ""])
+			_kind(toy), toy.U.length(), (", spin %.1f rad/s" % cube.w.length()) if cube else ""])
 
 
 ## A new ball (right) or cube (left) just in front of hand i, moving with it: none while the hand
 ## holds a toy; held if the grip is closed. The oldest toy goes if there are too many
 ## (BallWorld.MAX_BALLS, MAX_CUBES), never a held one.
 func _new_toy(i: int, cube: bool) -> void:
-	var st := state[i]
-	if st.has("held"):
+	var h := list[i]
+	if h.held:
 		return
 	var size := NEW_CUBE_HALF if cube else NEW_BALL_RADIUS
-	var F: Array = st["F"]
 	# 1 cm from the hand's ball: not touching it
-	var at := space.geodesic(st["l"], st["n"], -F[2], size + RADIUS + 0.01, F + [st["U"]])
-	var toy: Dictionary
+	var at := space.geodesic(h.ball.l, h.ball.n, -h.F[2], size + RADIUS + 0.01, h.F + [h.ball.U])
+	var toy: BallWorld.Body
 	if cube:
 		toy = world.add_cube(at[0], at[1], at[2][3], at[2].slice(0, 3), Vector3.ZERO, size,
 				Toys.CUBE_COLORS[randi() % Toys.CUBE_COLORS.size()])
 	else:
 		toy = world.add(at[0], at[1], at[2][3], size, Toys.BALL_COLORS[randi() % Toys.BALL_COLORS.size()])
-	print("new %s in the %s hand" % ["cube" if cube else "ball", _name(i)])
-	if st["grip"]:
+	print("new %s in the %s hand" % [_kind(toy), _name(i)])
+	if h.closed:
 		_take(i, toy)
 
 
@@ -267,14 +286,16 @@ static func _name(i: int) -> String:
 	return "left" if i == 0 else "right"
 
 
-## Adds a sample [t, ...] to st[key], keeping the newest one at least VELOCITY_WINDOW old and the
-## ones after it.
-func _remember(st: Dictionary, key: String, sample: Array) -> void:
-	var hist: Array = st.get(key, [])
+static func _kind(toy: BallWorld.Body) -> String:
+	return "cube" if toy is BallWorld.Cube else "ball"
+
+
+## Adds a sample [t, ...] to hist, keeping the newest one at least VELOCITY_WINDOW old and the ones
+## after it.
+func _remember(hist: Array, sample: Array) -> void:
 	hist.append(sample)
 	while hist.size() > 2 and sample[0] - hist[1][0] >= VELOCITY_WINDOW:
 		hist.pop_front()
-	st[key] = hist
 
 
 ## A body's velocity from its recent places (hist: [t, l, n] or [t, l, n, F], the newest last):

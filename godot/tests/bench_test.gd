@@ -8,7 +8,7 @@ extends SceneTree
 
 const U := preload("res://tests/util.gd")
 
-var main: Node3D
+var main: Main
 var frames := 0
 var pose_before: Array
 var shader_before: Shader
@@ -20,7 +20,7 @@ func check(name: String, good: bool, got: Variant = "") -> void:
 
 
 func _initialize() -> void:
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "none"
 	root.add_child(main)
 

@@ -22,14 +22,6 @@ F32 = np.float32
 U32 = np.uint32
 
 
-def f2u(x):
-    return np.asarray(x, F32).view(U32)
-
-
-def u2f(x):
-    return np.asarray(x, U32).view(F32)
-
-
 IMM_NAMED = {'log2(e)': 1.4426950408889634, '1/log2(e)': 0.6931471805599453,
              'pi': 3.141592653589793, '1/pi': 0.3183098861837907, '2/pi': 0.6366197723675814}
 

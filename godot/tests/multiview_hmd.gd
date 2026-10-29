@@ -15,7 +15,7 @@ const PLACES := [Vector3(0.0, 0.0, -2.0), Vector3(-0.8, 0.45, -2.4), Vector3(0.7
 const TURNS := [Vector3(0.3, 0.5, 0.1), Vector3(-0.4, 0.2, 0.7), Vector3(0.9, -0.3, 0.2),
 		Vector3(0.1, 0.8, -0.5), Vector3(-0.6, -0.7, 0.3)]
 
-var main: Node3D
+var main: Main
 var hmd
 var frames := 0
 var mode: String
@@ -27,7 +27,7 @@ func _initialize() -> void:
 	mode = args[1]
 	cubes = args[3] == "cubes"
 	hmd = U.headset(int(args[2]))
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = false             # its balls and grids would cover the ones under test
 	main.toys.enabled = false            # this test draws its own

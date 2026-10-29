@@ -6,14 +6,14 @@ const U := preload("res://tests/util.gd")
 const CHART := preload("res://tests/multiview_sphere.gd").CHART
 const RADIUS := preload("res://tests/multiview_sphere.gd").RADIUS
 
-var main: Node3D
+var main: Main
 var frames := 0
 var mode: String
 
 
 func _initialize() -> void:
 	mode = OS.get_cmdline_user_args()[1]
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.toys.enabled = false            # this test draws its own ball
 	main.xr_name = "none"
 	main.show_check = false             # its balls and grids would cover the test ball

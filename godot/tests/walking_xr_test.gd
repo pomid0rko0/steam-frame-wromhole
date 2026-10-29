@@ -23,7 +23,7 @@ extends SceneTree
 
 const U := preload("res://tests/util.gd")
 
-var main: Node3D
+var main: Main
 var hmd
 var left: XRControllerTracker
 var right: XRControllerTracker
@@ -36,7 +36,7 @@ func _initialize() -> void:
 	hmd = U.headset(0, 0.0, Vector2i(64, 64))      # nothing here looks at the image
 	left = U.controller(&"left_hand")
 	right = U.controller(&"right_hand")
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	root.add_child(main)
 

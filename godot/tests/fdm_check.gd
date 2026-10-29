@@ -17,7 +17,7 @@ class Headset extends "res://tests/fake_hmd.gd":
 	func _get_vrs_texture() -> RID:
 		return vrs.make_vrs_texture(Vector2(size), PackedVector2Array([Vector2(0.1, 0.0), Vector2(-0.1, 0.0)]))
 
-var main: Node3D
+var main: Main
 var hmd: Headset
 var frames := 0
 var mode: String
@@ -27,7 +27,7 @@ func _initialize() -> void:
 	mode = OS.get_cmdline_user_args()[0]
 	var n := int(OS.get_cmdline_user_args()[1]) if OS.get_cmdline_user_args().size() > 1 else 1000
 	hmd = U.headset(0, 0.0, Vector2i(n, n), Headset.new())
-	main = load("res://main.tscn").instantiate()
+	main = load("res://main.tscn").instantiate() as Main
 	main.toys.enabled = false            # the driver's passes, the same with or without toys
 	main.xr_name = "FakeHMD"
 	root.add_child(main)
