@@ -2,10 +2,10 @@ extends SceneTree
 ## A scene for tools/adreno_stats.sh (what the headset's compiler makes of its ray tracer): drawn
 ## for a while, so that the compiler sees the shaders the scene uses.
 ##   godot --path . --resolution 320x180 -s res://tests/perf.gd -- scene [shader]
-## plain: the start, no movable objects; balls: the same with the stereo check's three red balls;
-## check: the stereo check scene (with its cube); near: 6.5 m from the centre, the wormhole filling
-## most of the view (the costly rays); away: the same spot looking away from it. shader: another ray
-## tracer's path (res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), set before
+## plain: the start, no movable objects; balls: the same with the stereo check's red balls;
+## check: the stereo check scene (with its cube); near: in front of the curved zone, the wormhole
+## filling most of the view (the costly rays); away: the same spot looking away from it. shader:
+## another ray tracer's path (res://shaders/ab/1/wormhole.gdshader from tools/ab_shaders.sh), set before
 ## anything is drawn, so only it is compiled.
 
 var main: Node3D

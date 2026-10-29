@@ -8,7 +8,8 @@
 # elsewhere, and gamescope's Vulkan layer puts its swapchains on the owner's screen even under
 # xvfb-run; without the layer Turnip finds no queue that presents to Xvfb, and there is no lavapipe.
 # Anywhere with apt (a cloud session, the container itself) it runs the command right here.
-#   tools/box.sh godot --headless --path godot --import   (any command, in the same directory there)
+#   tools/box.sh godot --headless --path godot --import   (any command, in the same directory
+#                                                          there; from outside the repository, at its top)
 # The tools and ref/'s checks go there by themselves (tools/env.sh, ref/in_box.py), so this is for
 # commands of one's own.
 # Made on first use and kept, stopped or not; `podman rm -f wormhole-box` throws it away. It
@@ -63,7 +64,7 @@ stop() {
 			[ $sig = KILL ] || sleep 2
 		done
 		rm -f "$0"' "$tag" 2>/dev/null
-	[ -z "$run" ] || wait $run
+	[ -z "$run" ] || wait $run || true
 	exit "$1"
 }
 trap 'stop 130' INT
@@ -95,7 +96,7 @@ if ! podman container exists $NAME; then
 fi
 podman update --cpus $CPUS --memory $MEM --memory-swap $MEM $NAME >/dev/null   # also when they change
 [ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
-# podman update records the swap limit but leaves the cgroup's at max (podman 5.5): the Frame's
+# podman update records the swap limit but leaves the cgroup's at max: the Frame's
 # swap is zram, in the same memory
 cg=/sys/fs/cgroup$(podman inspect -f '{{.State.CgroupPath}}' $NAME)/memory.swap.max
 [ ! -w "$cg" ] || echo 0 > "$cg"

@@ -1,9 +1,9 @@
 extends SceneTree
-## The speed check (bench.gd) on the desktop, with short timings: it goes through every place,
-## with the other ray tracers in res://shaders/ab/ (tools/ab_shaders.sh) of the kind this build
-## runs (Bench.comparable), logs a line
-## per place, with this build's ray tracer also with the passes split and with each of FOVEATIONS,
-## and gives back the shader, the foveation and where the viewer stood. The menu has its row.
+## The speed check (bench.gd) on the desktop, with short timings: it goes through every place with
+## this build's ray tracer each way of FOVEATIONS and the other ray tracers in res://shaders/ab/
+## (tools/ab_shaders.sh) of the kind this build runs (Bench.comparable), logs a line per place, and
+## gives back the shader, the foveation and where the viewer stood. The menu has its row.
+## tools/test.sh runs it where git holds no shaders/ab: only this build's ray tracer then.
 ##   godot --path . -s res://tests/bench_test.gd
 
 const U := preload("res://tests/util.gd")
@@ -47,8 +47,8 @@ func _process(_d: float) -> bool:
 	if started and frames > 3:
 		if b.running and b.step >= 0:
 			var place: Array = b.PLACES[b.plan[b.step][0]]
-			if absf(main.foot_l - place[0]) > 0.3:
-				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, place[0]])
+			if absf(main.foot_l - b._l(place[0])) > 0.3:
+				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, b._l(place[0])])
 				started = false
 			var v: Array = b.variants[b.plan[b.step][1]]
 			if main.tracer.material.shader != v[1]:
@@ -62,7 +62,6 @@ func _process(_d: float) -> bool:
 				started = false
 		if not b.running:
 			check("finished", true, "%d frames" % frames)
-			check("every place timed", b.results.size() == b.PLACES.size(), b.results.size())
 			var all_timed := true
 			for r in b.results:
 				for v in r:

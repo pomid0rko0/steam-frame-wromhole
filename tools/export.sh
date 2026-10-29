@@ -6,19 +6,19 @@
 #   elsewhere (a cloud session): godot/build/wormhole_vr_<label>_steam_frame.zip with the one
 #     .arm64, to attach to the chat; tools/deploy_frame.bat on the PC puts it on the Frame
 #   tools/export.sh [--check] [label]      (label: the branch's name by default)
-# --check: the build for the one-eye check, with the stereo check scene on (an empty godot/check
-# while it exports: main.CHECK_FLAG).
+# --check: the build for the one-eye check, with the stereo check scene on (its own export preset,
+# whose feature "check" main.show_check reads).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/repo.sh"
 BUILD=$ROOT/godot/build/wormhole_vr.arm64
-if [ "${1:-}" = --godot ]; then   # the export itself, in the container on the Frame
+if [ "${1:-}" = --godot ]; then   # the export itself (the preset's name), in the container on the Frame
 	. "$ROOT/tools/env.sh"
 	[ -x "$GODOT" ] || { echo "no Godot: run tools/setup.sh"; exit 2; }
 	import_scripts
 	cd "$ROOT/godot"
 	mkdir -p build
-	exec "$GODOT" --headless --path . --export-release "Steam Frame (Linux arm64)" build/wormhole_vr.arm64
+	exec "$GODOT" --headless --path . --export-release "$2" build/wormhole_vr.arm64
 fi
 CHECK=""
 [ "${1:-}" = --check ] && { CHECK=1; shift; }
@@ -27,13 +27,10 @@ LABEL=${1:-$(git -C "$ROOT" symbolic-ref --short -q HEAD || true)}
 case $ROOT in "$REPO"/.wt/*) [ -n "$LABEL" ] || LABEL=${ROOT#"$REPO"/.wt/} ;; esac
 [ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" rev-parse --short HEAD)
 LABEL=$(tr '/' '-' <<<"$LABEL")${CHECK:+_check}
-if [ -n "$CHECK" ]; then
-	touch "$ROOT/godot/check"
-	trap 'rm -f "$ROOT/godot/check"' EXIT
-fi
+PRESET="Steam Frame${CHECK:+, the one-eye check} (Linux arm64)"
 rm -f "$BUILD"
 log=$(mktemp)
-"$ROOT/tools/box.sh" "$ROOT/tools/export.sh" --godot > "$log" 2>&1 || true
+"$ROOT/tools/box.sh" "$ROOT/tools/export.sh" --godot "$PRESET" > "$log" 2>&1 || true
 if [ ! -s "$BUILD" ] || grep -qE "SCRIPT ERROR|SHADER ERROR|^ERROR" "$log"; then
 	grep -E "ERROR" -A3 "$log" || tail -20 "$log"
 	rm -f "$log"

@@ -10,13 +10,14 @@ extends SceneTree
 ## 3. a right stick click switches to snaps, even with the stick out (it snaps only once back
 ##    in the middle): then the right stick held right turns 30 degrees once
 ## 4. A goes back to the start
-## 5. the menu with the generic profile: a left stick click opens it; then the left stick walks
-##    no more but picks rows (held, it repeats), A presses the picked row (turns: snap ->
-##    smooth) and does not go back to the start, right steps the gravity row's value, which takes
-##    effect half a second later, B closes it; then the stick walks again
-## 6. the menu with the Frame's profile: View opens it, the D-pad picks and changes, A puts the
-##    value into effect at once, Menu closes it; closed, the D-pad up, left and right show gravity
-##    (the floor, the arrows, off)
+## 5. the menu by actions the generic profile binds too (util.gd's BINDINGS): a left stick click
+##    opens it; then the left stick walks no more but picks rows (held, it repeats), A presses the
+##    picked row (turns: snap -> smooth) and does not go back to the start, right steps the
+##    gravity row's value, which takes effect half a second later, B closes it; then the stick
+##    walks again
+## 6. the menu by actions only the Frame's profile binds: View opens it, the D-pad picks and
+##    changes, A puts the value into effect at once, Menu closes it; closed, the D-pad up, left and
+##    right show gravity (the floor, the arrows, off)
 ## 7. while the speed check holds the viewer (main.hold), the sticks and A do nothing; then
 ##    left Y (generic: secondary/click) shows gravity: the floor, the arrows, off
 

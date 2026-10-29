@@ -2,31 +2,17 @@ class_name Menu
 extends Node3D
 ## The menu, drawn by Godot itself, and the line under it.
 ##
-## The menu is hidden until its button opens it and is worked with buttons (handle_input; which:
-## README.md, «Управление»). It opens in front of where the head looks (MENU_DIST), a little below
-## the eyes (MENU_DROP), and follows: as the head walks, quickly; as it turns, only once it has
-## turned well away (TURN), then smoothly. So it is there at the wormhole and inside it, without
-## being glued to the view.
+## The menu is worked with buttons (handle_input; which: README.md, «Управление») and follows the
+## head loosely (_follow): there at the wormhole and inside it, without being glued to the view.
+## Its head is frame_rate.gd's lines on a plate in the colour of its verdict.
 ##
-## Its head: frame_rate.gd's lines (status, notes) on a plate coloured by its verdict: green while
-## the display gets a new frame from us at (nearly) every refresh, red when it does not, the
-## panel's own colour while it is measuring.
+## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text, and where it
+## is left out _layout; one kept for the next start, SETTINGS: loaded in _ready, written by _save. A value
+## stepped to takes effect only after SETTLE (or with A, another row, closing): stepping through
+## the rates must not switch the headset at every step, nor the foveations rebuild the buffers.
 ##
-## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text. A value
-## stepped to with left and right takes effect once it has stayed SETTLE seconds, or at once with
-## A, on going to another row or on closing: stepping through the rates does not switch the headset
-## at every step, nor the foveations rebuild the buffers. A on a value that is in effect steps to
-## the next one at once (a switch: on, off), except on the rate row (press). Yellow: chosen, not
-## (yet) in effect; grey: nothing to change here now (_enabled).
-##
-## While the menu is closed, a line low in the view shows the head in short on the same colours;
-## also the speed check while it runs and its result until the menu is opened, then even with the
-## line turned off.
-##
-## The render scale of the XR viewport (SCALES; Godot upscales bilinearly to the headset's size):
-## fewer pixels to ray trace, a softer picture. It and foveation don't go together (foveation.gd
-## says why): one of them is chosen, the other goes back to 100% / off. Both, our maps' order and
-## the line below are kept in SETTINGS.
+## The render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly). It and
+## foveation don't go together (foveation.gd says why): one is chosen, the other goes back.
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 # names of Foveation.set_level's levels
@@ -38,7 +24,7 @@ const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
-const GRAVITY_NAMES := ["выкл", "пол", "стрелки"]   # Tracer.GRAVITY_VIEWS' names, one each
+const GRAVITY_NAMES := ["выкл", "пол", "пол и стрелки"]   # Tracer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
@@ -740,8 +726,6 @@ func set_render_scale(s: float) -> void:
 
 # ---------------------------------------------------------------- the text
 
-## The speed check's line: under its row in the menu, and below while it runs or until the menu
-## is opened.
 func bench_status(s: String) -> void:
 	bench_text = s
 	bench_unseen = not open
@@ -759,7 +743,6 @@ func _on_rate() -> void:
 	_set_text(_compose())
 
 
-## The menu's head, padded to STATUS_LINES lines.
 func _compose() -> String:
 	var joined := "\n".join(rate.status() + rate.notes())
 	while joined.count("\n") < STATUS_LINES - 1:
@@ -767,7 +750,6 @@ func _compose() -> String:
 	return joined
 
 
-## The line below the view: the head in one line, what came of a choice, the speed check.
 func _compose_line() -> String:
 	var s := rate.status()
 	var first: String = s[0]
@@ -781,8 +763,6 @@ func _compose_line() -> String:
 	return "\n".join(lines)
 
 
-## New head lines: into the menu's head and the line below; the rows again if the rate choices
-## changed, the menu's places again if its parts grew or shrank.
 func _set_text(s: String) -> void:
 	text = s
 	var lines_before := status_label.text.count("\n")

@@ -71,7 +71,7 @@ get_pip() {
 
 # what Mesa's build needs (Turnip, X11 for Godot's window, the drm-shim)
 MESA_V=25.2.8
-MESA_DEBS="ninja-build python3-mako python3-yaml python3-pycparser flex bison pkg-config glslang-tools
+MESA_DEBS="build-essential xz-utils python3-pip ninja-build python3-mako python3-yaml python3-pycparser flex bison pkg-config glslang-tools
 	libdrm-dev libexpat1-dev zlib1g-dev libzstd-dev libelf-dev libx11-dev libxext-dev libxfixes-dev
 	libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev libxcb-randr0-dev
 	libxcb-sync-dev libxcb-shm0-dev libxcb-xfixes0-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev"
@@ -112,7 +112,7 @@ get_apt() {
 # The source comes from mesa3d.org, or from Ubuntu's archive where mesa3d.org is unreachable.
 get_adreno() {
 	[ ! -f "$SHIM" ] || return 0
-	# Mesa wants meson 1.4 or newer; Ubuntu 24.04 has 1.3
+	# Mesa wants meson 1.4 or newer, which the system may lack
 	python3 -c "import mesonbuild.coredata as c, sys; sys.exit(tuple(map(int, c.version.split('.')[:2])) < (1, 4))" 2>/dev/null \
 		|| pip install --quiet --break-system-packages "meson>=1.4,<1.9" 2>/dev/null || pip install --quiet "meson>=1.4,<1.9"
 	local src=$BIN/mesa-src tar=$BIN/mesa.tar.xz u

@@ -5,7 +5,7 @@ extends RefCounted
 ## chart A coordinates under main's overlay, which main._update_chart_map places (when: its
 ## comment): if the ray-traced world drifted against the room, green would part from it.
 
-# the balls in chart A, in front of the start position; shaders/check_grid.gdshader's balls[]
+# the balls in chart A, in front of main.START_POS; shaders/check_grid.gdshader's balls[]
 # holds as many (build asserts it)
 const BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const BALL_RADIUS := 0.3
@@ -17,7 +17,7 @@ const CUBE_YAW := 0.5
 const CUBE_COLOR := Color(0.85, 0.1, 0.9)
 
 
-## Godot's green lines under overlay (nodes Grid, Ball1..3, Cube), the red balls and the cube to the
+## Godot's green lines under overlay (nodes Grid, Ball1.., Cube), the red balls and the cube to the
 ## ray tracer, and the scene's static objects taken away: Godot's floor lines would be drawn over
 ## them where the floor is hidden.
 static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void:
@@ -88,7 +88,7 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 
 
 ## The pictures of the stereo test draw only parts of it (tests/multiview_check.gd): the overlay's
-## children to show, by mode.
+## children whose names start with one of these.
 static func show_only(overlay: Node3D, names: Array) -> void:
 	for c in overlay.get_children():
-		c.visible = names.has(String(c.name))
+		c.visible = names.any(func(n: String) -> bool: return String(c.name).begins_with(n))

@@ -1,7 +1,8 @@
 class_name FrameRate
 extends Node
 ## The refresh rate the headset really runs at and whether our frames keep up, measured from
-## OpenXR's frame timing (rate_meter.gd) rather than taken from what the runtime reports; choosing a
+## OpenXR's frame timing (rate_meter.gd; the runtime's reported rate only picks among the rates the
+## timing fits); choosing a
 ## rate; the log's "refresh:" lines about these (the menu's own are about its settings). The menu
 ## shows it (menu.gd: its head and the line below).
 ##
@@ -10,12 +11,8 @@ extends Node
 ## (ValveSoftware/SteamVR-for-Linux#1020). What it follows is the app's own SteamVR setting
 ## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs; on
 ## the owner's Frame (SteamVR 2.18; the headset log's "refresh:" lines, which tools/frame_logs.ps1
-## fetches) the running app switches within a second,
-## others report it only from the next start. So when the app was started from the Steam library and
-## vrcmd is there, choosing a rate sets that (one vrcmd call on a worker thread; a choice made
-## meanwhile is written next), the display's own rate tells when it followed, and if it has not a
-## few seconds after the write the menu asks for a restart. Otherwise the choice asks the runtime
-## directly.
+## fetches) the running app switches within a second, others report it only from the next start.
+## So a choice sets that setting where it can (find_app_setting), else asks the runtime.
 ## Until a rate is stored for the app SteamVR runs it at 72 Hz (the log's "refresh:" lines). It has
 ## no XR_EXT_performance_settings.
 ##
@@ -25,12 +22,10 @@ extends Node
 ## Steam overlay and SteamVR's camera view do the same. The app could end it at once only by
 ## switching the rate there and back; it doesn't (docs/wishlist.md); cheaper frames make it rarer.
 ##
-## The log: every second a line starting with "refresh:", with where one stands and looks, the
-## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for each frame
-## that came a refresh late (at most LATE_LINES a second, none during the speed check), with where
-## and what the GPU and the CPU took for it (a GPU that lowers its clock makes the same frame take
-## longer; on the Frame, by the per-second lines, it stayed at its top clock while frames were too
-## slow).
+## The log has the GPU's clock because a GPU that lowers it makes the same frame take longer; on
+## the Frame the readings (one a second) showed its top clock while frames were too slow. The GPU
+## and CPU times it prints are the ones Godot measured last: its GPU timestamps come back when a
+## frame's slot is used again (RenderingDevice), so they belong to a frame a few frames earlier.
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
@@ -92,8 +87,7 @@ var note_left := 0
 var late_lines := 0             # late frames logged this second
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
-var clock_min := 0              # MHz, over the second
-var clock_max := 0
+var clock_mhz := 0              # read once a second: a kernel file each frame is not free
 
 
 func _ready() -> void:
@@ -144,7 +138,7 @@ func _process(delta: float) -> void:
 		var period := api.get_next_frame_time() - now
 		var missed_before := meter.missed()
 		meter.add(now, period, reported)
-		# a late frame gets a line: where, and what the GPU and the CPU took for it
+		# a late frame gets a line: where, and the times Godot measured last
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()
@@ -333,9 +327,7 @@ func _second() -> void:
 		note = ""
 	changed.emit()
 	if gpu_clock != "":
-		var mhz := gpu_mhz()
-		clock_min = mhz if clock_min == 0 else mini(clock_min, mhz)
-		clock_max = maxi(clock_max, mhz)
+		clock_mhz = gpu_mhz()
 	if xr:
 		_log()
 
@@ -412,11 +404,9 @@ func _log() -> void:
 			"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
 	var fov: Foveation = main.foveation
 	var tan_y: Vector2 = main.tracer.view_tangents()
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
 			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
-			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
+			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
 			rad_to_deg(atan(tan_y.y)), rad_to_deg(atan(tan_y.x)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
 			main.tracer.gravity_view, "open" if main.menu.open else "closed"])
-	clock_min = 0
-	clock_max = 0

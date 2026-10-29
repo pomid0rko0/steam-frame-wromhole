@@ -39,7 +39,7 @@ const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that ke
 const MAX_CUBES := 6
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates by this times the floor's push
-const BOUNCE_SPEED := 0.4            # slower cube impacts do not bounce (no endless micro-bounces)
+const BOUNCE_SPEED := 0.4            # m/s: slower cube impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
 const KINEMATIC := 1e9               # a held ball's mass against a free one (_pair; hands push without one: _push)
 # a hand or a held ball against a free ball (_push, _pair): it moves on regardless, so with
@@ -280,8 +280,8 @@ func _push(b: Dictionary, hand: Dictionary) -> void:
 
 
 ## A toy just let go (ghost: the hand's tracker) is not pushed by the hand that let it go until
-## they are 1 cm apart: the hand held it touching or inside, and set down gently it would be pushed
-## away at once.
+## it is clear of the hand: the hand held it touching or inside, and set down gently it would be
+## pushed away at once.
 func _ghosted(b: Dictionary, hand: Dictionary) -> bool:
 	var g: StringName = b.get("ghost", &"")
 	if g == &"" or g != hand.get("tracker", &""):

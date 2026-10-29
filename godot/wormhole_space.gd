@@ -40,8 +40,8 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float) -> vo
 ## Tracer.set_objects (its sorting and proxies use h and Rout), the stereo check scene
 ## (check_scene.gd: its grid's rout and lsh, its balls' and cube's R^4 centres from h), and what
 ## stands in chart coordinates outside Rout: godot/scene.json's objects, the toys' places (toys.gd),
-## CheckScene.BALLS and CUBE, main.START_POS. Nothing keeps the feet's and the balls' distance to
-## the curved zone's edge.
+## CheckScene.BALLS and CUBE, main.START_POS, and bench.gd's PLACES and TOUR_L (metres of l chosen
+## against the edge). Nothing keeps the feet's and the balls' distance to the curved zone's edge.
 func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length
@@ -159,7 +159,7 @@ static func combine(f: Array, c: Vector3) -> Vector4:
 ## The tangent vector at (l, n) whose geodesic, followed for its length, reaches (tl, tn): the
 ## inverse of geodesic, for points within a hand's reach. The chord of R^4 seen from (l, n) is a
 ## first guess (on the fillet it misses, the more the farther); two corrections by where its
-## geodesic lands (tests/grab_test.gd checks the hands to 1 mm).
+## geodesic lands (tests/grab_test.gd checks the hands with it).
 func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	var E := embed(l, n)
 	var T := embed(tl, tn)
@@ -344,12 +344,11 @@ func floor_gravity(l: float) -> float:
 	return gravity_f(l)[0] / r(l)
 
 
-## The ray tracer's gravity views (WH_GRAVITY in wormhole_core.gdshaderinc) without a table: on the cylinder
-## f / r = (a / rho0) cosh(k l) and f' = a k sinh(k l); outside f / r = 1 + beta / r^3 and
-## f' = 1 - 2 beta / r^3; on the fillet f / r and f' as polynomials of degree GRAV_DEG in
-## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (near the best fit;
-## tests/gravity_test.gd checks them on the app's profile). {cyl: (a / rho0, k, a k, beta), g, d:
-## [Vector4...]}: the shader's grav_cyl, grav_g, grav_d, coefficients from x^0 up.
+## The ray tracer's gravity views (WH_GRAVITY in wormhole_core.gdshaderinc) without a table: the
+## closed forms' constants, and on the fillet f / r and f' as polynomials of degree GRAV_DEG in
+## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (tests/gravity_test.gd
+## checks them). {cyl: (a / rho0, k, a k, beta), g, d: [Vector4...]}: the shader's grav_cyl,
+## grav_g, grav_d, coefficients from x^0 up.
 func gravity_shader() -> Dictionary:
 	var n := GRAV_DEG + 1
 	var V: Array = []

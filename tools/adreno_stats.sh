@@ -1,17 +1,17 @@
 #!/bin/bash
 # What the Steam Frame's shader compiler (Mesa's ir3 in the Turnip driver, Adreno 750) makes of
-# the wormhole shader, without a headset: Godot runs on Turnip over Mesa's "noop" drm-shim (no
-# GPU, nothing is drawn), and ir3 prints each fragment shader's statistics. For the ray tracer:
+# the wormhole shader, without a headset: Godot runs on Turnip over the drm-shim (tools/env.sh,
+# turnip), and ir3 prints each fragment shader's statistics. For the ray tracer:
 #   instr (nops)     code size; nops are cycles the shader waits for a result
 #   full regs        registers per pixel, in vec4: the fewer, the more waves
-#   waves            how many waves of 64 (128) pixels run at once (ir3's max_waves for those
-#                    registers): more hide waiting better
+#   waves            how many waves of 64 (128) pixels a core keeps at once (ir3's max_waves for
+#                    those registers): more hide waiting better
 #   cat4             transcendental instructions (exp, log, sqrt, rcp, sin...)
 #   loops            loops left after unrolling
 #   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: one of
 #   tests/perf.gd's, default near; --shader: another ray tracer, such as
 #   res://shaders/ab/1/wormhole.gdshader; --disasm: the biggest program, not the one that runs: the
-#   generic ubershader, or its /2 variant in a ray tracer with toys, which runs only past 512 vec4)
+#   generic ubershader, or the /2 variant of a ray tracer with toys, below)
 # KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it; on the Frame a file
 # in the repository, which the host sees too).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is
@@ -19,8 +19,6 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
-LIB=$MESA/lib/$(uname -m)-linux-gnu
-[ -f "$LIB/libfreedreno_noop_drm_shim.so" ] || { echo "no Turnip build in $MESA: run tools/setup.sh"; exit 2; }
 VARIANT=near
 DISASM=""
 FULL=""
@@ -33,27 +31,24 @@ while [ $# -gt 0 ]; do
 		*) VARIANT=$1; shift ;;
 	esac
 done
-# files given relative to where it was called, before the cd into godot/
+# files given relative to where it was called (on the Frame, from inside the repository:
+# tools/box.sh), before the cd into godot/
 [ -z "${KEEP_LOG:-}" ] || KEEP_LOG=$(realpath -m "$KEEP_LOG")
 [ -z "$DISASM" ] || DISASM=$(realpath -m "$DISASM")
 LOG=$(mktemp)
 DATA=$(mktemp -d)    # a fresh user:// each run: Godot's pipeline cache would skip the compiler
-# the driver's manifest, pointing at the library where it is now (the installed one has the build's
-# path)
-ICD=$DATA/freedreno_icd.json
-printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
-	"$LIB/libvulkan_freedreno.so" > "$ICD"
+trap 'rm -rf "$LOG" "$DATA"' EXIT
+turnip "$DATA" || exit 2
 cd "$ROOT/godot"
 import_scripts
 d=$(x_display 950)
-XDG_DATA_HOME=$DATA LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
-VK_ICD_FILENAMES=$ICD \
+XDG_DATA_HOME=$DATA env "${TURNIP[@]}" \
 MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=fs,nocache \
 	timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
 	--resolution 320x180 -s res://tests/perf.gd -- "$VARIANT" $SHADER > "$LOG" 2>&1
 free_display $d
-if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; rm -rf "$LOG" "$DATA"; exit 1; fi
-grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -20 "$LOG"; rm -rf "$LOG" "$DATA"; exit 1; }
+if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; exit 1; fi
+grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -20 "$LOG"; exit 1; }
 # The ray tracer: the fragment programs of more than half the biggest one's size. Godot compiles
 # it twice (a generic "ubershader" first, then the one specialised for the scene, which runs from
 # then on); one line each, then ir3's own statistics lines with --full. A shader with more than
@@ -67,6 +62,8 @@ progs = {}
 for m in re.finditer(r'; FRAG prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full, (\d+) constlen.*\n'
                      r'.*?(\d+) cat4.*\n.*?(\d+) loops\n.*?(\d+) max_waves, (\d+) double', text):
     progs[m.group(1)] = [int(v) for v in m.groups()[1:]]
+if not progs:
+    sys.exit('no fragment program statistics in the log')
 big = max(v[0] for v in progs.values())
 for p, (n, nops, half, full, constlen, cat4, loops, waves, dbl) in progs.items():
     if n < 0.5 * big:
@@ -83,5 +80,6 @@ if sys.argv[2]:
     start = text.rfind('Native code for', 0, end)
     open(sys.argv[2], 'w').write(text[start:end])
 EOF
-[ -n "${KEEP_LOG:-}" ] && cp "$LOG" "$KEEP_LOG"
-rm -rf "$LOG" "$DATA"
+code=$?
+[ -z "${KEEP_LOG:-}" ] || cp "$LOG" "$KEEP_LOG"
+exit $code

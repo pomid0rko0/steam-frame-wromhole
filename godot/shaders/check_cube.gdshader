@@ -3,7 +3,7 @@ shader_type spatial;
 // the ray tracer draws as a solid magenta one, with dark edges, at the same place.
 render_mode unshaded, cull_back, depth_test_disabled, depth_draw_never, fog_disabled, shadows_disabled;
 
-uniform float half = 0.3;      // the cube's half size (the mesh is 2 half wide)
+uniform float half;            // the cube's half size (the mesh is 2 half wide)
 
 varying vec3 v_local;
 

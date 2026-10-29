@@ -1,7 +1,7 @@
 // Wormhole renderer core: plain GLSL that is also valid Godot shading language (single source for both).
 // The including file declares the uniforms:
 //   float wh_rho0, wh_h, wh_fillet          geometry (see below)
-//   vec4 wh_sph[6], wh_pil[4], wh_box[4]    static objects as godot/scene.json has them: spheres
+//   vec4 wh_sph[], wh_pil[], wh_box[]       static objects as godot/scene.json has them: spheres
 //                                           0-2 A's, 3-5 B's; pillars A's; boxes B's
 //   vec4 wh_ball[WH_MAXB], wh_ballCol[WH_MAXB], int wh_nBall
 //                                           movable balls (the toys' and the hands': Toys.draw; or
@@ -12,7 +12,7 @@
 //   vec4 wh_fball[WH_MAXB]                  the same balls in a flat universe: the sphere the
 //                                           sheet cuts from it, in that universe's chart (centre,
 //                                           radius squared)
-//   vec4 wh_cube[6], wh_cubeE[5 * 6], wh_cubeCol[6], int wh_nCube, float wh_pix
+//   vec4 wh_cube[], wh_cubeE[5 per cube], wh_cubeCol[], int wh_nCube, float wh_pix
 //                                           movable cubes (the toys' or the stereo check's). Centre as a point of R^4;
 //                                           per cube five
 //                                           vectors: four orthonormal axes of R^4 divided by the half size
@@ -31,7 +31,7 @@
 //   sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
 //                                           the fillet polynomials by impact parameter
 //                                           (WormholeSpace.fillet_table)
-//   with WH_GRAVITY defined: vec4 grav_cyl, grav_g[2], grav_d[2]
+//   with WH_GRAVITY defined: vec4 grav_cyl, grav_g[], grav_d[]
 //                                           the gravity view (WormholeSpace.gravity_shader): the
 //                                           floor coloured by the strength of gravity
 //   with WH_ARROWS defined too: float wh_pix   also the field's arrows (wh_arrow; wh_pix as above,
@@ -46,8 +46,9 @@
 //
 // Godot's shading language reserves E, PI and TAU: a local named so is a compile error that GLSL
 // (ref/) accepts. Constants reach the GPU as Godot's shader compiler prints them, with 14 decimals
-// (rtos in f2sp0, servers/rendering/shader_compiler.cpp): 1e-20 becomes 0.0, 1e-12
-// survives (this file's 1e-30 and 1e-20 guards are max(x, 0.0) there: they guard only in ref/). GPUs' max and min return the other operand for a NaN, which hides most NaNs.
+// (rtos in f2sp0, servers/rendering/shader_compiler.cpp): 1e-20 becomes 0.0, 1e-12 survives (this
+// file's 1e-30 and 1e-20 guards are max(x, 0.0) there: they guard only in ref/). GPUs' max and min
+// return the other operand for a NaN, which hides most NaNs.
 //
 // The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
 // - Registers go to the heaviest point of the code, run or not: code for something not in view
@@ -63,15 +64,18 @@
 //   before each of world B's static boxes; their one test is the boxes' top, wh_traceFlat). Near
 //   the throat one group of pixels holds both skies, the floor and objects, and runs every branch
 //   of the shading.
-// - A screen derivative costs far more than an ALU op (tools/adreno_cost.py's constants).
-// - 16-bit math (mediump) is cheaper in waves of 128 (tools/ir3_emu.py), but for the sky's colours
-//   the conversions cost more than it saves; line coordinates need float32.
+// - A screen derivative is a texture-unit (cat5) instruction, not an ALU one (tools/ir3_emu.py
+//   counts them apart).
+// - 16-bit math (mediump) issues at twice the rate in waves of 128 (tools/adreno_cost.py); line
+//   coordinates need float32.
 //
 // A change here: ref/test_gpu.py prints errors, no verdict: compare with the same run on the code
 // before (WH_BALLS=0 too), and try a pose at an odd width (the middle column has vl = 0) and
-// viewpoints scanned around an object, which its poses may miss. Keep ref/wh.py's fast in step. A
-// change that should not touch the compiled shader must give the same programs
-// (tools/same_programs.py). Then tools/adreno_cost.sh --check. Speed: bench.gd.
+// viewpoints scanned around an object, which its poses may miss. It compiles this file as GLSL,
+// where the 1e-30 and 1e-20 guards still guard: a NaN from a guard Godot prints as 0 shows on the
+// GPU only. Keep ref/wh.py's fast in step. A change that should not touch the compiled shader must
+// give the same programs (tools/same_programs.py). Then tools/adreno_cost.sh --check. Speed:
+// bench.gd.
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;
@@ -295,10 +299,10 @@ vec4 wh_arrow(float l, float a, float foot) {
 // ua is where the fillet path starts: the turning point u = sig, or the fillet's inner end s0^2.
 // One of al, ga is 0 unless h < R. The moments come from a recursion that is stable while al and ga
 // are below 1; where one of them is 1 or more, its factor 1 / sqrt(t + al or ga) is smooth on
-// [0, 1] and is moved into the interpolated part instead (regimes 1 and 2). No loops, the same cost for every ray; the
-// floor crossing is a Newton solve on the closed form. z is the variable in which that solve and
-// the toys' search run: z = int w dt in regime 0,
-// sqrt(t + mn) in regimes 1 and 2. The method's accuracy: docs/geometry.md, «Точность».
+// [0, 1] and is moved into the interpolated part instead (regimes 1 and 2). No loops, the same
+// cost for every ray; the floor crossing is a Newton solve on the closed form. z is the variable in
+// which that solve and the toys' search run: z = int w dt in regime 0, sqrt(t + mn) in regimes 1
+// and 2. The method's accuracy: docs/geometry.md, «Точность».
 // WormholeSpace.fillet_table works the polynomial out by b (its nodes and the matrix to the
 // coefficients: _TAU, _A) and the shader samples it.
 const float WH_TABN = 256.0;     // knots per row of wh_tab (WormholeSpace.TABLE_N)
@@ -394,7 +398,9 @@ float wh_poly(vec4 c, float t) { return c.x + t * (c.y + t * (c.z + t * c.w)); }
 // movable objects' search (wh_curved) use it. Their hits are ordered by where on the path they are
 // (piece and fraction of it), not by length.
 float wh_filLen(WhFil f, vec4 m) {
-    float re = f.ra + f.span * m.y / max(m.x, 1e-30);
+    // m.y <= m.x (tau in [0, 1]): below the floor the ratio only gets smaller. 1e-12 survives Godot's
+    // printing; 1e-30 would be 0, and m.x is 0 at the fillet's inner end and at a turning point
+    float re = f.ra + f.span * m.y / max(m.x, 1e-12);
     return re * re * dot(f.e, m) * f.ib;
 }
 
@@ -996,18 +1002,16 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         wh_hitSphere(x, d, wh_sph[0], vec3(0.80, 0.15, 0.10), h);
         wh_hitSphere(x, d, wh_sph[1], vec3(0.95, 0.75, 0.15), h);
         wh_hitSphere(x, d, wh_sph[2], vec3(0.75, 0.75, 0.78), h);
-        for (int i = 0; i < 4; i++) wh_hitPillar(x, d, wh_pil[i], vec3(0.85, 0.80, 0.70), h);
+        for (int i = 0; i < wh_pil.length(); i++) wh_hitPillar(x, d, wh_pil[i], vec3(0.85, 0.80, 0.70), h);
     } else {
         wh_hitSphere(x, d, wh_sph[3], vec3(0.75, 0.15, 0.70), h);
         wh_hitSphere(x, d, wh_sph[4], vec3(0.15, 0.75, 0.30), h);
         wh_hitSphere(x, d, wh_sph[5], vec3(0.20, 0.35, 0.85), h);
-        float top = max(max(wh_box[0].z + wh_box[0].w, wh_box[1].z + wh_box[1].w),
-                        max(wh_box[2].z + wh_box[2].w, wh_box[3].z + wh_box[3].w));
+        float top = 0.0;
+        for (int i = 0; i < wh_box.length(); i++) top = max(top, wh_box[i].z + wh_box[i].w);
         if (x.z < top || d.z < 0.0) {
-            wh_hitBox(x, d, wh_box[0].xyz, vec3(wh_box[0].w), vec3(0.90, 0.90, 0.95), h);
-            wh_hitBox(x, d, wh_box[1].xyz, vec3(wh_box[1].w), vec3(0.90, 0.90, 0.95), h);
-            wh_hitBox(x, d, wh_box[2].xyz, vec3(wh_box[2].w), vec3(0.90, 0.90, 0.95), h);
-            wh_hitBox(x, d, wh_box[3].xyz, vec3(wh_box[3].w), vec3(0.90, 0.90, 0.95), h);
+            for (int i = 0; i < wh_box.length(); i++)
+                wh_hitBox(x, d, wh_box[i].xyz, vec3(wh_box[i].w), vec3(0.90, 0.90, 0.95), h);
         }
     }
 #ifndef WH_NO_BALLS
@@ -1278,8 +1282,8 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     }
     if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;
     // grid coordinates and their derivatives, for every pixel: the sky's by its direction (d, a
-    // unit vector there), the floor's by l and n, an object's fixed (it has no grid lines, and a
-    // ray that ends on one in the shell has d = 0, whose angle has none)
+    // unit vector there), the floor's by l and n; an object's azimuth fixed (it has no grid lines,
+    // and a ray that ends on one in the shell has d = 0, whose angle has none)
     vec3 dn = d;
     vec2 ga = kind == 1 ? fn.xy : (kind == 0 ? dn.xy : vec2(1.0, 0.0));
     float az = wh_atan2(ga.y, ga.x);

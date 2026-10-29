@@ -11,10 +11,11 @@ extends Node3D
 ## head-height above the feet along the floor normal. Each eye is derived in the shader from that
 ## view's own matrices (shaders/wormhole_view.gdshaderinc).
 ##
-## The parts: the ray tracer (tracer.gd), the demo's balls and cubes in gravity through the
-## wormhole (toys.gd, ball_world.gd), the hands that grab and throw them (hands.gd), foveated
-## rendering (foveation.gd), the menu and the line under it (menu.gd) with the measured frame rate
-## (frame_rate.gd), the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
+## The parts: the space's geometry (wormhole_space.gd), the ray tracer (tracer.gd), the demo's
+## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
+## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd), the menu and the
+## line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd), the speed
+## check (bench.gd) and the stereo check scene (check_scene.gd). Each
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
 ## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
 ## hold, and last the toys and the head to the ray tracer: a toy let go now starts from the hand.
@@ -50,7 +51,6 @@ const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const NEAR := 0.05                  # m: the camera's near plane
 const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
-const CHECK_FLAG := "res://check"   # present in a build: the stereo check scene is on (not in git)
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
@@ -58,7 +58,7 @@ var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://s
 var toys := Toys.new(space, scene)
 var hands := Hands.new(space, toys.world)
 var xr_name := "OpenXR"         # tests: "FakeHMD" (tests/fake_hmd.gd), "Native mobile", "none" (the desktop)
-var show_check := FileAccess.file_exists(CHECK_FLAG)
+var show_check := OS.has_feature("check")   # the export preset for the one-eye check (tools/export.sh --check)
 var xr: XRInterface
 var in_xr := false
 var xr_view: SubViewport        # XR renders here, so the desktop window gets no mirror image
@@ -260,7 +260,7 @@ func _process(delta: float) -> void:
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
-		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll))
+		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll), _head_forward_xz())
 	# in the order the top of this file gives; nothing during the speed check: it times the same
 	# scene at every pose
 	var active := toys.enabled and not await_pose and not hold
@@ -487,15 +487,23 @@ func _walk(step: Vector2) -> void:
 	frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
 
 
-## The head's frame [right, up, back] turned pitch up, then roll about the line of sight.
-static func _tilt(f: Array, pitch: float, roll: float) -> Array:
+## The play space's axes in the curved space, f = [x, up, z], turned so that a head looking along
+## fwd (play x, z) looks pitch higher and is rolled about its line of sight (right side up): about
+## the head's own right and back, not the play space's x and z.
+static func _tilt(f: Array, pitch: float, roll: float, fwd: Vector2) -> Array:
+	var r := Vector2(-fwd.y, fwd.x)                  # the head's right in the play space (x, z)
+	var right: Vector4 = r.x * f[0] + r.y * f[2]
+	var back: Vector4 = -fwd.x * f[0] - fwd.y * f[2]
 	var c := cos(pitch)
 	var s := sin(pitch)
-	var up: Vector4 = c * f[1] + s * f[2]
-	var back: Vector4 = c * f[2] - s * f[1]
+	var up: Vector4 = c * f[1] + s * back
+	back = c * back - s * f[1]
 	var cr := cos(roll)
 	var sr := sin(roll)
-	return [cr * f[0] + sr * up, cr * up - sr * f[0], back]
+	var right2: Vector4 = cr * right + sr * up
+	up = cr * up - sr * right
+	# back from the head's axes to the play space's: x = r.x right - fwd.x back, z = r.y right - fwd.y back
+	return [r.x * right2 - fwd.x * back, up, r.y * right2 - fwd.y * back]
 
 
 ## Turn the frame about the floor's normal; a positive angle turns the view to the right.

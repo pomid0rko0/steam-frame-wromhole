@@ -3,8 +3,8 @@ extends RefCounted
 ## <detail>", and it ends with "FAILURES: n" and exit status 1 on any (tools/test.sh shows the FAIL
 ## lines). Also: keys, the simulated headset and controllers, both eyes' pictures, Godot's own red
 ## geometry for the stereo tests to compare the ray tracer with.
-## In a test script main._ready has not run during _initialize: set main's fields there, touch its
-## nodes from _process, frame 2 or later.
+## In a test script main._ready has not run during _initialize (set main's fields there) and has
+## by the first _process; each frame the test's _process runs before main's.
 
 const FakeHmd := preload("res://tests/fake_hmd.gd")
 const HEAD_0 := Vector3(0.0, 1.6, 0.0)               # headset case 0: the head in the room
@@ -86,11 +86,12 @@ static func key(code: Key, down: bool, flush := false) -> void:
 ## The simulated headset (fake_hmd.gd, or hmd: an instance of a script that extends it), made the
 ## primary interface. case 0: the head straight up at HEAD_0, parallel eyes IPD apart, symmetric
 ## frusta FRUSTUM_0; 1: the head turned, pitched (pitch, degrees), rolled and displaced, the eyes
-## canted outward, asymmetric frusta.
-static func headset(case := 0, pitch := -12.0, size := Vector2i(1000, 1100), hmd: XRInterface = null) -> XRInterface:
+## canted outward, asymmetric frusta. size: each eye's pixels (zero: fake_hmd.gd's).
+static func headset(case := 0, pitch := -12.0, size := Vector2i.ZERO, hmd: XRInterface = null) -> XRInterface:
 	if hmd == null:
 		hmd = FakeHmd.new()
-	hmd.size = size
+	if size != Vector2i.ZERO:
+		hmd.size = size
 	if case == 0:
 		hmd.setup(Transform3D(Basis.IDENTITY, HEAD_0), IPD, 0.0, FRUSTUM_0)
 	else:

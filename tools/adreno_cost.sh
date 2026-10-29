@@ -54,7 +54,7 @@ others=()
 for s in "${srcs[@]}"; do [ "$s" = this ] || others+=("$s"); done
 if [ ${#others[@]} -gt 0 ]; then "$ROOT/tools/ab_shaders.sh" "${others[@]}" >/dev/null || exit 1; fi
 # the speed check's poses, bench.gd's PLACES
-[ -n "$POSES" ] || POSES=$(sed -n '/^const PLACES/,/^]/p' "$ROOT/godot/bench.gd" | grep -o '\[[-0-9., ]*\]' | tr -d '[] ' | paste -sd ';')
+[ -n "$POSES" ] || POSES=$(sed -n '/^const PLACES/,/^]/p' "$ROOT/godot/bench.gd" | grep -o '\[[-0-9.START, ]*\]' | tr -d '[] ' | paste -sd ';')
 scene=$([ -n "$TOYS" ] && echo toys$HELD || echo plain)
 n=0
 for s in "${srcs[@]}"; do
@@ -97,5 +97,5 @@ for s in "${srcs[@]}"; do
 		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
 		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
 	fi
-	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
+	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" --size "$HEADSET_EYE" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
 done

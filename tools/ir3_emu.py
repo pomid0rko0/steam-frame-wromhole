@@ -208,8 +208,8 @@ def parse_program(lines):
         for s in ins.srcs:
             if s.kind == 'l':
                 ins.target = labels[s.num]
-        # a 16-bit ALU op (Mesa's uses_significant_16bit_alu): half destination and a half source;
-        # in waves of 128 these run at double rate
+        # a 16-bit ALU op (Mesa's uses_significant_16bit_alu): half destination and a half source
+        # (in waves of 128 these issue at double rate: adreno_cost.per64)
         alu = ins.op.split('.')[0] in ('add', 'mul', 'mad', 'min', 'max', 'absneg', 'floor', 'ceil', 'sign',
                                          'rndne', 'trunc', 'cmps', 'sel', 'and', 'or', 'xor', 'not', 'sub',
                                          'shl', 'shr', 'cov', 'mov') or ins.op in CAT4

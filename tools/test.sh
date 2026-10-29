@@ -31,6 +31,7 @@ done
 OUT=${OUT:-$(mktemp -d "$OUTS/tests.XXXXXX")}; mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 JOBS=${JOBS:-$(nproc)}
 DATA=$(mktemp -d)
+trap 'rm -rf "$DATA"' EXIT
 i=0
 for t in "${names[@]}"; do
 	f=tests/${t}_test.gd
@@ -64,6 +65,5 @@ for t in "${names[@]}"; do
 	{ grep -E "^FAIL|^FAILURES" "$OUT/$t.log"; echo "$errors"; [ "$code" = 0 ] || tail -3 "$OUT/$t.log"; } \
 		| grep -v '^$' | head -20 | sed 's/^/    /'
 done
-rm -rf "$DATA"
 echo "logs: $OUT"
 exit $failed

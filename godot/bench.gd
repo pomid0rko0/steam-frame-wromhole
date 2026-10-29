@@ -1,6 +1,6 @@
 class_name Bench
 extends Node
-## The speed check, the menu's last row ("замер скорости"), in two parts. The eyes are best kept
+## The speed check (menu.gd's row "bench"), in two parts. The eyes are best kept
 ## closed throughout: the world is turned and moved to the head, and some pictures are no proper
 ## ones.
 ##
@@ -21,36 +21,28 @@ extends Node
 ## Fewer instructions or registers (tools/adreno_stats.sh) are not faster by themselves, and frame
 ## times from walking around don't compare between builds (where one looks changes them): this
 ## part decides.
-## This build's ray tracer is timed each way FOVEATIONS lists: without foveation, with the 3D scene
-## in a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
-## foveated rendering (foveation.gd); with the demo's toys one way more, the ray tracer with toys
-## over the whole view, not only where the stencil marks that a toy may be seen (Tracer.toy_mode).
-## The others run without foveation, and only of the same kind (comparable): none with the gravity view
-## on; without the toys plain; with them only those that have a toys' shader, over the whole view.
+## This build's ray tracer is timed each way FOVEATIONS lists (the split pass alone: what
+## foveation's pass costs without a map) and, with the toys, over the whole view too (what the
+## stencil saves); the others as comparable() takes them.
 ##
-## 2. The tour, at TOUR_RATE with this build's ray tracer: at each of TOUR_L the view sweeps from
-## the throat round to the other side, in rows at each of TOUR_PITCH; then walks through the
-## throat and back, turning and nodding on the way; then turns on the spot about each axis
-## (yaw, pitch, roll). Every frame gets a "tf" line: the time, the pose, the refreshes it took,
-## and the GPU and CPU time; every second a "tour:" line. Before each place the viewer goes back
-## to the start, a cheap pose, for TOUR_RECOVER s (not enough to undo SteamVR's half rate, which
-## lasts several seconds: frame_rate.gd).
+## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
+## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),
+## which is not enough to undo SteamVR's half rate (frame_rate.gd).
 ##
-## The result, on the menu's line below and under its row, says whether TOUR_RATE held (and where it
-## did worst), how this build's ray tracer compares with the first of the others, and what the
-## foveation and the stencil save. Render scale 100% throughout, the tour with the foveation chosen
-## in the menu; afterwards the rate, the scale, the shader, the foveation and where one stood come
-## back. A build made for measuring (tools/ab_shaders.sh --auto) runs it by itself once the headset
-## has tracked the head for AUTO_AFTER seconds: start it, put the headset on, close the eyes, send
-## the log afterwards.
+## Afterwards what it changed comes back (_restore, _finish). A build made for measuring
+## (tools/ab_shaders.sh --auto) runs it by itself once the headset has tracked the head for
+## AUTO_AFTER seconds: start it, put the headset on, close the eyes, send the log afterwards.
 
 const RateMeter := preload("res://rate_meter.gd")
 const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
 const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
 const AUTO := "res://shaders/ab/auto"      # present: run by itself
 const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
+# l, in PLACES and TOUR_L: the start (main.START_POS); the other values are metres of l chosen
+# against this throat's curved zone (edge L), which WormholeSpace.set_profile's list names
+const START := INF
 const PLACES := [   # the comparison's poses: [l, degrees to the right, degrees up] (place_on_axis)
-	[11.6, 0.0, 0.0],   # the start
+	[START, 0.0, 0.0],
 	[6.2, 0.0, 0.0],    # just outside the curved zone: the wormhole fills the view
 	[6.2, 60.0, 0.0],
 	[5.0, 0.0, 0.0],    # inside, at the edge: every ray starts in the curved zone
@@ -68,7 +60,7 @@ const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
 const PREPARE := 2.0            # s each ray tracer runs before the timing (its pipeline is compiled)
 const TOUR_RATE := 120.0
-const TOUR_L := [11.6, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2]
+const TOUR_L := [START, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2]
 const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
@@ -89,9 +81,7 @@ var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
-var variants: Array = []        # this run's [label, Shader, foveation, split, Tracer.toy_mode]:
-                                # others (of the kind this build runs: with toys or without),
-                                # then this build's (FOVEATIONS), with toys also over the whole view
+var variants: Array = []        # this run's [label, Shader, foveation, split, Tracer.toy_mode] (start)
 var own := 0                    # the variant that is this build without foveation
 var own_shader: Shader
 var plan: Array = []            # segments: [place index, variant index]
@@ -151,18 +141,25 @@ func comparable() -> Array:
 ## recover: back to the start first, what}
 func _make_tour() -> Array:
 	var t := []
-	for l in TOUR_L:
+	var start_l := _l(START)
+	for tl in TOUR_L:
+		var l := _l(tl)
 		for i in TOUR_PITCH.size():
 			var y0 := 0.0 if i % 2 == 0 else 180.0
 			t.append(_st(l, l, y0, 180.0 - y0, TOUR_PITCH[i], SWEEP,
 					"l %.1f m, %.0f deg up, sweeping round" % [l, TOUR_PITCH[i]], i == 0))
-	t.append(_st(11.6, -6.2, 0.0, 720.0, 0.0, 15.0, "walking from the start through the throat, turning and nodding", true, 30.0))
-	t.append(_st(-6.2, 11.6, 180.0, -540.0, 0.0, 15.0, "walking back, turning, nodding and tilting", true, 30.0, 20.0))
+	t.append(_st(start_l, -6.2, 0.0, 720.0, 0.0, 15.0, "walking from the start through the throat, turning and nodding", true, 30.0))
+	t.append(_st(-6.2, start_l, 180.0, -540.0, 0.0, 15.0, "walking back, turning, nodding and tilting", true, 30.0, 20.0))
 	for l in [6.2, 5.0, 0.0]:
 		t.append(_st(l, l, 0.0, 360.0, 0.0, 4.0, "l %.1f m, turning round (yaw)" % l, true))
 		t.append(_st(l, l, 0.0, 0.0, 0.0, 6.0, "l %.1f m, nodding 60 deg (pitch)" % l, false, 60.0))
 		t.append(_st(l, l, 0.0, 0.0, 0.0, 4.0, "l %.1f m, tilting 30 deg (roll)" % l, false, 0.0, 30.0))
 	return t
+
+
+## A pose's l: START as the start's.
+func _l(l: float) -> float:
+	return main.space.point_from_chart(1.0, main.START_POS)[0] if is_inf(l) else l
 
 
 func _st(l0: float, l1: float, y0: float, y1: float, p: float, secs: float, what: String,
@@ -283,7 +280,7 @@ func _process(delta: float) -> void:
 ## Run a ray tracer untimed at the first place, so its pipeline is compiled before the timing.
 func _prepare() -> void:
 	phase_t = 0.0
-	main.place_on_axis(PLACES[0][0], PLACES[0][1], PLACES[0][2])
+	main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])
 	_use(variants[variants.size() - preparing])
 
 
@@ -322,7 +319,7 @@ func _clock() -> void:
 func _begin(i: int) -> void:
 	step = i
 	var place: Array = PLACES[plan[i][0]]
-	main.place_on_axis(place[0], place[1], place[2])
+	main.place_on_axis(_l(place[0]), place[1], place[2])
 	_use(variants[plan[i][1]])
 	phase_t = 0.0
 	gpu_ms.clear()
@@ -349,7 +346,7 @@ func _end_segment() -> void:
 		parts.append(s)
 		segs.append(_list(r[v]))
 	print("bench: l %.1f m, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [place[0], place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
+			% [_l(place[0]), place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
 
 
 func _compared() -> void:
@@ -382,7 +379,7 @@ func _compared() -> void:
 			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
 		verdict = " · ".join(parts)
 	if _headset():
-		_show("замер: теперь %.0f Гц, глаза закрыты" % TOUR_RATE)
+		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
 		_rate(TOUR_RATE, "tour")
 	else:
 		_finish("")
@@ -414,8 +411,8 @@ func _tour_step(i: int) -> void:
 	counting = false
 	tour_results.append({"frames": 0, "refreshes": 0, "worst": [0.0, 0.0, 0.0, 0.0, 0.0]})
 	if tour[i].recover:
-		main.place_on_axis(PLACES[0][0], PLACES[0][1], PLACES[0][2])     # recover at the start
-	_show("замер %.0f Гц: шаг %d из %d, глаза закрыты" % [TOUR_RATE, i + 1, tour.size()])
+		main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])     # recover at the start
+	_show("замер %.0f Гц: шаг %d из %d, глаза закрыты" % [main.rate.rate, i + 1, tour.size()])
 
 
 func _tour(delta: float) -> void:
@@ -487,7 +484,7 @@ func _toured() -> void:
 ## A pose in words for the menu.
 func _ru(l: float, yaw: float, pitch: float) -> String:
 	var a := absf(l)
-	var where := "старт" if a >= 10.0 else ("снаружи у края" if a >= main.space.L else ("край зоны" if a >= main.space.Lc else "горло"))
+	var where := "старт" if a >= _l(START) - 0.05 else ("снаружи у края" if a >= main.space.L else ("край зоны" if a >= main.space.Lc else "горло"))
 	if l < 0.0:
 		where += " (мир B)"
 	var y := fposmod(yaw if l >= 0.0 else 180.0 - yaw, 360.0)    # degrees from the throat
@@ -508,7 +505,9 @@ func _finish(tour_line: String) -> void:
 	main.hold = false
 	main.set_pose(saved_pose)
 	menu.set_render_scale(menu.render_scale)
-	if _headset() and saved_rate > 0.0 and absf(saved_rate - main.rate.rate) > 0.5:
+	# also when the display never followed: SteamVR's setting for the app may hold TOUR_RATE now
+	if _headset() and saved_rate > 0.0 and (absf(saved_rate - main.rate.rate) > 0.5
+			or absf(saved_rate - main.rate.chosen()) > 0.5):
 		main.rate.choose(saved_rate)
 	print("bench: done")
 	var parts := []

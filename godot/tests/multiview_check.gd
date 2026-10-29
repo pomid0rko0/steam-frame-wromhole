@@ -20,8 +20,9 @@ extends SceneTree
 ## Vulkan has none, so what this tests is that the split pass draws everything where it was.
 
 const U := preload("res://tests/util.gd")
-const SHOWN := {"ray": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball1", "Ball2", "Ball3"],
-		"cube": ["Cube"], "both": ["Grid", "Ball1", "Ball2", "Ball3", "Cube"]}
+# the overlay's nodes each mode shows (CheckScene.show_only)
+const SHOWN := {"ray": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
+		"both": ["Grid", "Ball", "Cube"]}
 # case 2: the head's step in the room each frame
 const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05))
 # case 3: [frame, key, down]

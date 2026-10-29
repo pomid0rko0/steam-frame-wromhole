@@ -7,7 +7,7 @@ extends SceneTree
 ## 3. potential_grad is the gradient of potential (so the field conserves energy)
 ## 4. the ray tracer's polynomials (gravity_shader) are the field, and join the cylinder and the
 ##    flat part
-## 5. G cycles the views (off, floor, arrows) and their ray tracers; not during the speed check;
+## 5. G cycles the views (Tracer.GRAVITY_VIEWS) and their ray tracers; not during the speed check;
 ##    with movable balls and cubes each view has a ray tracer that draws them too
 ## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
 ##    throat, the sky untouched; arrows drawn over the view with view 2

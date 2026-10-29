@@ -8,6 +8,7 @@ extends SceneTree
 ## 4. R puts the viewer back at the start, facing the wormhole
 ## 5. Shift + W for six seconds runs 24 m: through the middle of the throat into universe B,
 ##    on the floor, still walking straight, to where 24 m along the floor end in chart B
+## 6. the speed check's view tilt turns about the head's own axes, whichever way it faces
 ## Controllers: tests/walking_xr_test.gd.
 
 const U := preload("res://tests/util.gd")
@@ -49,9 +50,33 @@ func _check_feet_kept(name: String) -> void:
 	U.check(name, absf(p.x - 8.5) < 0.03 and absf(p.y) < 0.01, "feet at (%.3f, %.3f), expected (8.5, 0)" % [p.x, p.y])
 
 
+## The speed check's view tilt (main._tilt) turns about the head's own axes, whichever way the head
+## faces in the room: the look goes pitch up, the head's right turns roll about the look.
+func _check_tilt() -> void:
+	var f := [Vector4(1, 0, 0, 0), Vector4(0, 1, 0, 0), Vector4(0, 0, 1, 0)]     # play x, up, z
+	var pitch := deg_to_rad(-35.0)
+	var roll := deg_to_rad(20.0)
+	var worst := 0.0
+	for yaw in [0.0, 90.0, 200.0]:
+		var a := deg_to_rad(yaw)
+		var fwd := Vector2(-sin(a), -cos(a))         # the head turned yaw to the left of -z
+		var t: Array = main._tilt(f, pitch, roll, fwd)
+		var look: Vector4 = fwd.x * t[0] + fwd.y * t[2]
+		var right: Vector4 = -fwd.y * t[0] + fwd.x * t[2]
+		var flat: Vector4 = fwd.x * f[0] + fwd.y * f[2]
+		var want_look: Vector4 = cos(pitch) * flat + sin(pitch) * f[1]
+		var flat_r: Vector4 = -fwd.y * f[0] + fwd.x * f[2]
+		var up_p: Vector4 = cos(pitch) * f[1] - sin(pitch) * flat
+		var want_right: Vector4 = cos(roll) * flat_r + sin(roll) * up_p
+		worst = maxf(worst, maxf((look - want_look).length(), (right - want_right).length()))
+	U.check("the speed check's tilt turns about the head's own axes", worst < 1e-6, "off by %.2e" % worst)
+
+
 func _process(_delta: float) -> bool:
 	frames += 1
 	match frames:
+		3:
+			_check_tilt()
 		5:
 			U.key(KEY_W, true)
 		65:

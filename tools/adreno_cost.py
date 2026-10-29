@@ -12,7 +12,7 @@ leaves out: tools/ir3_emu.py.
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
-headset, S x S pixels (default 1728, as tools/fdm_check.sh) and F degrees of vertical field of view
+headset, S x S pixels (tools/adreno_cost.sh passes tools/env.sh's HEADSET_EYE) and F degrees of vertical field of view
 (default 104, a guess at the Frame's: the headset log's per-second "refresh:" line gives the frustum
 the runtime hands Godot), on N random tiles (default 300; the same tiles for every LOG of the same
 wave width with the same seed K). --profile: cycles per stretch of code.
@@ -35,13 +35,12 @@ import ir3_emu as E  # noqa: E402
 
 # The estimate, fitted on speed checks in the headset of other ray tracers than this tree's, at
 # other poses than godot/bench.gd's PLACES; the measurements are not in the repository, so nothing
-# here checks the constants. A model to compare variants, not a timing: ms for a frame (both eyes at
-# --size) = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x transcendental
-# instructions + MS_CAT5 x texture-unit instructions, each per 64 pixels (ir3_emu.py counts them,
-# per64 scales them). In a wave of 128 a full-precision instruction issues in two cycles and a
-# half-precision one in one, and a nop slot covers 128 pixels; a cat4 or cat5 instruction's work is
-# per pixel whatever the wave. By the constants transcendentals and texture-unit instructions cost
-# far more than their issue slots (MS_CAT4 / MS_ALU and MS_CAT5 / MS_ALU ALU cycles' worth).
+# here checks the constants. A model to compare variants, not a timing: GODOT_MS + MS_ALU x ALU
+# issue cycles + MS_NOP x nop slots + MS_CAT4 x transcendental instructions + MS_CAT5 x texture-unit
+# instructions, each per 64 pixels averaged over the tiles (per64). No pixel count is in it: it
+# stands for the speed check's GPU ms only at the eye size the fit ran at, which is not recorded.
+# By the constants transcendentals and texture-unit instructions cost far more than their issue
+# slots (MS_CAT4 / MS_ALU and MS_CAT5 / MS_ALU ALU cycles' worth).
 GODOT_MS = 0.8
 MS_ALU = 1.61e-3
 MS_NOP = 1.05e-3
@@ -51,11 +50,13 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
 from wh import Wormhole, app_profile  # noqa: E402 (ref/, on the path above)
 PROFILE = app_profile()
+WH = Wormhole(*PROFILE)
 
 
 def ray_program(log):
-    """The specialised ray tracer from an ir3 log: of the two big fragment programs, the smaller.
-    The /2 variants are not run (tools/adreno_stats.sh), so the /1 runs."""
+    """The specialised ray tracer from an ir3 log: of the two big fragment programs, the smaller;
+    its /1 (the /2 runs only past 512 vec4 of constants in all stages: tools/adreno_stats.sh prints
+    each program's constlen)."""
     text = open(log, errors='replace').read().replace('MESA: info: ', '')
     progs = {}
     for m in re.finditer(r'; FRAG prog (\d+/1): (\d+) instr', text):
@@ -155,7 +156,7 @@ def material_ubo(spec, values):
 
 def fillet_table():
     """WormholeSpace.fillet_table, from the float64 reference (ref/wh.py)."""
-    return Wormhole(*PROFILE).fillet_table()
+    return WH.fillet_table()
 
 
 class Shader:
@@ -216,22 +217,6 @@ def tile_lanes(x0, y0, wide=False):
     return np.array(xs), np.array(ys)
 
 
-def wh_eye(l, rho0=PROFILE[0], h=PROFILE[1], R=PROFILE[2]):
-    """wormhole_core's wh_eye: (r, r - rmin) of a start point."""
-    Lc = max(h - R, 0.0)
-    th0 = np.arcsin(max(1.0 - h / R, 0.0))
-    L = Lc + R * (0.5 * np.pi - th0)
-    al = abs(l)
-    if al >= L:
-        r = al - L + rho0 + R
-    elif al <= Lc:
-        r = rho0
-    else:
-        r = rho0 + R * (1.0 - np.cos(th0 + (al - Lc) / R))
-    ths = th0 + max(al - Lc, 0.0) / R
-    return [r, 2.0 * R * np.sin(0.5 * (ths + th0)) * np.sin(0.5 * (ths - th0))]
-
-
 def varyings_for(entry, xs, ys, W, H, tan_x, tan_y, sh=None):
     """The shader's inputs per lane: v_ray (the pixel's unnormalised ray, as (U_l, u)) and the flat
     v_l, v_n and (where the shader has it) v_eye, packed into the slots in the order Mesa packed them
@@ -249,7 +234,7 @@ def varyings_for(entry, xs, ys, W, H, tan_x, tan_y, sh=None):
     v = np.zeros((max(smooth + flat) + 1, L), np.float32)
     for k, loc in enumerate(smooth):
         v[loc] = ray[k]
-    groups = {'l': [entry['head_l']], 'n': list(entry['head_n']), 'eye': wh_eye(entry['head_l'])}
+    groups = {'l': [entry['head_l']], 'n': list(entry['head_n']), 'eye': WH.eye(entry['head_l'])}
     order = sh.flat_order if sh and sh.flat_order else ['l', 'n', 'eye']
     fv = sum((groups[g] for g in order), [])
     for k, loc in enumerate(flat):
@@ -342,7 +327,7 @@ def proxy_marked(e, xs, ys, size, tan_x, tan_y):
     l, n = e['head_l'], np.array(e['head_n'], float)
     side = 1.0 if l > 0 else -1.0
     M = np.array([side, 1.0, 1.0])
-    x = M * wh_eye(l)[0] * n
+    x = M * WH.eye(l)[0] * n
     d = M[:, None] * (side * V[0][None] * n[:, None] + V[1:])
     d /= np.linalg.norm(d, axis=0)
     hit = np.zeros(len(xs), bool)
@@ -374,7 +359,10 @@ def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=No
             w = 1.0 if share is None else share(e, xs, ys, tan_x)
             if w <= 0.0:
                 continue
-            col, st = sh.run(varyings_for(e, xs, ys, size, size, tan_x, tan_y, sh), profile)
+            prof = None if profile is None else np.zeros_like(profile)
+            col, st = sh.run(varyings_for(e, xs, ys, size, size, tan_x, tan_y, sh), prof)
+            if profile is not None:
+                profile += w * prof
             for k in ('cycles', 'instr', 'cat4', 'cat5', 'lane_instr', 'nops', 'half'):
                 setattr(tot, k, getattr(tot, k) + w * getattr(st, k))
         res.append((e['pose'], tot))
@@ -383,7 +371,9 @@ def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=No
 
 def per64(sh, st, n):
     """A pose's totals over n tiles as (ALU cycles, nop slots, transcendentals, texture-unit
-    instructions) per 64 pixels."""
+    instructions) per 64 pixels. In a wave of 128 a full-precision instruction issues in two cycles
+    and a half-precision one in one, and a nop slot covers 128 pixels; a cat4 or cat5 instruction's
+    work is per pixel whatever the wave."""
     lanes = 128 if sh.wave128 else 64
     alu = (st.cycles - st.nops - st.half) * (2 if sh.wave128 else 1) / n * 64 / lanes + st.half / n * 64 / lanes
     return alu, st.nops / n * 64 / lanes, st.cat4 / n, st.cat5 / n
@@ -391,7 +381,7 @@ def per64(sh, st, n):
 
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 1728, '--fov': 104.0, '--seed': 1, '--split': ''}
+    opt = {'--tiles': 300, '--size': 0, '--fov': 104.0, '--seed': 1, '--split': ''}
     flags = set()
     pos = []
     i = 0
@@ -403,6 +393,8 @@ def main():
         else:
             pos.append(args[i]); i += 1
     log, dump = pos
+    if not opt['--size'] and '--check' not in flags:
+        sys.exit('--size: the eye size (tools/env.sh, HEADSET_EYE)')
     entries = json.load(open(dump))
     spec = shader_defines(entries[0]['shader'])
     def eye_pix(u):

@@ -11,7 +11,7 @@
 #                                       flat     no wormhole, straight rays, the same shading
 #                                       noshade  the same rays, a plain colour per kind of surface
 #                                       noderiv  grid lines of a fixed width: no screen derivatives
-#                                       nogrid   no grid lines: no atan, asin or derivatives
+#                                       nogrid   no grid lines: none of their atan, asin or derivatives
 #                                       nosky    one colour per sky, the grid lines kept
 #   tools/ab_shaders.sh --auto <source>...   the same, and the build runs the check by itself
 #                                     (bench.gd says when: a build for measuring)
@@ -82,7 +82,7 @@ elif kind in ('noderiv', 'nogrid', 'nosky'):
                 '    return side > 0.0 ? vec3(0.9, 0.6, 0.4) : vec3(0.5, 0.7, 1.0) + 1e-6 * el;')
     open(core, 'w').write(s)
     open(d + '/label', 'w').write({'noderiv': 'grid lines of a fixed width, no screen derivatives',
-                                   'nogrid': 'no grid lines: no atan, asin or derivatives',
+                                   'nogrid': 'no grid lines: none of their atan, asin or derivatives',
                                    'nosky': 'one colour per sky, the grid lines kept'}[kind] + '\n')
 else:
     s = open(d + '/wormhole_core.gdshaderinc').read()

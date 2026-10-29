@@ -21,16 +21,36 @@ GODOT=${GODOT:-$ROOT/tools/.bin/godot}
 # this tree's tools/.bin
 MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
 [ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
+# Each eye's pixels a side in the headset: the headset log's "refresh:" lines ("eye WxH"; SteamVR's
+# resolution setting decides it)
+HEADSET_EYE=1728
 OUTS=$REPO/.wt/.out
 mkdir -p "$OUTS"
-# runs' folders a day old go: nothing else deletes them (a run takes less than an hour)
+# runs' folders a day old go: nothing else deletes them (the tools' timeouts end a run sooner)
 find "$OUTS" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+# Godot on Turnip (Mesa's driver for the Frame's Adreno 750) over Mesa's "noop" drm-shim (no GPU,
+# nothing is drawn): turnip DIR writes the driver's manifest into DIR, pointing at the library where
+# it is now (the installed one has the build's path), and sets TURNIP, the environment to run
+# under (env "${TURNIP[@]}" ...); exit status 2 without setup.sh's Turnip.
+turnip() {
+	local lib=$MESA/lib/$(uname -m)-linux-gnu
+	[ -f "$lib/libfreedreno_noop_drm_shim.so" ] || { echo "no Turnip build in $MESA: run tools/setup.sh"; return 2; }
+	sed "s#\"library_path\": *\"[^\"]*\"#\"library_path\": \"$lib/libvulkan_freedreno.so\"#" \
+		"$MESA"/share/vulkan/icd.d/freedreno_icd.*.json > "$1/icd.json"
+	TURNIP=(LD_PRELOAD="$lib/libfreedreno_noop_drm_shim.so" FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw VK_ICD_FILENAMES="$1/icd.json")
+}
 # A Godot run with -s knows the project's script classes (WormholeSpace...) only from an import:
-# import when there was none or a script changed since.
+# import when there was none or a script changed since (the stamp's time: the import's start), one
+# run of this tree at a time.
 import_scripts() {
 	local stamp=$ROOT/godot/.godot/scripts_imported     # a file: Godot's own imported/ is a folder
-	[ -f "$stamp" ] && [ -z "$(find "$ROOT/godot" -name '*.gd' -newer "$stamp" -print -quit)" ] && return 0
-	"$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 && touch "$stamp"
+	mkdir -p "$ROOT/godot/.godot"
+	(
+		flock 8
+		[ -f "$stamp" ] && [ -z "$(find "$ROOT/godot" -name '*.gd' -newer "$stamp" -print -quit)" ] && exit 0
+		touch "$stamp.new"
+		"$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 && mv "$stamp.new" "$stamp"
+	) 8>"$ROOT/godot/.godot/import.lock"
 }
 # An X display no other run holds, also another task's: from $1 on, the first without an X server
 # whose reservation (a directory: mkdir makes it or fails, never both for two runs) this run gets.

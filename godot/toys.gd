@@ -4,8 +4,9 @@ extends RefCounted
 ## the wormhole: balls and cubes, one more cube in the throat. A moment after the start a
 ## cube and a ball are thrown from chest height; the ball rolls through the throat into universe B.
 ## Then two balls are dropped together from the same height: one beside the wormhole, one in the
-## middle of the throat, where gravity is weaker (docs/gravity.md). A puts it all back and does it
-## again.
+## middle of the throat, where gravity is weaker (docs/gravity.md). The reset (main._turn_and_reset)
+## puts it all back and does it again. Places are chart A's, laid out for the view from
+## main.START_POS.
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
@@ -13,10 +14,10 @@ const CUBE_COLORS := [Color(0.93, 0.93, 0.88), Color(0.95, 0.45, 0.55), Color(0.
 		Color(0.95, 0.7, 0.3), Color(0.55, 0.6, 0.95), Color(0.6, 0.85, 0.35)]
 const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
 const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
-const DROP_HEIGHT := 2.0
+const DROP_HEIGHT := 2.0        # m
 const DROP_COLOR := Color(0.95, 0.95, 0.97)
 const DROP_SPOT_A := Vector3(4.5, 4.2, DROP_HEIGHT)   # to the right of the wormhole
-const DROP_RADIUS := 0.35
+const DROP_RADIUS := 0.35       # m
 
 var space: WormholeSpace
 var world: BallWorld
@@ -114,9 +115,8 @@ func cube_in_throat(l: float, phi: float, half: float, color: Color) -> Dictiona
 	return world.add_cube(l, n, Vector4.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), up, across], Vector3.ZERO, half, color)
 
 
-## The balls and cubes to the ray tracer (Tracer.set_objects): a ball's centre as a point of R^4
-## and its radius, then the hands' balls (hands: [centre, colour with the radius]); a cube's 4D box
-## (centre, four axes over the half size) and colour.
+## The balls and cubes, and the hands' balls (hands: [centre, colour with the radius]), to the ray
+## tracer (Tracer.set_objects).
 func draw(tracer: Tracer, hands: Array) -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()

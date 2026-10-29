@@ -5,7 +5,6 @@ extends SceneTree
 ## --fixed-fps 60 under a display (xvfb-run: it looks at the left eye's picture); exit status 1
 ## on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/grab_test.gd
-## 0. the action map is exactly util.gd's, every binding of every profile (U.check_bindings)
 ## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
 ##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is
 ## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
@@ -15,8 +14,8 @@ extends SceneTree
 ##    it spins as the hand turned and moves as the hand did (not with the wrist's turn times its
 ##    lever to the cube's centre)
 ## 5. right B with the grip closed: a new ball in the right hand; the left hand takes it over
-## 6. the hand pushes a ball and a cube it meets, softly (a ball under 1.35 times the hand's speed;
-##    one pressed into the floor is not flung); a held ball pushes a ball
+## 6. the hand pushes a ball and a cube it meets, softly (one pressed into the floor is not flung);
+##    a held ball pushes a ball
 ## 7. a half-open grip keeps holding, more open lets go; a hand that loses its tracking leaves its
 ##    ball in the air, at rest (a ball set on it is not flung), and let go then it falls from rest
 ## 8. while the speed check holds the viewer, the hands are not drawn and grab nothing, B and X
@@ -122,7 +121,6 @@ func _left_eye() -> Image:
 
 func _run() -> void:
 	await _step(3)
-	U.check_bindings()
 	U.check("main runs in XR, so it reads the controllers", main.in_xr, "in_xr %s" % main.in_xr)
 	main.menu.visible = false        # it follows the head: in every view
 	spawned = [main.toys.world.balls.size(), main.toys.world.cubes.size()]

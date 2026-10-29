@@ -4,12 +4,13 @@ extends SceneTree
 ## shader can be fed the same inputs and checked against the picture.
 ##   godot --path . --resolution WxH -s res://tests/emu_dump.gd -- out.json "l,yaw,pitch;..." [fov] [scene] [shader]
 ## Each pose gives out_<i>.png and an entry in out.json with the ray tracer's path and its uniforms.
-## fov: vertical, degrees (default 90); scene: plain (default), toys (the demo after the throw and
-## the drop, everything at rest), with +gravity1 or +gravity2 the gravity view
+## fov: vertical, degrees (default 90); scene: plain (default), toys (the demo's toys, thrown and
+## dropped in the same frame and at rest 12 s later: not where the demo's timing leaves them), with
+## +gravity1 or +gravity2 the gravity view
 ## (main.set_gravity_view), e.g. toys+gravity2; with +hands also both hands' balls where hands are
 ## at every pose, with +held also a ball held in the right one in front of the chest (what the
-## hands and grabbing add to a frame; the held ball takes the place of the demo's oldest, as the
-## demo fills BallWorld.MAX_BALLS); shader: another ray tracer's path
+## hands and grabbing add to a frame; the held ball goes in as BallWorld.add puts any: with
+## MAX_BALLS there, in the oldest's place); shader: another ray tracer's path
 ## (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D
@@ -33,13 +34,12 @@ func _initialize() -> void:
 	out = a[0]
 	for p in a[1].split(";"):
 		var v := p.split(",")
-		poses.append([float(v[0]), float(v[1]), float(v[2])])
+		poses.append([v[0] if v[0] == "START" else float(v[0]), float(v[1]), float(v[2])])     # START: bench.gd's
 	if a.size() > 2:
 		fov = float(a[2])
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
 	var scene: String = a[3] if a.size() > 3 else "plain"
-	main.show_check = false     # also with a godot/check of export.sh --check lying in the tree
 	main.toys.enabled = scene.begins_with("toys")
 	main.toys.demo = false
 	toys = main.toys.enabled
@@ -60,7 +60,7 @@ func _process(_d: float) -> bool:
 			main.tracer.toy_mode = Tracer.BARE    # another source's: no stencil test, the whole view
 	if frames == 2:
 		if toys:
-			# the demo after the throw and the drop, all of it at rest, then held still
+			# thrown, dropped, at rest, then held still
 			main.toys.throw()
 			main.toys.drop()
 			for k in 12 * 60:
@@ -82,6 +82,8 @@ func _process(_d: float) -> bool:
 			f.store_string(JSON.stringify(entries, " "))
 			return true
 		var p: Array = poses[i]
+		if p[0] is String:
+			p[0] = main.space.point_from_chart(1.0, main.START_POS)[0]
 		main.place_on_axis(p[0], p[1], p[2])
 		if hands:
 			_hold_ball()

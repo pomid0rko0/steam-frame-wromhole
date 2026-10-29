@@ -8,8 +8,9 @@ extends CompositorEffect
 ## tiles. Godot (the version tools/setup.sh installs) gives its two subpasses a dependency without
 ## VK_DEPENDENCY_BY_REGION_BIT, and Turnip then renders the whole pass straight to memory, without
 ## tiles: the density map is ignored (godotengine/godot#124141, fixed in #124811, which that version
-## lacks; tools/fdm_check.sh shows which passes render in tiles). A pass of its own has no such
-## dependency, and Turnip renders it in tiles. Foveation.set_level turns this on and off.
+## lacks; tools/fdm_check.sh shows which passes render in tiles and says when "off" does too). A
+## pass of its own has no such dependency, and Turnip renders it in tiles. Foveation.set_level
+## turns this on and off.
 
 
 func _init() -> void:

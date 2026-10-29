@@ -1,11 +1,10 @@
 extends SceneTree
-## Stereo correctness through Godot's real multiview path with a simulated headset that has
-## canted eyes, asymmetric frusta and a tilted, displaced head (tests/fake_hmd.gd). Five balls, or
-## five turned cubes (the toys' kinds), in front of the head are drawn either by our ray tracer
+## Stereo correctness through Godot's real multiview path with a simulated headset (util.gd's,
+## case 1: canted eyes, asymmetric frusta, a tilted and displaced head). Balls, or
+## turned cubes (the toys' kinds; PLACES), in front of the head are drawn either by our ray tracer
 ## (mode "ray": placed by walking from the feet along their play-space offset, a cube's axes carried
 ## along) or by Godot's standard renderer (mode "mesh"). In each eye the silhouettes must coincide.
 ##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix ray|mesh case balls|cubes
-## case: util.gd's headset.
 
 const U := preload("res://tests/util.gd")
 const RADIUS := 0.25

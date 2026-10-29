@@ -10,6 +10,12 @@ import re
 import numpy as np
 
 
+def app_table_n():
+    """Knots per row of the shader's fillet table: godot/wormhole_space.gd's TABLE_N."""
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'wormhole_space.gd')).read()
+    return int(re.search(r'^const TABLE_N := (\d+)', src, re.M).group(1))
+
+
 def app_profile():
     """The app's throat, (rho0, h, R) in metres: godot/main.gd's THROAT_RADIUS, HALF_LENGTH, FILLET."""
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
@@ -152,8 +158,8 @@ class Wormhole:
 
     # ---------- fast method: one ray at a time, mirrors the shader ----------
     # The fillet as the shader's "curved part" (wormhole_core.gdshaderinc), with G, the path length,
-    # interpolated as F is. Two tolerances are float64's (1e-12) where the shader's are float32's
-    # (1e-6): E0's floor and from_edge.
+    # interpolated as F is. Its guards are float64's: where the shader floors, nudges or clamps a
+    # value for float32, this has a smaller tolerance or the exact form.
     _X = (np.polynomial.legendre.leggauss(4)[0] + 1) / 2
     TAU = _X * _X
     A = np.linalg.inv(np.vander(TAU, 4, increasing=True))
@@ -224,8 +230,16 @@ class Wormhole:
         s = np.sqrt(min(max((f['ra'] + f['span'] * t - self.rho0) / (2 * self.R), 0.0), 0.5))
         return side * (self.Lc + self.R * (2 * np.arcsin(s) - self.th0))
 
-    def fillet_table(self, N=256):
-        """The shader's fillet table, as WormholeSpace.fillet_table makes it. Returns (table (4, N, 4) float32, lo, inv, reg)."""
+    def eye(self, l):
+        """wormhole_core's wh_eye: (r, r - rmin) of a start point, the second as a product (no
+        cancellation near the fillet's inner end)."""
+        ths = self.th0 + max(abs(l) - self.Lc, 0.0) / self.R
+        return [float(self.r(np.array(l))), 2 * self.R * np.sin((ths + self.th0) / 2) * np.sin((ths - self.th0) / 2)]
+
+    def fillet_table(self, N=None):
+        """The shader's fillet table, as WormholeSpace.fillet_table makes it (N knots a row: the app's
+        TABLE_N by default). Returns (table (4, N, 4) float32, lo, inv, reg)."""
+        N = N or app_table_n()
         sp = max(self.Rout - self.rmin, 1e-6 * self.R)
         alp = (self.rmin - self.rho0) / sp
         b1 = min(max(self.rmin - sp, 0.0), self.rmin)
@@ -257,8 +271,8 @@ class Wormhole:
         turn = b > self.rmin
         f = self.fil(b, turn)
         from_edge = als >= L * (1 - 1e-12)
-        ths = self.th0 + max(als - Lc, 0.0) / R
-        ts = rs * vl * vl / (1 + wn) if turn else 2 * R * np.sin((ths + self.th0) / 2) * np.sin((ths - self.th0) / 2)
+        rmr = self.eye(l_s)[1]
+        ts = rs * vl * vl / (1 + wn) if turn else rmr
         ts = 1.0 if from_edge else min(max(ts / f['span'], 0.0), 1.0)
         zs = self.fil_z(f, ts)
         Ss = np.array(self.fil_at(f, zs)[:2])
@@ -274,7 +288,7 @@ class Wormhole:
         DB = Lc - x0B if hasB else 0.0
         wc = b / rho0
         # sqrt(1 - wc^2) as the shader takes it: (rho0 - b)(rho0 + b) / rho0^2, rho0 - b from vl^2
-        omb = rs * vl * vl / (1 + wn) - (R if from_edge else 2 * R * np.sin((ths + self.th0) / 2) * np.sin((ths - self.th0) / 2))
+        omb = rs * vl * vl / (1 + wn) - (R if from_edge else rmr)
         vlc = max(np.sqrt(max(omb * (rho0 + b), 0.0)) / rho0, 1e-300)
         kc = wc / (rho0 * vlc)
         PA = Ss if hasA else np.zeros(2)

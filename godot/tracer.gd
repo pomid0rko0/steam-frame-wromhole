@@ -11,10 +11,10 @@ extends Node3D
 ## the GPU compiles the other one, so the shader changes only when what is shown changes.
 ##
 ## The stencil split. The shader with toys holds more registers and costs more even where it finds
-## nothing, so with toys the frame is split: proxies drawn first (render priority -1,
-## stencil_mark.gdshader) mark the pixels whose rays may meet a toy, the shader with toys runs only
-## there (stencil equal 1), the plain one of the same view everywhere else (a second quad, stencil
-## not equal 1). Godot geometry drawn before the ray tracers must not write the stencil. The
+## nothing, so with toys the frame is split: proxies drawn first (stencil_mark.gdshader) mark the
+## pixels whose rays may meet a toy, the shader with toys runs only there, the plain one of the same
+## view everywhere else (a second quad). Godot geometry drawn before the ray tracers must not write
+## the stencil. The
 ## stencil (stencil_mode in a shader) works on Mobile, with multiview and on lavapipe; opaque draws
 ## go by render_priority, lower first.
 ##
@@ -110,7 +110,7 @@ func _ready() -> void:
 	add_child(mark_all)
 
 
-## A quad over the whole view, 1 m in front of the camera (the shaders put it on the screen).
+## A quad in front of the camera; the shaders put it over the whole screen.
 static func _screen_quad(mat: ShaderMaterial) -> MeshInstance3D:
 	var q := MeshInstance3D.new()
 	var mesh := QuadMesh.new()
@@ -129,9 +129,7 @@ func param(name: StringName, value: Variant) -> void:
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there and its place
-## in the room (the shader puts each eye there), the pixel's angle, and the proxies placed in the
-## room from where the head is (in a flat universe the play-space offset from the head along the
-## head's frame), or the whole view marked.
+## in the room (the shader puts each eye there), and the proxies or the whole view marked.
 func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	param("head_l", l)
 	param("head_n", n)
@@ -181,14 +179,10 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 	return out
 
 
-## Movable balls and cubes. Balls (BallWorld's): centres as points of R^4 (pos), colours with the
-## radius (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES: the centre
-## as a point of R^4 (cpos), four orthonormal axes divided by the half size (axes: three body axes
-## tangent to the space, then its normal; four per cube), (rgb, half size) (ccol). The shader gets
-## them as wormhole_core.gdshaderinc's top says, sorted by where they are (region_order): the flat
-## universes' rays and the shell's look only at their own, so a ball's index in the shader is not
-## its index in the caller's list. The shader is chosen here: with no toys it is the one without
-## their code.
+## Movable balls (pos, col) and cubes (cpos, axes, ccol), laid out as wormhole_core.gdshaderinc's
+## top says, at most MAX_BALLS and MAX_CUBES. The shader gets them sorted by where they are
+## (region_order), so a ball's index there is not its index in the caller's list; with none, the
+## shader without their code is chosen.
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:
 	var n := pos.size()
@@ -315,8 +309,7 @@ static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: 
 	return [order, Vector4i(ends[0], ends[1], ends[2], ends[3])]
 
 
-## How gravity is shown (docs/gravity.md, «Показ»): 0 not at all, 1 the floor coloured by its
-## strength, 2 also arrows of the field.
+## How gravity is shown: GRAVITY_VIEWS (docs/gravity.md, «Показ»).
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	param("wh_pix", _pixel_angle())
@@ -344,8 +337,8 @@ func plain() -> bool:
 
 
 ## Whether the sizes the shader fixes follow this code's: WormholeSpace's table and gravity
-## polynomials, MAX_BALLS, MAX_CUBES, the scene's objects. Each that differs is printed. Only
-## asserted: debug builds (the tests) run it, an export does not.
+## polynomials, MAX_BALLS, MAX_CUBES (and BallWorld's), the scene's objects. Each that differs is
+## printed. Only asserted: debug builds (the tests) run it, an export does not.
 func _fits_shader() -> bool:
 	var src: String = load("res://shaders/wormhole_view.gdshaderinc").code \
 			+ load("res://shaders/wormhole_core.gdshaderinc").code
@@ -357,9 +350,17 @@ func _fits_shader() -> bool:
 			"wh_pil": scene["pillars_A"].size(), "wh_box": scene["boxes_B"].size()}
 	for u: String in arrays:
 		want.append("uniform vec4 %s[%d];" % [u, arrays[u]])
-	var ok := coefs % 4 == 0
-	if not ok:
-		push_error("GRAV_DEG + 1 coefficients do not fill whole vec4s")
+	var fails := []
+	if coefs != 8:
+		fails.append("wh_grav evaluates 8 coefficients, GRAV_DEG + 1 is %d" % coefs)
+	if scene["spheres_A"].size() != scene["spheres_B"].size():
+		fails.append("wh_traceFlat takes wh_sph's first half for universe A")
+	# the toys' balls and both hands' share the slots; cubes take candidate bits 16 and up
+	if BallWorld.MAX_BALLS + 2 > MAX_BALLS or BallWorld.MAX_CUBES > MAX_CUBES or MAX_BALLS > 16 or MAX_CUBES > 16:
+		fails.append("BallWorld's toys, the hands and the candidate bits do not fit MAX_BALLS, MAX_CUBES")
+	for f: String in fails:
+		push_error(f)
+	var ok := fails.is_empty()
 	for w: String in want:
 		if not src.contains(w):
 			push_error("the shader lacks \"%s\"" % w)

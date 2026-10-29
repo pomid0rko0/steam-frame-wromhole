@@ -14,6 +14,8 @@ if command -v apt-get >/dev/null || ! command -v podman >/dev/null; then
 fi
 NAME=wormhole-box
 TMP=$(mktemp -d)
+w=""
+trap 'rm -rf "$TMP"; [ -z "$w" ] || git -C "$REPO" worktree remove --force "$w"' EXIT
 failed=0
 check() {   # name, condition (bash)
 	if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; failed=1; fi
@@ -70,6 +72,7 @@ ow=$(sed -n 's/^logs: //p' "$TMP/w.txt")
 check "a fresh worktree runs the tests, its files where the host sees them" '[ $rw = 0 ] && [ -f "$ow/refresh_rate.log" ]'
 check "the worktree's git status is clean" '[ -z "$(git -C "$w" status --porcelain)" ]'
 git -C "$REPO" worktree remove --force "$w"
+w=""
 
 podman exec $NAME sh -c 'echo 0 > /box-ready'
 "$ROOT/tools/box.sh" true > "$TMP/s1.txt" 2>&1 &
@@ -81,6 +84,5 @@ wait $p2; r2=$?
 check "two box.sh at once set the container up once" \
 	'[ $r1 = 0 ] && [ $r2 = 0 ] && [ "$(cat "$TMP/s1.txt" "$TMP/s2.txt" | grep -c "setting up")" = 1 ]'
 
-rm -rf "$TMP"
 if [ $failed = 0 ]; then echo "ALL PASS"; else echo "FAILED"; fi
 exit $failed

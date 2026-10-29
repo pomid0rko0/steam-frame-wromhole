@@ -60,7 +60,9 @@ def analyse(instrs):
                 u |= 1 << c
         d = 0
         if ins.dst is not None and ins.op not in E.NO_DST:
-            width = max(ins.wrmask, 1) if ins.wrmask > 1 else reps
+            # an ldc writes its N dwords (ldc.offsetC.N...), a texture-unit op its write mask
+            m = re.match(r'ldc(?:\.u)?(?:\.offset\d+)?\.(\d+)\.', ins.op)
+            width = int(m.group(1)) if m else ins.wrmask if ins.wrmask > 1 else reps
             for c in components(ins.dst, width, True):
                 d |= 1 << c
         uses.append(u)

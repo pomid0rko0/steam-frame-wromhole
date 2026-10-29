@@ -26,6 +26,7 @@ import_scripts
 JOBS=${JOBS:-$(nproc)}
 LIMIT=600
 LOGS=$(mktemp -d)
+trap 'rm -rf "$LOGS"' EXIT
 n=0
 render() {   # a Godot test script, in the background
 	n=$((n + 1))
@@ -48,7 +49,8 @@ verdict() {   # name, comparison command...
 
 for m in ray mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
 for m in ray mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
-# five balls and five turned cubes (the toys' kinds) drawn by the ray tracer against Godot's own
+# balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES) drawn by the ray tracer
+# against Godot's own
 for c in 0 1; do
 	for m in ray mesh; do
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c balls
@@ -87,14 +89,13 @@ for f in "$LOGS"/*.status; do
 	read -r code args < "$f"
 	[ "$code" = 0 ] || { echo "render exit status $code: $args"; tail -3 "${f%.status}.log"; failed=1; }
 done
-rm -rf "$LOGS"
 
 verdict "desktop: ray-traced ball vs Godot ball" python3 "$CMP/one_ball.py" "$OUT/dsk_ray.png" "$OUT/dsk_mesh.png"
 verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_ball.py" \
 	"$OUT/sph_ray_left.png" "$OUT/sph_mesh_left.png" "$OUT/sph_ray_right.png" "$OUT/sph_mesh_right.png"
 for c in 0 1; do
-	verdict "simulated headset, case $c: five balls, each eye" python3 "$CMP/five_balls.py" "$OUT/hmd$c"
-	verdict "simulated headset, case $c: five turned cubes, each eye" python3 "$CMP/five_balls.py" "$OUT/cub$c"
+	verdict "simulated headset, case $c: balls, each eye" python3 "$CMP/silhouettes.py" "$OUT/hmd$c"
+	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
 done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"

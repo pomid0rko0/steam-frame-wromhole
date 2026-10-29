@@ -10,6 +10,10 @@ import numpy as np
 import moderngl
 import test_gpu as T
 from test_gpu import W, CORE, TAN, frame_from_chart, flat_hit
+from gravity import Gravity
+G = Gravity(W)
+# WormholeSpace.gravity_shader's cyl
+GRAV_CYL = (G.scale / W.rho0, np.sqrt(2) / W.rho0, G.scale * np.sqrt(2) / W.rho0, G.beta)
 
 HEADER = T.FRAG.split(CORE)[0]
 FRAG = HEADER.replace('#define WH_NO_BALLS\n', '#define WH_NO_BALLS\n#define WH_GRAVITY\n#define WH_ARROWS\n#define WH_SLICE_OUT wh_sl\n') + """
@@ -43,7 +47,7 @@ def render(ctx, state, size, tan):
     for k, v in dict(wh_sph=[tuple(x) for x in T.SCENE['spheres_A'] + T.SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in T.SCENE['pillars_A']], wh_box=[tuple(x) for x in T.SCENE['boxes_B']],
                      wh_tab=0, wh_tabLo=tuple(lo), wh_tabInv=tuple(inv), wh_tabReg=tuple(reg),
-                     wh_pix=0.001, grav_cyl=(0.2, 0.47, 0.29, -3.2),
+                     wh_pix=0.001, grav_cyl=GRAV_CYL,
                      wh_rho0=T.PROF[0], wh_h=T.PROF[1], wh_fillet=T.PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F),
                      uRt=tuple(Rt), uUp=tuple(Up), uTan=tuple(tan), uSize=(size, size)).items():
         if k in prog:

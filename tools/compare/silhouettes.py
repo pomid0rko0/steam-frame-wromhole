@@ -1,4 +1,4 @@
-"""Per-eye comparison of red silhouettes, five balls or cubes: union IoU and per-object centroid
+"""Per-eye comparison of red silhouettes, balls or cubes: union IoU and per-object centroid
 offsets. Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...). PASS:
 in each eye at least MIN_CHECKED objects lie wholly in the picture (a turned head can lose one or
 two past its edge), each of them has its ray-traced silhouette's centre within MAX_OFFSET px of

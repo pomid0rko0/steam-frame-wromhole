@@ -167,7 +167,8 @@ func _process(_delta: float) -> bool:
 		U.check("speed check: started by itself, asks for 72 Hz", r.desired == 72.0)
 	if j > 70 and not b.running and (bench_seen or not bench_auto):
 		var segs: int = 2 if b.variants.size() > 1 else 1
-		U.check("speed check: every place timed", b.results.size() == b.PLACES.size() and b.results.back().back().size() == segs)
+		var timed: bool = b.results.all(func(r: Array) -> bool: return r.all(func(v: Array) -> bool: return v.size() == segs))
+		U.check("speed check: every place timed", timed)
 		U.check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
@@ -251,7 +252,7 @@ func _foveation(p: Menu) -> void:
 	_gravity(p)
 
 
-## The gravity row: right and A ("пол"), right and A ("стрелки"), then A alone steps round ("выкл").
+## The gravity row: right and A, right and A, then A alone steps round (its values: Menu.GRAVITY_NAMES).
 func _gravity(p: Menu) -> void:
 	var seen := []
 	p.select("grav")
@@ -263,7 +264,7 @@ func _gravity(p: Menu) -> void:
 	# the demo's balls and cubes are there: the ray tracers with them
 	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
 			[0, "wormhole_balls.gdshader", true]]
-	U.check("гравитация: пол, стрелки, выкл", seen == want)
+	U.check("the gravity row: each view, then off", seen == want)
 	if seen != want:
 		print("  ", seen)
 

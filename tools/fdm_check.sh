@@ -1,27 +1,24 @@
 #!/bin/bash
 # Does foveated rendering reach the Steam Frame's GPU driver? Without a headset: Godot runs on
-# Turnip (Mesa's driver for the Frame's Adreno 750) over Mesa's "noop" drm-shim (no GPU, nothing
-# is drawn), the XR view through the simulated headset, and the driver's trace (u_trace) says
-# for each render pass whether it rendered in tiles and with how many attachments (a density map
-# applies only in tiles: split_pass.gd). Four runs of tests/fdm_check.gd:
+# Turnip over the drm-shim (tools/env.sh, turnip), the XR view through the simulated headset, and
+# the driver's trace (u_trace) says for each render pass whether it rendered in tiles and with how
+# many attachments (a density map applies only in tiles: split_pass.gd). Four runs of
+# tests/fdm_check.gd:
 #   off    the XR 3D pass without foveation: one pass with two subpasses, which Turnip renders
 #          without tiles (split_pass.gd)
 #   split  the 3D scene in a pass of its own: in tiles
 #   on     foveation: in tiles, and with one attachment more than split (the density map)
 #   own    the same with our own density map (Foveation.OWN_MAPS)
-# Each eye at 1728x1728, what the headset's logs showed ("refresh:" lines, "eye WxH"; SteamVR's
-# resolution setting decides it); the tiles' size is printed too (a density is per tile).
+# Each eye at tools/env.sh's HEADSET_EYE; the tiles' size is printed too (a density is per tile).
 #   tools/fdm_check.sh           (exit 0 if "split", "on" and "own" render the XR pass in tiles, and "on"
 #                                 and "own" with one attachment more than "split": the density map)
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
-LIB=$MESA/lib/$(uname -m)-linux-gnu
-[ -f "$LIB/libfreedreno_noop_drm_shim.so" ] || { echo "no Turnip build in $MESA: run tools/setup.sh"; exit 2; }
 TMP=$(mktemp -d)
-printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
-	"$LIB/libvulkan_freedreno.so" > "$TMP/icd.json"
+trap 'rm -rf "$TMP"' EXIT
+turnip "$TMP" || exit 2
 cd "$ROOT/godot"
 import_scripts
 for m in off split on own; do
@@ -31,21 +28,20 @@ for m in off split on own; do
 	# and none by the samples the GPU counted in earlier frames, which the drm-shim makes up (here,
 	# with no GPU behind it, zeros: "Autotune selected sysmem"); the reasons tiles are impossible
 	# come first
-	XDG_DATA_HOME=$TMP/data_$m LD_PRELOAD=$LIB/libfreedreno_noop_drm_shim.so FD_GPU_ID=750 MESA_VK_WSI_DEBUG=sw \
-	VK_ICD_FILENAMES=$TMP/icd.json MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=$TMP/trace_$m.txt TU_DEBUG=perf,gmem \
-		timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
-		--resolution 320x180 -s res://tests/fdm_check.gd -- $m 1728 > "$TMP/log_$m.txt" 2>&1
+	XDG_DATA_HOME=$TMP/data_$m MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=$TMP/trace_$m.txt TU_DEBUG=perf,gmem \
+		env "${TURNIP[@]}" timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
+		--resolution 320x180 -s res://tests/fdm_check.gd -- $m $HEADSET_EYE > "$TMP/log_$m.txt" 2>&1
 	free_display $d
 	if grep -qE "SCRIPT ERROR|SHADER ERROR" "$TMP/log_$m.txt"; then
-		grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$TMP/log_$m.txt"; rm -rf "$TMP"; exit 1
+		grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$TMP/log_$m.txt"; exit 1
 	fi
-	grep -q "Turnip Adreno" "$TMP/log_$m.txt" || { echo "$m: Godot did not run on Turnip:"; tail -20 "$TMP/log_$m.txt"; rm -rf "$TMP"; exit 1; }
+	grep -q "Turnip Adreno" "$TMP/log_$m.txt" || { echo "$m: Godot did not run on Turnip:"; tail -20 "$TMP/log_$m.txt"; exit 1; }
 	grep "^fdm_check:" "$TMP/log_$m.txt"
 	grep "^TU: warning" "$TMP/log_$m.txt" | sort | uniq -c | sed 's/^/    driver: /'
 done
-python3 - "$TMP" <<'PY'
+python3 - "$TMP" "$HEADSET_EYE" <<'PY'
 import re, sys, collections
-tmp = sys.argv[1]
+tmp, eye = sys.argv[1], sys.argv[2]
 def passes(m):
     """The XR 3D pass's renders after the switch: (attachments, tiled, why not, tiles)."""
     out, start = [], None
@@ -54,7 +50,7 @@ def passes(m):
             start = line
         elif 'end_render_pass:' in line and start:
             # the simulated headset's view, with depth: the 3D scene
-            if 'width=1728, height=1728' in start and 'hasDepth=true' in start:
+            if f'width={eye}, height={eye}' in start and 'hasDepth=true' in start:
                 att = int(re.search(r'attachment_count=(\d+)', start).group(1))
                 tiled = 'tiledRender=true' in line
                 why = re.search(r'tilingDisableReason=([^,]*)', line).group(1)
@@ -73,8 +69,8 @@ for m in ('on', 'own'):
     on = set(res[m])
     ok &= all(p[1] for p in on) and {p[0] for p in on} == {p[0] + 1 for p in split}
 print('PASS: with foveation on (either map) the driver renders the XR pass in tiles, with the density map' if ok else 'FAIL')
+if res['off'] and all(p[1] for p in res['off']):
+    print('note: "off" renders in tiles too: this Godot has the fix godot/split_pass.gd works around')
 sys.exit(0 if ok else 1)
 PY
-code=$?
-rm -rf "$TMP"
-exit $code
+exit $?

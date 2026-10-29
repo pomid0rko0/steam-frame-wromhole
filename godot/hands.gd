@@ -18,8 +18,8 @@ const MAX_THROW_SPEED := 25.0    # m/s: a tracking glitch at the release flings 
 const MAX_THROW_SPIN := 40.0     # rad/s
 const SET_DOWN_SPEED := 0.15     # m/s and rad/s: a hand slower than this, turning slower than
 const SET_DOWN_SPIN := 1.0       # this, sets its toy down at rest
-const NEW_BALL_RADIUS := 0.2     # a new ball in the right hand (its button: README.md)
-const NEW_CUBE_HALF := 0.15      # a new cube in the left hand
+const NEW_BALL_RADIUS := 0.2     # m: a new ball in the right hand (its button: README.md)
+const NEW_CUBE_HALF := 0.15      # m: a new cube in the left hand
 
 var space: WormholeSpace
 var world: BallWorld
@@ -37,7 +37,7 @@ func _init(p_space: WormholeSpace, p_world: BallWorld) -> void:
 
 ## Each frame, after the free toys moved: each hand where the controller is, the toy it holds with
 ## it, the grip's take and release, a new ball (right) or cube (left) if asked. hp: the head's
-## point, normal and frame [right, up, back] in the curved space; head: its pose in the room.
+## point (l, n) and the play space's axes [x, up, z] there; head: its pose in the room.
 ## Not active (the speed check, no tracking yet, no toys): the hands are not drawn and do nothing.
 func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: bool, new_cube: bool) -> void:
 	clock += delta
@@ -47,8 +47,15 @@ func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: 
 		st["on"] = false
 		if not active:
 			_hold_still(i)
+			st["tracked"] = false
 			continue
-		if c.get_has_tracking_data():
+		var tracked := c.get_has_tracking_data()
+		if tracked and not st.get("tracked", false):
+			# back from a gap in tracking: the places before it are no motion
+			st.erase("hist")
+			st.erase("thist")
+		st["tracked"] = tracked
+		if tracked:
 			var xf := c.transform
 			var off := xf.origin - head.origin
 			var at := hp

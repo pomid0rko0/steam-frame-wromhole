@@ -65,18 +65,12 @@ environment's install; if it starts downloading or building, tell the owner whic
 environment lacks. On the Frame there is nothing to run: `tools/box.sh` sets its container up by
 itself. Install nothing by hand: what the work needs goes into `setup.sh`.
 
-| command | time in the cloud; on the Frame where given |
-|---|---|
-| `tools/test_stereo.sh` | ~5 min alone, more beside other runs; ~11 min on the Frame |
-| `tools/test.sh [name...]` | 1–3 min; ~2 min on the Frame |
-| `tools/test_openxr.sh` | ~3 min, alone (its top says why) |
-| `tools/export.sh [--check] [label]` | ~40 s |
-| `python3 ref/test_gpu.py`, `ref/test_eye.py` | ~4 min, ~1.5 min |
-| `python3 ref/test_fast.py`, `test_slice.py`, `test_gravity.py` | seconds to 2 min |
-| `tools/fdm_check.sh`, `adreno_stats.sh`, `ab_shaders.sh`; `python3 tools/ir3_live.py`, `same_programs.py` | seconds |
-| `tools/adreno_cost.sh` | ~1 min per source |
-| `tools/test_box.sh` | ~3 min on the Frame (only there) |
-
+- **In the background** (minutes): `tools/test_stereo.sh`, `tools/test.sh [name...]`,
+  `tools/test_openxr.sh` (alone: its top says why), `python3 ref/test_gpu.py`, `ref/test_eye.py`,
+  `ref/test_fast.py`, `ref/test_slice.py`, `ref/test_gravity.py`, `tools/adreno_cost.sh`,
+  `tools/test_box.sh` (only on the Frame).
+- **At once:** `tools/export.sh [--check] [label]`, `tools/fdm_check.sh`, `tools/adreno_stats.sh`,
+  `tools/ab_shaders.sh`, `python3 tools/ir3_live.py`, `python3 tools/same_programs.py`.
 - **Before a Godot run of your own with `-s`** (the tools import by themselves when a script
   changed): `tools/box.sh godot --headless --path godot --import` in the tree you run it from.
 - **Speed** is measured in the headset with the speed check (`godot/bench.gd`).

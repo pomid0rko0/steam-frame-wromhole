@@ -16,7 +16,7 @@ extends SceneTree
 ##    the middle, where a ball rests; a ball set down at the shell's edge rolls in by itself and
 ##    rests in the middle (2-6 without air drag but that one: they check the motion itself)
 ## 7. the demo as the headset shows it: the thrown ball rolls through to universe B, the dropped
-##    balls stay on their spots, all come to rest
+##    balls stay on their spots and come to rest
 ## Then, with a screenshot path given, saves one with a ball and a cube inside the throat.
 
 const U := preload("res://tests/util.gd")
@@ -224,15 +224,17 @@ func _cube_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	var tilt := 0.0
 	var spin := 0.0
 	var t := 0.0
-	var t0 := Time.get_ticks_usec()
+	var usec := 0
 	var steps := 0
 	while t < 3.0:
+		var t0 := Time.get_ticks_usec()
 		w.step(1.0 / 60.0, [])
+		usec += Time.get_ticks_usec() - t0
 		steps += 1
 		t += 1.0 / 60.0
 		tilt = maxf(tilt, _tilt(slider))
 		spin = maxf(spin, slider["w"].length())
-	var cost := (Time.get_ticks_usec() - t0) / 1000.0 / steps
+	var cost := usec / 1000.0 / steps
 	var dist := (sp.chart_position(slider["l"], slider["n"]) - x0).length()
 	var expect := 9.0 / (2.0 * BallWorld.FRICTION_CUBE * BallWorld.GRAVITY)
 	U.check("sliding cube stops after v^2 / (2 mu g), without tipping or rolling",
@@ -397,7 +399,7 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	w.balls.clear()
 
 	# 7: the scene as the headset shows it: the throw, then the drop; the thrown ball still rolls
-	# through to universe B, nothing knocks the dropped balls off their spots, all come to rest
+	# through to universe B, nothing knocks the dropped balls off their spots, they come to rest
 	main.toys.spawn()
 	main.toys.launch_in = -1.0
 	main.toys.drop_in = -1.0

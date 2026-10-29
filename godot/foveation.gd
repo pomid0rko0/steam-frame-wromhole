@@ -1,9 +1,9 @@
 class_name Foveation
 extends RefCounted
-## Foveated rendering: the edges of each eye's picture are
-## rendered coarser. Level 0 is off, 1..3 the runtime's density map at its level low, medium,
-## high, 4 and 5 our own (OWN_MAPS); split: the 3D scene in a render pass of its own without a
-## density map (the speed check times that alone).
+## Foveated rendering: what lies away from where the eyes look is rendered coarser. Level 0 is
+## off, 1..3 the runtime's density map at its level low, medium, high, 4 and 5 our own
+## (OWN_MAPS); split: the 3D scene in a render pass of its own without a density map (the speed
+## check times that alone).
 ##
 ## On the Steam Frame the runtime's density map is SteamVR's (XR_FB_foveation). SteamVR tracks the
 ## eyes and hands Godot each frame where each eye looks (XR_META_foveation_eye_tracked; Godot asks
@@ -25,14 +25,13 @@ extends RefCounted
 ## 100% only.
 ##
 ## Subsampled images stay off (project.godot): SteamVR can't read them. verbose_stdout lists the
-## OpenXR extensions and what the driver supports (hundreds of lines: keep it off).
+## OpenXR extensions and what the driver supports (long: keep it off).
 
 const LEVELS := 3                    # the runtime's levels: low, medium, high
 # Our own density maps (levels 4 and 5), each eye alike, centred: rings out from where the eyes
 # look, [radius, shading width, height in screen pixels]; the radius in each eye's picture, its
-# edge at 1. Each step halves the pixels shaded, for a softer edge than the
-# runtime's maps: the width first, then the height (order 1 swaps them: 1x2, 2x4). 4: wide,
-# 5: narrow.
+# edge at 1. Each step halves the pixels shaded, for a softer edge than the runtime's maps: the
+# width first, then the height (order 1 swaps them). 4: wide, 5: narrow.
 const OWN_MAPS := {
 	4: [[0.7, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
 	5: [[0.45, 1, 1], [0.65, 2, 1], [0.85, 2, 2], [1.05, 4, 2], [99.0, 4, 4]],
@@ -80,8 +79,8 @@ func set_level(p_level: int, split := false) -> void:
 		xr.set("vrs_strength", OWN_MAP_STRENGTH[level - 1])
 
 
-## Our maps' order of steps: 0 the width first (1x1, 2x1, 2x2, 4x2, 4x4), 1 the height first
-## (1x1, 1x2, 2x2, 2x4, 4x4). At once if one of them is on.
+## Our maps' order of steps (OWN_MAPS): 0 the width first, 1 the height first. At once if one of
+## them is on.
 func set_order(p_order: int) -> void:
 	order = clampi(p_order, 0, 1)
 	if OWN_MAPS.has(level):
