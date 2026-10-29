@@ -199,7 +199,7 @@ func _foveation(p: Menu) -> void:
 	U.check("выкл: no density map, no split", main.foveation.level == 0 and _value(p, "fov") == "выкл"
 			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled)
 	U.check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported()
-			and _row(p, "fov").name.text == "фовеация · без SteamVR")
+			and _row(p, "fov").name_label.text == "фовеация · без SteamVR")
 	p.choose_scale(0.8)
 	p.select("fov")
 	p.change(1)
