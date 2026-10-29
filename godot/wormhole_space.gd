@@ -77,7 +77,7 @@ func dr(l: float) -> float:
 ## (docs/geometry.md, «Почему луч считается быстро», 1): n = cos psi n0 + sin psi e, with
 ## b = r |u| kept. Only l, its rate vl and psi change: along a straight line in a flat chart and on
 ## the cylinder (closed forms, exact), in RK4 steps of l'' = r' b^2 / r^3, psi' = b / r^2 on a
-## fillet (a step that leaves it is cut where it does). The surface the plane cuts out is totally
+## fillet (a step that leaves it is cut where it first does). The surface the plane cuts out is totally
 ## geodesic (the space's mirror image in the plane leaves it in place), so a transported vector keeps
 ## its part along the plane's normal, and its part in the plane, (U_l, the part toward growing psi),
 ## keeps its angle to the geodesic's direction, which is (vl, b / r) there.
@@ -135,17 +135,23 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 				sg = signf(vl)
 			var hs := minf(left, STEP * fillet)
 			var y1 := _fillet_step(l, vl, psi, b, hs, sg)
-			var lo := sg * Lc
-			var hi := sg * L
-			var out := sg * y1[0] > L or sg * y1[0] < Lc
-			if out:
-				# where l crosses the fillet's end: on the step's cubic in l (its values and slopes at
-				# both ends), then the step again up to there
-				var target := hi if sg * y1[0] > L else lo
-				var t := _cross(l, vl * hs, y1[0], y1[1] * hs, target)
-				hs *= t
+			# Past a crease (h < fillet: the fillets meet at l = 0 at an angle) the circle's
+			# continuation narrows below r_min: a path that passes the throat (b < r_min) would turn
+			# back there, within the step. Coming in, it turns back on this fillet only if it does not
+			# pass; so if it does, a step that turns it has crossed l = 0.
+			var bounced := th0 > 0.0 and sg * vl < 0.0 and sg * y1[1] > 0.0 and b < r(0.0)
+			if bounced or sg * y1[0] > L or sg * y1[0] < Lc:
+				# where l first crosses the fillet's end: on the step's cubic in l (its values and
+				# slopes at both ends), then the step again up to there, its end put there with the
+				# rate that keeps the direction a unit vector, vl^2 + (b / r)^2 = 1 (a path that
+				# crosses at a grazing angle is sensitive to the rate)
+				var out := sg * y1[0] > L and not bounced
+				var target := sg * L if out else sg * Lc
+				hs *= _cross(l, vl * hs, y1[0], y1[1] * hs, target)
 				y1 = _fillet_step(l, vl, psi, b, hs, sg)
+				var bt := b / r(target)
 				y1[0] = target
+				y1[1] = (sg if out else -sg) * sqrt(maxf(1.0 - bt * bt, 0.0))
 			l = y1[0]
 			vl = y1[1]
 			psi = y1[2]
@@ -167,53 +173,65 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 
 
 ## One RK4 step of (l, vl, psi) on the fillet of side sg: l'' = r' b^2 / r^3, psi' = b / r^2, with
-## that fillet's r and r' (smooth past its ends, where a step that is cut there looks).
+## that fillet's circle, continued smoothly past its ends (where a step that is cut there looks).
 func _fillet_step(l: float, vl: float, psi: float, b: float, hs: float, sg: float) -> PackedFloat64Array:
-	var b2 := b * b
+	var a1 := _fillet_rate(l, b, sg)
+	var l2 := l + 0.5 * hs * vl
+	var v2 := vl + 0.5 * hs * a1[0]
+	var a2 := _fillet_rate(l2, b, sg)
+	var l3 := l + 0.5 * hs * v2
+	var v3 := vl + 0.5 * hs * a2[0]
+	var a3 := _fillet_rate(l3, b, sg)
+	var l4 := l + hs * v3
+	var v4 := vl + hs * a3[0]
+	var a4 := _fillet_rate(l4, b, sg)
+	return PackedFloat64Array([l + hs / 6.0 * (vl + 2.0 * v2 + 2.0 * v3 + v4),
+			vl + hs / 6.0 * (a1[0] + 2.0 * a2[0] + 2.0 * a3[0] + a4[0]),
+			psi + hs / 6.0 * (a1[1] + 2.0 * a2[1] + 2.0 * a3[1] + a4[1])])
+
+
+## [l'', psi'] at l on the fillet of side sg (its circle, continued smoothly), for impact parameter b.
+func _fillet_rate(l: float, b: float, sg: float) -> PackedFloat64Array:
 	var th := th0 + (sg * l - Lc) / fillet
 	var p := rho0 + fillet * (1.0 - cos(th))
-	var a1 := sg * sin(th) * b2 / (p * p * p)
-	var w1 := b / (p * p)
-	var l2 := l + 0.5 * hs * vl
-	var v2 := vl + 0.5 * hs * a1
-	th = th0 + (sg * l2 - Lc) / fillet
-	p = rho0 + fillet * (1.0 - cos(th))
-	var a2 := sg * sin(th) * b2 / (p * p * p)
-	var w2 := b / (p * p)
-	var l3 := l + 0.5 * hs * v2
-	var v3 := vl + 0.5 * hs * a2
-	th = th0 + (sg * l3 - Lc) / fillet
-	p = rho0 + fillet * (1.0 - cos(th))
-	var a3 := sg * sin(th) * b2 / (p * p * p)
-	var w3 := b / (p * p)
-	var l4 := l + hs * v3
-	var v4 := vl + hs * a3
-	th = th0 + (sg * l4 - Lc) / fillet
-	p = rho0 + fillet * (1.0 - cos(th))
-	var a4 := sg * sin(th) * b2 / (p * p * p)
-	var w4 := b / (p * p)
-	return PackedFloat64Array([l + hs / 6.0 * (vl + 2.0 * v2 + 2.0 * v3 + v4),
-			vl + hs / 6.0 * (a1 + 2.0 * a2 + 2.0 * a3 + a4),
-			psi + hs / 6.0 * (w1 + 2.0 * w2 + 2.0 * w3 + w4)])
+	var ip2 := 1.0 / (p * p)
+	return PackedFloat64Array([sg * sin(th) * b * b * ip2 / p, b * ip2])
 
 
-## Where on a step the cubic with values y0, y1 and slopes d0, d1 (per step) at its ends reaches
-## target, which lies between y0 and y1: the step's fraction, by bisection.
+## Where on a step the cubic with values y0, y1 and slopes d0, d1 (per step) at its ends first
+## reaches target (y0 is on one side of it): the step's fraction. Its first sample on the other side
+## of 32, then bisection; where none is, the sample nearest to target (a dip the samples miss).
 static func _cross(y0: float, d0: float, y1: float, d1: float, target: float) -> float:
+	var side := y0 > target
 	var a := 0.0
 	var z := 1.0
-	var up := y1 > y0
-	for _it in 40:
+	var nearest := 1.0
+	var gap := INF
+	for k in range(1, 33):
+		var t := k / 32.0
+		var y := _cubic(y0, d0, y1, d1, t)
+		if (y > target) != side:
+			z = t
+			break
+		a = t
+		if absf(y - target) < gap:
+			gap = absf(y - target)
+			nearest = t
+	if a == 1.0:
+		return nearest
+	for _it in 30:
 		var t := 0.5 * (a + z)
-		var t2 := t * t
-		var t3 := t2 * t
-		var y := (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * d0 \
-				+ (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * d1
-		if (y < target) == up:
+		if (_cubic(y0, d0, y1, d1, t) > target) == side:
 			a = t
 		else:
 			z = t
 	return z
+
+
+static func _cubic(y0: float, d0: float, y1: float, d1: float, t: float) -> float:
+	var t2 := t * t
+	var t3 := t2 * t
+	return (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * d0 + (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * d1
 
 
 ## A unit vector orthogonal to n.

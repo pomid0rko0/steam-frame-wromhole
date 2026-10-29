@@ -146,8 +146,8 @@ func distance_to(b: Body, P: Vector4) -> float:
 
 ## Advance by delta seconds with fixed substeps. hands: the hands' balls (Hands.balls). A held
 ## ball or cube is kinematic like them: the hand places it and sets its U (and w) before each step.
-## A ball held by friction or a cube at rest for SLEEP_TIME is asleep (asleep): not moved until
-## something gives it a velocity or pushes it.
+## A ball the floor's friction has held for SLEEP_TIME, or a cube that has hardly moved for as
+## long, is asleep (asleep): not moved until something wakes it.
 func step(delta: float, hands: Array[Ball]) -> void:
 	_acc = minf(_acc + delta, MAX_LAG)
 	while _acc >= DT:
@@ -180,9 +180,10 @@ func step(delta: float, hands: Array[Ball]) -> void:
 			_solve_cubes(hands)
 
 
-## At rest and not held, so step does not move it. A ball's own floor contact keeps its count
-## (_floor), a cube's the contacts' solver; a velocity from outside (an impulse, the hand that lets
-## it go) or a push (_move, _wake) wakes it at once.
+## Asleep: not held and at rest past SLEEP_TIME, so step does not move it. A ball's count is kept
+## by its floor contact (_floor) and ended by a push (_move) or by a velocity it is given (another
+## body's impulse, a hand's throw; a held toy's count is 0). A cube's is kept by the contacts'
+## solver, which gives a sleeping cube no impulse, and ended by a touching body that moves (_wake).
 static func asleep(b: Body) -> bool:
 	return b.held == &"" and b.still > SLEEP_TIME and b.U == Vector4.ZERO
 
@@ -463,8 +464,8 @@ class Contact:
 				bc.w += (j * iib) * arm_b[i]
 
 
-## Inverse mass and inverse moment of inertia; 0 for the floor, statics, hands, held and
-## sleeping things.
+## Inverse mass and inverse moment of inertia; 0 for the floor, statics, hands, held things and
+## sleeping cubes (a sleeping ball takes an impulse, which wakes it).
 func _inverse_mass(b: Body) -> Vector2:
 	if b == null or b.held != &"":
 		return Vector2.ZERO
