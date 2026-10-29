@@ -27,11 +27,10 @@ func _initialize() -> void:
 
 func _process(_d: float) -> bool:
 	frames += 1
-	var b: Node = main.bench
+	var b: Bench = main.bench
 	if frames == 3:
-		var p: Node3D = main.menu
 		var has_row := false
-		for r: Dictionary in p.rows:
+		for r in main.menu.rows:
 			has_row = has_row or r.key == "bench"
 		check("the menu has the speed check's row", has_row)
 		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
@@ -42,22 +41,22 @@ func _process(_d: float) -> bool:
 		b.start()
 		started = true
 		check("running", b.running)
-		print("ray tracers: ", b.variants.map(func(v: Array) -> String: return v[0]))
+		print("ray tracers: ", b.variants.map(func(v: Bench.Setup) -> String: return v.label))
 		return false
 	if started and frames > 3:
 		if b.running and b.step >= 0:
-			var place: Array = b.PLACES[b.plan[b.step][0]]
+			var place: Array = b.PLACES[b.plan[b.step].x]
 			if absf(main.foot_l - b._l(place[0])) > 0.3:
 				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, b._l(place[0])])
 				started = false
-			var v: Array = b.variants[b.plan[b.step][1]]
-			if main.tracer.material.shader != v[1]:
-				check("the segment's shader", false, b.plan[b.step][1])
+			var v := b.variants[b.plan[b.step].y]
+			if main.tracer.material.shader != v.shader:
+				check("the segment's shader", false, b.plan[b.step].y)
 				started = false
-			if main.tracer.toy_mode != v[4]:
-				check("the segment's stencil split", false, b.plan[b.step][1])
+			if main.tracer.toy_mode != v.toy_mode:
+				check("the segment's stencil split", false, b.plan[b.step].y)
 				started = false
-			if main.foveation.level != v[2] or main.foveation.split_pass.enabled != (v[2] > 0 or v[3]):
+			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != (v.foveation > 0 or v.split):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.split_pass.enabled])
 				started = false
 		if not b.running:

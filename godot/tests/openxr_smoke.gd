@@ -146,7 +146,7 @@ func _process(_delta: float) -> bool:
 		U.check("too slow: judged, red", FrameRate.keeps_up(r.seconds) == false and p.plate_mat.albedo_color == p.COLOR_BAD
 				and p.strip_mat.albedo_color == p.COLOR_BAD)
 		U.check("too slow: the menu says so", p.text.contains("не успевает"))
-	var b: Node = main.bench
+	var b: Bench = main.bench
 	if j == 70:
 		b.warm = 0.1
 		b.time = 0.2

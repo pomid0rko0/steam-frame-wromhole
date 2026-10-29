@@ -63,11 +63,9 @@ var target: Viewport            # the viewport the scene is rendered into
 var xr: OpenXRInterface         # null without OpenXR (the desktop, the tests' fake headsets)
 var api: OpenXRAPIExtension     # the frame timing OpenXR predicts
 var meter := RateMeter.new()
-var seconds: Array = []         # the last few seconds at the current rate: [frames, refreshes, gpu ms sum, gpu ms max, process frames]
-var t := 0.0                    # this second so far: s, frames, GPU ms sum and max
-var frames := 0
-var gpu := 0.0
-var gpu_max := 0.0
+var seconds: Array[Second] = []   # the last few at the current rate
+var t := 0.0                    # s of this second so far
+var now := Second.new()         # and its counts (shown and refreshes: _second)
 var rate := 0.0                 # measured, Hz
 var reported := 0.0             # what the runtime says, Hz (read once a second)
 var vrcmd := VRCMD
@@ -148,10 +146,10 @@ func _process(delta: float) -> void:
 					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
 		bench.frame_timing(now, period, reported)
 	t += delta
-	frames += 1
+	now.drawn += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
-	gpu += g
-	gpu_max = maxf(gpu_max, g)
+	now.gpu += g
+	now.gpu_max = maxf(now.gpu_max, g)
 	if requested > 0.0:
 		if absf(meter.rate() - requested) < 0.5:
 			_answer_request()
@@ -162,9 +160,7 @@ func _process(delta: float) -> void:
 	if t >= 1.0:
 		_second()
 		t = 0.0
-		frames = 0
-		gpu = 0.0
-		gpu_max = 0.0
+		now = Second.new()
 
 
 func choose(r: float) -> void:
@@ -254,14 +250,14 @@ func _on_runtime_rate(r: float) -> void:
 
 ## Up to the last JUDGE_SECONDS seconds: true if at most MISSED_OK of the refreshes went without
 ## a new frame, false if more, null while there is too little to judge.
-static func keeps_up(window: Array) -> Variant:
+static func keeps_up(window: Array[Second]) -> Variant:
 	if window.size() < MIN_SECONDS:
 		return null
 	var f := 0
 	var r := 0
 	for s in window:
-		f += s[0]
-		r += s[1]
+		f += s.shown
+		r += s.refreshes
 	if r == 0:
 		return null
 	return float(r - f) <= MISSED_OK * r
@@ -315,7 +311,9 @@ func _second() -> void:
 		rate = r
 		seconds.clear()
 	else:
-		seconds.append([meter.frames, meter.refreshes, gpu, gpu_max, frames])
+		now.shown = meter.frames
+		now.refreshes = meter.refreshes
+		seconds.append(now)
 		if seconds.size() > JUDGE_SECONDS:
 			seconds.pop_front()
 	meter.reset_window()
@@ -332,20 +330,20 @@ func _second() -> void:
 
 ## The GPU time per frame so far this second, ms.
 func gpu_ms() -> float:
-	return gpu / frames if frames > 0 else 0.0
+	return now.gpu / now.drawn if now.drawn > 0 else 0.0
 
 
 ## The first lines: the rate and the verdict, the frames and the GPU time.
 func status() -> Array:
-	var fps := frames / t if t > 0.0 else 0.0
+	var fps := now.drawn / t if t > 0.0 else 0.0
 	if xr == null:
 		return [LINE_FPS % fps, LINE_GPU % gpu_ms()]
 	if rate <= 0.0:
 		return [LINE_FPS % fps, LINE_GPU % gpu_ms(), NO_TIMING]
 	var ok: Variant = keeps_up(seconds)
-	var last: Array = seconds.back() if not seconds.is_empty() else [0, 0]
+	var last: Second = seconds.back() if not seconds.is_empty() else Second.new()
 	return [LINE_RATE % [rate, VERDICTS[0 if ok == null else (1 if ok else 2)]],
-			LINE_FRAMES % [last[0], last[1], gpu_budget()]]
+			LINE_FRAMES % [last.shown, last.refreshes, gpu_budget()]]
 
 
 ## "GPU <ms> из <ms> мс": the GPU time against the time one frame may take.
@@ -393,7 +391,7 @@ func notes() -> Array:
 func _log() -> void:
 	if seconds.is_empty():
 		return
-	var s: Array = seconds.back()
+	var s: Second = seconds.back()
 	var eye := xr.get_render_target_size()
 	var l: float = main.foot_l
 	var edge: float = main.space.L
@@ -403,8 +401,17 @@ func _log() -> void:
 	var fov: Foveation = main.foveation
 	var tan_y: Vector2 = main.tracer.view_tangents()
 	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
-			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
+			% [rate, meter.paced_rate(), s.shown, s.refreshes, s.refreshes - s.shown, s.gpu / s.drawn if s.drawn > 0 else 0.0, s.gpu_max,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
 			rad_to_deg(atan(tan_y.y)), rad_to_deg(atan(tan_y.x)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
 			main.tracer.gravity_view, "open" if main.menu.open else "closed"])
+
+
+## A second's counts.
+class Second:
+	var shown := 0                  # frames the display showed (rate_meter.gd)
+	var refreshes := 0              # and its refreshes
+	var drawn := 0                  # frames Godot drew
+	var gpu := 0.0                  # their GPU ms, summed
+	var gpu_max := 0.0

@@ -80,11 +80,11 @@ var tour_scale := 1.0           # the tour's durations, scaled (tests)
 var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
-var others: Array = []          # [label, Shader, the Shader with balls or null] from res://shaders/ab/
-var variants: Array = []        # this run's [label, Shader, foveation, split, Tracer.toy_mode] (start)
+var others: Array[Other] = []   # from res://shaders/ab/
+var variants: Array[Setup] = []   # this run's ray tracers (start)
 var own := 0                    # the variant that is this build without foveation
 var own_shader: Shader
-var plan: Array = []            # segments: [place index, variant index]
+var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
 var gpu_ms: Array = []          # this segment's frames
@@ -92,13 +92,13 @@ var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
                                 # a hitch of the system does not move it)
-var tour: Array = []            # the tour's steps (_make_tour)
-var tour_results: Array = []    # per step: {frames, refreshes, worst: [share, l, yaw, pitch, roll]}
+var tour: Array[Step] = []      # the tour's steps (_make_tour)
+var tour_results: Array[Tally] = []   # per step
 var meter := RateMeter.new()    # fed by main.rate each frame
 var counting := false
 var tour_t := 0.0               # s since the tour began counting (the "tf" lines' time)
 var pose := [0.0, 0.0, 0.0, 0.0]     # the tour's pose now: l, degrees right, up, roll
-var sec := {}                   # this second's counts
+var sec := Tally.new()          # this second's
 var saved_pose: Array
 var saved_rate := 0.0           # the rate to go back to
 var preparing := 0              # variants left to run untimed before the first segment
@@ -112,7 +112,7 @@ func _ready() -> void:
 	while ResourceLoader.exists(AB_DIR % i):
 		var sh: Shader = load(AB_DIR % i)
 		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
-		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls])
+		others.append(Other.new(sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls))
 		i += 1
 	auto = FileAccess.file_exists(AUTO)
 
@@ -124,23 +124,23 @@ func has_ab() -> bool:
 ## The others as variants of the kind this build runs now: without toys, or with them (the demo's),
 ## theirs over the whole view: with the stencil test the whole view marked, without it no stencil
 ## at all; none with the gravity view on (theirs are without it).
-func comparable() -> Array:
+func comparable() -> Array[Setup]:
 	var tracer: Tracer = main.tracer
-	var out := []
-	for o in others if tracer.gravity_view == 0 else []:
+	var out: Array[Setup] = []
+	if tracer.gravity_view != 0:
+		return out
+	for o in others:
 		if tracer.plain():
-			out.append([o[0], o[1], 0, false, Tracer.BARE])
-		elif o[2] != null:
-			var with_stencil: bool = o[2].code.contains("stencil_mode")
-			out.append([o[0], o[2], 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE])
+			out.append(Setup.new(o.label, o.shader, 0, false, Tracer.BARE))
+		elif o.balls != null:
+			var with_stencil := o.balls.code.contains("stencil_mode")
+			out.append(Setup.new(o.label, o.balls, 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE))
 	return out
 
 
-## The tour's steps: {l: [from, to], yaw: [from, to], pitch, nod: the amplitude of a nod about
-## the pitch (degrees, NOD_PERIOD), roll: the amplitude of a tilt (TILT_PERIOD), secs,
-## recover: back to the start first, what}
-func _make_tour() -> Array:
-	var t := []
+## The tour's steps.
+func _make_tour() -> Array[Step]:
+	var t: Array[Step] = []
 	var start_l := _l(START)
 	for tl in TOUR_L:
 		var l := _l(tl)
@@ -163,9 +163,17 @@ func _l(l: float) -> float:
 
 
 func _st(l0: float, l1: float, y0: float, y1: float, p: float, secs: float, what: String,
-		recover := false, nod := 0.0, roll := 0.0) -> Dictionary:
-	return {"l": [l0, l1], "yaw": [y0, y1], "pitch": p, "nod": nod, "roll": roll,
-			"secs": secs * tour_scale, "recover": recover, "what": what}
+		recover := false, nod := 0.0, roll := 0.0) -> Step:
+	var st := Step.new()
+	st.l = Vector2(l0, l1)
+	st.yaw = Vector2(y0, y1)
+	st.pitch = p
+	st.nod = nod
+	st.roll = roll
+	st.secs = secs * tour_scale
+	st.recover = recover
+	st.what = what
+	return st
 
 
 func start() -> void:
@@ -177,9 +185,9 @@ func start() -> void:
 	variants = comparable()
 	own = variants.size()
 	for f in FOVEATIONS:
-		variants.append([f[0], own_shader, f[1], f[2], Tracer.SPLIT])
+		variants.append(Setup.new(f[0], own_shader, f[1], f[2], Tracer.SPLIT))
 	if not tracer.plain():
-		variants.append(["this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE])
+		variants.append(Setup.new("this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -201,13 +209,13 @@ func start() -> void:
 		for v in variants:
 			r.append([])
 		results.append(r)
-		for v in order:
-			plan.append([i, v])
+		for v: int in order:
+			plan.append(Vector2i(i, v))
 	step = -1
 	preparing = variants.size()
 	var names := []
 	for i in variants.size():
-		names.append("%d = %s" % [i + 1, variants[i][0]])
+		names.append("%d = %s" % [i + 1, variants[i].label])
 	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first; gravity view %s"
 			% [", ".join(names), PLACES.size(), time, "width" if main.foveation.order == 0 else "height",
 			Tracer.GRAVITY_VIEWS[tracer.gravity_view]])
@@ -285,12 +293,12 @@ func _prepare() -> void:
 
 
 ## A variant's ray tracer and foveation.
-func _use(v: Array) -> void:
-	main.tracer.material.shader = v[1]
-	main.tracer.toy_mode = v[4]
+func _use(v: Setup) -> void:
+	main.tracer.material.shader = v.shader
+	main.tracer.toy_mode = v.toy_mode
 	var fov: Foveation = main.foveation
-	if fov.level != v[2] or fov.split_pass.enabled != (v[2] > 0 or v[3]):
-		fov.set_level(v[2], v[3])
+	if fov.level != v.foveation or fov.split_pass.enabled != (v.foveation > 0 or v.split):
+		fov.set_level(v.foveation, v.split)
 
 
 func _segment() -> void:
@@ -318,25 +326,25 @@ func _clock() -> void:
 
 func _begin(i: int) -> void:
 	step = i
-	var place: Array = PLACES[plan[i][0]]
+	var place: Array = PLACES[plan[i].x]
 	main.place_on_axis(_l(place[0]), place[1], place[2])
-	_use(variants[plan[i][1]])
+	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
-	if i == 0 or plan[i][0] != plan[i - 1][0]:
+	if i == 0 or plan[i].x != plan[i - 1].x:
 		clock_lo = 0
 		clock_hi = 0
-		_show("замер: место %d из %d, глаза закрыты" % [plan[i][0] + 1, PLACES.size()])
+		_show("замер: место %d из %d, глаза закрыты" % [plan[i].x + 1, PLACES.size()])
 
 
 func _end_segment() -> void:
-	var r: Array = results[plan[step][0]]
+	var r: Array = results[plan[step].x]
 	gpu_ms.sort()
-	r[plan[step][1]].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
-	var last: bool = step + 1 >= plan.size() or plan[step + 1][0] != plan[step][0]
+	r[plan[step].y].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
+	var last := step + 1 >= plan.size() or plan[step + 1].x != plan[step].x
 	if not last:
 		return
-	var place: Array = PLACES[plan[step][0]]
+	var place: Array = PLACES[plan[step].x]
 	var parts := []
 	var segs := []
 	for v in variants.size():
@@ -356,17 +364,17 @@ func _compared() -> void:
 		var summary := []
 		for v in range(1, variants.size()):
 			summary.append("%d/1 %.3f" % [v + 1, _ratio(v, 0)])
-		print("bench: compared, on average over the places %s (1 = %s)" % [", ".join(summary), variants[0][0]])
+		print("bench: compared, on average over the places %s (1 = %s)" % [", ".join(summary), variants[0].label])
 		var parts := []
 		if own > 0:
 			var m := _ratio(own, 0)
 			var pct := roundi(absf(1.0 - m) * 100.0)
-			parts.append(("этот и %s одинаковы" % variants[0][0]) if absf(1.0 - m) <= 0.02 else
-					("этот %s, чем %s, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", variants[0][0], pct]))
+			parts.append(("этот и %s одинаковы" % variants[0].label) if absf(1.0 - m) <= 0.02 else
+					("этот %s, чем %s, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", variants[0].label, pct]))
 		# the foveation against this build without it
 		summary.clear()
 		for v in range(own + 1, variants.size()):
-			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
+			summary.append("%s %.3f" % [variants[v].label.trim_prefix("this build, "), _ratio(v, own)])
 		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
 		# for the menu, what each foveation (a density map on) saves, by the menu's names
 		var pcts := []
@@ -399,30 +407,30 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
 			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
-	sec.f += 1
-	sec.r += meter.refreshes - refreshes_before
-	sec.g += g
-	sec.gmax = maxf(sec.gmax, g)
+	sec.frames += 1
+	sec.refreshes += meter.refreshes - refreshes_before
+	sec.gpu += g
+	sec.gpu_max = maxf(sec.gpu_max, g)
 
 
 func _tour_step(i: int) -> void:
 	step = i
 	phase_t = 0.0
 	counting = false
-	tour_results.append({"frames": 0, "refreshes": 0, "worst": [0.0, 0.0, 0.0, 0.0, 0.0]})
+	tour_results.append(Tally.new())
 	if tour[i].recover:
 		main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])     # recover at the start
 	_show("замер %.0f Гц: шаг %d из %d, глаза закрыты" % [main.rate.rate, i + 1, tour.size()])
 
 
 func _tour(delta: float) -> void:
-	var s: Dictionary = tour[step]
-	var recover: float = TOUR_RECOVER * tour_scale if s.recover else 0.0
+	var s := tour[step]
+	var recover := TOUR_RECOVER * tour_scale if s.recover else 0.0
 	if phase_t < recover:
 		return
 	var t := phase_t - recover
 	var k := clampf(t / s.secs, 0.0, 1.0)
-	pose = [lerpf(s.l[0], s.l[1], k), lerpf(s.yaw[0], s.yaw[1], k),
+	pose = [lerpf(s.l.x, s.l.y, k), lerpf(s.yaw.x, s.yaw.y, k),
 			s.pitch + s.nod * sin(TAU * t / (NOD_PERIOD * tour_scale)),
 			s.roll * sin(TAU * t / (TILT_PERIOD * tour_scale))]
 	main.place_on_axis(pose[0], pose[1], pose[2], pose[3])
@@ -432,21 +440,22 @@ func _tour(delta: float) -> void:
 		return
 	tour_t += delta
 	sec.t += delta
-	var r: Dictionary = tour_results[step]
+	var r := tour_results[step]
 	if sec.t >= 1.0 or k >= 1.0:
 		print("tour: step %d, l %.2f m, %.0f deg right, %.0f deg up, %.0f deg roll: %d frames of %d refreshes, gpu %.2f ms avg %.2f max"
-				% [step + 1, pose[0], pose[1], pose[2], pose[3], sec.f, sec.r, sec.g / maxi(sec.f, 1), sec.gmax])
-		r.frames += sec.f
-		r.refreshes += sec.r
-		var share: float = float(sec.r - sec.f) / sec.r if sec.r > 0 else 0.0
-		if share > r.worst[0]:
-			r.worst = [share, pose[0], pose[1], pose[2], pose[3]]
+				% [step + 1, pose[0], pose[1], pose[2], pose[3], sec.frames, sec.refreshes, sec.gpu / maxi(sec.frames, 1), sec.gpu_max])
+		r.frames += sec.frames
+		r.refreshes += sec.refreshes
+		var share := float(sec.refreshes - sec.frames) / sec.refreshes if sec.refreshes > 0 else 0.0
+		if share > r.worst:
+			r.worst = share
+			r.worst_pose = pose.duplicate()
 		_new_second()
 	if k >= 1.0:
 		counting = false
 		print("tour: %s: %d of %d refreshes without a new frame (%.1f%%), worst second %.0f%% at l %.1f m, %.0f deg right, %.0f deg up"
-				% [s.what, r.refreshes - r.frames, r.refreshes, 100.0 * _missed(r), 100.0 * r.worst[0],
-				r.worst[1], r.worst[2], r.worst[3]])
+				% [s.what, r.refreshes - r.frames, r.refreshes, 100.0 * r.missed(), 100.0 * r.worst,
+				r.worst_pose[0], r.worst_pose[1], r.worst_pose[2]])
 		if step + 1 < tour.size():
 			_tour_step(step + 1)
 		else:
@@ -454,11 +463,7 @@ func _tour(delta: float) -> void:
 
 
 func _new_second() -> void:
-	sec = {"t": 0.0, "f": 0, "r": 0, "g": 0.0, "gmax": 0.0}
-
-
-static func _missed(r: Dictionary) -> float:
-	return float(r.refreshes - r.frames) / r.refreshes if r.refreshes > 0 else 0.0
+	sec = Tally.new()
 
 
 func _toured() -> void:
@@ -466,15 +471,16 @@ func _toured() -> void:
 	var total_f := 0
 	var total_r := 0
 	for i in tour_results.size():
-		var r: Dictionary = tour_results[i]
+		var r := tour_results[i]
 		total_f += r.frames
 		total_r += r.refreshes
-		if r.worst[0] > FrameRate.MISSED_OK and (worst < 0 or r.worst[0] > tour_results[worst].worst[0]):
+		if r.worst > FrameRate.MISSED_OK and (worst < 0 or r.worst > tour_results[worst].worst):
 			worst = i
 	var line := "%.0f Гц держится везде" % main.rate.rate
 	if worst >= 0:
-		var w: Array = tour_results[worst].worst
-		line = "%.0f Гц: пропуски, хуже всего %s (%d%%)" % [main.rate.rate, _ru(w[1], w[2], w[3]), roundi(100.0 * w[0])]
+		var w := tour_results[worst]
+		line = "%.0f Гц: пропуски, хуже всего %s (%d%%)" % [main.rate.rate,
+				_ru(w.worst_pose[0], w.worst_pose[1], w.worst_pose[2]), roundi(100.0 * w.worst)]
 	print("tour: done at %.0f Hz: %d of %d refreshes without a new frame (%.1f%%), %s"
 			% [main.rate.rate, total_r - total_f, total_r, 100.0 * (total_r - total_f) / maxi(total_r, 1),
 			("no second above %d%%" % roundi(100.0 * FrameRate.MISSED_OK)) if worst < 0 else "worst: " + tour[worst].what])
@@ -557,3 +563,59 @@ func _headset() -> bool:
 
 func _show(s: String) -> void:
 	menu.bench_status(s)
+
+
+## A ray tracer the comparison times, and how.
+class Setup:
+	var label: String
+	var shader: Shader
+	var foveation: int              # Foveation.set_level's level
+	var split: bool                 # the split pass without a density map
+	var toy_mode: int               # Tracer.SPLIT, WHOLE or BARE
+
+	func _init(p_label: String, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
+		label = p_label
+		shader = p_shader
+		foveation = p_foveation
+		split = p_split
+		toy_mode = p_toy_mode
+
+
+## Another source's ray tracers (tools/ab_shaders.sh).
+class Other:
+	var label: String               # their first line
+	var shader: Shader
+	var balls: Shader               # with the toys, or null
+
+	func _init(p_label: String, p_shader: Shader, p_balls: Shader) -> void:
+		label = p_label
+		shader = p_shader
+		balls = p_balls
+
+
+## A step of the tour: l and yaw (degrees to the right) from x to y over secs, pitch with a nod of
+## that amplitude (degrees, NOD_PERIOD), a tilt of roll's (TILT_PERIOD); back to the start first if
+## recover.
+class Step:
+	var l: Vector2
+	var yaw: Vector2
+	var pitch: float
+	var nod: float
+	var roll: float
+	var secs: float
+	var recover: bool
+	var what: String
+
+
+## Frames and refreshes counted: over a second, or over a step with its worst second.
+class Tally:
+	var t := 0.0                    # s counted
+	var frames := 0
+	var refreshes := 0
+	var gpu := 0.0                  # ms, summed
+	var gpu_max := 0.0
+	var worst := 0.0                # the worst second's share of refreshes without a new frame
+	var worst_pose: Array = [0.0, 0.0, 0.0, 0.0]   # and where: l, degrees right, up, roll
+
+	func missed() -> float:
+		return float(refreshes - frames) / refreshes if refreshes > 0 else 0.0

@@ -86,12 +86,12 @@ func _initialize() -> void:
 	check("pause: frames", m.frames, 0)
 	check("pause: missed", m.missed(), 0)
 
-	# the verdict over the last seconds: [frames, refreshes, ...]
-	check("verdict: one second is too little", FrameRate.keeps_up([[90, 90]]), null)
-	check("verdict: all frames", FrameRate.keeps_up([[90, 90], [90, 90]]), true)
-	check("verdict: 1 missed of 450", FrameRate.keeps_up([[90, 90], [90, 90], [89, 90], [90, 90], [90, 90]]), true)
-	check("verdict: 9 missed of 180", FrameRate.keeps_up([[81, 90], [90, 90]]), false)
-	check("verdict: half rate", FrameRate.keeps_up([[36, 72], [36, 72]]), false)
+	# the verdict over the last seconds: [frames shown, refreshes] each
+	check("verdict: one second is too little", FrameRate.keeps_up(_seconds([[90, 90]])), null)
+	check("verdict: all frames", FrameRate.keeps_up(_seconds([[90, 90], [90, 90]])), true)
+	check("verdict: 1 missed of 450", FrameRate.keeps_up(_seconds([[90, 90], [90, 90], [89, 90], [90, 90], [90, 90]])), true)
+	check("verdict: 9 missed of 180", FrameRate.keeps_up(_seconds([[81, 90], [90, 90]])), false)
+	check("verdict: half rate", FrameRate.keeps_up(_seconds([[36, 72], [36, 72]])), false)
 
 	# the GPU's clock as the kernel shows it: /sys/class/devfreq/<address>.gpu, a symlink
 	var fake := ProjectSettings.globalize_path("user://fake_devfreq")
@@ -119,3 +119,13 @@ func _initialize() -> void:
 		check("sysfs value is clean ASCII", v.to_ascii_buffer().size(), v.length())
 
 	U.finish(self)
+
+
+static func _seconds(counts: Array) -> Array[FrameRate.Second]:
+	var out: Array[FrameRate.Second] = []
+	for c: Array in counts:
+		var s := FrameRate.Second.new()
+		s.shown = c[0]
+		s.refreshes = c[1]
+		out.append(s)
+	return out
