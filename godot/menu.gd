@@ -307,11 +307,11 @@ static func _tick(hand: XRController3D) -> void:
 
 # ---------------------------------------------------------------- the menu
 
-## Open or close the menu (the menu button). Closing puts a value stepped to into effect.
 func toggle() -> void:
 	set_open(not open)
 
 
+## Closing puts a value stepped to into effect.
 func set_open(on: bool) -> void:
 	if on == open:
 		return
@@ -372,7 +372,6 @@ func press() -> void:
 	_apply_pending()
 
 
-## B: close.
 func back() -> void:
 	set_open(false)
 
@@ -461,7 +460,6 @@ func _enabled(k: String) -> bool:
 	return true
 
 
-## The row's i-th value in words.
 func _value_text(k: String, i: int) -> String:
 	if i < 0:
 		return "%.0f Гц" % rate.rate if k == "rate" and rate.rate > 0.0 else "—"
@@ -499,7 +497,7 @@ func _waiting(k: String) -> bool:
 	return false
 
 
-## The rows and their labels. Built again when the rate choices change.
+## Built again when the rate choices change.
 func _layout() -> void:
 	for r in rows:
 		r.name.queue_free()
@@ -573,7 +571,6 @@ func _place() -> void:
 	refresh()
 
 
-## The rows' values and colours, the picked row.
 func refresh() -> void:
 	if rows.is_empty():
 		return
@@ -670,7 +667,6 @@ func choose_order(order: int) -> void:
 	refresh()
 
 
-## The gaze dot: where SteamVR's eye tracking says the eyes look (main.gaze_dot).
 func show_gaze(on: bool) -> void:
 	if main.gaze_dot == null:
 		return

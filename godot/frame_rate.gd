@@ -2,9 +2,8 @@ class_name FrameRate
 extends Node
 ## The refresh rate the headset really runs at and whether our frames keep up, measured from
 ## OpenXR's frame timing (rate_meter.gd; the runtime's reported rate only picks among the rates the
-## timing fits); choosing a
-## rate; the log's "refresh:" lines about these (the menu's own are about its settings). The menu
-## shows it (menu.gd: its head and the line below).
+## timing fits); choosing a rate; the log's "refresh:" lines about these (the menu's own are about
+## its settings).
 ##
 ## Choosing a rate. SteamVR on the Steam Frame accepts an app's own request
 ## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
@@ -168,7 +167,6 @@ func _process(delta: float) -> void:
 		gpu_max = 0.0
 
 
-## Ask for a rate.
 func choose(r: float) -> void:
 	if xr == null:
 		return

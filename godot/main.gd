@@ -150,7 +150,7 @@ func _ready() -> void:
 	menu.xr = xr as OpenXRInterface
 	menu.head = camera
 	bench.menu = menu
-	add_child(bench)                # first: the menu's last row asks it what it compares
+	add_child(bench)                # first: the menu asks it what it compares
 	origin.add_child(menu)
 
 	place(START_POS, START_FORWARD)
@@ -275,7 +275,6 @@ func _process(delta: float) -> void:
 	tracer.set_head(hp[0], hp[1], hf, head.origin)
 
 
-## The toys and the hands to the ray tracer.
 func draw_toys() -> void:
 	toys.draw(tracer, hands.drawn())
 
@@ -353,13 +352,11 @@ func gaze_text() -> String:
 	return "none" if g == null else "%.0f deg right %.0f deg up" % [g.x, g.y]
 
 
-## How gravity is shown (Tracer.set_gravity_view): the menu's row, its button, G.
 func set_gravity_view(view: int) -> void:
 	tracer.set_gravity_view(view)
 	menu.refresh()
 
 
-## Turns smoothly or in snaps of SNAP_ANGLE (the right stick's click switches, as does the menu).
 func set_smooth_turn(on: bool) -> void:
 	smooth_turn = on
 	print("right stick turns ", "smoothly" if smooth_turn else "in %d-degree snaps" % roundi(rad_to_deg(SNAP_ANGLE)))
@@ -434,10 +431,8 @@ func _run_pressed() -> bool:
 	return in_xr and left_hand.get_float(&"trigger") > 0.5
 
 
-## Right stick left/right (Q / E): turn around the head, smoothly (speed follows the stick) or
-## in snaps of SNAP_ANGLE; a right stick click (Tab) switches between the two. Right A (R): back
-## to the start, the toys back in place and the hands empty (not while the menu is open: A is its).
-## True if a turn moved the view against the room (the reset redoes the chart map itself).
+## The turns and the reset (README.md, «Управление»). True if a turn moved the view against the
+## room (the reset redoes the chart map itself).
 func _turn_and_reset(delta: float) -> bool:
 	var turn := 0.0
 	var mode_down := Input.is_key_pressed(KEY_TAB)

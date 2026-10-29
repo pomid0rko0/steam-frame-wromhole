@@ -151,7 +151,6 @@ static func orthonormalize(f: Array) -> Array:
 	return [ex.normalized(), ey, ez]
 
 
-## Linear combination c.x f[0] + c.y f[1] + c.z f[2]: a vector given in a frame's coordinates.
 static func combine(f: Array, c: Vector3) -> Vector4:
 	return c.x * f[0] + c.y * f[1] + c.z * f[2]
 
@@ -213,7 +212,6 @@ func dw(l: float) -> float:
 	return cos(_theta(al))
 
 
-## The point (l, n) as a point of R^4.
 func embed(l: float, n: Vector3) -> Vector4:
 	var p := r(l) * n
 	return Vector4(p.x, p.y, p.z, w(l))

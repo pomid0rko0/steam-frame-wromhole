@@ -1,41 +1,22 @@
-// Wormhole renderer core: plain GLSL that is also valid Godot shading language (single source for both).
-// The including file declares the uniforms:
-//   float wh_rho0, wh_h, wh_fillet          geometry (see below)
-//   vec4 wh_sph[], wh_pil[], wh_box[]       static objects as godot/scene.json has them: spheres
-//                                           0-2 A's, 3-5 B's; pillars A's; boxes B's
-//   vec4 wh_ball[WH_MAXB], wh_ballCol[WH_MAXB], int wh_nBall
-//                                           movable balls (the toys' and the hands': Toys.draw; or
-//                                           the stereo check's): centre as a point of R^4
-//                                           (xyz, w) and (rgb, radius)
-//   ivec4 wh_bIdx                          the balls sorted by where they are: the index ranges
-//                                           Tracer.region_order gives
-//   vec4 wh_fball[WH_MAXB]                  the same balls in a flat universe: the sphere the
-//                                           sheet cuts from it, in that universe's chart (centre,
-//                                           radius squared)
-//   vec4 wh_cube[], wh_cubeE[5 per cube], wh_cubeCol[], int wh_nCube, float wh_pix
-//                                           movable cubes (the toys' or the stereo check's). Centre as a point of R^4;
-//                                           per cube five
-//                                           vectors: four orthonormal axes of R^4 divided by the half size
-//                                           (three body axes tangent to the space, then its normal), then
-//                                           dot(centre, axis) for the four (one index base for the search);
-//                                           (rgb, half size). A point P is inside when |dot(P, axis) -
-//                                           dot(centre, axis)| < 1 for all four axes. wh_pix: a
-//                                           pixel's angle (the edge lines' soft edges).
-//                                           ivec4 wh_cIdx:
-//                                           the cubes sorted as the balls.
-//   vec4 wh_bound[4]                        bounding spheres of the balls in A, in B, of the cubes in
-//                                           A, in B (xyz of the centre, radius; < 0: none): a ray of a
-//                                           flat universe that misses one tests none of them
-//                                           With WH_NO_BALLS defined first the balls' and cubes' code is
-//                                           left out (wh_ball, wh_ballCol and wh_nBall stay declared).
-//   sampler2D wh_tab, vec4 wh_tabLo, wh_tabInv, wh_tabReg
-//                                           the fillet polynomials by impact parameter
-//                                           (WormholeSpace.fillet_table)
-//   with WH_GRAVITY defined: vec4 grav_cyl, grav_g[], grav_d[]
-//                                           the gravity view (WormholeSpace.gravity_shader): the
-//                                           floor coloured by the strength of gravity
-//   with WH_ARROWS defined too: float wh_pix   also the field's arrows (wh_arrow; wh_pix as above,
-//                                           for the arrows' soft edges)
+// Wormhole renderer core: plain GLSL that is also valid Godot shading language (one source for
+// both). The including file declares the uniforms (wormhole_view.gdshaderinc); what they hold:
+//   wh_sph, wh_pil, wh_box  scene.json's static objects (which universe each is in: Tracer._fits_shader)
+//   wh_ball, wh_cube        movable balls' and cubes' centres as points of R^4 (xyz, w)
+//   wh_ballCol              (rgb, radius)
+//   wh_fball                each ball in a flat universe: the sphere the sheet cuts from it, in that
+//                           universe's chart (centre, radius squared)
+//   wh_bIdx, wh_cIdx        the balls' and cubes' index ranges by region (Tracer.region_order)
+//   wh_cubeE                five per cube: its four axes of R^4 (three body axes tangent to the space,
+//                           then the normal) over the half size, then dot(centre, axis) for the four; a
+//                           point P is inside when |dot(P, axis) - dot(centre, axis)| < 1 for all four
+//   wh_cubeCol              (rgb, half size)
+//   wh_bound                bounding spheres of the balls in A, in B, of the cubes in A, in B (centre,
+//                           radius; < 0: none): a flat universe's ray that misses one tests none of them
+//   wh_pix                  a pixel's angle: the soft edges of the cubes' edge lines and of the arrows
+//   wh_tab...               the fillet polynomials by impact parameter (WormholeSpace.fillet_table)
+//   grav_*                  the gravity view's constants (WormholeSpace.gravity_shader)
+// WH_NO_BALLS leaves the balls' and cubes' code out, WH_GRAVITY colours the floor by gravity,
+// WH_ARROWS adds the field's arrows.
 //
 // The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md (here:
 // "curved part").
