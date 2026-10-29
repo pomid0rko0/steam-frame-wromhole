@@ -10,10 +10,10 @@
 #   loops            loops left after unrolling
 #   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: one of
 #   tests/perf.gd's, default near; --shader: another ray tracer, such as
-#   res://shaders/ab/1/wormhole.gdshader; --disasm: the biggest program, the generic ubershader, not
-#   the one that runs)
-# KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it; on the Frame a file in
-# the repository, which the host sees too).
+#   res://shaders/ab/1/wormhole.gdshader; --disasm: the biggest program, not the one that runs: the
+#   generic ubershader, or its unused /2 variant in a ray tracer with toys)
+# KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it; on the Frame a file
+# in the repository, which the host sees too).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is
 # no GPU, and software Vulkan's timings don't follow the Frame's.
 set -u
@@ -38,7 +38,8 @@ done
 [ -z "$DISASM" ] || DISASM=$(realpath -m "$DISASM")
 LOG=$(mktemp)
 DATA=$(mktemp -d)    # a fresh user:// each run: Godot's pipeline cache would skip the compiler
-# the driver's manifest, pointing at the library where it is now (the installed one has the build's path)
+# the driver's manifest, pointing at the library where it is now (the installed one has the build's
+# path)
 ICD=$DATA/freedreno_icd.json
 printf '{"file_format_version": "1.0.1", "ICD": {"library_path": "%s", "api_version": "1.4.318"}}\n' \
 	"$LIB/libvulkan_freedreno.so" > "$ICD"

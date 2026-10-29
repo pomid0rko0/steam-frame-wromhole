@@ -67,7 +67,8 @@ var foveation: Foveation
 var rate: FrameRate
 var menu: Menu
 var bench: Bench
-var overlay: Node3D             # the stereo check's: drawn by Godot in chart A coordinates, fixed to the room
+var overlay: Node3D             # the stereo check's Godot geometry in chart A (_update_chart_map)
+var chart_map_stale := false    # the feet were where there is no chart map: made again once out
 var left_hand: XRController3D   # at their aim pose: the buttons and sticks (XR only)
 var right_hand: XRController3D
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
@@ -245,7 +246,12 @@ func _process(delta: float) -> void:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part of sheet A
-		overlay.visible = foot_l > space.L
+		var shown := foot_l > space.L
+		if not shown:
+			chart_map_stale = true
+		elif chart_map_stale:
+			_update_chart_map()
+		overlay.visible = shown
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
@@ -508,10 +514,15 @@ func _head_forward_xz() -> Vector2:
 ## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a
 ## rigid motion: computed where the feet are placed and after a recentre of the play space, a stick
 ## step or turn, and left alone while one walks and turns in the room. The stereo check's overlay
-## hangs on it (check_scene.gd).
+## hangs on it (check_scene.gd). Elsewhere (the curved zone, sheet B) there is none, and a walk in
+## the curved zone turns the axes against the chart: the map is made again as the feet come out.
 func _update_chart_map() -> void:
-	if overlay == null or foot_l <= space.L:
+	if overlay == null:
 		return
+	if foot_l <= space.L:
+		chart_map_stale = true
+		return
+	chart_map_stale = false
 	var fc := space.chart_position(foot_l, foot_n)
 	# columns: where play x, y, z point in the chart
 	var B := Basis(WormholeSpace.vector_to_chart(1.0, foot_n, frame[0]).normalized(), Vector3(0.0, 0.0, 1.0),

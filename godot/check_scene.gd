@@ -2,8 +2,9 @@ class_name CheckScene
 extends RefCounted
 ## The stereo check: Godot's standard renderer draws green lines on top of what the ray tracer
 ## draws (what, and how to read it: README.md, the one-eye check). Godot's geometry is placed in
-## chart A coordinates under main's overlay, which is fixed to the room: if the ray-traced world
-## drifted against the room, green would part from it.
+## chart A coordinates under main's overlay, which follows the world as main._update_chart_map
+## places it and stays put in the room while one walks and turns there in the flat part: if the
+## ray-traced world drifted against the room, green would part from it.
 
 # the balls in chart A, in front of the start position
 const BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]

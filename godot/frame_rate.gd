@@ -17,11 +17,11 @@ extends Node
 ## Until a rate is stored for the app SteamVR runs it at 72 Hz (the log's "refresh:" lines). It has
 ## no XR_EXT_performance_settings.
 ##
-## Half rate. One late frame sends SteamVR to every second refresh for 6-14 s (the log's
-## "refresh:" lines): it fills in the frames between on the same GPU, so our frame at the same pose
-## costs more, and it can stay there until the frame gets cheaper or the rate is switched there and
-## back. The Steam overlay and SteamVR's camera view do the same. The app can't stop it; cheaper
-## frames make it rarer.
+## Half rate. One late frame sends SteamVR to every second refresh for 6-14 s (the log's "refresh:"
+## lines): it fills in the frames between on the same GPU, so our frame at the same pose costs more,
+## and it can stay there until the frame gets cheaper or the rate is switched there and back. The
+## Steam overlay and SteamVR's camera view do the same. The app could end it at once only by
+## switching the rate there and back; it doesn't (docs/wishlist.md); cheaper frames make it rarer.
 ##
 ## The log: every second a line starting with "refresh:", with where one stands and looks, the
 ## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for each frame
