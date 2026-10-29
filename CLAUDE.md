@@ -67,7 +67,7 @@ itself. Install nothing by hand: what the work needs goes into `setup.sh`.
 
 | command | time in the cloud; on the Frame where given |
 |---|---|
-| `tools/test_stereo.sh` | ~5 min alone, more beside other runs; ~11 min on the Frame |
+| `tools/test_stereo.sh` | ~8 min alone, more beside other runs; ~11 min on the Frame |
 | `tools/test.sh [name...]` | 1–3 min; ~2 min on the Frame |
 | `tools/test_openxr.sh` | ~3 min, alone (its top says why) |
 | `tools/export.sh [--check] [label]` | ~40 s |
