@@ -114,7 +114,7 @@ func _process(_delta: float) -> bool:
 			U.key(KEY_W, false)
 			U.key(KEY_SHIFT, false)
 		559:
-			# 24 m from chart A x = 10: 6 m of flat floor, 2L = 11.14 m of throat, 6.86 m in B
+			# 24 m from chart A x = 10: 6 m of flat floor, 2L = 11.14 m of curved zone, 6.86 m in B
 			var want_r: float = 24.0 - (10.0 - main.space.Rout) - 2.0 * main.space.L + main.space.Rout
 			var p := _feet()
 			U.check("Shift + W runs through the throat into universe B", _side() < 0.0 and absf(p.x + want_r) < 0.05 and absf(p.y) < 0.01,

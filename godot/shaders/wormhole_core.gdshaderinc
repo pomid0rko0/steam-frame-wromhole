@@ -4,9 +4,8 @@
 //   vec4 wh_sph[6], wh_pil[4], wh_box[4]    static objects as godot/scene.json has them: spheres
 //                                           0-2 A's, 3-5 B's; pillars A's; boxes B's
 //   vec4 wh_ball[WH_MAXB], wh_ballCol[WH_MAXB], int wh_nBall
-//                                           movable balls: centre as a point of R^4 (xyz, w) and
-//                                           (rgb, radius). A ball is every point of space whose chord
-//                                           distance in R^4 to the centre is below the radius.
+//                                           movable balls (BallWorld's): centre as a point of R^4
+//                                           (xyz, w) and (rgb, radius)
 //   ivec4 wh_bIdx                          the balls sorted by where they are: the index ranges
 //                                           Tracer.region_order gives
 //   vec4 wh_fball[WH_MAXB]                  the same balls in a flat universe: the sphere the
@@ -95,8 +94,8 @@ float wh_r(float l) { return wh_prof(l).x; }
 
 vec3 wh_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
 
-// atan(y, x) for arguments of order 1 (components of unit vectors): one range reduction and a
-// minimax polynomial. The built-in atan reduces twice and guards against huge arguments.
+// atan(y, x) at any scale (it takes the ratio of the smaller to the larger): one range reduction and
+// a minimax polynomial. The built-in atan reduces twice and guards against huge arguments.
 float wh_atan2(float y, float x) {
     float ax = abs(x);
     float ay = abs(y);
@@ -111,7 +110,8 @@ float wh_atan2(float y, float x) {
     return y < 0.0 ? -p : p;
 }
 
-// asin, for the sky's latitude lines: pi/2 - sqrt(1 - |x|) P(|x|), no division
+// asin, for the sky's latitude lines and the toys' search window: pi/2 - sqrt(1 - |x|) P(|x|), no
+// division
 float wh_asin(float x) {
     float a = min(abs(x), 1.0);
     float p = (1.57079153 - 0.214280613 * a) + a * a * ((0.0856383856 - 0.0376182282 * a) + 0.00973297445 * a * a);
@@ -285,14 +285,14 @@ vec4 wh_arrow(float l, float a, float foot) {
 // the path length is dlength = G dv with G = r^2 / b F. F is interpolated by a polynomial in
 // tau = (u - ua) / (0.5 - ua) in [0, 1] (4 nodes: squares of the Gauss-Legendre nodes on [0, 1]),
 // and its moments against the exact weight, int t^k w(t) dt, are elementary (G, the path length,
-// is estimated instead: wh_filLen; ref/wh.py integrates G as F):
+// is estimated instead: wh_filLen):
 //   w(t) = 1 / (2 sqrt((t + al)(t + ga)))     (regime 0)
 // ua is where the fillet path starts: the turning point u = sig, or the fillet's inner end s0^2.
 // One of al, ga is 0 unless h < R. The moments come from a recursion that is stable while al and ga
 // are below 1; a factor 1 / sqrt(t + al or ga) that is 1 or more is smooth on [0, 1] and is moved
-// into the interpolated part instead (regimes 1 and 2). No loops, the same cost for every ray, and
-// the integral up to any point is the same closed form: the floor crossing is a Newton solve on it.
-// z is the variable in which that solve and the toys' search run: z = int w dt in regime 0,
+// into the interpolated part instead (regimes 1 and 2). No loops, the same cost for every ray; the
+// floor crossing is a Newton solve on the closed form. z is the variable in which that solve and
+// the toys' search run: z = int w dt in regime 0,
 // sqrt(t + mn) in regimes 1 and 2. The method's accuracy: docs/geometry.md, «Точность».
 // WormholeSpace.fillet_table works the polynomial out by b (its nodes and the matrix to the
 // coefficients: _TAU, _A) and the shader samples it.
@@ -861,9 +861,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
 }
 
 // ---------------------------------------------------------------- moving an observer
-// Geodesic equation with parallel transport, in the (U_l, u) representation:
-//   dl/ds = V_l,  dn/ds = v / r,  dU_l/ds = (r'/r) v.u,  du/ds = -(r'/r) U_l v - (u.v / r) n
-// for the velocity V = (V_l, v) itself and for every transported vector U.
+// The geodesic equation with parallel transport: docs/geometry.md («Движение наблюдателя и
+// предметов»).
 vec4 wh_dU(vec4 U, vec3 v, vec3 n, float k, float r) {
     return vec4(k * dot(v, U.yzw), -k * U.x * v - dot(U.yzw, v) / r * n);
 }
@@ -1047,8 +1046,8 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         h.nrm = (x + bt * d - S.xyz) * inversesqrt(S.w);
         h.col = wh_ballCol[bi].rgb;
     }
-    // cubes: the 4D box cut by this sheet is a convex solid bounded by four pairs of planes (an
-    // ordinary cube when the box's centre is in this flat universe); entries only
+    // cubes: the 4D box cut by this sheet is a convex solid bounded by four pairs of planes; entries
+    // only
     vec3 md = wh_M(side, d);
     vec3 mx = wh_M(side, x);
     int bf = 0;                    // the nearest cube's entry face: axis k + 1, negative for -axis

@@ -20,8 +20,8 @@ var Lc: float
 var th0: float
 var L: float
 var Rout: float
-# gravity (see gravity_f): docs/gravity.md's f is grav_a cosh(grav_k l) on the cylinder, a table on
-# the fillet, r + grav_beta / r^2 in the flat universes
+# gravity (see gravity_f): the coefficients of docs/gravity.md's f on the cylinder (grav_a,
+# grav_k) and in the flat universes (grav_beta); on the fillet a table
 var grav_a := 1.0
 var grav_k := 1.0
 var grav_beta := 0.0

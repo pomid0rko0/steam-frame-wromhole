@@ -173,8 +173,8 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 	return out
 
 
-## Movable balls and cubes. Balls: centres as points of R^4 (pos), colours with the radius, a chord
-## distance in R^4 (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES:
+## Movable balls and cubes. Balls (BallWorld's): centres as points of R^4 (pos), colours with the
+## radius (col: rgb, radius), at most MAX_BALLS. Cubes (BallWorld's), at most MAX_CUBES:
 ## the centre as a point of R^4 (cpos), four
 ## orthonormal axes divided by the half size (axes: three body axes tangent to the space, then its
 ## normal; four per cube), (rgb, half size) (ccol). The shader gets them as

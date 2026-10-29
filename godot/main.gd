@@ -78,7 +78,7 @@ var frame: Array
 var prev_head := Vector2.ZERO
 var recentered := false         # the runtime moved the play space: not a step
 var await_pose := false         # XR: place the viewer once head tracking delivers a pose
-var hold := false               # the speed check: the feet stay while the head moves, sticks, A and the hands do nothing
+var hold := false               # the speed check holds the viewer (what does nothing then: this file's top)
 var view_pitch := 0.0           # degrees: the view turned up and about the line of sight on top of
 var view_roll := 0.0            # the head's own (the speed check; the head stays where it is)
 var desktop_yaw := 0.0
@@ -251,9 +251,8 @@ func _process(delta: float) -> void:
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
 		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll))
-	# the free toys up to this frame (pushed by the hands where they were), then the hands and
-	# what they hold to this frame: a toy let go now starts from where the hand has it. Nothing
-	# during the speed check: it times the same scene at every pose.
+	# in the order the top of this file gives; nothing during the speed check: it times the same
+	# scene at every pose
 	var active := toys.enabled and not await_pose and not hold
 	if active:
 		toys.step(delta, hands.balls())

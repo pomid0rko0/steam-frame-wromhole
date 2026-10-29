@@ -11,7 +11,8 @@
 #   own    the same with our own density map (Foveation.OWN_MAPS)
 # Each eye at 1728x1728, what the headset's logs showed ("refresh:" lines, "eye WxH"; SteamVR's
 # resolution setting decides it); the tiles' size is printed too (a density is per tile).
-#   tools/fdm_check.sh           (exit 0 if "on" and "own" render the XR pass in tiles with the density map)
+#   tools/fdm_check.sh           (exit 0 if "split", "on" and "own" render the XR pass in tiles, and "on"
+#                                 and "own" with one attachment more than "split": the density map)
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

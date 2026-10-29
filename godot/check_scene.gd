@@ -59,7 +59,7 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 		m.material_override = ball_mat
 		m.position = c
 		overlay.add_child(m)
-	# the cube: Godot draws its edges green, the ray tracer the 4D box of sheet A (axes over the half size)
+	# the cube: Godot draws its edges green, the ray tracer its 4D box (axes over the half size)
 	var box := MeshInstance3D.new()
 	box.name = "Cube"
 	box.mesh = BoxMesh.new()

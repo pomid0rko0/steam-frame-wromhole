@@ -14,8 +14,8 @@ extends Node
 ## meanwhile is written next), the display's own rate tells when it followed, and if it has not a
 ## few seconds after the write the menu asks for a restart. Otherwise the choice asks the runtime
 ## directly.
-## Until a rate is stored for the app SteamVR runs it at 72 Hz. It has no
-## XR_EXT_performance_settings.
+## Until a rate is stored for the app SteamVR runs it at 72 Hz (the log's "refresh:" lines). It has
+## no XR_EXT_performance_settings.
 ##
 ## Half rate. One late frame sends SteamVR to every second refresh for 6-14 s (the log's
 ## "refresh:" lines): it fills in the frames between on the same GPU, so our frame at the same pose

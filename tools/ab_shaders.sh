@@ -24,7 +24,7 @@ rm -rf "$DIR"
 [ "${1:-}" = "--remove" ] && exit 0
 AUTO=""
 [ "${1:-}" = "--auto" ] && { AUTO=1; shift; }
-[ $# -ge 1 ] || { echo "usage: tools/ab_shaders.sh <commit or directory>... | --remove"; exit 2; }
+[ $# -ge 1 ] || { echo "usage: tools/ab_shaders.sh [--auto] <source>... | --remove   (sources: its top)"; exit 2; }
 n=0
 for src in "$@"; do
 	n=$((n + 1))

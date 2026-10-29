@@ -8,10 +8,10 @@
 #                    registers): more hide waiting better
 #   cat4             transcendental instructions (exp, log, sqrt, rcp, sin...)
 #   loops            loops left after unrolling
-#   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: as
-#   tests/perf.gd, default near; plain, near and away without movable objects, check or balls with
-#   them; --shader: another ray tracer, such as res://shaders/ab/1/wormhole.gdshader; --disasm: the
-#   biggest program, the generic ubershader, not the one that runs)
+#   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: one of
+#   tests/perf.gd's, default near; --shader: another ray tracer, such as
+#   res://shaders/ab/1/wormhole.gdshader; --disasm: the biggest program, the generic ubershader, not
+#   the one that runs)
 # KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it; on the Frame a file in
 # the repository, which the host sees too).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is

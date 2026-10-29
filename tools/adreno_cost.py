@@ -39,8 +39,8 @@ import ir3_emu as E  # noqa: E402
 # GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x transcendental instructions
 # + MS_CAT5 x texture-unit instructions (ir3_emu.py counts them). In waves of 128 the issue cycles
 # are ir3_emu.py's and a nop slot covers 128 pixels; a cat4 or cat5 instruction's work is per pixel
-# whatever the wave. By the constants transcendentals and derivatives cost far more than their issue
-# slots (16 and ~90 ALU cycles' worth).
+# whatever the wave. By the constants transcendentals and texture-unit instructions cost far more
+# than their issue slots (16 and ~90 ALU cycles' worth).
 GODOT_MS = 0.8
 MS_ALU = 1.61e-3
 MS_NOP = 1.05e-3
@@ -63,8 +63,8 @@ def ray_program(log):
     end = text.index('; FRAG prog %s:' % p)
     start = text.rfind('Native code for', 0, end)
     body = text[start:end]
-    # Godot compiles in threads: another shader's "NIR (final form) for ..." header can land
-    # inside this program's listing
+    # another shader's "NIR (final form) for ..." header can land inside this program's listing
+    # (tools/same_programs.py says why)
     lines = [x for x in body.split('\n') if not x.startswith('NIR (')]
     hdr = body[body.rfind('; FRAG: outputs'):]
     # the program's instructions: from the first line after the @in/@out declarations
@@ -147,7 +147,7 @@ def fillet_table():
 
 class Shader:
     def set_uniforms(self, uniforms):
-        """The material's uniforms (a pose's own, when they differ between poses: --held)."""
+        """The material's uniforms (a pose's own, when they differ between poses: --hands, --held)."""
         self.ubos = {3: material_ubo(self.defines, uniforms)}   # the main program loads from it too (ldc at a computed index)
         self.consts = E.run_preamble(self.instrs, self.ps, self.pe + 1, np.zeros(8192, np.uint32), self.ubos)
 
@@ -343,7 +343,7 @@ def proxy_marked(e, xs, ys, size, tan_x, tan_y):
 
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
     """share(e, xs, ys, tan): the share of a tile's pixels this ray tracer runs (--split); unis:
-    each pose's own uniforms (toys that move with the viewer: --held)."""
+    each pose's own uniforms (toys that move with the viewer: --hands, --held)."""
     tan_y = np.tan(np.radians(fov) / 2.0)
     tan_x = tan_y
     res = []
@@ -399,7 +399,7 @@ def main():
             u['wh_pix'] = 2.0 * np.tan(np.radians(opt['--fov']) / 2.0) / opt['--size']
         return u
     uniforms = eye_pix(entries[0].get('uniforms', {}))
-    # toys held in the hand move with the viewer: then each pose's own
+    # the hands and what they hold move with the viewer: then each pose's own
     unis = [eye_pix(e.get('uniforms', {})) for e in entries]
     if all(u == unis[0] for u in unis):
         unis = None

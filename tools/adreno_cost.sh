@@ -8,9 +8,8 @@
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
 # (lavapipe) picture on 256 random tiles a pose (under 0.2% of pixels off by more than 4/255).
-# --toys: the demo's balls and cubes, after the throw and the drop, at rest (the shader with balls;
-# other sources' shader with balls too, as tools/ab_shaders.sh copies it). --hands: with them both
-# hands' balls where hands are at every pose; --held: and a ball held in the right one (emu_dump.gd).
+# --toys, --hands, --held: tests/emu_dump.gd's scenes toys, toys+hands, toys+held (the shader with
+# balls, of every source: one without it stops the run).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
@@ -67,9 +66,12 @@ for s in "${srcs[@]}"; do
 		stsh=res://shaders/$([ -n "$TOYS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
 	fi
 	[ -n "$TOYS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
+	if [ -n "$sh" ] && [ ! -f "$ROOT/godot/${sh#res://}" ]; then
+		echo "$s: no ray tracer with balls (--toys needs one; a cost check has none)"; exit 1
+	fi
 	[ -n "$sh" ] && stsh=$sh
 	log=$WORK/$n.log
-	# a log whose listings came out interleaved (tools/same_programs.py) is compiled again, up to
+	# a log adreno_cost.py can't parse (no log, or listings interleaved) is compiled again, up to
 	# three times
 	parsed=""
 	for try in 1 2 3; do

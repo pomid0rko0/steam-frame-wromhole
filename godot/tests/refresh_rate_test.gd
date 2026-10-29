@@ -42,8 +42,8 @@ func _initialize() -> void:
 	check("72 Hz at half rate: missed", m.missed(), 36)
 	check("72 Hz at half rate: measured rate", snappedf(m.rate(), 0.01), 72.0)
 
-	# a runtime that paces a slow app at every 2nd refresh and says so in the predicted period
-	# (Monado does): the display is still 72 Hz, each frame missed one refresh
+	# a runtime that paces a slow app at every 2nd refresh (rate_meter.gd): the display is still
+	# 72 Hz, each frame missed one refresh
 	m.reset_window()
 	for i in 36:
 		t += 2 * 13_888_889

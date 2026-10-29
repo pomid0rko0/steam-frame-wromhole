@@ -1,11 +1,11 @@
 #!/bin/bash
 # main through the real OpenXR path, no headset: Monado's simulated headset with its null
-# compositor (one refresh rate, 20 Hz, 128x128 per eye), then tests/openxr_smoke.gd.
+# compositor (its one rate and eye size: tests/openxr_smoke.gd checks them), then that test.
 #   tools/test_openxr.sh            (GODOT=path/to/godot to override the binary)
 # Monado's socket goes into XDG_RUNTIME_DIR, here a directory of this run's own (also its logs,
 # printed on failure): any Godot that finds the socket takes Monado as its headset, so other runs'
 # Godots must not find it; its Godot's user data is there too. Run it alone: beside other runs its
-# frames miss the 20 Hz display's refreshes under the load, and the check that frames keep up fails.
+# frames miss the display's refreshes under the load, and the check that frames keep up fails.
 # Exit status 0 only if the smoke test passes and no script error was printed.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

@@ -48,7 +48,7 @@ godot --path godot --xr-mode off
 Для шлема:
 
 ```
-tools/setup.sh      # на Linux с apt (облачная сессия): Godot 4.7.2, шаблоны экспорта и всё для проверок
+tools/setup.sh      # на Linux с apt: Godot 4.7.2, шаблоны экспорта и всё для проверок (что уже стоит, берёт готовым)
 tools/export.sh     # сборка: на Linux с apt — godot/build/wormhole_vr_<ветка>_steam_frame.zip, на шлеме — сразу на место
 ```
 
