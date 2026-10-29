@@ -31,11 +31,13 @@ const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const MAX_BALLS := 12           # the shader's slots for the toys' and the hands' balls
 const MAX_CUBES := 6
-# m around each proxy sphere. A ray that meets a toy inside its sphere leaves the sphere at least
-# this far beyond the hit, so it is marked even where the near plane clips the sphere's near side,
-# as long as the near plane (main.NEAR along the view axis, NEAR / cos of the ray's angle along the
-# ray) is nearer than this: within acos(main.NEAR / PROXY_MARGIN) of the view axis.
+# m around each proxy sphere at least. A ray that meets a toy inside its sphere leaves the proxy at
+# least the margin beyond the hit; it is marked if that is beyond the near plane, which lies
+# Main.NEAR along the view axis and up to near_reach along the frustum's corners. So a proxy whose
+# toy comes nearer the eyes than near_reach gets a margin that makes up the difference (_margin):
+# the rest keep this one.
 const PROXY_MARGIN := 0.08
+const EYE_REACH := 0.05         # m from the head to either eye, at most
 # the proxy sphere's mesh (check_scene.gd's balls take it too); its faces lie inside the sphere
 # (Godot's SphereMesh has rings + 1 latitude steps): grown by PROXY_SLACK, more than they lie in
 # (_ready asserts it)
@@ -61,6 +63,8 @@ var toy_count := 0              # balls and cubes the shader has (set_objects)
 var toy_spheres := [PackedVector4Array(), PackedVector4Array()]   # per universe A, B: the toys' chart spheres
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var pixel_angle := 0.0          # the pixel angle set_head last saw: wh_pix goes again when it changes
+var head_chart := Vector3.ZERO  # the head in its universe's chart (set_head, with the split)
+var near_reach := 3.0 * Main.NEAR   # m to the near plane along the frustum's farthest ray (set_head)
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -149,6 +153,8 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		return
 	var side := 1.0 if l > 0.0 else -1.0
 	var ch := space.chart_position(l, n)
+	head_chart = ch
+	near_reach = _near_reach()
 	# chart -> play: head_pos + (d . v_k)_k for d = X - ch, v_k the chart directions of the play
 	# axes (the head's frame)
 	var B := Basis(WormholeSpace.vector_to_chart(side, n, hf[0]), WormholeSpace.vector_to_chart(side, n, hf[1]),
@@ -173,10 +179,39 @@ func proxy_spheres(l: float) -> PackedVector4Array:
 	var out := PackedVector4Array()
 	if toy_count == 0 or toy_mode != SPLIT or absf(l) <= space.L:
 		return out
-	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + PROXY_MARGIN) * PROXY_SLACK))
+	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + _margin(Vector3.ZERO, space.Rout)) * PROXY_SLACK))
 	for s in toy_spheres[0 if l > 0.0 else 1]:
-		out.append(Vector4(s.x, s.y, s.z, (s.w + PROXY_MARGIN) * PROXY_SLACK))
+		var c := Vector3(s.x, s.y, s.z)
+		out.append(Vector4(s.x, s.y, s.z, (s.w + _margin(c, s.w)) * PROXY_SLACK))
 	return out
+
+
+## The margin of the proxy around a sphere (chart centre c, radius rad): enough that a ray from
+## either eye that meets it, at least the sphere's distance from the head less EYE_REACH away,
+## leaves the proxy beyond the near plane.
+func _margin(c: Vector3, rad: float) -> float:
+	var nearest := c.distance_to(head_chart) - rad - EYE_REACH
+	return maxf(PROXY_MARGIN, near_reach - nearest + 0.005)
+
+
+## How far the near plane is from an eye along the frustum's farthest ray, m: Main.NEAR along the
+## view axis, NEAR / cos of its angle off the axis elsewhere. From the runtime's projection of each
+## eye (the tangents of the frustum's sides), on the desktop from the camera's fov and the window.
+func _near_reach() -> float:
+	var t := Vector2.ZERO           # the largest tangents of the sides, across and up
+	if xr:
+		for v in xr.get_view_count():
+			# a frustum's projection: x.x = 2 / (right - left), z.x = (right + left) / (right - left)
+			var p := xr.get_projection_for_view(v, 1.0, Main.NEAR, 100.0)
+			t = t.max(Vector2((1.0 + absf(p.z.x)) / p.x.x, (1.0 + absf(p.z.y)) / p.y.y))
+	else:
+		var cam := get_parent() as Camera3D
+		var size := get_viewport().get_visible_rect().size
+		var ty := tan(0.5 * deg_to_rad(cam.fov))
+		t = Vector2(ty * size.x / maxf(size.y, 1.0), ty)
+	var reach := Main.NEAR * sqrt(1.0 + t.x * t.x + t.y * t.y)
+	# no frustum from the runtime yet: the last one
+	return reach if is_finite(reach) and reach > 0.0 else near_reach
 
 
 ## Movable balls (pos, col) and cubes (cpos, axes, ccol), laid out as wormhole_core.gdshaderinc's

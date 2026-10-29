@@ -27,9 +27,10 @@
 //
 // Godot's shading language reserves E, PI and TAU: a local named so is a compile error that GLSL
 // (ref/) accepts. Constants reach the GPU as Godot's shader compiler prints them, with 14 decimals
-// (rtos in f2sp0, servers/rendering/shader_compiler.cpp): 1e-20 becomes 0.0, 1e-12 survives (this
-// file's 1e-30 and 1e-20 guards are max(x, 0.0) there: they guard only in ref/). GPUs' max and min
-// return the other operand for a NaN, which hides most NaNs.
+// (rtos in f2sp0, servers/rendering/shader_compiler.cpp): 1e-20 becomes 0.0, 1e-12 survives, so a
+// guard against dividing by zero is 1e-12 or more (ref/ compiles this file as GLSL, where a smaller
+// one would still guard). GPUs' max and min return the other operand for a NaN, which hides most
+// NaNs.
 //
 // The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
 // - Registers go to the heaviest point of the code, run or not: code for something not in view
@@ -52,9 +53,7 @@
 //
 // A change here: ref/test_gpu.py prints errors, no verdict: compare with the same run on the code
 // before (WH_BALLS=0 too), and try a pose at an odd width (the middle column has vl = 0) and
-// viewpoints scanned around an object, which its poses may miss. It compiles this file as GLSL,
-// where the 1e-30 and 1e-20 guards still guard: a NaN from a guard Godot prints as 0 shows on the
-// GPU only. Keep ref/wh.py's fast in step. A change that should not touch the compiled shader must
+// viewpoints scanned around an object, which its poses may miss. Keep ref/wh.py's fast in step. A change that should not touch the compiled shader must
 // give the same programs (tools/same_programs.py). Then tools/adreno_cost.sh --check. Speed:
 // bench.gd.
 
@@ -89,7 +88,7 @@ vec3 wh_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
 float wh_atan2(float y, float x) {
     float ax = abs(x);
     float ay = abs(y);
-    float t = min(ax, ay) / max(max(ax, ay), 1e-30);
+    float t = min(ax, ay) / max(max(ax, ay), 1e-12);
     float t2 = t * t;
     float t4 = t2 * t2;
     // in pairs (Estrin): a shorter chain of dependent steps than one product after another
@@ -379,8 +378,8 @@ float wh_poly(vec4 c, float t) { return c.x + t * (c.y + t * (c.z + t * c.w)); }
 // movable objects' search (wh_curved) use it. Their hits are ordered by where on the path they are
 // (piece and fraction of it), not by length.
 float wh_filLen(WhFil f, vec4 m) {
-    // m.y <= m.x (tau in [0, 1]): below the floor the ratio only gets smaller. 1e-12 survives Godot's
-    // printing; 1e-30 would be 0, and m.x is 0 at the fillet's inner end and at a turning point
+    // m.y <= m.x (tau in [0, 1]): below the floor the ratio only gets smaller; m.x is 0 at the
+    // fillet's inner end and at a turning point
     float re = f.ra + f.span * m.y / max(m.x, 1e-12);
     return re * re * dot(f.e, m) * f.ib;
 }
@@ -411,7 +410,9 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     float x = clamp((b - rw.x) * rw.y, 0.0, WH_TABN - 1.0);
     vec4 et = textureLod(wh_tab, vec2((x + 0.5) / WH_TABN, (float(row) + 0.5) * 0.25), 0.0);
     f.e = f.reg == 0 ? et : et * inversesqrt(f.mx * (f.reg == 2 ? f.mn : 1.0));
-    f.ib = 1.0 / max(b, 1e-30);
+    // b is 0 for a ray along the radius exactly: then f.e is 0 and so is the fillet's length (not
+    // 0 times infinity)
+    f.ib = 1.0 / max(b, 1e-12);
     f.zlo = f.reg == 0 ? 0.0 : min(sal, sga);    // sqrt(mn)
     vec4 m;
     f.zhi = wh_filMomT(f, 1.0, m);
@@ -430,12 +431,12 @@ vec2 wh_filAt(WhFil f, float z, out float t) {
 // z where psi from the inner end reaches T (Newton from the linear guess; psi(z) is smooth and
 // increasing; ref/test_gpu.py measures the paths it gives against RK4)
 float wh_filSolve(WhFil f, float T) {
-    float z = mix(f.zlo, f.zhi, clamp(T / max(f.psi, 1e-30), 0.0, 1.0));
+    float z = mix(f.zlo, f.zhi, clamp(T / max(f.psi, 1e-12), 0.0, 1.0));
     for (int it = 0; it < 2; it++) {
         float t; vec4 m;
         wh_filMom(f, z, t, m);
         float dz = wh_poly(f.e, t) * (f.reg == 2 ? z : 1.0);    // dpsi/dz
-        z = clamp(z - (dot(f.e, m) - T) / max(dz, 1e-30), f.zlo, f.zhi);
+        z = clamp(z - (dot(f.e, m) - T) / max(dz, 1e-12), f.zlo, f.zhi);
     }
     return z;
 }
@@ -542,7 +543,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         if (psiS < (floorHit ? wh_atan2(e1.z, -e2.z) : tot.x)) {
             float lS; float aS;
             if (psiS >= PA.x && psiS < PA.x + PB.x) {
-                float xS = (psiS - PA.x) / max(kc, 1e-30);
+                float xS = (psiS - PA.x) / max(kc, 1e-12);
                 lS = d * (x0B + xS);
                 aS = PA.y + xS * ivlc;
             } else {
@@ -612,7 +613,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
             // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
             float psiF = wh_atan2(e1.z, -e2.z);
             if (psiF >= PA.x && psiF < PA.x + PB.x) {
-                keyEnd = (psiF - PA.x) / max(kc * DB, 1e-30);
+                keyEnd = (psiF - PA.x) / max(kc * DB, 1e-12);
             } else {
                 bool inA = psiF < PA.x;
                 // psi from the fillet's inner end: piece A runs toward it, piece C away from it
@@ -758,7 +759,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                         if (j > 0) {
                             if (!isCube) {
                                 vec3 a = prevQ - cb;
-                                float A = max(dot(D, D), 1e-20);
+                                // two samples at the same point: no chord, no entry
+                                float A = max(dot(D, D), 1e-12);
                                 float B = dot(a, D);
                                 float Cq = dot(a, a) + perp2 - size * size;
                                 float disc = B * B - A * Cq;
@@ -827,7 +829,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         float psiF = wh_atan2(e1.z, -e2.z);
         hitN = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
         if (psiF >= PA.x && psiF < PA.x + PB.x) {
-            float xF = (psiF - PA.x) / max(kc, 1e-30);
+            float xF = (psiF - PA.x) / max(kc, 1e-12);
             hitL = d * (x0B + xF);
             arcEnd = PA.y + xF * ivlc;
         } else {

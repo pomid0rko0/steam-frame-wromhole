@@ -6,7 +6,9 @@ extends SceneTree
 ## on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/grab_test.gd
 ## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
-##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is
+##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is;
+##    a small ball just in front of the eye, toward the corner of a wide frustum, is drawn with
+##    the stencil as over the whole view (the near plane lies farther along a corner ray)
 ## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
 ## 3. let go while the hand moves, the ball flies off with the hand's velocity: along a line,
 ##    and along an arc (no lag: the direction right)
@@ -126,6 +128,7 @@ func _run() -> void:
 	spawned = [main.toys.world.balls.size(), main.toys.world.cubes.size()]
 	_clear()
 	await _hands()
+	await _near_eye()
 	await _grab_and_throw()
 	await _cube_and_spin()
 	await _hand_over()
@@ -190,6 +193,48 @@ func _hands() -> void:
 	hue /= maxf(count, 1)
 	U.check("an empty hand is grey-blue", hue.z > hue.x, "mean colour %s" % hue)
 	_pose(right, pr)
+	await _step(2)
+
+
+# 1
+## A frustum wider than this test's (tangents 1.8, 61 degrees, its corner 70 degrees off the axis)
+## and a 5 mm ball 3 cm in front of the left eye toward its corner: there the near plane lies
+## 14 cm along the ray, farther than a toy's proxy reaches beyond it with a fixed margin.
+func _near_eye() -> void:
+	_clear()
+	var pr := Vector3(0.3, 0.8, 0.3)          # the hands low and behind: out of view
+	var pl := Vector3(-0.3, 0.8, 0.3)
+	_pose(right, pr)
+	_pose(left, pl)
+	var wide := Vector4(-1.8, 1.8, -1.8, 1.8)
+	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, wide)
+	var eye := HEAD - Vector3(0.5 * IPD, 0.0, 0.0)
+	var dir := Vector3(0.9 * wide.x, 0.9 * wide.w, -1.0).normalized()   # toward the upper left corner
+	var r := 0.005
+	var ball := _ball_at(_chart(eye + dir * 0.03), r)
+	ball.held = &"test"                      # kinematic: it stays where it is put
+	await _step(3)
+	var split := _left_eye()
+	main.tracer.toy_mode = Tracer.WHOLE
+	await _step(3)
+	var whole := _left_eye()
+	main.tracer.toy_mode = Tracer.SPLIT
+	var differ := 0
+	var red := 0
+	for y in SIZE:
+		for x in SIZE:
+			var a := split.get_pixel(x, y)
+			var b := whole.get_pixel(x, y)
+			if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > 0.1:
+				differ += 1
+			if b.r > 0.5 and b.g < 0.35:
+				red += 1
+	U.check("a small ball just in front of the eye, toward a wide frustum's corner: drawn with the stencil as over the whole view",
+			red > 0 and differ == 0, "%d pixels differ; the ball covers %d" % [differ, red])
+	_clear()
+	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, FRUSTUM)
+	_pose(right, Vector3(0.15, 1.45, -0.4))   # where _hands left them
+	_pose(left, Vector3(-0.2, 1.1, -0.35))
 	await _step(2)
 
 
