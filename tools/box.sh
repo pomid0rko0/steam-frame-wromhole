@@ -87,9 +87,9 @@ inbox() {   # command...: runs it in the container, stopped with this script; it
 	return $s
 }
 # Making, starting and setting up the container, one box.sh at a time (another task's waits).
-# Starting it leaves podman's conmon running as long as the container does, keeping the open
-# descriptors past 0-2 that the podman command had: without 9>&- conmon would hold the lock, and
-# every later box.sh would wait until the container stopped
+# Starting it leaves podman's conmon running as long as the container does, keeping the
+# descriptors past 0-2 that the podman command inherited: without 9>&- conmon would hold the
+# lock, and every later box.sh would wait until the container stopped
 mkdir -p "$REPO/.wt"
 exec 9>"$REPO/.wt/.box.lock"
 flock 9
