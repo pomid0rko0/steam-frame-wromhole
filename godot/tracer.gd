@@ -31,9 +31,10 @@ const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const MAX_BALLS := 12           # the shader's slots for the toys' and the hands' balls
 const MAX_CUBES := 6
-# m around each proxy sphere: more than the near plane (main.NEAR). A ray that meets a toy inside its
-# sphere leaves the sphere at least this far beyond the hit, so it is marked even where the near
-# plane clips the sphere's near side.
+# m around each proxy sphere. A ray that meets a toy inside its sphere leaves the sphere at least
+# this far beyond the hit, so it is marked even where the near plane clips the sphere's near side,
+# as long as the near plane (main.NEAR along the view axis, NEAR / cos of the ray's angle along the
+# ray) is nearer than this: within about 51 degrees of the view axis (0.05 / cos 51 is about 0.08).
 const PROXY_MARGIN := 0.08
 const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (a 48 x 24 SphereMesh's by
                                 # up to 0.41%: Godot's has rings + 1 latitude steps): grown by this

@@ -13,9 +13,9 @@ extends SceneTree
 ## steps switches (the width or the height first); the gaze dot shows and hides; the gravity row
 ## switches the gravity view (the floor, the arrows, off: A steps round) and its ray tracers;
 ## frames made too slow for the display turn the head and the line below red; and the speed
-## check's row runs it through (bench.gd: the comparison at 72 Hz, then the tour at 120 Hz, which
-## Monado does not offer: it stays at 20), closing the menu, the line below saying how it goes and
-## what came out, and puts the rate, the shader and the viewer back.
+## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
+## offer: it stays at 20), closing the menu, the line below saying how it goes and what came out,
+## and puts the rate, the shader and the viewer back.
 ## (The menu's buttons themselves: tests/walking_xr_test.gd; Monado's simulated controllers bind
 ## to none of our profiles, so here the menu's own calls stand for them.)
 ##   tools/test_openxr.sh

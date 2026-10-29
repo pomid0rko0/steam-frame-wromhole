@@ -7,8 +7,9 @@ extends SceneTree
 ## fov: vertical, degrees (default 90); scene: plain (default), toys (the demo after the throw and
 ## the drop, everything at rest: 8 balls, 4 cubes), with +gravity1 or +gravity2 the gravity view
 ## (main.set_gravity_view), e.g. toys+gravity2; with +hands also both hands' balls where hands are
-## at every pose, with +held also a ball held in the right one in front of the chest (what the hands
-## and grabbing add to a frame); shader: another ray tracer's path
+## at every pose, with +held also a ball held in the right one in front of the chest (what the
+## hands and grabbing add to a frame; the held ball takes the place of the demo's oldest, as the
+## demo fills BallWorld.MAX_BALLS); shader: another ray tracer's path
 ## (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Node3D

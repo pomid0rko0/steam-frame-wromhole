@@ -1,5 +1,5 @@
 """wh_geodesic (the GPU move from the head to an eye) vs a float64 fine-step reference:
-eye position and transported frame for random heads, offsets and profiles."""
+eye position and transported frame for random heads and offsets, on three profiles."""
 import os, sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
