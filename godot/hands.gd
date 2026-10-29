@@ -253,9 +253,9 @@ func _release(i: int) -> void:
 	var spin: Vector3 = v[1]
 	var gentle := U.length() < SET_DOWN_SPEED and spin.length() < SET_DOWN_SPIN
 	toy.U = Vector4.ZERO if gentle else U
+	toy.still = 0.0
 	if cube:
 		cube.w = Vector3.ZERO if gentle else spin.limit_length(MAX_THROW_SPIN)
-		cube.still = 0.0
 	toy.ghost = h.ball.held      # this hand does not push it until they are apart
 	print("%s: %s hand lets a %s go at %.2f m/s%s" % ["set down" if gentle else "throw", _name(i),
 			_kind(toy), toy.U.length(), (", spin %.1f rad/s" % cube.w.length()) if cube else ""])
