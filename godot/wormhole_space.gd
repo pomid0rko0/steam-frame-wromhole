@@ -8,10 +8,12 @@ extends RefCounted
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 
-const STEP := 0.02  # metres per RK4 step
-const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes): 6 mm here
+const STEP := 0.02  # m: the longest RK4 step (geodesic cuts a path into equal steps no longer)
+const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
 const GRAV_SUB := 2      # RK4 steps between nodes
-const GRAV_DEG := 7      # the shader's polynomials on the fillet (gravity_shader)
+# the degree of the shader's polynomials on the fillet (gravity_shader): their GRAV_DEG + 1
+# coefficients go four to a vec4 of its grav_g[] and grav_d[] (Tracer._fits_shader checks they fit)
+const GRAV_DEG := 7
 
 var rho0: float
 var h: float
@@ -118,7 +120,8 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 
 
 ## A short move by the tangent displacement D: one Euler step of the geodesic equation,
-## transporting vecs (error of order |D|^2 / r^2). Returns [l, n, vecs].
+## transporting vecs (an error of second order in |D|: BallWorld._move takes it for short moves
+## only). Returns [l, n, vecs].
 func nudge(l: float, n: Vector3, D: Vector4, vecs: Array) -> Array:
 	var rr := r(l)
 	var k := dr(l) / rr
@@ -256,7 +259,7 @@ func height_grad(l: float, n: Vector3) -> Vector4:
 ## a table, then scale so that f = r + beta / r^2 outside.
 func _build_gravity() -> void:
 	grav_k = sqrt(2.0) / rho0
-	# f and the flux p = r^2 f' at l = Lc (p is continuous even across the crease of h < R)
+	# f and the flux p = r^2 f' at l = Lc (p is continuous even across the crease of h < fillet)
 	var f := 1.0
 	var p := 0.0
 	if Lc > 0.0:
@@ -341,12 +344,12 @@ func floor_gravity(l: float) -> float:
 	return gravity_f(l)[0] / r(l)
 
 
-## The ray tracer's gravity view (wormhole_gravity.gdshader) without a table: on the cylinder
+## The ray tracer's gravity views (WH_GRAVITY in wormhole_core.gdshaderinc) without a table: on the cylinder
 ## f / r = (a / rho0) cosh(k l) and f' = a k sinh(k l); outside f / r = 1 + beta / r^3 and
 ## f' = 1 - 2 beta / r^3; on the fillet f / r and f' as polynomials of degree GRAV_DEG in
 ## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (near the best fit;
-## tests/gravity_test.gd checks them on the app's profile). {cyl: (a / rho0, k, a k, beta), g: [2 Vector4], d: [2 Vector4]}: the shader's grav_cyl,
-## grav_g, grav_d, coefficients from x^0 up.
+## tests/gravity_test.gd checks them on the app's profile). {cyl: (a / rho0, k, a k, beta), g, d:
+## [Vector4...]}: the shader's grav_cyl, grav_g, grav_d, coefficients from x^0 up.
 func gravity_shader() -> Dictionary:
 	var n := GRAV_DEG + 1
 	var V: Array = []
@@ -364,9 +367,12 @@ func gravity_shader() -> Dictionary:
 		yd.append(F[1])
 	var cg := _solve(V, yg)
 	var cd := _solve(V, yd)
-	return {"cyl": Vector4(grav_a / rho0, grav_k, grav_a * grav_k, grav_beta),
-			"g": [Vector4(cg[0], cg[1], cg[2], cg[3]), Vector4(cg[4], cg[5], cg[6], cg[7])],
-			"d": [Vector4(cd[0], cd[1], cd[2], cd[3]), Vector4(cd[4], cd[5], cd[6], cd[7])]}
+	var g := []
+	var dd := []
+	for j in range(0, n, 4):
+		g.append(Vector4(cg[j], cg[j + 1], cg[j + 2], cg[j + 3]))
+		dd.append(Vector4(cd[j], cd[j + 1], cd[j + 2], cd[j + 3]))
+	return {"cyl": Vector4(grav_a / rho0, grav_k, grav_a * grav_k, grav_beta), "g": g, "d": dd}
 
 
 ## A x = y by Gaussian elimination with partial pivoting, in doubles (rows: PackedFloat64Array).
@@ -459,7 +465,10 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 ## row. In rows of regimes 1 and 2 a factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which
 ## goes to zero like a square root at the shell's edge, is taken out (the shader puts it back): what
 ## is left is smooth enough for linear interpolation.
-const TABLE_N := 256
+const TABLE_N := 256           # the shader's WH_TABN (Tracer._fits_shader checks it)
+# the polynomial's nodes in tau: the squares of the 4-point Gauss-Legendre nodes on [0, 1], and the
+# inverse of their Vandermonde matrix, which takes F at them to the coefficients (numpy:
+# x = leggauss(4)[0]; _TAU = ((x + 1) / 2)^2; _A = inv(vander(_TAU, 4, increasing=True)))
 const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]
 const _A := [
 	[1.0635954209629264, -0.06994895315294707, 0.0072202981818859785, -0.0008667659918653305],

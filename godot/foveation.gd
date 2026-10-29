@@ -6,12 +6,12 @@ extends RefCounted
 ## density map (the speed check times that alone).
 ##
 ## On the Steam Frame the runtime's density map is SteamVR's (XR_FB_foveation). SteamVR tracks the
-## eyes and hands Godot each frame where each eye looks (XR_META_foveation_eye_tracked; Godot 4.7.2
-## asks only with the eye gaze extension on, project.godot), and Godot hands the driver offsets
+## eyes and hands Godot each frame where each eye looks (XR_META_foveation_eye_tracked; Godot asks
+## only with the eye gaze extension on, project.godot), and Godot hands the driver offsets
 ## that move the density map there (VK_QCOM_fragment_density_map_offset), whichever map it is: so
 ## our own maps follow the eyes too. They are centred in each eye's picture, where SteamVR's are
-## (the offsets are taken from the picture's centre). The GPU driver renders each tile at the
-## map's density there, only in tiles: hence split_pass.gd. The swapchain gets SteamVR's map when
+## (the offsets are taken from the picture's centre). The GPU driver applies a density map only
+## to a pass it renders in tiles: split_pass.gd. The swapchain gets SteamVR's map when
 ## it is created, so project.godot asks for the high level and "off" is the viewport's density
 ## map taken away (vrs_mode), not the runtime's level 0. Without the runtime's map (Monado,
 ## Godot's "Native mobile") levels 1..3 are Godot's own, round each eye's centre.
@@ -37,7 +37,9 @@ const OWN_MAPS := {
 	4: [[0.7, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
 	5: [[0.45, 1, 1], [0.65, 2, 1], [0.85, 2, 2], [1.05, 4, 2], [99.0, 4, 4]],
 }
-const OWN_MAP_SIZE := 64             # texels a side: the driver samples it once per tile anyway
+# texels a side: the driver takes one density per tile, and a tile spans many texels (tools/fdm_check.sh
+# prints the tiles' size)
+const OWN_MAP_SIZE := 64
 const OWN_MAP_BYTE := {1: 0, 2: 128, 4: 192}     # shading size -> colour byte (_own_map)
 # Godot's own density map where the runtime has none (Monado, tests): its strength per level
 const OWN_MAP_STRENGTH := [0.5, 1.0, 2.0]

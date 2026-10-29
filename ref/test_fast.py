@@ -65,7 +65,7 @@ def run(name, prof, m, rng):
     S = states(W, rng, m)
     ref = W.brute(np.array([s[0] for s in S]), np.array([s[1] for s in S]),
                   np.array([s[2] for s in S]), np.array([s[3] for s in S]), h=W.rho0 * 2e-3, smax=60 * W.L)
-    pos, dirr, flo, mism, steps, unfinished = [], [], [], 0, [], 0
+    pos, dirr, flo, mism, unfinished = [], [], [], 0, 0
     for i, s in enumerate(S):
         if ref['kind'][i] == 0:
             unfinished += 1
@@ -78,7 +78,6 @@ def run(name, prof, m, rng):
         if f['kind'] == 2:
             flo.append(max(abs(f['l'] - ref['l'][i]), W.r(f['l']) * np.linalg.norm(f['n'] - ref['n'][i])))
         else:
-            steps.append(f['steps'])
             pos.append(W.Rout * np.linalg.norm(f['n'] - ref['n'][i]))
             dirr.append(np.linalg.norm(np.r_[f['vl'] - ref['vl'][i], f['w'] - ref['w'][i]]))
     u = W.rho0

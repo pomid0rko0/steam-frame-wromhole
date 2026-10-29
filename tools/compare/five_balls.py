@@ -1,8 +1,8 @@
 """Per-eye comparison of red silhouettes, five balls or cubes: union IoU and per-object centroid
 offsets. Argument: the image prefix (<prefix>_ray_left.png, <prefix>_mesh_left.png, ...). PASS:
 in each eye at least MIN_CHECKED objects lie wholly in the picture (a turned head can lose one or
-two past its edge), each of them has its ray-traced silhouette's centre within 0.5 px of Godot's,
-and the union IoU is at least MIN_IOU (no ray-traced object where Godot drew none)."""
+two past its edge), each of them has its ray-traced silhouette's centre within MAX_OFFSET px of
+Godot's, and the union IoU is at least MIN_IOU (no ray-traced object where Godot drew none)."""
 import sys, numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -11,6 +11,7 @@ def mask(p):
     return (a[..., 0] - np.maximum(a[..., 1], a[..., 2])) > 60
 MIN_CHECKED = 3
 MIN_IOU = 0.99
+MAX_OFFSET = 0.5
 worst = 0.0
 ok = True
 for eye in ('left', 'right'):
@@ -37,4 +38,4 @@ for eye in ('left', 'right'):
         print(f'   {checked} objects checked (at least {MIN_CHECKED}), union IoU {iou:.4f} (at least {MIN_IOU})')
         ok = False
 print(f'worst centroid offset {worst:.2f} px')
-print('PASS' if ok and worst < 0.5 else 'FAIL')
+print('PASS' if ok and worst < MAX_OFFSET else 'FAIL')

@@ -5,8 +5,7 @@ extends SceneTree
 ## --fixed-fps 60 under a display (xvfb-run: it looks at the left eye's picture); exit status 1
 ## on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/grab_test.gd
-## 0. the action map binds grip, haptic, right B and left X (the Frame's own profile: the D-pad
-##    down) on the profiles the Frame may use (util.gd, BINDINGS)
+## 0. the action map is exactly util.gd's, every binding of every profile (U.check_bindings)
 ## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
 ##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is
 ## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
@@ -19,7 +18,7 @@ extends SceneTree
 ## 6. the hand pushes a ball and a cube it meets, softly (a ball under 1.35 times the hand's speed;
 ##    one pressed into the floor is not flung); a held ball pushes a ball
 ## 7. a half-open grip keeps holding, more open lets go; a hand that loses its tracking leaves its
-##    ball in the air, and let go then it falls from rest
+##    ball in the air, at rest (a ball set on it is not flung), and let go then it falls from rest
 ## 8. while the speed check holds the viewer, the hands are not drawn and grab nothing, B and X
 ##    make nothing; while the menu is open, B, X and the D-pad down make nothing either (the B
 ##    that closes it neither), A does not reset; the D-pad down makes a cube as X does; A puts
@@ -33,17 +32,18 @@ extends SceneTree
 
 const U := preload("res://tests/util.gd")
 const SIZE := 160                    # each eye's picture
-const FRUSTUM := Vector4(-1.0, 1.0, -1.1, 1.1)
-const IPD := 0.064
-const HEAD := Vector3(0.0, 1.6, 0.0)
+const FRUSTUM := U.FRUSTUM_0         # util.gd's headset, case 0
+const IPD := U.IPD
+const HEAD := U.HEAD_0
 var main: Node3D
+var spawned: Array                   # [balls, cubes] the demo's spawn makes
 var hmd
 var left: XRControllerTracker
 var right: XRControllerTracker
 
 
 func _initialize() -> void:
-	hmd = U.headset(0, 0.0, Vector2i(SIZE, SIZE))    # the head at HEAD, the eyes IPD apart, FRUSTUM
+	hmd = U.headset(0, 0.0, Vector2i(SIZE, SIZE))
 	left = U.controller(&"left_hand")
 	right = U.controller(&"right_hand")
 	main = load("res://main.tscn").instantiate()
@@ -67,14 +67,14 @@ func _pose(t: XRControllerTracker, p: Vector3, b := Basis.IDENTITY, tracked := t
 		t.invalidate_pose(&"grip")
 
 
-## The room against chart A at the start (feet at (10, 0), facing -x, the head above the room's
-## origin): right is +y, up +z, back +x.
+## The room against chart A at the start (feet at Main.START_POS, facing -x: START_FORWARD; the head
+## above the room's origin): right is +y, up +z, back +x.
 static func _chart(p: Vector3) -> Vector3:
-	return Vector3(10.0 + p.z, p.x, p.y)
+	return Vector3(Main.START_POS.x + p.z, p.x, p.y)
 
 
 static func _play(c: Vector3) -> Vector3:
-	return Vector3(c.y, c.z, c.x - 10.0)
+	return Vector3(c.y, c.z, c.x - Main.START_POS.x)
 
 
 static func _chart_dir(v: Vector3) -> Vector3:
@@ -125,6 +125,7 @@ func _run() -> void:
 	U.check_bindings()
 	U.check("main runs in XR, so it reads the controllers", main.in_xr, "in_xr %s" % main.in_xr)
 	main.menu.visible = false        # it follows the head: in every view
+	spawned = [main.toys.world.balls.size(), main.toys.world.cubes.size()]
 	_clear()
 	await _hands()
 	await _grab_and_throw()
@@ -234,8 +235,8 @@ func _grab_and_throw() -> void:
 	await _step(12)
 	var moved := _at(ball) - before
 	U.check("... and keeps flying", absf(moved.x - want.x * 0.2) < 0.03, "0.2 s later %s along chart x (%.2f)" % [moved.x, want.x * 0.2])
-	# along an arc: a circle of 0.5 m in the room's y-z plane at 8 rad/s, let go when the hand moves
-	# straight up; an average over the last 60 ms would point 14 degrees back along the arc
+	# along an arc: a circle in the room's y-z plane, let go when the hand moves straight up; an
+	# average over the last VELOCITY_WINDOW would point back along the arc by half the turn in it
 	_clear()
 	right.set_input(&"grip", 1.0)
 	var c := Vector3(0.2, 1.0, -0.1)
@@ -301,7 +302,7 @@ func _cube_and_spin() -> void:
 	var spin: Vector3 = cube["w"]
 	var got_v := _vel(cube)
 	# with the hand's velocity, not its own: the hand turned in place, so the cube only spins (its
-	# centre moved at 0.6 m/s round the hand: the wrist's turn times the lever, which no throw gets)
+	# centre moved round the hand at the wrist's turn times the lever, which no throw gets)
 	U.check("let go, it spins as the hand turned and moves as the hand did (it stood)",
 			spin.distance_to(Vector3(0.0, w, 0.0)) < 0.03 * w and got_v.length() < 0.01,
 			"spin %s rad/s (body; (0, %.1f, 0)), velocity %s" % [spin, w, got_v])
@@ -421,6 +422,12 @@ func _grip_and_tracking() -> void:
 	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
 	U.check("a hand that loses its tracking leaves its ball where it was", ball["held"] == &"right_hand"
 			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
+	# at rest there: a ball set on it is not flung with the velocity the hand last had
+	var other := _ball_at(at + Vector3(0.0, 0.0, 0.39), 0.2)
+	await _step(3)
+	U.check("... at rest: it pushes nothing with the hand's last velocity", ball["U"] == Vector4.ZERO
+			and _vel(other).length() < 0.5, "its velocity %s, the ball on it %s" % [ball["U"], _vel(other)])
+	main.toys.world.balls.erase(other)
 	right.set_input(&"grip", 0.0)
 	await _step(1)
 	U.check("... and let go then, it falls from rest", ball["held"] == &"" and _vel(ball).length() < 0.2, "chart velocity %s" % _vel(ball))
@@ -488,7 +495,7 @@ func _hold_and_reset() -> void:
 	for b in main.toys.world.balls + main.toys.world.cubes:
 		free = free and b["held"] == &""
 	U.check("A puts everything back and empties the hands", took and free and not _hand(1).has("held")
-			and main.toys.world.balls.size() == 5 and main.toys.world.cubes.size() == 3,
+			and [main.toys.world.balls.size(), main.toys.world.cubes.size()] == spawned,
 			"took %s, %d balls, %d cubes, all free %s" % [took, main.toys.world.balls.size(), main.toys.world.cubes.size(), free])
 	right.set_input(&"grip", 0.0)
 	await _step(1)

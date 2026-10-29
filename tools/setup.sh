@@ -1,12 +1,13 @@
 #!/bin/bash
 # Everything the tests and exports need on a Linux machine (or a fresh cloud session):
-# Godot 4.7.2 into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
+# Godot (V below) into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
 # Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL for
 # ref/'s GPU checks, Monado to run the app through a real OpenXR runtime without a headset.
-# The four steps don't depend on each other and run at once; each line of output starts with
-# its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
-# is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the headset's
-# shader compiler makes of the ray tracer) and tools/fdm_check.sh (how its driver renders a pass).
+# The steps (steps= below) don't depend on each other and run at once; each line of output starts
+# with its step's name. Then, last (adreno), the Steam Frame's Vulkan driver (Mesa's Turnip for
+# Adreno 750) is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the
+# headset's shader compiler makes of the ray tracer) and tools/fdm_check.sh (how its driver renders
+# a pass).
 # No package has the drm-shim (built once).
 # On the Steam Frame all of it goes into tools/box.sh's container, where the tools run
 # (tools/env.sh).
@@ -49,7 +50,7 @@ get_godot() {
 
 get_templates() {
 	[ ! -f "$TPL/linux_release.arm64" ] || return 0
-	echo "downloading export templates (1.3 GB: the release file's size)"
+	echo "downloading export templates (the release's file for every platform: one is kept)"
 	fetch "$REL/Godot_v$V-stable_export_templates.tpz" "$BIN/templates.tpz"
 	# one unzip per core, into a side folder: an interrupted run leaves no half-filled $TPL
 	rm -rf "$TPL.part"
@@ -87,7 +88,7 @@ check_apt() {   # sets $missing to the apt packages still needed
 	fi
 	command -v xvfb-run >/dev/null || missing="$missing xvfb"
 	command -v xauth >/dev/null || missing="$missing xauth"     # xvfb-run's
-	command -v git >/dev/null || missing="$missing git"         # tools/repo.sh, export.sh, ab_shaders.sh
+	command -v git >/dev/null || missing="$missing git"         # tools that read the repository
 	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
 	command -v monado-service >/dev/null || missing="$missing monado-service"
 	[ -f /usr/share/openxr/1/openxr_monado.json ] || missing="$missing libopenxr1-monado"

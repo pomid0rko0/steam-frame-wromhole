@@ -1,6 +1,7 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place,
-## with the other ray tracers if res://shaders/ab/ holds some (tools/ab_shaders.sh), logs a line
+## with the other ray tracers in res://shaders/ab/ (tools/ab_shaders.sh) of the kind this build
+## runs (Bench.comparable), logs a line
 ## per place, with this build's ray tracer also with the passes split and with each of FOVEATIONS,
 ## and gives back the shader, the foveation and where the viewer stood. The menu has its row.
 ##   godot --path . -s res://tests/bench_test.gd
@@ -67,8 +68,9 @@ func _process(_d: float) -> bool:
 				for v in r:
 					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
-			# this build six ways, and with toys a seventh: over the whole view
-			check("all the others in it, this build six (seven) ways", b.variants.size() == b.others.size()
+			# the others of this kind, this build each way of FOVEATIONS, and with toys one more: over
+			# the whole view
+			check("the others of this kind in it, this build each way", b.variants.size() == b.comparable().size()
 					+ b.FOVEATIONS.size() + (1 if main.tracer.toy_count > 0 else 0))
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])

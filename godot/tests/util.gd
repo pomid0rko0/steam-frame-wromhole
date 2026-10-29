@@ -7,6 +7,9 @@ extends RefCounted
 ## nodes from _process, frame 2 or later.
 
 const FakeHmd := preload("res://tests/fake_hmd.gd")
+const HEAD_0 := Vector3(0.0, 1.6, 0.0)               # headset case 0: the head in the room
+const FRUSTUM_0 := Vector4(-1.0, 1.0, -1.1, 1.1)     # its frusta (tangents: left, right, bottom, top)
+const IPD := 0.064
 const FRAME := "/interaction_profiles/valve/frame_controller_valve"
 const GENERIC := "/interaction_profiles/khr/generic_controller"
 const TOUCH := "/interaction_profiles/oculus/touch_controller"
@@ -81,18 +84,18 @@ static func key(code: Key, down: bool, flush := false) -> void:
 
 
 ## The simulated headset (fake_hmd.gd, or hmd: an instance of a script that extends it), made the
-## primary interface. case 0: the head straight up at 1.6 m, parallel eyes, symmetric frusta;
-## 1: the head turned 30 degrees, pitched (pitch, degrees) and rolled 8, displaced, the eyes canted
-## 10 degrees outward, asymmetric frusta.
+## primary interface. case 0: the head straight up at HEAD_0, parallel eyes IPD apart, symmetric
+## frusta FRUSTUM_0; 1: the head turned, pitched (pitch, degrees), rolled and displaced, the eyes
+## canted outward, asymmetric frusta.
 static func headset(case := 0, pitch := -12.0, size := Vector2i(1000, 1100), hmd: XRInterface = null) -> XRInterface:
 	if hmd == null:
 		hmd = FakeHmd.new()
 	hmd.size = size
 	if case == 0:
-		hmd.setup(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.6, 0.0)), 0.064, 0.0, Vector4(-1.0, 1.0, -1.1, 1.1))
+		hmd.setup(Transform3D(Basis.IDENTITY, HEAD_0), IPD, 0.0, FRUSTUM_0)
 	else:
 		var b := Basis.from_euler(Vector3(deg_to_rad(pitch), deg_to_rad(30.0), deg_to_rad(8.0)))
-		hmd.setup(Transform3D(b, Vector3(0.35, 1.5, -0.25)), 0.064, 10.0, Vector4(-1.2, 0.9, -1.15, 1.0))
+		hmd.setup(Transform3D(b, Vector3(0.35, 1.5, -0.25)), IPD, 10.0, Vector4(-1.2, 0.9, -1.15, 1.0))
 	XRServer.add_interface(hmd)
 	hmd.initialize()
 	XRServer.primary_interface = hmd
@@ -143,7 +146,7 @@ static func check_bindings() -> void:
 		actions.merge(have)
 		for action: String in actions:
 			var h: Array = have.get(action, [])
-			var w: Array = want.get(action, [])
+			var w: Array = want.get(action, []).duplicate()     # BINDINGS' own are read-only
 			h.sort()
 			w.sort()
 			check("%s: %s" % [path.get_file(), action], h == w, "bound to %s, expected %s" % [h, w])

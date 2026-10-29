@@ -106,7 +106,7 @@ def parse_operand(s):
         return o
     m = re.fullmatch(r'(h?)c<a0\.x \+ (\d+)>', s)
     if m:
-        o.kind = 'cr'; o.num = int(m.group(2))
+        o.kind = 'cr'; o.half = m.group(1) == 'h'; o.num = int(m.group(2))
         return o
     m = re.fullmatch(r't#(\d+)', s)
     if m:
@@ -593,16 +593,12 @@ def execute(ins, w, ex):
             kind = 's' if op.endswith('.s') else 'u'
             a = w.read(ins.srcs[0], k, kind); b = w.read(ins.srcs[1], k, kind)
             w.write(d, k, np.minimum(a, b) if base == 'min' else np.maximum(a, b), kind, ex)
-        elif op in ('shlm', 'shrm', 'shlg', 'shrg', 'andg'):
+        elif op in ('shlm', 'shrm', 'shlg', 'shrg'):
             # a7xx's shift-and-mask family (Mesa isa/ir3-cat3.xml), the shift amount first:
-            # shlm s, a, c = (a << s) & c, shrm (a >> s) & c, shlg (a << s) | c, shrg (a >> s) | c;
-            # andg b, a, c = (a & b) | c
+            # shlm s, a, c = (a << s) & c, shrm (a >> s) & c, shlg (a << s) | c, shrg (a >> s) | c
             s_ = w.read(ins.srcs[0], k, 'u'); a = w.read(ins.srcs[1], k, 'u'); c = w.read(ins.srcs[2], k, 'u')
-            if op == 'andg':
-                v = (a & s_) | c
-            else:
-                sh = (a << (s_ & 31)) & 0xffffffff if op.startswith('shl') else a >> (s_ & 31)
-                v = sh & c if op.endswith('m') else sh | c
+            sh = (a << (s_ & 31)) & 0xffffffff if op.startswith('shl') else a >> (s_ & 31)
+            v = sh & c if op.endswith('m') else sh | c
             w.write(d, k, v, 'u', ex)
         elif op in ('bfrev.b', 'clz.b', 'clz.s', 'cbits.b'):
             # bit reverse, count leading zeros (findLSB is clz(bfrev(x)); 0 gives -1 here), set bits
@@ -635,7 +631,9 @@ def execute(ins, w, ex):
             c = w.read(ins.srcs[2], k, 'u')
             w.write(d, k, ((((a & 0xffff) * (b >> 16)) << 16) + c) & 0xffffffff, 'u', ex)
         elif base in ('shl', 'shr', 'ashr') and op.endswith('.b'):
-            a = w.read(ins.srcs[0], k, 'u'); b = w.read(ins.srcs[1], k, 'u')
+            # the shift amount modulo the width; ashr shifts the sign in
+            b = w.read(ins.srcs[1], k, 'u') & (15 if d.half else 31)
+            a = w.read(ins.srcs[0], k, 's' if base == 'ashr' else 'u')
             v = (a << b) if base == 'shl' else (a >> b)
             w.write(d, k, v, 'u', ex)
         elif base in ('swz', 'gat', 'sct'):

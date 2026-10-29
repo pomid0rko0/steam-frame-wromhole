@@ -8,7 +8,7 @@ render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, fog_
 uniform float rout;            // chart radius where the flat floor starts
 uniform float lsh;             // l at that radius
 const float clear = 0.3;       // keep away from the curved part
-uniform vec4 balls[3];         // the check balls (chart centre, radius) hide the floor behind them
+uniform vec4 balls[3];         // CheckScene.BALLS (chart centre, radius) hide the floor behind them
 uniform vec4 cube;             // and the check cube (chart centre, radius of a ball around it)
 uniform bool solid = false;    // tests: fill everywhere a line could be drawn
 
@@ -30,7 +30,7 @@ void fragment() {
 	vec3 d = v_chart - eye;
 	float t = clamp(-dot(eye, d) / dot(d, d), 0.0, 1.0);
 	if (length(eye + t * d) < rout + clear) discard;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < balls.length(); i++) {
 		float tb = clamp(dot(balls[i].xyz - eye, d) / dot(d, d), 0.0, 1.0);
 		if (length(eye + tb * d - balls[i].xyz) < balls[i].w) discard;
 	}

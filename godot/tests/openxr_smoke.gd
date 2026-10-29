@@ -97,7 +97,8 @@ func _process(_delta: float) -> bool:
 		r.seconds.clear()
 	if frames > 232 and judged == 0:
 		# The rate changes just before cost software rendering a missed refresh now and then, and one
-		# miss in a window of 2 s is over the 1% the verdict allows. So: judge windows of MIN_SECONDS,
+		# miss in a window of MIN_SECONDS at this rate is over the MISSED_OK the verdict allows. So:
+		# judge windows of MIN_SECONDS,
 		# each started afresh, until one keeps up and the head and the line show it green. Frames made
 		# too slow never get there (they are checked red below).
 		green = FrameRate.keeps_up(r.seconds) == true and p.plate_mat.albedo_color == p.COLOR_OK \
@@ -124,17 +125,17 @@ func _process(_delta: float) -> bool:
 		U.check("foveation at first: our narrow map, the width first", main.foveation.level == p.DEFAULT_FOVEATION
 				and main.foveation.order == p.DEFAULT_ORDER and _value(p, "fov") == "плавная узкая"
 				and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.foveation.split_pass.enabled)
-		U.check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _value(p, "scale") == "100% (128 точек)")
+		U.check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _value(p, "scale") == "100% (128×128)")
 		p.select("scale")
 		p.change(1)
 		U.check("the scale row, right: 90% picked, not yet in effect", p.target.scaling_3d_scale == 1.0
-				and _value(p, "scale") == "90% (115 точек)" and _color(p, "scale") == p.COLOR_PENDING)
+				and _value(p, "scale") == "90% (115×115)" and _color(p, "scale") == p.COLOR_PENDING)
 		p.move(1)       # another row: what was picked takes effect
 		var cfg := ConfigFile.new()
 		cfg.load("user://settings.cfg")
 		U.check("on to the next row: render scale 90%, kept", is_equal_approx(p.target.scaling_3d_scale, 0.9)
 				and cfg.get_value("render", "scale", 0.0) == 0.9 and p.picked() == "fov")
-		U.check("the row shows it", _value(p, "scale") == "90% (115 точек)" and _color(p, "scale") == p.COLOR_TEXT)
+		U.check("the row shows it", _value(p, "scale") == "90% (115×115)" and _color(p, "scale") == p.COLOR_TEXT)
 		p.choose_scale(1.0)
 		U.check("back to 100%", p.target.scaling_3d_scale == 1.0)
 		_foveation(p)

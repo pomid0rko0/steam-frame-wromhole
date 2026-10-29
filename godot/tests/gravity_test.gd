@@ -20,8 +20,9 @@ var frames := 0
 var shots := ""
 var step := 0
 var pics := {}
+# [name, l (null: the start's), degrees up, gravity view]
 const PICS := [["far", 11.6, -70.0, 1], ["throat", 0.0, -70.0, 1], ["throat_off", 0.0, -70.0, 0],
-		["start_off", 10.0, 0.0, 0], ["start_floor", 10.0, 0.0, 1], ["start_arrows", 10.0, 0.0, 2]]
+		["start_off", null, 0.0, 0], ["start_floor", null, 0.0, 1], ["start_arrows", null, 0.0, 2]]
 
 
 func _initialize() -> void:
@@ -51,7 +52,8 @@ func _process(_delta: float) -> bool:
 		var p: Array = PICS[i]
 		if k == 0:
 			main.set_gravity_view(p[3])
-			main.place_on_axis(p[1], 0.0, p[2])
+			var start_l: float = main.space.point_from_chart(1.0, main.START_POS)[0]
+			main.place_on_axis(p[1] if p[1] != null else start_l, 0.0, p[2])
 		elif k == 2:
 			var img := root.get_texture().get_image()
 			img.convert(Image.FORMAT_RGB8)
@@ -77,11 +79,13 @@ func _math_checks(sp: WormholeSpace) -> void:
 	# 2: (r^2 f')' = 2 f by central differences, in doubles
 	var res := 0.0
 	var e := 1e-3
+	var f2 := Vector2(INF, -INF)      # the range of 2 f, against which the residual is small
 	for i in 400:
 		var l := -sp.L - 3.0 + (2.0 * sp.L + 6.0) * (i + 0.5) / 400.0
 		var lap := (_flux(sp, l + e) - _flux(sp, l - e)) / (2.0 * e) - 2.0 * sp.gravity_f(l)[0]
 		res = maxf(res, absf(lap))
-	U.check("gravity solves Laplace's equation", res < 1e-4, "max |(r^2 f')' - 2 f| %s m over the shell and 3 m around it (2 f is 1.2..14 m)" % _e(res))
+		f2 = Vector2(minf(f2.x, 2.0 * sp.gravity_f(l)[0]), maxf(f2.y, 2.0 * sp.gravity_f(l)[0]))
+	U.check("gravity solves Laplace's equation", res < 1e-4, "max |(r^2 f')' - 2 f| %s m over the shell and 3 m around it (2 f is %.1f..%.1f m)" % [_e(res), f2.x, f2.y])
 
 	# 3: the gradient against differences of the potential, at points above the floor
 	var gerr := 0.0
@@ -103,8 +107,8 @@ func _math_checks(sp: WormholeSpace) -> void:
 
 	# 4: the shader's polynomials, with its float32 coefficients
 	var gs := sp.gravity_shader()
-	var cg := [gs.g[0], gs.g[1]]
-	var cd := [gs.d[0], gs.d[1]]
+	var cg: Array = gs.g
+	var cd: Array = gs.d
 	var perr := 0.0
 	var derr := 0.0
 	for i in 200:
@@ -134,10 +138,10 @@ func _flux(sp: WormholeSpace, l: float) -> float:
 	return sp.r(l) * sp.r(l) * sp.gravity_f(l)[1]
 
 
-## A polynomial from x^0 up, 8 coefficients in two Vector4s, in doubles.
+## A polynomial from x^0 up, its coefficients four to a Vector4, in doubles.
 static func _poly(c: Array, x: float) -> float:
 	var v := 0.0
-	for k in range(7, -1, -1):
+	for k in range(4 * c.size() - 1, -1, -1):
 		var q: Vector4 = c[k / 4]
 		v = v * x + q[k % 4]
 	return v

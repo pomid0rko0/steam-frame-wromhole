@@ -2,13 +2,15 @@ class_name FrameRate
 extends Node
 ## The refresh rate the headset really runs at and whether our frames keep up, measured from
 ## OpenXR's frame timing (rate_meter.gd) rather than taken from what the runtime reports; choosing a
-## rate; the "refresh:" lines in the log. The menu shows it (menu.gd: its head and the line below).
+## rate; the log's "refresh:" lines about these (the menu's own are about its settings). The menu
+## shows it (menu.gd: its head and the line below).
 ##
 ## Choosing a rate. SteamVR on the Steam Frame accepts an app's own request
 ## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
 ## (ValveSoftware/SteamVR-for-Linux#1020). What it follows is the app's own SteamVR setting
 ## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs; on
-## our Frame (SteamVR 2.18; the log's "refresh:" lines) the running app switches within a second,
+## the owner's Frame (SteamVR 2.18; the headset log's "refresh:" lines, which tools/frame_logs.ps1
+## fetches) the running app switches within a second,
 ## others report it only from the next start. So when the app was started from the Steam library and
 ## vrcmd is there, choosing a rate sets that (one vrcmd call on a worker thread; a choice made
 ## meanwhile is written next), the display's own rate tells when it followed, and if it has not a
@@ -27,14 +29,15 @@ extends Node
 ## frames, the GPU time and the GPU's clock where the kernel shows it, and a line for each frame
 ## that came a refresh late (at most LATE_LINES a second, none during the speed check), with where
 ## and what the GPU and the CPU took for it (a GPU that lowers its clock makes the same frame take
-## longer; on the Frame, by those lines, it stayed at its top clock while frames were too slow).
+## longer; on the Frame, by the per-second lines, it stayed at its top clock while frames were too
+## slow).
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
 signal changed                  # the lines (status, notes) or the verdict changed
 
 const RateMeter := preload("res://rate_meter.gd")
-const JUDGE_SECONDS := 5        # the verdict judges up to the last 5 seconds
+const JUDGE_SECONDS := 5        # the verdict judges up to this many last seconds
 const MIN_SECONDS := 2          # at a new rate, measure this long before judging
 const MISSED_OK := 0.01         # share of the refreshes without a new frame that still counts as keeping up
 const REQUEST_WAIT := 3.0       # s the headset gets to follow a request
@@ -46,10 +49,24 @@ const VRSETTINGS := "/.config/openvr/config/steamvr.vrsettings"     # under $HOM
 const SETTING := "preferredRefreshRate"
 const DEVFREQ := "/sys/class/devfreq"                             # the kernel's clock-scaled devices
 const STEAM_HINT := "частота: SteamVR > Video >\nPer-Application Video Settings"
+# the lines status() and notes() give: here, so widest_lines() takes them all
+const LINE_FPS := "%.0f кадр/с"
+const LINE_GPU := "GPU %.1f мс"
+const NO_TIMING := "шлем не даёт время кадров"
+const LINE_RATE := "%.0f Гц · %s"
+const VERDICTS := ["меряю...", "успевает", "не успевает"]    # too little to judge, keeps up, not
+const LINE_FRAMES := "кадров %d из %d · %s"
+const LINE_BUDGET := "GPU %.1f из %.1f мс"
+const NOTE_SWITCHING := "переключаю на %.0f Гц..."
+const NOTE_RESTART := "задано %.0f Гц: выйди и запусти снова"
+const NOTE_MISMATCH := "в SteamVR задано %.0f Гц, а шлем на %.0f"
+const NOTE_FOLLOWED := "шлем перешёл на %.0f Гц"
+const NOTE_STAYED := "шлем остался на %.0f Гц"
+const NOTE_NOT_SET := "не получилось задать частоту"
 
 var main: Main                  # where the feet are and the head looks, for the log
 var target: Viewport            # the viewport the scene is rendered into
-var xr: OpenXRInterface         # null on the desktop
+var xr: OpenXRInterface         # null without OpenXR (the desktop, the tests' fake headsets)
 var api: OpenXRAPIExtension     # the frame timing OpenXR predicts
 var meter := RateMeter.new()
 var seconds: Array = []         # the last few seconds at the current rate: [frames, refreshes, gpu ms sum, gpu ms max, process frames]
@@ -212,7 +229,7 @@ func _stored_set(r: float, code: int, text_out: String) -> void:
 		stored = r
 	elif absf(desired - r) < 0.5:
 		requested = 0.0
-		_set_note("не получилось задать частоту", true)
+		_set_note(NOTE_NOT_SET, true)
 	if absf(desired - r) > 0.5:
 		_write()            # chosen again meanwhile
 	else:
@@ -224,9 +241,9 @@ func _answer_request() -> void:
 	var now := meter.rate()
 	var followed := absf(now - requested) < 0.5
 	if followed:
-		_set_note("шлем перешёл на %.0f Гц" % now, false)
+		_set_note(NOTE_FOLLOWED % now, false)
 	elif steam_key == "":
-		_set_note("шлем остался на %.0f Гц" % now, true)
+		_set_note(NOTE_STAYED % now, true)
 	print("refresh: asked for %.1f Hz, the display runs at %.1f Hz (was %.1f), runtime says %.1f"
 			% [requested, now, request_from, xr.display_refresh_rate])
 	requested = 0.0
@@ -332,18 +349,31 @@ func gpu_ms() -> float:
 func status() -> Array:
 	var fps := frames / t if t > 0.0 else 0.0
 	if xr == null:
-		return ["%.0f кадр/с" % fps, "GPU %.1f мс" % gpu_ms()]
+		return [LINE_FPS % fps, LINE_GPU % gpu_ms()]
 	if rate <= 0.0:
-		return ["%.0f кадр/с" % fps, "GPU %.1f мс" % gpu_ms(), "шлем не даёт время кадров"]
+		return [LINE_FPS % fps, LINE_GPU % gpu_ms(), NO_TIMING]
 	var ok: Variant = keeps_up(seconds)
 	var last: Array = seconds.back() if not seconds.is_empty() else [0, 0]
-	return ["%.0f Гц · %s" % [rate, "меряю..." if ok == null else ("успевает" if ok else "не успевает")],
-			"кадров %d из %d · %s" % [last[0], last[1], gpu_budget()]]
+	return [LINE_RATE % [rate, VERDICTS[0 if ok == null else (1 if ok else 2)]],
+			LINE_FRAMES % [last[0], last[1], gpu_budget()]]
 
 
 ## "GPU <ms> из <ms> мс": the GPU time against the time one frame may take.
 func gpu_budget() -> String:
-	return "GPU %.1f из %.1f мс" % [gpu_ms(), 1000.0 / rate]
+	return LINE_BUDGET % [gpu_ms(), 1000.0 / rate]
+
+
+## Lines as wide as the widest that status() and notes() give, for the menu's width: their formats
+## with the widest numbers (three digits a rate or the frames in a second, four the desktop's frames
+## a second, two before the point a time).
+static func widest_lines() -> Array:
+	var lines := [LINE_FPS % 8888.0, LINE_GPU % 88.8, NO_TIMING,
+			LINE_FRAMES % [888, 888, LINE_BUDGET % [88.8, 88.8]], NOTE_SWITCHING % 888.0,
+			NOTE_RESTART % 888.0, NOTE_MISMATCH % [888.0, 888.0], NOTE_FOLLOWED % 888.0,
+			NOTE_STAYED % 888.0, NOTE_NOT_SET, STEAM_HINT]
+	for v: String in VERDICTS:
+		lines.append(LINE_RATE % [888.0, v])
+	return lines
 
 
 ## What came of a rate choice, and what to do about it.
@@ -352,15 +382,15 @@ func notes() -> Array:
 	if xr == null or rate <= 0.0:
 		return lines
 	if requested > 0.0:
-		lines.append("переключаю на %.0f Гц..." % requested)
+		lines.append(NOTE_SWITCHING % requested)
 	elif note != "":
 		lines.append(note)
 	if steam_key != "":
 		if stored > 0.0 and absf(stored - rate) > 0.5 and requested == 0.0:
 			if stored != stored_at_start:
-				lines.append("задано %.0f Гц: выйди и запусти снова" % stored)
+				lines.append(NOTE_RESTART % stored)
 			else:
-				lines.append("в SteamVR задано %.0f Гц, а шлем на %.0f" % [stored, rate])
+				lines.append(NOTE_MISMATCH % [stored, rate])
 		if note_failed and note != "":
 			lines.append(STEAM_HINT)
 	elif options().size() < 2 or (note_failed and note != ""):
@@ -381,11 +411,12 @@ func _log() -> void:
 	var where := "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 			"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
 	var fov: Foveation = main.foveation
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
+	var tan_y: Vector2 = main.tracer.view_tangents()
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d..%d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
 			% [rate, meter.paced_rate(), s[0], s[1], s[1] - s[0], s[2] / s[4] if s[4] > 0 else 0.0, s[3],
 			1000.0 / rate if rate > 0.0 else 0.0, clock_min, clock_max, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
-			keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
+			rad_to_deg(atan(tan_y.y)), rad_to_deg(atan(tan_y.x)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
 			main.tracer.gravity_view, "open" if main.menu.open else "closed"])
 	clock_min = 0
 	clock_max = 0

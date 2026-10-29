@@ -1,20 +1,22 @@
 """Render the GLSL core headless (EGL/llvmpipe) and compare its per-pixel
 geometry against an independent float64 reference that integrates every
 curved ray with brute-force RK4 (no symmetry reduction)."""
-import sys, os
+import sys, os, re
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from PIL import Image
-from wh import Wormhole
+from wh import Wormhole, app_profile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
-PROF = tuple(float(v) for v in os.environ.get('WH_PROFILE', '3,5,1').split(','))   # rho0, h, fillet in metres
+TAN = 1.0      # the cameras' tangent of the half field of view, every side
+# rho0, h, fillet in metres: WH_PROFILE="rho0,h,fillet" if set, else the app's throat
+PROF = tuple(float(v) for v in os.environ['WH_PROFILE'].split(',')) if 'WH_PROFILE' in os.environ else app_profile()
 W = Wormhole(*PROF)
 import json
 SCENE = json.load(open(os.path.join(HERE, '..', 'godot', 'scene.json')))
-MAXB = 12
+MAXB = int(re.search(r'const int WH_MAXB = (\d+);', CORE).group(1))    # the shader's ball slots
 
 
 def test_balls():
@@ -66,8 +68,7 @@ CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 
 def region_order(objs, reach):
-    """Tracer.region_order: the objects sorted by where they can be met (universe A's sheet, the
-    shell, B's sheet) and the bounds (x, y, z, w): A 0 .. y, the shell x .. w, B z .. the end."""
+    """Tracer.region_order, in float64 (its comment says what it returns)."""
     groups = [[], [], [], [], []]
     for o in objs:
         C, r = np.asarray(o[0]), reach(o)
@@ -92,8 +93,8 @@ uniform float wh_fillet;
 uniform vec4 wh_sph[6];
 uniform vec4 wh_pil[4];
 uniform vec4 wh_box[4];
-uniform vec4 wh_ball[12];
-uniform vec4 wh_ballCol[12];
+uniform vec4 wh_ball[""" + str(MAXB) + """];
+uniform vec4 wh_ballCol[""" + str(MAXB) + """];
 uniform int wh_nBall;
 uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
@@ -102,7 +103,7 @@ uniform int wh_nCube;
 uniform vec4 wh_bound[4];
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
-uniform vec4 wh_fball[12];
+uniform vec4 wh_fball[""" + str(MAXB) + """];
 uniform float wh_pix;
 uniform float uL0;
 uniform vec3 uN0;
@@ -338,7 +339,7 @@ def compare(gpu, ref, name):
     the pixel footprint (distance to the neighbouring pixels' hits in the reference), converted to
     an equivalent viewing angle. Errors well below a pixel are invisible."""
     n = gpu.shape[0]
-    px_deg = 90.0 / n
+    px_deg = np.degrees(2.0 * np.arctan(TAN)) / n
     valid = ref[..., 0] >= 0
     k_ok = (gpu[..., 0] == ref[..., 0]) & valid
     code = ref[..., 0]
@@ -377,7 +378,7 @@ def compare(gpu, ref, name):
 
 if __name__ == '__main__':
     ctx = moderngl.create_standalone_context(backend='egl')
-    tan = (1.0, 1.0, 1.0, 1.0)
+    tan = (TAN,) * 4
     cams = {
         'outside_A': frame_from_chart(1, np.array([12.0, 1.0, 1.6]), np.array([-1.0, 0, 0]), np.array([0, 0, 1.0])),
         'outside_B_look_back': frame_from_chart(-1, np.array([-11.0, 2.0, 1.6]), np.array([1.0, 0, 0]), np.array([0, 0, 1.0])),

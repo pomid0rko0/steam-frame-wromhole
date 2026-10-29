@@ -13,7 +13,7 @@ const GRIP_OFF := 0.45           # go: apart, so a half-closed hand does not gra
 const COLOR := Color(0.55, 0.62, 0.75)
 const COLOR_READY := Color(0.35, 0.95, 0.5)   # a toy within reach, or held
 const VELOCITY_WINDOW := 0.06    # s of recent places a velocity is taken from (_velocity)
-const STALE := 0.1               # s: places older than this give no velocity (tracking lost)
+const STALE := 0.1               # s: with the newest place older than this, no velocity (tracking lost)
 const MAX_THROW_SPEED := 25.0    # m/s: a tracking glitch at the release flings nothing farther
 const MAX_THROW_SPIN := 40.0     # rad/s
 const SET_DOWN_SPEED := 0.15     # m/s and rad/s: a hand slower than this, turning slower than
@@ -46,6 +46,7 @@ func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: 
 		var st := state[i]
 		st["on"] = false
 		if not active:
+			_hold_still(i)
 			continue
 		if c.get_has_tracking_data():
 			var xf := c.transform
@@ -63,8 +64,10 @@ func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: 
 			st["U"] = _velocity(st["hist"])[0]
 			st["on"] = true
 		# the held toy where the hand is now, also in the frame it lets go
-		if st.has("held") and st["on"]:
+		if st["on"]:
 			_carry(i)
+		else:
+			_hold_still(i)
 		# the grip, with a gap between grabbing and letting go
 		var g := c.get_float(&"grip")
 		var was: bool = st.get("grip", false)
@@ -171,6 +174,8 @@ func _hold_point(st: Dictionary) -> Array:
 ## pushes others with.
 func _carry(i: int) -> void:
 	var st := state[i]
+	if not st.has("held"):
+		return
 	var toy: Dictionary = st["held"]
 	var at := _hold_point(st)
 	toy["l"] = at[0]
@@ -188,10 +193,21 @@ func _carry(i: int) -> void:
 		toy["w"] = v[1]
 
 
+## With hand i not tracked its toy stays where it was, at rest: it would push the others with the
+## velocity it last had.
+func _hold_still(i: int) -> void:
+	var toy: Dictionary = state[i].get("held", {})
+	if toy.is_empty():
+		return
+	toy["U"] = Vector4.ZERO
+	if toy.has("F"):
+		toy["w"] = Vector3.ZERO
+
+
 ## Hand i lets its toy go: it flies off with the hand's velocity and turns as the hand turned. Not
-## with its own velocity in the hand: held off the hand (half a metre to a big ball's centre), it
-## also moves with the turn of the wrist times that lever, and a flick of the wrist would throw it
-## far too fast.
+## with its own velocity in the hand: held off the hand (up to REACH plus its size from the hand to
+## its centre), it also moves with the turn of the wrist times that lever, and a flick of the wrist
+## would throw it far too fast.
 func _release(i: int) -> void:
 	var st := state[i]
 	if not st.has("held"):

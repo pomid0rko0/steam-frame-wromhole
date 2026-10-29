@@ -4,7 +4,8 @@ extends SceneTree
 ## 1. balls and cubes placed on the floor (one cube inside the throat) stay at rest
 ## 2. energy 1/2|U|^2 + g phi is conserved in free flight through the curved throat
 ## 3. a ball rolled toward the wormhole crosses into universe B and stays on the floor
-## 4. two balls collide and conserve momentum along the line of centres (flat region)
+## 4. two balls collide and conserve momentum along the line of centres (flat region); two held
+##    ones that touch do not
 ## 5. cubes: the body axes are parallel-transported, a tumbling cube keeps its energy in free
 ##    flight through the throat, a sliding cube stops after v^2 / (2 mu g) without tipping or
 ##    rolling, a thrown cube comes to rest flat on a face, a cube slides on the curved floor of
@@ -64,7 +65,7 @@ func _process(_delta: float) -> bool:
 			cube_moved = maxf(cube_moved, (sp.embed(c["l"], c["n"]) - cubes_at_start[i]).length())
 			cube_tilt = maxf(cube_tilt, _tilt(c))
 			cube_floor = maxf(cube_floor, absf(_lowest(c)))
-		U.check("cubes at rest stay at rest (one in the throat)", w.cubes.size() == 3 and cube_moved < 0.002 and cube_tilt < 0.01 and cube_floor < 0.003,
+		U.check("cubes at rest stay at rest (one in the throat)", w.cubes.size() == cubes_at_start.size() and cube_moved < 0.002 and cube_tilt < 0.01 and cube_floor < 0.003,
 				"%d cubes, moved %.5f m, tilt %.5f rad, lowest corner %.5f m from the floor" % [w.cubes.size(), cube_moved, cube_tilt, cube_floor])
 		w.balls.clear()
 		w.cubes.clear()
@@ -87,7 +88,8 @@ func _process(_delta: float) -> bool:
 		U.check("energy conserved in free flight", emax < 1e-4 * absf(e0), "max |dE| %.7f of E %.3f, flier reached l = %.2f" % [emax, e0, flier["l"]])
 		U.check("rolling ball went through to universe B", roller["l"] < -sp.L, "l = %.2f (shell |l| < %.2f)" % [roller["l"], sp.L])
 		U.check("rolling ball stays on the floor", absf(sp.height(roller["l"], roller["n"]) - roller["radius"]) < 0.02, "H - radius = %.4f" % (sp.height(roller["l"], roller["n"]) - roller["radius"]))
-		# 4: head-on collision in mid-air (flat A): horizontal momentum conserved, e = 0.85; far from
+		# 4: head-on collision in mid-air (flat A): horizontal momentum conserved, RESTITUTION_BALL (and two
+		# held balls do not collide); far from
 		# the wormhole, where gravity is uniform (nearer, it pulls a little toward the throat)
 		w.balls.clear()
 		var a := sp.point_from_chart(1.0, Vector3(28.0, 4.0, 2.0))
@@ -101,6 +103,18 @@ func _process(_delta: float) -> bool:
 		var e := BallWorld.RESTITUTION_BALL
 		U.check("collision: momentum and restitution", absf(va.x + vc.x - 3.0) < 1e-3 and absf(vc.x - va.x - 3.0 * e) < 1e-2,
 				"p %.4f (3.0), separation speed %.4f (%.4f)" % [va.x + vc.x, vc.x - va.x, 3.0 * e])
+		# two held balls that touch, moving at each other: the hands place both, neither pushes the other
+		w.balls.clear()
+		var c2 := sp.point_from_chart(1.0, Vector3(28.45, 4.0, 2.0))
+		var h1 := w.add(a[0], a[1], WormholeSpace.vector_from_chart(1.0, a[1], Vector3(1, 0, 0)), 0.25, Color.WHITE)
+		var h2 := w.add(c2[0], c2[1], WormholeSpace.vector_from_chart(1.0, c2[1], Vector3(-1, 0, 0)), 0.25, Color.WHITE)
+		h1["held"] = &"left_hand"
+		h2["held"] = &"right_hand"
+		var u1: Vector4 = h1["U"]
+		var u2: Vector4 = h2["U"]
+		w.step(1.0 / 60.0, [])
+		U.check("two held balls that touch don't push each other", h1["U"] == u1 and h2["U"] == u2,
+				"velocities %s, %s" % [_chart_vel(h1), _chart_vel(h2)])
 		_cube_checks(sp, w)
 		_gravity_checks(sp, w)
 		# a ball inside the throat for the screenshot
@@ -390,11 +404,11 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 	_run(w, Toys.LAUNCH_DELAY)
 	main.toys.throw()
 	_run(w, Toys.DROP_DELAY - Toys.LAUNCH_DELAY)
-	main.toys.drop()
+	var dropped: Array = main.toys.drop()
 	var drops := []
 	var orange: Dictionary
 	for b in w.balls:
-		if b["color"] == Toys.DROP_COLOR:
+		if dropped.any(func(d: Dictionary) -> bool: return is_same(d, b)):
 			drops.append([b, sp.embed(b["l"], b["n"])])
 		elif b["color"] == Toys.BALL_COLORS[5]:
 			orange = b
@@ -413,7 +427,7 @@ func _gravity_checks(sp: WormholeSpace, w: BallWorld) -> void:
 		var moved: Vector4 = now - d[1]
 		drift = maxf(drift, Vector3(moved.x, moved.y, 0.0).length() if d[0]["l"] > sp.L else absf(d[0]["l"]))
 		speed = maxf(speed, d[0]["U"].length())
-	U.check("the demo: thrown ball in universe B, dropped balls land where they fell and rest", drops.size() == 2 and not orange.is_empty() and orange["l"] < -sp.L and drift < 0.3 and speed < 0.05 and creep < 1e-5,
+	U.check("the demo: thrown ball in universe B, dropped balls land where they fell and rest", drops.size() == dropped.size() and not orange.is_empty() and orange["l"] < -sp.L and drift < 0.3 and speed < 0.05 and creep < 1e-5,
 			"thrown ball at l = %.2f, dropped balls moved %.3f m sideways (pulled toward the throat), now at %.3f m/s, %.7f m in the last 2 s, %d balls" % [orange.get("l", 0.0), drift, speed, creep, w.balls.size()])
 	w.balls.clear()
 	w.cubes.clear()

@@ -30,13 +30,15 @@ find "$OUTS" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/de
 import_scripts() {
 	local stamp=$ROOT/godot/.godot/scripts_imported     # a file: Godot's own imported/ is a folder
 	[ -f "$stamp" ] && [ -z "$(find "$ROOT/godot" -name '*.gd' -newer "$stamp" -print -quit)" ] && return 0
-	"$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1
-	touch "$stamp"
+	"$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 && touch "$stamp"
 }
 # An X display no other run holds, also another task's: from $1 on, the first without an X server
 # whose reservation (a directory: mkdir makes it or fails, never both for two runs) this run gets.
+# A run stopped before free_display leaves its reservation: one older than an hour goes (the tools'
+# timeouts end every run before that).
 x_display() {
 	local d=$1
+	find /tmp -maxdepth 1 -name '.wormhole-X*' -type d -mmin +60 -exec rmdir {} + 2>/dev/null || true
 	while [ -e "/tmp/.X$d-lock" ] || [ -e "/tmp/.X11-unix/X$d" ] || ! mkdir "/tmp/.wormhole-X$d" 2>/dev/null; do
 		d=$((d + 1))
 	done

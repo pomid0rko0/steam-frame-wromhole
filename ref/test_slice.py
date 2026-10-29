@@ -9,7 +9,7 @@ os.environ['WH_BALLS'] = '0'
 import numpy as np
 import moderngl
 import test_gpu as T
-from test_gpu import W, CORE, frame_from_chart, flat_hit
+from test_gpu import W, CORE, TAN, frame_from_chart, flat_hit
 
 HEADER = T.FRAG.split(CORE)[0]
 FRAG = HEADER.replace('#define WH_NO_BALLS\n', '#define WH_NO_BALLS\n#define WH_GRAVITY\n#define WH_ARROWS\n#define WH_SLICE_OUT wh_sl\n') + """
@@ -165,7 +165,7 @@ def compare(gpu, ref, name):
     """Found / not found per pixel, then the crossing point's error in units of the pixel
     footprint (distance between neighbouring pixels' crossings), as a viewing angle."""
     n = gpu.shape[0]
-    px_deg = 90.0 / n
+    px_deg = np.degrees(2.0 * np.arctan(TAN)) / n
     fg, fr = gpu[..., 0] > 0, ref[..., 0] > 0
     mism = (fg != fr).mean() * 100
     both = fg & fr
@@ -185,7 +185,7 @@ def compare(gpu, ref, name):
 
 if __name__ == '__main__':
     ctx = moderngl.create_standalone_context(backend='egl')
-    tan = (1.0, 1.0, 1.0, 1.0)
+    tan = (TAN,) * 4
 
     def look(side, x, at):
         f = np.asarray(at, float) - x; f /= np.linalg.norm(f)

@@ -34,10 +34,14 @@ const MAX_CUBES := 6
 # m around each proxy sphere. A ray that meets a toy inside its sphere leaves the sphere at least
 # this far beyond the hit, so it is marked even where the near plane clips the sphere's near side,
 # as long as the near plane (main.NEAR along the view axis, NEAR / cos of the ray's angle along the
-# ray) is nearer than this: within about 51 degrees of the view axis (0.05 / cos 51 is about 0.08).
+# ray) is nearer than this: within acos(main.NEAR / PROXY_MARGIN) of the view axis.
 const PROXY_MARGIN := 0.08
-const PROXY_SLACK := 1.02       # the proxy mesh's faces lie inside its sphere (a 48 x 24 SphereMesh's by
-                                # up to 0.41%: Godot's has rings + 1 latitude steps): grown by this
+# the proxy sphere's mesh (check_scene.gd's balls take it too); its faces lie inside the sphere
+# (Godot's SphereMesh has rings + 1 latitude steps): grown by PROXY_SLACK, more than they lie in
+# (_ready asserts it)
+const PROXY_SEGMENTS := 48
+const PROXY_RINGS := 24
+const PROXY_SLACK := 1.02
 # how the shader with toys gets its pixels: SPLIT by the stencil (the plain one elsewhere), WHOLE
 # the whole view marked, BARE no stencil at all (another source's shader in the speed check, which
 # has no stencil test)
@@ -69,6 +73,9 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 
 ## Under the camera: the quads it draws on. The proxies go into the play space, the camera's parent.
 func _ready() -> void:
+	assert(PROXY_SLACK * cos(PI / PROXY_SEGMENTS) * cos(PI / (2.0 * (PROXY_RINGS + 1))) > 1.0,
+			"PROXY_SLACK covers the proxy mesh's deepest faces")
+	assert(_fits_shader(), "the shader's sizes follow this code's (the errors above)")
 	param("wh_rho0", space.rho0)
 	param("wh_h", space.h)
 	param("wh_fillet", space.fillet)
@@ -82,8 +89,8 @@ func _ready() -> void:
 	var sphere := SphereMesh.new()
 	sphere.radius = 1.0
 	sphere.height = 2.0
-	sphere.radial_segments = 48
-	sphere.rings = 24
+	sphere.radial_segments = PROXY_SEGMENTS
+	sphere.rings = PROXY_RINGS
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = sphere
@@ -336,14 +343,51 @@ func plain() -> bool:
 	return toy_count == 0
 
 
+## Whether the sizes the shader fixes follow this code's: WormholeSpace's table and gravity
+## polynomials, MAX_BALLS, MAX_CUBES, the scene's objects. Each that differs is printed. Only
+## asserted: debug builds (the tests) run it, an export does not.
+func _fits_shader() -> bool:
+	var src: String = load("res://shaders/wormhole_view.gdshaderinc").code \
+			+ load("res://shaders/wormhole_core.gdshaderinc").code
+	var coefs := WormholeSpace.GRAV_DEG + 1
+	var want := ["WH_TABN = %d.0;" % WormholeSpace.TABLE_N, "WH_MAXB = %d;" % MAX_BALLS]
+	var arrays := {"grav_g": coefs / 4, "grav_d": coefs / 4, "wh_ball": MAX_BALLS, "wh_ballCol": MAX_BALLS,
+			"wh_fball": MAX_BALLS, "wh_cube": MAX_CUBES, "wh_cubeE": 5 * MAX_CUBES, "wh_cubeCol": MAX_CUBES,
+			"wh_sph": scene["spheres_A"].size() + scene["spheres_B"].size(),
+			"wh_pil": scene["pillars_A"].size(), "wh_box": scene["boxes_B"].size()}
+	for u: String in arrays:
+		want.append("uniform vec4 %s[%d];" % [u, arrays[u]])
+	var ok := coefs % 4 == 0
+	if not ok:
+		push_error("GRAV_DEG + 1 coefficients do not fill whole vec4s")
+	for w: String in want:
+		if not src.contains(w):
+			push_error("the shader lacks \"%s\"" % w)
+			ok = false
+	return ok
+
+
 ## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the
-## cubes' edge lines): the headset's vertical field of view taken as 104 degrees (not asked of the
-## runtime).
+## cubes' edge lines): the height of eye 0's frustum at unit distance, by the runtime's projection,
+## over the pixels it spans.
 func _pixel_angle() -> float:
 	if xr:
-		return 2.0 * tan(0.5 * deg_to_rad(104.0)) / maxf(xr.get_render_target_size().y * xr_view.scaling_3d_scale, 1.0)
+		var px := xr.get_render_target_size() * xr_view.scaling_3d_scale
+		var height := view_tangents().x - view_tangents().y
+		if not is_finite(height) or height <= 0.0:
+			# no frustum from the runtime yet: the last one, or 90 degrees
+			return pixel_angle if pixel_angle > 0.0 else 2.0 / maxf(px.y, 1.0)
+		return height / maxf(px.y, 1.0)
 	var cam := get_parent() as Camera3D
 	return 2.0 * tan(0.5 * deg_to_rad(cam.fov)) / maxf(float(get_viewport().get_visible_rect().size.y), 1.0)
+
+
+## Eye 0's frustum by the runtime's projection: the tangents of its top and bottom edges' angles
+## up from the view axis (the bottom's negative below it).
+func view_tangents() -> Vector2:
+	var p := xr.get_projection_for_view(0, 1.0, 0.05, 100.0)
+	# a frustum's projection: y.y = 2 / (top - bottom), z.y = (top + bottom) / (top - bottom)
+	return Vector2(1.0 + p.z.y, p.z.y - 1.0) / p.y.y
 
 
 ## Gravity for the gravity views: f / r and f' as the shader evaluates them

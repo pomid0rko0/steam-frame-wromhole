@@ -15,7 +15,9 @@
 # mounts only the repository's folder, and every task's runs share it: a task's git worktree goes
 # under .wt/, one per task (git worktree add --detach .wt/<branch> <branch>), and each run of the
 # tests keeps its files and its Monado in a directory of its own (test.sh, test_stereo.sh,
-# test_openxr.sh).
+# test_openxr.sh). The worktree stays where it was made: commit, move it to the commit
+# (git -C .wt/<branch> checkout --detach <branch>), then run there, and export a headset build
+# there too: its stereo test must have run on exactly its source (CLAUDE.md).
 set -euo pipefail
 if command -v apt-get >/dev/null; then exec "$@"; fi
 command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
@@ -25,9 +27,9 @@ NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
 # SteamVR and the owner's view share this machine's memory and cores with the container: a stereo
 # test's renders, run at once with no memory limit, can take enough to crash SteamVR. So the
-# container gets at most one core's time and MEM of memory, no swap (a run that needs more fails
-# in here, not SteamVR), runs take JOBS renders at once (default 2), and a run stops when the
-# Frame has less than MIN_FREE left.
+# container gets at most CPUS cores' time and MEM of memory, no swap (a run that needs more fails
+# in here, not SteamVR), runs take JOBS renders at once (its default below), and a run stops when
+# the Frame has less than MIN_FREE left.
 CPUS=1
 MEM=4g
 MIN_FREE=1500   # MiB

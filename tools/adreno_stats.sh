@@ -11,7 +11,7 @@
 #   tools/adreno_stats.sh [scene] [--full] [--disasm FILE] [--shader res://...]   (scene: one of
 #   tests/perf.gd's, default near; --shader: another ray tracer, such as
 #   res://shaders/ab/1/wormhole.gdshader; --disasm: the biggest program, not the one that runs: the
-#   generic ubershader, or its unused /2 variant in a ray tracer with toys)
+#   generic ubershader, or its /2 variant in a ray tracer with toys, which runs only past 512 vec4)
 # KEEP_LOG=file keeps the compiler's whole log (tools/adreno_cost.py reads it; on the Frame a file
 # in the repository, which the host sees too).
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured: there is
@@ -58,22 +58,21 @@ grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -2
 # it twice (a generic "ubershader" first, then the one specialised for the scene, which runs from
 # then on); one line each, then ir3's own statistics lines with --full. A shader with more than
 # 100 vec4 of constants is compiled once more as prog N/2, reading them from memory; Turnip runs
-# that one only if the pipeline's stages need more than 512 vec4 in all (the ray tracers' fragment
-# programs: 60 to 184, the log's constlen with --full), so it is
-# marked "unused".
+# that one only if the pipeline's stages need more than 512 vec4 in all: each line gives the
+# program's own (constlen).
 python3 - "$LOG" "$DISASM" "$FULL" <<'EOF'
 import re, sys
 text = open(sys.argv[1], errors='replace').read().replace('MESA: info: ', '')
 progs = {}
-for m in re.finditer(r'; FRAG prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full.*\n'
+for m in re.finditer(r'; FRAG prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full, (\d+) constlen.*\n'
                      r'.*?(\d+) cat4.*\n.*?(\d+) loops\n.*?(\d+) max_waves, (\d+) double', text):
     progs[m.group(1)] = [int(v) for v in m.groups()[1:]]
 big = max(v[0] for v in progs.values())
-for p, (n, nops, half, full, cat4, loops, waves, dbl) in progs.items():
+for p, (n, nops, half, full, constlen, cat4, loops, waves, dbl) in progs.items():
     if n < 0.5 * big:
         continue
-    safe = '' if p.endswith('/1') else ' (the safe-constlen variant: unused)'
-    print(f"prog {p}: {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, {cat4} cat4, {loops} loops{safe}")
+    safe = '' if p.endswith('/1') else ' (the safe-constlen variant: runs only past 512 vec4 in all stages)'
+    print(f"prog {p}: {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, {cat4} cat4, {loops} loops, constlen {constlen}{safe}")
     if sys.argv[3]:
         for line in re.findall(r'; FRAG prog %s: .*' % p, text):
             print("    " + line)

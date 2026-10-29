@@ -4,8 +4,7 @@ extends SceneTree
 ## by the action names of openxr_action_map.tres. Run with --fixed-fps 60; exit status 1 on any
 ## failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/walking_xr_test.gd
-## 0. the action map binds those names to the Steam Frame's own controller profile (its D-pad,
-##    View and Menu), to the KHR generic controller and to the Oculus Touch one (util.gd, BINDINGS)
+## 0. the action map is exactly util.gd's, every binding of every profile (U.check_bindings)
 ## 1. left stick forward for a second walks 1.5 m; with the left trigger, half a second runs 2 m
 ## 2. the right stick at half way (past the dead zone) turns 45 degrees per second, smoothly
 ## 3. a right stick click switches to snaps, even with the stick out (it snaps only once back

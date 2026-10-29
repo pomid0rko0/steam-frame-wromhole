@@ -1,7 +1,7 @@
 class_name Toys
 extends RefCounted
 ## The demo's balls and cubes: the physics is BallWorld's, this sets the scene. At rest in front of
-## the wormhole: five balls and two cubes, a third cube in the throat. A moment after the start a
+## the wormhole: balls and cubes, one more cube in the throat. A moment after the start a
 ## cube and a ball are thrown from chest height; the ball rolls through the throat into universe B.
 ## Then two balls are dropped together from the same height: one beside the wormhole, one in the
 ## middle of the throat, where gravity is weaker (docs/gravity.md). A puts it all back and does it
@@ -12,7 +12,7 @@ const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98,
 const CUBE_COLORS := [Color(0.93, 0.93, 0.88), Color(0.95, 0.45, 0.55), Color(0.35, 0.8, 0.75),
 		Color(0.95, 0.7, 0.3), Color(0.55, 0.6, 0.95), Color(0.6, 0.85, 0.35)]
 const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
-const DROP_DELAY := 6.5         # and the drop, after the thrown ball has rolled through the throat
+const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
 const DROP_HEIGHT := 2.0
 const DROP_COLOR := Color(0.95, 0.95, 0.97)
 const DROP_SPOT_A := Vector3(4.5, 4.2, DROP_HEIGHT)   # to the right of the wormhole
@@ -20,7 +20,7 @@ const DROP_RADIUS := 0.35
 
 var space: WormholeSpace
 var world: BallWorld
-var enabled := true             # simulate and draw them; the stereo check and tests that draw their own turn it off
+var enabled := true             # simulate and draw them
 var demo := true                # the throw and the drop after the start and each reset
 var launch_in := -1.0           # s until the throw; < 0: none pending
 var drop_in := -1.0             # s until the drop; < 0: none pending
@@ -81,11 +81,12 @@ func throw() -> void:
 ## where gravity is ordinary, and one in the middle of the throat. The second is straight ahead in
 ## the throat (azimuth 0): from the start it is seen in the middle of the wormhole against universe
 ## B's sky, and falls and bounces in slow motion.
-func drop() -> void:
+func drop() -> Array:
 	var p := space.point_from_chart(1.0, DROP_SPOT_A)
-	world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
-	world.add(0.0, throat_point(0.0, DROP_HEIGHT), Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
+	var balls := [world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR),
+			world.add(0.0, throat_point(0.0, DROP_HEIGHT), Vector4.ZERO, DROP_RADIUS, DROP_COLOR)]
 	print("toys: two balls dropped")
+	return balls
 
 
 ## The direction n at height H = r(0) n.z above the floor in the middle of the throat, at azimuth

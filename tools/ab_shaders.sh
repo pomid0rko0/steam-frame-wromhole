@@ -20,11 +20,14 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
 DIR=$ROOT/godot/shaders/ab
-rm -rf "$DIR"
-[ "${1:-}" = "--remove" ] && exit 0
+if [ "${1:-}" = "--remove" ]; then rm -rf "$DIR"; exit 0; fi
 AUTO=""
 [ "${1:-}" = "--auto" ] && { AUTO=1; shift; }
 [ $# -ge 1 ] || { echo "usage: tools/ab_shaders.sh [--auto] <source>... | --remove   (sources: its top)"; exit 2; }
+rm -rf "$DIR"
+# a source that fails halfway leaves no godot/shaders/ab at all: an export would ship it half made
+tmp=""
+trap 'rm -rf "$DIR" "$tmp"' EXIT
 n=0
 for src in "$@"; do
 	n=$((n + 1))
@@ -69,10 +72,10 @@ elif kind in ('noderiv', 'nogrid', 'nosky'):
         b = s.index(end, a) + len(end)
         return s[:a] + new + s[b:]
     if kind in ('noderiv', 'nogrid'):
-        s = cut(s, '    float cls = kind == 0 ?', 'max(fw, vec2(1e-4));     // tiny: no line, no circle',
+        s = cut(s, '    float cls = kind == 0 ?', 'max(fw, vec2(1e-4));',
                 '    vec2 fw = vec2(%s);' % ('0.02' if kind == 'noderiv' else '1e-4'))
     if kind == 'nogrid':
-        s = cut(s, '    vec2 ga = kind == 1 ? fn.xy : dn.xy;', '* (180.0 / WH_PI / 15.0);',
+        s = cut(s, '    vec2 ga = ', '* (180.0 / WH_PI / 15.0);',
                 '    vec2 gq = vec2(0.5) + 1e-6 * vec2(fl, fn.x);')
     if kind == 'nosky':
         s = cut(s, '    float sd = dot(d, wh_sunDir(side));', 'clamp(-el * 8.0, 0.0, 1.0));',
@@ -121,5 +124,6 @@ PY
 	[ -n "${tmp:-}" ] && rm -rf "$tmp" && tmp=""
 done
 [ -n "$AUTO" ] && echo "run by itself" > "$DIR/auto" && echo "godot/shaders/ab/auto: the check runs by itself"
+trap - EXIT
 # Godot needs to have seen the new files before a script loads them
 "$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 || true

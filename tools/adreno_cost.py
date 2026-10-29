@@ -13,9 +13,9 @@ LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tes
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
 headset, S x S pixels (default 1728, as tools/fdm_check.sh) and F degrees of vertical field of view
-(default 104, as tracer.gd takes it),
-on N random tiles (default 300; the same tiles for every LOG of the same wave width with the same
-seed K). --profile: cycles per stretch of code.
+(default 104, a guess at the Frame's: the headset log's per-second "refresh:" line gives the frustum
+the runtime hands Godot), on N random tiles (default 300; the same tiles for every LOG of the same
+wave width with the same seed K). --profile: cycles per stretch of code.
 --split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
 toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
 (the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
@@ -34,13 +34,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ir3_emu as E  # noqa: E402
 
 # The estimate, fitted on speed checks in the headset of other ray tracers than this tree's, at
-# other poses than godot/bench.gd's PLACES; the measurements are not in the repository. A model to
-# compare variants, not a timing: per 64 pixels of a frame of both eyes at 1728 x 1728, ms =
-# GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x transcendental instructions
-# + MS_CAT5 x texture-unit instructions (ir3_emu.py counts them). In waves of 128 the issue cycles
-# are ir3_emu.py's and a nop slot covers 128 pixels; a cat4 or cat5 instruction's work is per pixel
-# whatever the wave. By the constants transcendentals and texture-unit instructions cost far more
-# than their issue slots (16 and ~90 ALU cycles' worth).
+# other poses than godot/bench.gd's PLACES; the measurements are not in the repository, so nothing
+# here checks the constants. A model to compare variants, not a timing: ms for a frame (both eyes at
+# --size) = GODOT_MS + MS_ALU x ALU issue cycles + MS_NOP x nop slots + MS_CAT4 x transcendental
+# instructions + MS_CAT5 x texture-unit instructions, each per 64 pixels (ir3_emu.py counts them,
+# per64 scales them). In a wave of 128 a full-precision instruction issues in two cycles and a
+# half-precision one in one, and a nop slot covers 128 pixels; a cat4 or cat5 instruction's work is
+# per pixel whatever the wave. By the constants transcendentals and texture-unit instructions cost
+# far more than their issue slots (MS_CAT4 / MS_ALU and MS_CAT5 / MS_ALU ALU cycles' worth).
 GODOT_MS = 0.8
 MS_ALU = 1.61e-3
 MS_NOP = 1.05e-3
@@ -48,6 +49,8 @@ MS_CAT4 = 0.0258
 MS_CAT5 = 0.146
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
+from wh import Wormhole, app_profile  # noqa: E402 (ref/, on the path above)
+PROFILE = app_profile()
 
 
 def ray_program(log):
@@ -74,38 +77,49 @@ def ray_program(log):
     return lines[first:], hdr, p, progs[p]
 
 
-# The material's uniforms in declaration order (wormhole_view.gdshaderinc), with the defines that
-# keep each: (name, type, array length). Godot lays them out std140-like: a scalar takes 4 bytes on
-# a 4-byte boundary, a vec3 12 bytes on a 16-byte one, a vec4 and every array element 16 bytes.
-UNIFORMS = [('wh_rho0', 'f', 0, None), ('wh_h', 'f', 0, None), ('wh_fillet', 'f', 0, None),
-            ('wh_sph', 'v4', 6, None), ('wh_pil', 'v4', 4, None), ('wh_box', 'v4', 4, None),
-            ('wh_ball', 'v4', 12, None), ('wh_ballCol', 'v4', 12, None), ('wh_nBall', 'i', 0, None),
-            ('head_l', 'f', 0, None), ('head_n', 'v3', 0, None), ('head_f', 'v4', 3, None), ('head_pos', 'v3', 0, None),
-            ('wh_tabLo', 'v4', 0, None), ('wh_tabInv', 'v4', 0, None), ('wh_tabReg', 'v4', 0, None),
-            ('grav_cyl', 'v4', 0, 'WH_GRAVITY'), ('grav_g', 'v4', 2, 'WH_GRAVITY'), ('grav_d', 'v4', 2, 'WH_GRAVITY'),
-            ('wh_pix', 'f', 0, 'WH_PIX'),
-            ('wh_cube', 'v4', 6, 'BALLS'), ('wh_cubeE', 'v4', 30, 'BALLS'), ('wh_cubeCol', 'v4', 6, 'BALLS'),
-            ('wh_nCube', 'i', 0, 'BALLS'), ('wh_bound', 'v4', 4, 'BALLS'), ('wh_bIdx', 'iv4', 0, 'BALLS'),
-            ('wh_cIdx', 'iv4', 0, 'BALLS'), ('wh_fball', 'v4', 12, 'BALLS')]
+def res_file(path):
+    """A res:// path (or a file) as a file."""
+    return path.replace('res://', os.path.join(ROOT, 'godot') + '/') if path.startswith('res://') else path
 
 
 def shader_defines(path):
-    """The WH_* defines of a ray tracer's .gdshader (res:// path or file), as the view include sees them."""
-    f = path.replace('res://', os.path.join(ROOT, 'godot') + '/') if path.startswith('res://') else path
-    d = set(re.findall(r'^#define (WH_\w+)', open(f).read(), re.M))
-    if 'WH_NO_BALLS' not in d:
-        d.add('BALLS')
-    if 'BALLS' in d or 'WH_ARROWS' in d:
-        d.add('WH_PIX')
-    return d
+    """A ray tracer's .gdshader (res:// path or file): (its WH_* defines, the view include's file)."""
+    src = open(res_file(path)).read()
+    return (frozenset(re.findall(r'^#define (WH_\w+)', src, re.M)),
+            res_file(re.search(r'^#include "([^"]+)"', src, re.M).group(1)))
 
 
-def ubo_layout(defines):
-    """Byte offset of each uniform the shader with these defines declares."""
+def view_uniforms(spec):
+    """The material's uniforms the view include declares for a shader (shader_defines), in order:
+    (name, type, array length). Its #ifdef, #ifndef, #else, #endif and #define are followed."""
+    defines, view = set(spec[0]), spec[1]
+    on, out = [], []
+    for line in open(view).read().split('\n'):
+        s = line.strip()
+        m = re.match(r'#(ifdef|ifndef)\s+(\w+)', s)
+        if m:
+            on.append((m.group(2) in defines) == (m.group(1) == 'ifdef'))
+        elif s.startswith('#else'):
+            on[-1] = not on[-1]
+        elif s.startswith('#endif'):
+            on.pop()
+        elif all(on):
+            m = re.match(r'#define\s+(\w+)', s)
+            if m:
+                defines.add(m.group(1))
+            m = re.match(r'uniform\s+(float|int|vec3|vec4|ivec4)\s+(\w+)(?:\[(\d+)\])?', s)
+            if m:
+                typ = {'float': 'f', 'int': 'i', 'vec3': 'v3', 'vec4': 'v4', 'ivec4': 'iv4'}[m.group(1)]
+                out.append((m.group(2), typ, int(m.group(3) or 0)))
+    return out
+
+
+def ubo_layout(spec):
+    """Byte offset of each uniform of the shader's material block. Godot lays them out std140-like: a
+    scalar takes 4 bytes on a 4-byte boundary, a vec3 12 bytes on a 16-byte one, a vec4 and every
+    array element 16 bytes."""
     out, off = {}, 0
-    for name, typ, n, need in UNIFORMS:
-        if need and need not in defines:
-            continue
+    for name, typ, n in view_uniforms(spec):
         size, align = {'f': (4, 4), 'i': (4, 4), 'v3': (12, 16), 'v4': (16, 16), 'iv4': (16, 16)}[typ]
         if n:
             size, align = 16 * n, 16
@@ -115,16 +129,17 @@ def ubo_layout(defines):
     return out
 
 
-def material_ubo(defines, values):
-    """Godot's material uniform block for a shader with these defines; values: name -> number or
-    list (tests/emu_dump.gd's "uniforms"); the scene's static objects and the fillet table by default."""
+def material_ubo(spec, values):
+    """Godot's material uniform block for a shader (shader_defines); values: name -> number or
+    list (tests/emu_dump.gd's "uniforms"); the app's throat, the scene's static objects and the
+    fillet table by default."""
     u = np.zeros(4 * 160, np.float32)
     ui = u.view(np.uint32)
     tab, lo, inv, reg = fillet_table()
-    vals = {'wh_rho0': 3.0, 'wh_h': 5.0, 'wh_fillet': 1.0, 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
+    vals = {'wh_rho0': PROFILE[0], 'wh_h': PROFILE[1], 'wh_fillet': PROFILE[2], 'wh_sph': SCENE['spheres_A'] + SCENE['spheres_B'],
             'wh_pil': SCENE['pillars_A'], 'wh_box': SCENE['boxes_B'], 'wh_tabLo': lo, 'wh_tabInv': inv, 'wh_tabReg': reg}
     vals.update(values or {})
-    for name, (off, typ, n) in ubo_layout(defines).items():
+    for name, (off, typ, n) in ubo_layout(spec).items():
         if name not in vals:
             continue
         v = np.ravel(np.asarray(vals[name], np.float64))
@@ -140,24 +155,22 @@ def material_ubo(defines, values):
 
 def fillet_table():
     """WormholeSpace.fillet_table, from the float64 reference (ref/wh.py)."""
-    sys.path.insert(0, os.path.join(ROOT, 'ref'))
-    from wh import Wormhole
-    return Wormhole(3.0, 5.0, 1.0).fillet_table()
+    return Wormhole(*PROFILE).fillet_table()
 
 
 class Shader:
     def set_uniforms(self, uniforms):
-        """The material's uniforms (a pose's own, when they differ between poses: --hands, --held)."""
-        self.ubos = {3: material_ubo(self.defines, uniforms)}   # the main program loads from it too (ldc at a computed index)
+        """The material's uniforms (a pose's own, when they differ between poses: tools/adreno_cost.sh --hands, --held)."""
+        self.ubos = {3: material_ubo(self.spec, uniforms)}   # the main program loads from it too (ldc at a computed index)
         self.consts = E.run_preamble(self.instrs, self.ps, self.pe + 1, np.zeros(8192, np.uint32), self.ubos)
 
-    def __init__(self, log, defines, uniforms=None):
+    def __init__(self, log, spec, uniforms=None):
         lines, self.hdr, self.name, self.ninstr = ray_program(log)
         self.instrs, self.labels = E.parse_program(lines)
         self.ps = next(i for i, x in enumerate(self.instrs) if x.op == 'shps')
         self.pe = next(i for i, x in enumerate(self.instrs) if x.op == 'shpe')
         self.start = self.instrs[self.ps].target
-        self.defines = defines
+        self.spec = spec
         self.tex = fillet_table()[0]
         self.set_uniforms(uniforms)
         # the inputs: smooth (bary.f) and flat (flat.b) varying slots, in slot order
@@ -203,7 +216,7 @@ def tile_lanes(x0, y0, wide=False):
     return np.array(xs), np.array(ys)
 
 
-def wh_eye(l, rho0=3.0, h=5.0, R=1.0):
+def wh_eye(l, rho0=PROFILE[0], h=PROFILE[1], R=PROFILE[2]):
     """wormhole_core's wh_eye: (r, r - rmin) of a start point."""
     Lc = max(h - R, 0.0)
     th0 = np.arcsin(max(1.0 - h / R, 0.0))
@@ -343,7 +356,7 @@ def proxy_marked(e, xs, ys, size, tan_x, tan_y):
 
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
     """share(e, xs, ys, tan): the share of a tile's pixels this ray tracer runs (--split); unis:
-    each pose's own uniforms (toys that move with the viewer: --hands, --held)."""
+    each pose's own uniforms (toys that move with the viewer: tools/adreno_cost.sh --hands, --held)."""
     tan_y = np.tan(np.radians(fov) / 2.0)
     tan_x = tan_y
     res = []
@@ -391,7 +404,7 @@ def main():
             pos.append(args[i]); i += 1
     log, dump = pos
     entries = json.load(open(dump))
-    defines = shader_defines(entries[0]['shader'])
+    spec = shader_defines(entries[0]['shader'])
     def eye_pix(u):
         u = dict(u)
         if 'wh_pix' in u and '--check' not in flags:
@@ -404,8 +417,8 @@ def main():
     if all(u == unis[0] for u in unis):
         unis = None
     # the packing of the flat inputs: found against Godot's picture, with its uniforms
-    order = find_flat_order(Shader(log, defines, dict(entries[0].get('uniforms', {}))), entries)
-    sh = Shader(log, defines, uniforms)
+    order = find_flat_order(Shader(log, spec, dict(entries[0].get('uniforms', {}))), entries)
+    sh = Shader(log, spec, uniforms)
     sh.flat_order = order
     print('%s: prog %s, %d instr; flat inputs %s' % (os.path.basename(log), sh.name, sh.ninstr, ', '.join(order)))
     if '--check' in flags:
@@ -420,10 +433,7 @@ def main():
     plain = None
     if opt['--split']:
         # the plain ray tracer: its own uniforms are the same material's
-        pdefs = {d for d in defines if d not in ('BALLS', 'WH_PIX')} | {'WH_NO_BALLS'}
-        if 'WH_ARROWS' in pdefs:
-            pdefs.add('WH_PIX')
-        plain = Shader(opt['--split'], pdefs, uniforms)
+        plain = Shader(opt['--split'], (spec[0] | {'WH_NO_BALLS'}, spec[1]), uniforms)
         plain.flat_order = order
         share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
     res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)

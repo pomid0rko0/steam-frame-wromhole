@@ -5,7 +5,7 @@ extends SceneTree
 ## Frame's GPU driver (Turnip, no GPU) and reads from the driver's trace how it rendered the pass.
 ## The simulated headset hands Godot a density map of its own making (XRVRS, the one Godot makes
 ## where the runtime has none), so the viewport has a density map to attach. The eyes' size in
-## pixels is the second argument (tools/fdm_check.sh gives 1728).
+## pixels is the second argument (tools/fdm_check.sh gives the headset's: its top says).
 ##   godot --path . -s res://tests/fdm_check.gd -- off|split|on|own [eye size in pixels]
 
 const U := preload("res://tests/util.gd")

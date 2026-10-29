@@ -5,7 +5,16 @@ The space, its profile r(l) and the method: docs/geometry.md.
 
 Points, tangents and the flat charts as the shader's (wormhole_core.gdshaderinc's top).
 """
+import os
+import re
 import numpy as np
+
+
+def app_profile():
+    """The app's throat, (rho0, h, R) in metres: godot/main.gd's THROAT_RADIUS, HALF_LENGTH, FILLET."""
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
+    return tuple(float(re.search(r'^const %s := ([\d.]+)' % k, src, re.M).group(1))
+                 for k in ('THROAT_RADIUS', 'HALF_LENGTH', 'FILLET'))
 
 
 class Wormhole:
@@ -143,7 +152,8 @@ class Wormhole:
 
     # ---------- fast method: one ray at a time, mirrors the shader ----------
     # The fillet as the shader's "curved part" (wormhole_core.gdshaderinc), with G, the path length,
-    # interpolated as F is.
+    # interpolated as F is. Two tolerances are float64's (1e-12) where the shader's are float32's
+    # (1e-6): E0's floor and from_edge.
     _X = (np.polynomial.legendre.leggauss(4)[0] + 1) / 2
     TAU = _X * _X
     A = np.linalg.inv(np.vander(TAU, 4, increasing=True))
@@ -285,7 +295,7 @@ class Wormhole:
         t = -np.sin(tot[0]) * e1 + np.cos(tot[0]) * e2
         bR = b / self.Rout
         return dict(kind=int(sideC), l=sideC * L, n=n, vl=sideC * np.sqrt(max(1 - bR * bR, 0.0)),
-                    w=bR * t, steps=5)
+                    w=bR * t)
 
 
 def _any_perp(n):

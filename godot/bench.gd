@@ -7,34 +7,36 @@ extends Node
 ## What a frame costs depends on the pose: how far from the throat one stands (l), where one looks
 ## (degrees from the throat along the floor, degrees up) and how the head is tilted (roll: it
 ## changes how pixels fall into the GPU's groups). With the toys still (main.hold stops them) and
-## the viewer on the axis through the throat (main.place_on_axis), these are all there is; nothing
-## carries over from one frame to the next, so moving only changes which poses come.
+## the viewer on the axis through the throat (main.place_on_axis), the pose decides what the ray
+## tracer does. Besides it a frame's time changes with where the eyes look under foveation (the
+## density map follows them: foveation.gd) and with SteamVR's half rate after a late frame (below).
 ##
-## 1. Comparison, at 72 Hz. The viewer is put at fixed poses (PLACES), with the feet held there,
+## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), with the feet held there,
 ## and the ray tracer is timed on the GPU (the median frame of each segment). A build can carry
-## other ray tracers in res://shaders/ab/1, 2, ... (tools/ab_shaders.sh). Every pose is
-## then timed with each of them and this build's own, in a palindrome order (1 2 .. n n .. 2 1:
-## a slow drift of heat or clock falls on all alike). 72 Hz: a frame that misses its refresh
-## sends SteamVR to half rate (frame_rate.gd), and the GPU time then grows: a variant over the
-## frame's budget reads dearer than it is, and so does the segment after it. Fewer instructions or
-## registers (tools/adreno_stats.sh) are not faster by themselves, and frame times from walking
-## around don't compare between builds (where one looks changes them): this part decides.
-## This build's ray tracer is timed six ways (FOVEATIONS): without foveation, with the 3D scene in
-## a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
-## foveated rendering: SteamVR's map low and high, our own wide and narrow (foveation.gd); with the
-## demo's toys a seventh, the ray tracer with toys over the whole view, not only where the stencil
-## marks that a toy may be seen (Tracer.toy_mode). The others run without foveation, a ray tracer
-## with toys over the whole view.
+## other ray tracers in res://shaders/ab/1, 2, ... (tools/ab_shaders.sh). Every pose is then timed
+## with those of the kind this build runs and this build's own, in a palindrome order (1 2 .. n
+## n .. 2 1: a slow drift of heat or clock falls on all alike). RATE is low because a frame that
+## misses its refresh sends SteamVR to half rate (frame_rate.gd), and the GPU time then grows: a
+## variant over the frame's budget reads dearer than it is, and so does the segment after it.
+## Fewer instructions or registers (tools/adreno_stats.sh) are not faster by themselves, and frame
+## times from walking around don't compare between builds (where one looks changes them): this
+## part decides.
+## This build's ray tracer is timed each way FOVEATIONS lists: without foveation, with the 3D scene
+## in a render pass of its own (what foveation needs, split_pass.gd) but no density map, and with
+## foveated rendering (foveation.gd); with the demo's toys one way more, the ray tracer with toys
+## over the whole view, not only where the stencil marks that a toy may be seen (Tracer.toy_mode).
+## The others run without foveation, and only of the same kind (comparable): none with the gravity view
+## on; without the toys plain; with them only those that have a toys' shader, over the whole view.
 ##
-## 2. The tour, at 120 Hz with this build's ray tracer: at each of TOUR_L the view sweeps from
-## the throat round to the other side, in rows from 60 degrees down to 60 up; then walks through
-## the throat and back, turning and nodding on the way; then turns on the spot about each axis
+## 2. The tour, at TOUR_RATE with this build's ray tracer: at each of TOUR_L the view sweeps from
+## the throat round to the other side, in rows at each of TOUR_PITCH; then walks through the
+## throat and back, turning and nodding on the way; then turns on the spot about each axis
 ## (yaw, pitch, roll). Every frame gets a "tf" line: the time, the pose, the refreshes it took,
 ## and the GPU and CPU time; every second a "tour:" line. Before each place the viewer goes back
 ## to the start, a cheap pose, for TOUR_RECOVER s (not enough to undo SteamVR's half rate, which
 ## lasts several seconds: frame_rate.gd).
 ##
-## The result, on the menu's line below and under its row, says whether 120 Hz held (and where it
+## The result, on the menu's line below and under its row, says whether TOUR_RATE held (and where it
 ## did worst), how this build's ray tracer compares with the first of the others, and what the
 ## foveation and the stencil save. Render scale 100% throughout, the tour with the foveation chosen
 ## in the menu; afterwards the rate, the scale, the shader, the foveation and where one stood come
@@ -70,6 +72,8 @@ const TOUR_L := [11.6, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2]
 const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
+const NOD_PERIOD := 3.0         # s: the tour's nods
+const TILT_PERIOD := 2.0        # s: its tilts (roll)
 # this build's ray tracer: [label, foveation level (Foveation.set_level), split]; the first is the
 # reference the others are compared with
 const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
@@ -107,7 +111,6 @@ var pose := [0.0, 0.0, 0.0, 0.0]     # the tour's pose now: l, degrees right, up
 var sec := {}                   # this second's counts
 var saved_pose: Array
 var saved_rate := 0.0           # the rate to go back to
-var saved_scale := 1.0
 var preparing := 0              # variants left to run untimed before the first segment
 var verdict := ""               # the comparison's line
 var auto := false               # start by itself (once)
@@ -115,13 +118,12 @@ var auto_t := 0.0
 
 
 func _ready() -> void:
-	for i in range(1, 10):
-		var path := AB_DIR % i
-		if not ResourceLoader.exists(path):
-			break
-		var sh: Shader = load(path)
+	var i := 1
+	while ResourceLoader.exists(AB_DIR % i):
+		var sh: Shader = load(AB_DIR % i)
 		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
 		others.append([sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls])
+		i += 1
 	auto = FileAccess.file_exists(AUTO)
 
 
@@ -129,8 +131,23 @@ func has_ab() -> bool:
 	return not others.is_empty()
 
 
+## The others as variants of the kind this build runs now: without toys, or with them (the demo's),
+## theirs over the whole view: with the stencil test the whole view marked, without it no stencil
+## at all; none with the gravity view on (theirs are without it).
+func comparable() -> Array:
+	var tracer: Tracer = main.tracer
+	var out := []
+	for o in others if tracer.gravity_view == 0 else []:
+		if tracer.plain():
+			out.append([o[0], o[1], 0, false, Tracer.BARE])
+		elif o[2] != null:
+			var with_stencil: bool = o[2].code.contains("stencil_mode")
+			out.append([o[0], o[2], 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE])
+	return out
+
+
 ## The tour's steps: {l: [from, to], yaw: [from, to], pitch, nod: the amplitude of a nod about
-## the pitch (degrees, a 3 s period), roll: the amplitude of a tilt (a 2 s period), secs,
+## the pitch (degrees, NOD_PERIOD), roll: the amplitude of a tilt (TILT_PERIOD), secs,
 ## recover: back to the start first, what}
 func _make_tour() -> Array:
 	var t := []
@@ -160,16 +177,7 @@ func start() -> void:
 	running = true
 	var tracer: Tracer = main.tracer
 	own_shader = tracer.material.shader
-	variants = []
-	# others compared with the same kind: without toys, or with them (the demo's), theirs over the
-	# whole view: with the stencil test the whole view marked, without
-	# it no stencil at all; none with the gravity view on (theirs are without it)
-	for o in others if tracer.gravity_view == 0 else []:
-		if tracer.plain():
-			variants.append([o[0], o[1], 0, false, Tracer.BARE])
-		elif o[2] != null:
-			var with_stencil: bool = o[2].code.contains("stencil_mode")
-			variants.append([o[0], o[2], 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE])
+	variants = comparable()
 	own = variants.size()
 	for f in FOVEATIONS:
 		variants.append([f[0], own_shader, f[1], f[2], Tracer.SPLIT])
@@ -177,8 +185,7 @@ func start() -> void:
 		variants.append(["this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE])
 	saved_pose = main.get_pose()
 	main.hold = true
-	saved_scale = menu.render_scale
-	menu.set_render_scale(1.0)
+	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
 	# back to this app's own setting where there is one, else to what the display ran at
 	var rate: FrameRate = main.rate
 	saved_rate = rate.stored if rate.steam_key != "" and rate.stored > 0.0 else rate.rate
@@ -364,17 +371,18 @@ func _compared() -> void:
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v][0].trim_prefix("this build, "), _ratio(v, own)])
 		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
-		# for the menu, what each foveation saves: SteamVR low, high, own wide, narrow
+		# for the menu, what each foveation (a density map on) saves, by the menu's names
 		var pcts := []
-		for v in range(own + 2, own + FOVEATIONS.size()):
-			pcts.append("%+d" % roundi(100.0 * (_ratio(v, own) - 1.0)))
-		parts.append("фовеация %s%%" % "/".join(pcts))
+		for k in FOVEATIONS.size():
+			if FOVEATIONS[k][1] > 0:
+				pcts.append("%s %+d%%" % [Menu.FOVEATIONS[FOVEATIONS[k][1]], roundi(100.0 * (_ratio(own + k, own) - 1.0))])
+		parts.append("фовеация: " + ", ".join(pcts))
 		# and what the stencil saves: the toys' ray tracer over the whole view against split
 		if variants.size() > own + FOVEATIONS.size():
 			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
 		verdict = " · ".join(parts)
 	if _headset():
-		_show("замер: теперь 120 Гц, глаза закрыты")
+		_show("замер: теперь %.0f Гц, глаза закрыты" % TOUR_RATE)
 		_rate(TOUR_RATE, "tour")
 	else:
 		_finish("")
@@ -407,7 +415,7 @@ func _tour_step(i: int) -> void:
 	tour_results.append({"frames": 0, "refreshes": 0, "worst": [0.0, 0.0, 0.0, 0.0, 0.0]})
 	if tour[i].recover:
 		main.place_on_axis(PLACES[0][0], PLACES[0][1], PLACES[0][2])     # recover at the start
-	_show("замер 120 Гц: шаг %d из %d, глаза закрыты" % [i + 1, tour.size()])
+	_show("замер %.0f Гц: шаг %d из %d, глаза закрыты" % [TOUR_RATE, i + 1, tour.size()])
 
 
 func _tour(delta: float) -> void:
@@ -418,7 +426,8 @@ func _tour(delta: float) -> void:
 	var t := phase_t - recover
 	var k := clampf(t / s.secs, 0.0, 1.0)
 	pose = [lerpf(s.l[0], s.l[1], k), lerpf(s.yaw[0], s.yaw[1], k),
-			s.pitch + s.nod * sin(TAU * t / (3.0 * tour_scale)), s.roll * sin(TAU * t / (2.0 * tour_scale))]
+			s.pitch + s.nod * sin(TAU * t / (NOD_PERIOD * tour_scale)),
+			s.roll * sin(TAU * t / (TILT_PERIOD * tour_scale))]
 	main.place_on_axis(pose[0], pose[1], pose[2], pose[3])
 	if not counting:
 		counting = true
@@ -498,7 +507,7 @@ func _finish(tour_line: String) -> void:
 	_restore()
 	main.hold = false
 	main.set_pose(saved_pose)
-	menu.set_render_scale(saved_scale)
+	menu.set_render_scale(menu.render_scale)
 	if _headset() and saved_rate > 0.0 and absf(saved_rate - main.rate.rate) > 0.5:
 		main.rate.choose(saved_rate)
 	print("bench: done")

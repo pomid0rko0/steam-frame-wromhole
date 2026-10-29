@@ -22,11 +22,13 @@ extends Node3D
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
 ## the feet stay, and the sticks, A, the gravity view's button, the hands and the toys do nothing. A
-## new action goes into openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare
-## them exactly), in the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a
-## snap turn) call hands.forget_motion, or the jump would be a throw.
+## new action goes into openxr_action_map.tres and tests/util.gd alike (BINDINGS per profile, POSES
+## or STICKS for one every controller has; the tests compare them exactly), in the Frame's profile
+## with Valve's paths. Jumps of the viewer (place, set_pose, a snap turn, a recentre) call
+## hands.forget_motion, or the jump would be a throw.
 ##
-## The controllers. Valve's page «Steam Frame Input» lists the Frame's paths: left
+## The controllers. Valve's page «Steam Frame Input»
+## (https://partner.steamgames.com/doc/steamhardware/steamframe/input) lists the Frame's paths: left
 ## dpad_up/down/left/right, view, system, bumper; right a, b, x, y, menu, system, bumper; both
 ## squeeze, trigger, thumbstick, grip/pose, aim/pose, output/haptic. SteamVR takes the Frame's
 ## profile if the app offers it, else the generic one, else Touch remapped (Touch's menu is View,
@@ -87,7 +89,7 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var smooth_turn := true         # false: snaps of SNAP_ANGLE
 var snap_armed := true          # the right stick went back to the middle since the last turn
-var menu_active := false        # the menu was open this frame: A, B, the D-pad and the left stick are its
+var menu_active := false        # the menu was open this frame: its buttons are its (Menu.handle_input)
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
 
@@ -227,6 +229,7 @@ func _process(delta: float) -> void:
 		prev_head = hz
 		recentered = false
 		moved = true
+		hands.forget_motion()
 	var step := hz - prev_head
 	prev_head = hz
 	var stick := Vector2.ZERO if hold or menu_active else _move_input()

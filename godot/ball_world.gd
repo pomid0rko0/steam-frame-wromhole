@@ -38,20 +38,24 @@ const MAX_BALLS := 8
 const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls and cubes nearby
 const MAX_CUBES := 6
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
-const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates at 0.5 g
+const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates by this times the floor's push
 const BOUNCE_SPEED := 0.4            # slower cube impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
-const KINEMATIC := 1e9               # mass of a held toy against a free ball (hands push without one: _push)
-# a hand or a held toy against a free ball: it moves on regardless, so with the balls' 0.85 a ball
-# it meets would fly off at 1.85 times its speed, and one pressed against the floor or another ball
-# would gain speed from nothing; this is a soft hand's
+const KINEMATIC := 1e9               # a held ball's mass against a free one (_pair; hands push without one: _push)
+# a hand or a held ball against a free ball (_push, _pair): it moves on regardless, so with
+# RESTITUTION_BALL a ball it meets would fly off at 1 + RESTITUTION_BALL times the hand's speed, and one
+# pressed against the floor or another ball would gain speed from nothing; this is a soft hand's
 const RESTITUTION_KINEMATIC := 0.3
 
 var space: WormholeSpace
 var scene: Dictionary
 var air := true                      # air drag (tests of the motion itself turn it off)
-var balls: Array = []                # Dictionary: l, n, U, radius, color, held (StringName or &"")
-var cubes: Array = []                # Dictionary: l, n, U, F (3 body axes), w (body), half, color, held
+# Dictionary: l, n, U, radius, color, held (a hand's tracker or &""), ghost (a hand's tracker for a
+# while after it let go: _ghosted)
+var balls: Array = []
+# Dictionary: as a ball's, with F (3 body axes), w (body), half instead of radius, and still (s it
+# has hardly moved: asleep past SLEEP_TIME)
+var cubes: Array = []
 var _acc := 0.0
 
 
@@ -233,8 +237,8 @@ func _pair(a: Dictionary, b: Dictionary, e: float) -> void:
 	var D := Eb - Ea
 	var dist := D.length()
 	var pen: float = a["radius"] + b["radius"] - dist
-	if pen <= 0.0 or dist < 1e-6:
-		return
+	if pen <= 0.0 or dist < 1e-6 or (a["held"] != &"" and b["held"] != &""):
+		return                               # two held balls: the hands place both
 	var Na := space.project(a["l"], a["n"], D).normalized()      # at a, toward b
 	var Nb := space.project(b["l"], b["n"], -D).normalized()     # at b, toward a
 	var ma: float = pow(a["radius"], 3.0) if a["held"] == &"" else KINEMATIC

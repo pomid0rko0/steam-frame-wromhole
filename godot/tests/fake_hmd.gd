@@ -1,7 +1,8 @@
 extends XRInterfaceExtension
 ## A simulated headset for tests: Godot's real multiview path with eyes we choose, including
 ## what a real headset may do and the "Native mobile" interface never does: canted (rotated)
-## eyes, asymmetric frusta and an arbitrary head pose.
+## eyes, frusta of any shape (Native mobile's are off-centre only sideways, by its lens model) and
+## an arbitrary head pose.
 
 var head := Transform3D.IDENTITY       # head pose in the play space (the XROrigin)
 var eyes: Array[Transform3D] = []      # each eye relative to the head

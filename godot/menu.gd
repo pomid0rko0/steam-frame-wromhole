@@ -3,53 +3,57 @@ extends Node3D
 ## The menu, drawn by Godot itself, and the line under it.
 ##
 ## The menu is hidden until its button opens it and is worked with buttons (handle_input; which:
-## README.md, «Управление»). It opens 1.1 m in front of where the head looks, a little below the
-## eyes, and follows: as the head walks, quickly; as it turns, only once it has turned well away,
-## then smoothly. So it is there at the wormhole and inside it, without being glued to the view.
+## README.md, «Управление»). It opens in front of where the head looks (MENU_DIST), a little below
+## the eyes (MENU_DROP), and follows: as the head walks, quickly; as it turns, only once it has
+## turned well away (TURN), then smoothly. So it is there at the wormhole and inside it, without
+## being glued to the view.
 ##
-## Its head: the refresh rate the headset really runs at and whether frames keep up, the frames of
-## the refreshes in the last second and the GPU time against the time one frame may take
-## (frame_rate.gd), on a plate green while the display gets a new frame from us at (nearly) every
-## refresh, red when it does not, the panel's own colour while it is measuring; under it what came
-## of a choice.
+## Its head: frame_rate.gd's lines (status, notes) on a plate coloured by its verdict: green while
+## the display gets a new frame from us at (nearly) every refresh, red when it does not, the
+## panel's own colour while it is measuring.
 ##
-## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text. Its rows: the
-## refresh rate, the 3D render scale, foveated rendering (off, SteamVR's density map
-## low or high, our own softer ones wide or narrow), which way our maps coarsen first (the width or
-## the height, to compare by eye), the gaze dot where SteamVR's eye tracking says the eyes look, how
-## gravity is shown (off, the floor coloured by it, also arrows of its field), smooth or snap turns,
-## the line below on or off, and the speed check (bench.gd; its result under its row). A value
+## A setting is a row: ROWS, NAMES, _count, _current, _apply, _enabled, _value_text. A value
 ## stepped to with left and right takes effect once it has stayed SETTLE seconds, or at once with
 ## A, on going to another row or on closing: stepping through the rates does not switch the headset
 ## at every step, nor the foveations rebuild the buffers. A on a value that is in effect steps to
 ## the next one at once (a switch: on, off), except on the rate row (press). Yellow: chosen, not
-## (yet) in effect; grey: nothing to change here now (during the speed check, which sets these).
+## (yet) in effect; grey: nothing to change here now (_enabled).
 ##
-## While the menu is closed, a line low in the view shows the rate, whether frames keep up and the
-## GPU time on the same colours, and what came of a choice; also the speed check while it runs and
-## its result until the menu is opened.
+## While the menu is closed, a line low in the view shows the head in short on the same colours;
+## also the speed check while it runs and its result until the menu is opened, then even with the
+## line turned off.
 ##
-## The render scale of the XR viewport (100, 90, 80, 70%; Godot upscales bilinearly to the
-## headset's size): fewer pixels to ray trace, a softer picture. It and foveation don't go
-## together (foveation.gd says why): one of them is chosen, the other goes back to 100% / off.
-## Both, our maps' order and the line below are kept in user://settings.cfg.
+## The render scale of the XR viewport (SCALES; Godot upscales bilinearly to the headset's size):
+## fewer pixels to ray trace, a softer picture. It and foveation don't go together (foveation.gd
+## says why): one of them is chosen, the other goes back to 100% / off. Both, our maps' order and
+## the line below are kept in SETTINGS.
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 # names of Foveation.set_level's levels
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
-const FOV_CHOICES := [0, 1, 3, 4, 5]     # the menu's: off, SteamVR low and high, our own wide and narrow
+const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
 # until one is chosen: our narrow map, the width first (its border is not seen in the headset)
 const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
-const GRAVITY_NAMES := ["выкл", "пол", "стрелки"]   # Tracer.gravity_view 0, 1, 2
+const GRAVITY_NAMES := ["выкл", "пол", "стрелки"]   # Tracer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
 # the rows, top to bottom (those that make no sense here are left out: _layout)
-const ROWS := ["rate", "scale", "fov", "order", "gaze", "grav", "turn", "strip", "bench"]
+const ROWS := [
+	"rate",         # the refresh rate (frame_rate.gd)
+	"scale",        # the 3D render scale
+	"fov",          # foveated rendering (foveation.gd)
+	"order",        # which way our maps coarsen first: the width or the height, to compare by eye
+	"gaze",         # the dot where SteamVR's eye tracking says the eyes look
+	"grav",         # how gravity is shown (docs/gravity.md)
+	"turn",         # smooth or snap turns
+	"strip",        # the line below
+	"bench",        # the speed check (bench.gd; its result under its row)
+]
 const NAMES := {"rate": "частота", "scale": "разрешение", "fov": "фовеация", "order": "плавная грубее",
 	"gaze": "точка взгляда", "grav": "гравитация", "turn": "поворот", "strip": "строка частоты",
 	"bench": "замер скорости"}
@@ -57,6 +61,8 @@ const HINT := "крестовина или левый стик: выбрать, 
 const SETTLE := 0.5             # s a value stepped to waits before it takes effect
 const REPEAT_AFTER := 0.4       # s a direction is held before it repeats
 const REPEAT := 0.12            # s between repeats
+const STICK_ON := 0.6           # the left stick as a D-pad: pushed out this far it points
+const STICK_OFF := 0.3          # and let go back under this it doesn't
 const STATUS_LINES := 4         # the head's lines at least: the rows below stay put
 const PIXEL := 0.001            # m per font pixel
 const FONT_STATUS := 24
@@ -85,12 +91,12 @@ const COLOR_WAIT := Color(0.05, 0.06, 0.09, 0.9)
 var main: Main                  # the settings the rows change
 var rate: FrameRate
 var target: Viewport            # the viewport the scene is rendered into (its render scale)
-var xr: OpenXRInterface         # null on the desktop
+var xr: OpenXRInterface         # null without OpenXR (the desktop, the tests' fake headsets)
 var head: Node3D                # the XR camera, a sibling in the play space
 var yaw := 0.0                  # the menu's bearing from the head
 var turning := false
 var placed := false
-var render_scale := 1.0         # 3D render scale of the XR viewport
+var render_scale := 1.0         # 3D render scale of the XR viewport chosen (the speed check sets 100% meanwhile)
 var foveation := 0              # the foveation level chosen (the speed check sets others meanwhile)
 var text := ""                  # the head's lines
 var open := false               # the menu is shown
@@ -127,6 +133,7 @@ var value_half := 0.0
 
 
 func _ready() -> void:
+	assert(GRAVITY_NAMES.size() == Tracer.GRAVITY_VIEWS.size(), "a name for each gravity view")
 	menu = Node3D.new()
 	menu.transform = Transform3D(Basis(Vector3.RIGHT, -atan2(MENU_DROP, MENU_DIST)), Vector3(0.0, -MENU_DROP, -MENU_DIST))
 	add_child(menu)
@@ -287,8 +294,8 @@ func _pressed(key: String, down: bool) -> bool:
 	return down and not before
 
 
-## The direction held: the D-pad or arrow keys, else the left stick as a D-pad (pushed out past 0.6,
-## let go under 0.3, its main axis the direction); y down is +1 (the next row).
+## The direction held: the D-pad or arrow keys, else the left stick as a D-pad (pushed out past
+## STICK_ON, let go under STICK_OFF, its main axis the direction); y down is +1 (the next row).
 func _direction(left: XRController3D) -> Vector2i:
 	var d := Vector2i(int(Input.is_key_pressed(KEY_RIGHT)) - int(Input.is_key_pressed(KEY_LEFT)),
 			int(Input.is_key_pressed(KEY_DOWN)) - int(Input.is_key_pressed(KEY_UP)))
@@ -296,9 +303,9 @@ func _direction(left: XRController3D) -> Vector2i:
 		d += Vector2i(int(left.is_button_pressed(&"dpad_right")) - int(left.is_button_pressed(&"dpad_left")),
 				int(left.is_button_pressed(&"dpad_down")) - int(left.is_button_pressed(&"dpad_up")))
 		var s := left.get_vector2(&"primary")
-		if s.length() > 0.6:
+		if s.length() > STICK_ON:
 			stick_dir = Vector2i(0, -int(signf(s.y))) if absf(s.y) >= absf(s.x) else Vector2i(int(signf(s.x)), 0)
-		elif s.length() < 0.3:
+		elif s.length() < STICK_OFF:
 			stick_dir = Vector2i.ZERO
 		if d == Vector2i.ZERO:
 			d = stick_dir
@@ -416,7 +423,7 @@ func _count(k: String) -> int:
 		"rate": return rate_options.size()
 		"scale": return SCALES.size()
 		"fov": return FOV_CHOICES.size()
-		"grav": return GRAVITY_NAMES.size()
+		"grav": return Tracer.GRAVITY_VIEWS.size()
 		"bench": return 1
 	return 2
 
@@ -456,7 +463,8 @@ func _apply(k: String, i: int) -> void:
 		"strip": set_strip(i == 0)
 
 
-## Whether the row can be changed now: not what the speed check sets while it runs.
+## Whether the row can be changed now: the headset's rows need OpenXR, and while the speed check
+## holds the viewer (main.hold) the settings it times or reads stay as they are.
 func _enabled(k: String) -> bool:
 	var held: bool = main.hold
 	match k:
@@ -474,8 +482,10 @@ func _value_text(k: String, i: int) -> String:
 	match k:
 		"rate": return "%.0f Гц" % rate_options[i]
 		"scale":
-			var px := roundi(xr.get_render_target_size().x * SCALES[i]) if xr else 0
-			return "%d%% (%d точек)" % [roundi(SCALES[i] * 100.0), px] if px > 0 else "%d%%" % roundi(SCALES[i] * 100.0)
+			# and the pixels of each eye's picture at that scale
+			var px := Vector2i((xr.get_render_target_size() * SCALES[i]).round()) if xr else Vector2i.ZERO
+			var pct := roundi(SCALES[i] * 100.0)
+			return "%d%% (%d×%d)" % [pct, px.x, px.y] if px.x > 0 else "%d%%" % pct
 		"fov": return FOVEATIONS[FOV_CHOICES[i]]
 		"order": return ORDERS[i]
 		"gaze": return OFF_ON[i]
@@ -525,11 +535,10 @@ func _layout() -> void:
 		name_w = maxf(name_w, _width(_name_text(k), FONT_ROW))
 		for i in _count(k):
 			val_w = maxf(val_w, _width(_value_text(k, i), FONT_ROW))
-	val_w = maxf(val_w, _width("100% (8888 точек)", FONT_ROW) if xr else 0.0)
+	val_w = maxf(val_w, _width("100% (8888×8888)", FONT_ROW) if xr else 0.0)
 	var arrow_w := ARROW
 	menu_w = 2.0 * PAD + name_w + 2.0 * GAP + 2.0 * (arrow_w + GAP) + val_w
-	for s: String in [HINT, "кадров 144 из 144 · GPU 13.9 из 13.9 мс", "в SteamVR задано 144 Гц, а шлем на 144",
-			"задано 144 Гц: выйди и запусти снова", FrameRate.STEAM_HINT]:
+	for s: String in [HINT] + FrameRate.widest_lines():
 		menu_w = maxf(menu_w, 2.0 * PAD + _width(s, FONT_STATUS))
 	name_x = -0.5 * menu_w + PAD
 	value_half = 0.5 * val_w
@@ -603,7 +612,13 @@ func refresh() -> void:
 
 func _show() -> void:
 	menu.visible = open
-	strip.visible = strip_on and not open
+	strip.visible = not open and (strip_on or _bench_below())
+
+
+## The speed check's line goes on the line below: while it runs (and its countdown) and until the
+## menu is opened.
+func _bench_below() -> bool:
+	return bench_text != "" and (bench_unseen or main.bench.running)
 
 
 func _process(delta: float) -> void:
@@ -704,12 +719,16 @@ func _set_foveation(level: int) -> void:
 
 
 ## Where SteamVR's density map is: where the eyes look, the middle, or none (Godot's own then).
+## Where the eyes look means Godot asked for that (foveation.gd says when): OpenXRInterface doesn't
+## tell whether the runtime gives it.
 func _foveation_source() -> String:
 	if xr == null:
 		return ""
 	if not xr.is_foveation_supported():
 		return "без SteamVR"
-	return "по взгляду" if xr.is_eye_gaze_interaction_supported() else "по центру"
+	var asked: bool = ProjectSettings.get_setting("xr/openxr/foveation_eye_tracked", false) \
+			and xr.is_eye_gaze_interaction_supported()
+	return "по взгляду" if asked else "по центру"
 
 
 ## The XR viewport's render scale.
@@ -727,6 +746,7 @@ func bench_status(s: String) -> void:
 	bench_text = s
 	bench_unseen = not open
 	bench_label.text = s
+	_show()
 	_set_text(text)
 
 
@@ -756,7 +776,7 @@ func _compose_line() -> String:
 	elif s.size() > 1:
 		first += " · " + s[1]
 	var lines := [first] + rate.notes()
-	if bench_text != "" and (bench_unseen or main.bench.running):
+	if _bench_below():
 		lines.append(bench_text)
 	return "\n".join(lines)
 

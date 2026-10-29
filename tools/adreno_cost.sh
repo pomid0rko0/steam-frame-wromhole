@@ -7,7 +7,7 @@
 #                        [--poses P] [--profile] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
-# (lavapipe) picture on 256 random tiles a pose (under 0.2% of pixels off by more than 4/255).
+# (lavapipe) picture on 256 random tiles a pose (the bound: tools/adreno_cost.py, --check).
 # --toys: tests/emu_dump.gd's scene toys, with --hands or --held its toys+hands or toys+held (the
 # shader with balls, of every source: one without it stops the run).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
@@ -79,7 +79,7 @@ for s in "${srcs[@]}"; do
 		out=$(KEEP_LOG=$log "$ROOT/tools/adreno_stats.sh" plain ${stsh:+--shader $stsh} 2>&1)
 		# of its two programs, the one that runs: the smaller /1 (as adreno_cost.py picks it)
 		stats=$(grep '^prog [0-9]*/1' <<<"$out" | sort -n -k3 | head -1)
-		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', set())" 2>/dev/null && { parsed=1; break; }
+		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', A.shader_defines('${stsh:-res://shaders/wormhole.gdshader}'))" 2>/dev/null && { parsed=1; break; }
 		[ $try = 3 ] || echo "$s: the compiler's log did not parse, compiling again"
 	done
 	[ -n "$parsed" ] || { echo "$s: the compiler's log did not parse three times:"; tail -5 <<<"$out"; exit 1; }

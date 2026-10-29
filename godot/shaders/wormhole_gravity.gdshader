@@ -3,7 +3,7 @@ render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip
 // where no movable ball or cube can be seen (stencil_mark.gdshader)
 stencil_mode read, compare_not_equal, 1;
 
-// The gravity view's floor (main.set_gravity_view 1): the plain ray tracer with the floor coloured
+// The gravity view "floor" (Tracer.GRAVITY_VIEWS): the plain ray tracer with the floor coloured
 // by the strength of gravity (tracer.gd: a shader per combination).
 #define WH_NO_BALLS
 #define WH_GRAVITY

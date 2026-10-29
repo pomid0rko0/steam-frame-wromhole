@@ -10,9 +10,9 @@
 // geodesic from the head to the eye. Without multiview EYE_OFFSET is zero.
 
 // The uniforms wormhole_core.gdshaderinc's top says the including file declares, and the head's.
-uniform float wh_rho0 = 3.0;
-uniform float wh_h = 5.0;
-uniform float wh_fillet = 1.0;
+uniform float wh_rho0;
+uniform float wh_h;
+uniform float wh_fillet;
 uniform vec4 wh_sph[6];
 uniform vec4 wh_pil[4];
 uniform vec4 wh_box[4];

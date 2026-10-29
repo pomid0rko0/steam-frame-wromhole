@@ -36,14 +36,15 @@ func _process(_delta: float) -> bool:
 	if frames == 2:
 		main.menu.visible = false     # nothing but the ball under test
 	if frames == 3:
-		# the viewer stands at chart (10, 0) facing -x: play x -> chart +y, play +y -> chart +z,
-		# play +z -> chart +x. So chart (cx, cy, cz) is play (cy, cz, cx - 10).
+		# the viewer stands at main.START_POS facing -x (START_FORWARD, main places it so): play x ->
+		# chart +y, play +y -> chart +z, play +z -> chart +x. So chart (cx, cy, cz) is play
+		# (cy, cz, cx - START_POS.x).
 		if mode == "ray":
 			var p := Vector4(CHART.x, CHART.y, CHART.z, main.space.h)     # point of R^4 in sheet A
 			main.tracer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))
-			m.position = Vector3(CHART.y, CHART.z, CHART.x - 10.0)
+			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)
 			main.origin.add_child(m)
 	if frames == 12:
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)

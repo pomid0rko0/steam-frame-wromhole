@@ -7,7 +7,7 @@ extends SceneTree
 ## 3. Tab switches to snaps: E snap-turns 30 degrees to the right (once per push), Q back
 ## 4. R puts the viewer back at the start, facing the wormhole
 ## 5. Shift + W for six seconds runs 24 m: through the middle of the throat into universe B,
-##    on the floor, still walking straight (chart B: x = -10.86)
+##    on the floor, still walking straight, to where 24 m along the floor end in chart B
 ## Controllers: tests/walking_xr_test.gd.
 
 const U := preload("res://tests/util.gd")
@@ -114,8 +114,8 @@ func _process(_delta: float) -> bool:
 			U.key(KEY_W, false)
 			U.key(KEY_SHIFT, false)
 		559:
-			# 24 m from chart A x = 10: 6 m of flat floor, 2L = 11.14 m of curved zone, 6.86 m in B
-			var want_r: float = 24.0 - (10.0 - main.space.Rout) - 2.0 * main.space.L + main.space.Rout
+			# 24 m from the start: START_POS.x - Rout of flat floor, 2L of curved zone, the rest in B
+			var want_r: float = 24.0 - (main.START_POS.x - main.space.Rout) - 2.0 * main.space.L + main.space.Rout
 			var p := _feet()
 			U.check("Shift + W runs through the throat into universe B", _side() < 0.0 and absf(p.x + want_r) < 0.05 and absf(p.y) < 0.01,
 					"side %+.0f, feet at (%.3f, %.3f), expected (%.3f, 0)" % [_side(), p.x, p.y, -want_r])
