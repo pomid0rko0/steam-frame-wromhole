@@ -33,11 +33,12 @@ const MAX_BALLS := 12           # the shader's slots for the toys' and the hands
 const MAX_CUBES := 6
 # m around each proxy sphere at least. A ray that meets a toy inside its sphere leaves the proxy at
 # least the margin beyond the hit; it is marked if that is beyond the near plane, which lies
-# Main.NEAR along the view axis and up to near_reach along the frustum's corners. So a proxy whose
-# toy comes nearer the eyes than near_reach gets a margin that makes up the difference (_margin):
-# the rest keep this one.
+# Main.NEAR along the view axis and up to near_reach along the frustum's corners. So a proxy (the
+# shell's too) whose sphere comes so near the eyes that this margin would leave such a ray short of
+# near_reach gets a larger one (_margin): the rest keep this one.
 const PROXY_MARGIN := 0.08
-const EYE_REACH := 0.05         # m from the head to either eye, at most
+# m from the head to either eye that _margin allows for (half an IPD: about 0.032)
+const EYE_REACH := 0.05
 # the proxy sphere's mesh (check_scene.gd's balls take it too); its faces lie inside the sphere
 # (Godot's SphereMesh has rings + 1 latitude steps): grown by PROXY_SLACK, more than they lie in
 # (_ready asserts it)

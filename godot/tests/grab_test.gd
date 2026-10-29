@@ -197,9 +197,10 @@ func _hands() -> void:
 
 
 # 1
-## A frustum wider than this test's (tangents 1.8, 61 degrees, its corner 70 degrees off the axis)
-## and a 5 mm ball 3 cm in front of the left eye toward its corner: there the near plane lies
-## 14 cm along the ray, farther than a toy's proxy reaches beyond it with a fixed margin.
+## A frustum wider than this test's (tangents 1.8, 61 degrees, its corner 69 degrees off the axis)
+## and a ball of radius 5 mm 3 cm in front of the left eye toward its corner: along the ray through
+## the ball the near plane lies 12.5 cm from the eye, beyond the 11.7 cm the ball's proxy would reach
+## with the fixed margin.
 func _near_eye() -> void:
 	_clear()
 	var pr := Vector3(0.3, 0.8, 0.3)          # the hands low and behind: out of view
