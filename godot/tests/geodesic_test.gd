@@ -93,8 +93,9 @@ func _inward(rng: RandomNumberGenerator, l: float, b: float, dist: float) -> Arr
 	return [l, n, dir, dist, [_random_tangent(rng, n), _random_tangent(rng, n), dir]]
 
 
-## Each path where the reference ends, in the same universe, within TOL beyond the reference's own
-## spread (the header: paths whose ends may be sensitive to their direction).
+## Each path where the reference ends, in the same universe, and its transported vectors where the
+## reference's point, within TOL beyond the reference's own spread (the header: paths whose ends may
+## be sensitive to their direction).
 func _check_sensitive(label: String, paths: Array) -> void:
 	var worst_p := 0.0
 	var worst_f := 0.0
