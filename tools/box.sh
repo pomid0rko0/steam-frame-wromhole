@@ -23,7 +23,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/repo.sh"
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
-# SteamVR and the owner's view share this machine's memory and cores with the container, so the
+# SteamVR and the owner's view share this machine's memory and cores with the container: a stereo
+# test's renders, five at once with no memory limit, can take enough to crash SteamVR. So the
 # container gets at most one core's time and MEM of memory, no swap (a run that needs more fails
 # in here, not SteamVR), runs take JOBS renders at once (default 2), and a run stops when the
 # Frame has less than MIN_FREE left.
@@ -103,7 +104,7 @@ if [ "$(podman exec $NAME cat /box-ready 2>/dev/null)" != "$SETUP" ]; then
 	echo "setting up the $NAME container"
 	# what setup.sh itself needs to run, then setup.sh
 	inbox sh -c 'dpkg --configure -a && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-		curl unzip xauth python3-pip git >/dev/null'
+		curl unzip python3-pip >/dev/null'
 	inbox "$ROOT/tools/setup.sh"
 	podman exec $NAME sh -c "echo $SETUP > /box-ready"
 fi

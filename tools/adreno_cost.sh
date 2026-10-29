@@ -8,8 +8,8 @@
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
 # (lavapipe) picture on 256 random tiles a pose (under 0.2% of pixels off by more than 4/255).
-# --toys, --hands, --held: tests/emu_dump.gd's scenes toys, toys+hands, toys+held (the shader with
-# balls, of every source: one without it stops the run).
+# --toys: tests/emu_dump.gd's scene toys, with --hands or --held its toys+hands or toys+held (the
+# shader with balls, of every source: one without it stops the run).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
@@ -43,6 +43,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 [ ${#srcs[@]} -gt 0 ] || srcs=(this)
+[ -z "$HELD$SPLIT" ] || [ -n "$TOYS" ] || { echo "--hands, --held and --split go with --toys"; exit 2; }
 WORK=$(mktemp -d)
 AB=$ROOT/godot/shaders/ab
 # tools/ab_shaders.sh's directory is the build's: keep what is there
@@ -71,17 +72,17 @@ for s in "${srcs[@]}"; do
 	fi
 	[ -n "$sh" ] && stsh=$sh
 	log=$WORK/$n.log
-	# a log adreno_cost.py can't parse (no log, or listings interleaved) is compiled again, up to
-	# three times
+	# compiled up to three times, until adreno_cost.py can parse the log (listings can come out
+	# interleaved)
 	parsed=""
 	for try in 1 2 3; do
+		out=$(KEEP_LOG=$log "$ROOT/tools/adreno_stats.sh" plain ${stsh:+--shader $stsh} 2>&1)
 		# of its two programs, the one that runs: the smaller /1 (as adreno_cost.py picks it)
-		stats=$(KEEP_LOG=$log "$ROOT/tools/adreno_stats.sh" plain ${stsh:+--shader $stsh} \
-			| grep '^prog [0-9]*/1' | sort -n -k3 | head -1)
+		stats=$(grep '^prog [0-9]*/1' <<<"$out" | sort -n -k3 | head -1)
 		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', set())" 2>/dev/null && { parsed=1; break; }
-		echo "$s: the compiler's log did not parse, compiling again"
+		[ $try = 3 ] || echo "$s: the compiler's log did not parse, compiling again"
 	done
-	[ -n "$parsed" ] || { echo "$s: the compiler's log did not parse three times"; exit 1; }
+	[ -n "$parsed" ] || { echo "$s: the compiler's log did not parse three times:"; tail -5 <<<"$out"; exit 1; }
 	echo "$s: $stats"
 	# the poses' inputs (and pictures, for --check), from Godot itself
 	d=$(x_display 970)
@@ -94,7 +95,7 @@ for s in "${srcs[@]}"; do
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS" ]; then
 		plog=$WORK/$n.plain.log
 		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
-		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog ' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
+		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
 	fi
 	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
 done

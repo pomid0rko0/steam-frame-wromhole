@@ -175,8 +175,7 @@ func _process(_delta: float) -> bool:
 		U.check("speed check: the rate set back", r.desired == bench_stored)
 		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
-		U.check("speed check: the menu says it is done", p.bench_text.contains("Гц") or p.bench_text.begins_with("замер готов")
-				or p.bench_text.begins_with("этот"))
+		U.check("speed check: the menu says it is done (the tour's result)", p.bench_text.contains("Гц"))
 		U.check("... on the line below, until the menu opens", p.strip_label.text.contains(p.bench_text))
 		p.set_open(true)
 		U.check("... and in the menu, under its row", p.bench_label.visible and p.bench_label.text == p.bench_text

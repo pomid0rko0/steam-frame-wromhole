@@ -3,7 +3,7 @@
 of any pixel, in 1/255, and how many pixels differ by more than 1/255. Passes when in every pair
 the pixels off by more than 1/255 (the GPU may round a colour either way) are fewer than 1 in
 10 000.
-   python3 tools/compare/same_images.py dir a:b [a:b ...]"""
+   python3 tools/compare/same_images.py dir a:b [a:b ...]     (where numpy is: tools/box.sh)"""
 import sys, glob, os
 import numpy as np
 from PIL import Image

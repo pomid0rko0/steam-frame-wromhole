@@ -38,6 +38,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate()
 	main.xr_name = "none"
 	var scene: String = a[3] if a.size() > 3 else "plain"
+	main.show_check = false     # also with a godot/check of export.sh --check lying in the tree
 	main.toys.enabled = scene.begins_with("toys")
 	main.toys.demo = false
 	toys = main.toys.enabled

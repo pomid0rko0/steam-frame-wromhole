@@ -84,6 +84,8 @@ check_apt() {   # sets $missing to the apt packages still needed
 		done
 	fi
 	command -v xvfb-run >/dev/null || missing="$missing xvfb"
+	command -v xauth >/dev/null || missing="$missing xauth"     # xvfb-run's
+	command -v git >/dev/null || missing="$missing git"         # tools/repo.sh, export.sh, ab_shaders.sh
 	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
 	command -v monado-service >/dev/null || missing="$missing monado-service"
 	[ -f /usr/share/openxr/1/openxr_monado.json ] || missing="$missing libopenxr1-monado"

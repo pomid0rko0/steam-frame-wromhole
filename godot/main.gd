@@ -20,7 +20,8 @@ extends Node3D
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
-## the sticks, A and the hands do nothing. A new action goes into
+## the feet stay, and the sticks, A, the gravity view's button, the hands and the toys do nothing. A
+## new action goes into
 ## openxr_action_map.tres and tests/util.gd's BINDINGS alike (the tests compare them exactly), in
 ## the Frame's profile with Valve's paths. Jumps of the viewer (place, set_pose, a snap turn) call
 ## hands.forget_motion, or the jump would be a throw.

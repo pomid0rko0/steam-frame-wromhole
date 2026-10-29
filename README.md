@@ -49,7 +49,7 @@ godot --path godot --xr-mode off
 
 ```
 tools/setup.sh      # на Linux с apt: Godot 4.7.2, шаблоны экспорта и всё для проверок (что уже стоит, берёт готовым)
-tools/export.sh     # сборка: на Linux с apt — godot/build/wormhole_vr_<ветка>_steam_frame.zip, на шлеме — сразу на место
+tools/export.sh     # сборка: на шлеме — сразу на место, иначе — godot/build/wormhole_vr_<ветка>_steam_frame.zip
 ```
 
 Zip ставят в шлем с компьютера на Windows по SSH (шлем и компьютер в одной сети Wi-Fi): вписать имя пользователя и адрес шлема в начало `tools/deploy_frame.ps1` и перетащить zip на `tools/deploy_frame.bat`. Сборка ложится в `~/wormhole-vr/wormhole_vr.arm64`, в первый раз скрипт добавляет её в библиотеку Steam. Логи со шлема — `tools/frame_logs.bat`, скриншоты — `tools/frame_screens.bat`, оба кладут файл в «Загрузки».
@@ -88,5 +88,5 @@ CLAUDE.md правила для ИИ-агента, который пишет к�
 
 ## Ограничения
 
-- Только сферически симметричная червоточина (другие формы — [docs/wishlist.md](docs/wishlist.md)).
+- Только эта форма червоточины (другие — [docs/wishlist.md](docs/wishlist.md)).
 - Теней нет.
