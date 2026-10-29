@@ -399,12 +399,12 @@ func _log() -> void:
 	var where := "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 			"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
 	var fov: Foveation = main.foveation
-	var tan_y: Vector2 = main.tracer.view_tangents()
+	var f: Vector4 = main.tracer.frustum(0)
 	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
 			% [rate, meter.paced_rate(), s.shown, s.refreshes, s.refreshes - s.shown, s.gpu / s.drawn if s.drawn > 0 else 0.0, s.gpu_max,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
-			rad_to_deg(atan(tan_y.y)), rad_to_deg(atan(tan_y.x)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
+			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
 			main.tracer.gravity_view, "open" if main.menu.open else "closed"])
 
 
@@ -415,3 +415,9 @@ class Second:
 	var drawn := 0                  # frames Godot drew
 	var gpu := 0.0                  # their GPU ms, summed
 	var gpu_max := 0.0
+
+
+	## As the tests print it.
+	func _to_string() -> String:
+		return "%d of %d refreshes shown, %d drawn, GPU %.1f ms avg %.1f max" % [shown, refreshes, drawn,
+				gpu / drawn if drawn > 0 else 0.0, gpu_max]

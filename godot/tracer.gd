@@ -195,15 +195,14 @@ func _margin(c: Vector3, rad: float) -> float:
 
 
 ## How far the near plane is from an eye along the frustum's farthest ray, m: Main.NEAR along the
-## view axis, NEAR / cos of its angle off the axis elsewhere. From the runtime's projection of each
-## eye (the tangents of the frustum's sides), on the desktop from the camera's fov and the window.
+## view axis, NEAR / cos of its angle off the axis elsewhere. From each eye's frustum, on the
+## desktop from the camera's fov and the window.
 func _near_reach() -> float:
 	var t := Vector2.ZERO           # the largest tangents of the sides, across and up
 	if xr:
 		for v in xr.get_view_count():
-			# a frustum's projection: x.x = 2 / (right - left), z.x = (right + left) / (right - left)
-			var p := xr.get_projection_for_view(v, 1.0, Main.NEAR, 100.0)
-			t = t.max(Vector2((1.0 + absf(p.z.x)) / p.x.x, (1.0 + absf(p.z.y)) / p.y.y))
+			var f := frustum(v)
+			t = t.max(Vector2(maxf(-f.x, f.y), maxf(-f.z, f.w)))
 	else:
 		var cam := get_parent() as Camera3D
 		var size := get_viewport().get_visible_rect().size
@@ -409,7 +408,8 @@ func _fits_shader() -> bool:
 func _pixel_angle() -> float:
 	if xr:
 		var px := xr.get_render_target_size() * xr_view.scaling_3d_scale
-		var height := view_tangents().x - view_tangents().y
+		var f := frustum(0)
+		var height := f.w - f.z
 		if not is_finite(height) or height <= 0.0:
 			# no frustum from the runtime yet: the last one, or 90 degrees
 			return pixel_angle if pixel_angle > 0.0 else 2.0 / maxf(px.y, 1.0)
@@ -418,12 +418,15 @@ func _pixel_angle() -> float:
 	return 2.0 * tan(0.5 * deg_to_rad(cam.fov)) / maxf(float(get_viewport().get_visible_rect().size.y), 1.0)
 
 
-## Eye 0's frustum by the runtime's projection: the tangents of its top and bottom edges' angles
-## up from the view axis (the bottom's negative below it).
-func view_tangents() -> Vector2:
-	var p := xr.get_projection_for_view(0, 1.0, 0.05, 100.0)
-	# a frustum's projection: y.y = 2 / (top - bottom), z.y = (top + bottom) / (top - bottom)
-	return Vector2(1.0 + p.z.y, p.z.y - 1.0) / p.y.y
+## Eye v's frustum by the runtime's projection: the tangents of its sides' angles off the view
+## axis, left, right, bottom, top (negative left of and below the axis).
+func frustum(v: int) -> Vector4:
+	var p := xr.get_projection_for_view(v, 1.0, Main.NEAR, 100.0)
+	# a frustum's projection: x.x = 2 / (right - left), z.x = (right + left) / (right - left), and
+	# y.y, z.y likewise for top and bottom
+	var across := Vector2(p.z.x - 1.0, p.z.x + 1.0) / p.x.x
+	var up := Vector2(p.z.y - 1.0, p.z.y + 1.0) / p.y.y
+	return Vector4(across.x, across.y, up.x, up.y)
 
 
 ## Gravity for the gravity views: f / r and f' as the shader evaluates them
