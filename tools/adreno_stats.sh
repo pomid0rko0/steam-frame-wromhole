@@ -53,8 +53,9 @@ grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -2
 # it twice (a generic "ubershader" first, then the one specialised for the scene, which runs from
 # then on); one line each, then ir3's own statistics lines with --full. A shader with more than
 # 100 vec4 of constants is compiled once more as prog N/2, reading them from memory; Turnip runs
-# that one only if the pipeline's stages need more than 512 vec4 in all: each line gives the
-# program's own (constlen).
+# that one only if the pipeline's stages need more than 512 vec4 in all (Mesa's ir3_compiler.c,
+# max_const_safe and max_const_pipeline; ir3_trim_constlen): each line gives the program's own
+# (constlen).
 python3 - "$LOG" "$DISASM" "$FULL" <<'EOF'
 import re, sys
 text = open(sys.argv[1], errors='replace').read().replace('MESA: info: ', '')
