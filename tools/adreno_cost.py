@@ -8,7 +8,7 @@ sums what the waves issue. Divergent branches cost a wave both sides, as on the 
 leaves out: tools/ir3_emu.py.
 
   python3 tools/adreno_cost.py LOG DUMP.json [--tiles N] [--size S] [--fov F] [--seed K] [--check] [--profile]
-                               [--split PLAINLOG]
+                               [--split WORLDLOG]
 LOG: the compiler log (KEEP_LOG=... tools/adreno_stats.sh plain); DUMP.json: tests/emu_dump.gd's
 output (the poses). --check compares the emulated colours with the dumped pictures (the pose is
 then emulated at the picture's size and FOV); otherwise each pose is emulated as one eye of the
@@ -16,10 +16,11 @@ headset, S x S pixels (tools/adreno_cost.sh passes tools/env.sh's HEADSET_EYE) a
 (default 104, a guess at the Frame's: the headset log's per-second "refresh:" line gives the frustum
 the runtime hands Godot), on N random tiles (default 300; the same tiles for every LOG of the same
 wave width with the same seed K). --profile: cycles per stretch of code.
---split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
-toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
-(the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
-GPU packs the passing pixels into waves). The proxies' own pass is not counted.
+--split: the frame as the app draws it with toys (tracer.gd, «The split»): WORLDLOG's ray tracer (the
+world's) over the whole view, LOG's (with the toys) also where the world's leaves the pixel to it
+(may_meet, wormhole_core.gdshaderinc's wh_mayMeet); LOG's cost in a tile is weighted by the share of
+its pixels it runs (the GPU packs the pixels it runs into waves, whole 2x2 groups, the others of a
+group as helpers: that share is a little short of the lanes it takes).
 """
 import json
 import os
@@ -47,6 +48,9 @@ MS_NOP = 1.05e-3
 MS_CAT4 = 0.0258
 MS_CAT5 = 0.146
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+_CORE = open(os.path.join(ROOT, 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
+MAY_MARGIN = float(re.search(r'const float WH_MAY_MARGIN = ([0-9.e-]+);', _CORE).group(1))
+WH_STEP = float(re.search(r'const float WH_STEP = ([0-9.e-]+);', _CORE).group(1))
 SCENE = json.load(open(os.path.join(ROOT, 'godot', 'scene.json')))
 from wh import Wormhole, app_profile  # noqa: E402 (ref/, on the path above)
 PROFILE = app_profile()
@@ -197,6 +201,7 @@ class Shader:
         st = E.Stats()
         st.pc = profile
         E.run_wave(self.instrs, self.start, w, st)
+        self.killed = w.killed           # lanes the program discarded (the world's ray tracer)
         if self.out_half:
             col = np.stack([w.H[self.out + k].view(np.float16).astype(np.float32) for k in range(3)], 1)
         else:
@@ -244,38 +249,44 @@ def varyings_for(entry, xs, ys, W, H, tan_x, tan_y, sh=None):
 
 def find_flat_order(sh, entries):
     """Which way Mesa packed the flat inputs (v_l, v_n, v_eye): the order whose emulated colours are
-    Godot's picture on a few tiles."""
+    Godot's pictures, within 4/255, on the most pixels of a few tiles of each pose (the pictures can
+    hold what this program leaves to another ray tracer: the toys of the split, or pixels it
+    discards)."""
     import itertools
     from PIL import Image
     names = ['l', 'n', 'eye'] if len(sh.flat) == 6 else ['l', 'n']
-    e = entries[0]
-    img = np.asarray(Image.open(e['png']).convert('RGB'), np.float32) / 255.0
-    H, W = img.shape[:2]
-    P = np.array(e['proj'])
+    pics = [(e, np.asarray(Image.open(e['png']).convert('RGB'), np.float32) / 255.0) for e in entries]
     best = None
     for order in itertools.permutations(names):
         sh.flat_order = list(order)
-        rng = np.random.default_rng(7)
-        worst = 0.0
-        for t in range(6):
-            xs, ys = tile_lanes(8 * rng.integers(0, W // 8), 8 * rng.integers(0, H // 8))
-            col, _ = sh.run(varyings_for(e, xs, ys, W, H, 1.0 / P[0][0], 1.0 / P[1][1], sh))
-            err = np.nan_to_num(np.abs(srgb(2.0 * col) - img[ys, xs]), nan=1.0).max()
-            worst = max(worst, err)
-        if best is None or worst < best[0]:
-            best = (worst, list(order))
+        good = 0
+        for e, img in pics:
+            H, W = img.shape[:2]
+            P = np.array(e['proj'])
+            sh.set_uniforms(e.get('uniforms', {}))
+            rng = np.random.default_rng(7)
+            for t in range(6):
+                xs, ys = tile_lanes(8 * rng.integers(0, W // 8), 8 * rng.integers(0, H // 8))
+                col, _ = sh.run(varyings_for(e, xs, ys, W, H, 1.0 / P[0][0], 1.0 / P[1][1], sh))
+                err = np.nan_to_num(np.abs(srgb(2.0 * col) - img[ys, xs]), nan=1.0).max(1)
+                good += int(((err <= 4.0 / 255) & ~sh.killed).sum())
+        if best is None or good > best[0]:
+            best = (good, list(order))
     sh.flat_order = best[1]
-    if best[0] > 4.0 / 255:
-        print('warning: no packing of the flat inputs reproduces the picture (%.1f/255)' % (255 * best[0]))
+    sh.set_uniforms(entries[0].get('uniforms', {}))
+    if best[0] < 0.5 * len(pics) * 6 * 64:
+        print('warning: the best packing of the flat inputs reproduces the pictures on %d of %d pixels'
+              % (best[0], len(pics) * 6 * 64))
     return best[1]
 
 
 def share_of(e, size, fov, step=16):
-    """The share of the view the stencil marks (a grid of pixels)."""
+    """The share of the view where wh_mayMeet holds (a grid of pixels): what the world's ray tracer
+    leaves to the one with the toys, but for the pixels it also leaves beside those (may_meet)."""
     tan = np.tan(np.radians(fov) / 2.0)
     g = np.arange(step // 2, size, step)
     xs, ys = np.meshgrid(g, g)
-    return float(proxy_marked(e, xs.ravel(), ys.ravel(), size, tan, tan).mean())
+    return float(may_meet(e, xs.ravel(), ys.ravel(), size, tan, tan, quads=False).mean())
 
 
 def srgb(c):
@@ -311,32 +322,87 @@ def check(sh, entries, ntiles, rng, unis=None):
     return worst
 
 
-def proxy_marked(e, xs, ys, size, tan_x, tan_y):
-    """Per lane: whether the stencil marks its pixel (Tracer.set_head, proxy_spheres): its straight ray
-    from the head, in the chart of the head's universe, meets a proxy sphere (or starts in one).
-    No proxies: the whole view is marked."""
-    P = np.array(e.get('proxies') or [], float).reshape(-1, 4)
-    if len(P) == 0:
-        return np.ones(len(xs), bool)
+def may_meet(e, xs, ys, size, tan_x, tan_y, quads=True):
+    """Per lane: whether the world's ray tracer leaves its pixel to the one with the toys
+    (wormhole_core.gdshaderinc, wh_mayMeet, from the dump's uniforms; its ray from the head), with
+    quads (lanes 4k .. 4k + 3, as tile_lanes lays them out) also where the pixel beside it or above
+    or below it in its 2x2 group does (wh_renderE's derivatives, fine as tools/ir3_emu.py takes them)."""
+    u = e.get('uniforms', {})
     B = np.array(e['cam_basis'], float).T
     f = np.array(e['head_f'], float)
     vx = (2.0 * (xs + 0.5) / size - 1.0) * tan_x
     vy = (1.0 - 2.0 * (ys + 0.5) / size) * tan_y
     pd = B @ np.stack([vx, vy, -np.ones_like(vx)], 0)
     V = pd[0][None] * f[0][:, None] + pd[1][None] * f[1][:, None] + pd[2][None] * f[2][:, None]
-    l, n = e['head_l'], np.array(e['head_n'], float)
-    side = 1.0 if l > 0 else -1.0
-    M = np.array([side, 1.0, 1.0])
-    x = M * WH.eye(l)[0] * n
-    d = M[:, None] * (side * V[0][None] * n[:, None] + V[1:])
-    d /= np.linalg.norm(d, axis=0)
-    hit = np.zeros(len(xs), bool)
-    for c in P:
-        oc = (x - c[:3])[:, None]
-        b = (oc * d).sum(0)
-        cq = float((oc * oc).sum()) - c[3] * c[3]
-        hit |= (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
-    return hit
+    V /= np.linalg.norm(V, axis=0)
+    l0, n0 = e['head_l'], np.array(e['head_n'], float)
+    vl, w = V[0], V[1:]
+    tw = np.array([0.0, n0[2], -n0[1]]) if abs(n0[0]) < 0.9 else np.array([-n0[2], 0.0, n0[0]])
+    we = w + 1e-7 * tw[:, None]
+    e2 = we / np.linalg.norm(we, axis=0)
+    rs = WH.eye(l0)[0]
+    b = rs * np.minimum((w * e2).sum(0), 1.0)
+    side = 1.0 if l0 >= 0.0 else -1.0
+    inward = vl * side < 0.0
+    enters = ~((abs(l0) > WH.L) & ((b >= WH.Rout + MAY_MARGIN) | ~inward))
+    turn = b > WH.rmin - MAY_MARGIN
+    passing = b < WH.rmin + MAY_MARGIN
+    rend = np.maximum(b, WH.rmin) - MAY_MARGIN
+    fz = np.stack([-e2[2], np.full(len(xs), n0[2])])
+    fz2 = (fz * fz).sum(0)
+    ct = np.minimum(b / rs, 1.0)
+    tn = np.stack([ct, np.where(inward, 1.0, -1.0) * np.sqrt(np.maximum(1.0 - ct * ct, 0.0))])
+    psie = np.arccos(np.minimum(b / min(rs, WH.Rout), 1.0))
+    stretch = abs(l0) >= WH.Lc
+    stretch_f = WH.Rout / WH.rmin * np.sqrt((WH.Rout + WH.R - WH.rmin) / WH.R)
+
+    def inv_slope(r):
+        c = np.clip((WH.Rout - r) / WH.R, 0.0, 1.0)
+        return 1.0 / np.sqrt(np.maximum(1.0 - c * c, 1e-14))
+
+    may = np.zeros(len(xs), bool)
+    bi = u.get('wh_bIdx', [0, 0, 0, 0])
+    ci = u.get('wh_cIdx', [0, 0, 0, 0])
+    objs = [(u['wh_ball'][i], u['wh_ballCol'][i][3], 1.0) for i in range(int(bi[0]), int(bi[3]))]
+    objs += [(u['wh_cube'][i], u['wh_cubeCol'][i][3], 2.0) for i in range(int(ci[0]), int(ci[3]))]
+    for C4, sz, k in objs:
+        c = np.array(C4[:3], float)
+        step = stretch_f * WH_STEP * sz
+        reach = k * sz + step * step / (8.0 * min(WH.R, WH.rho0)) + 1e-4 + MAY_MARGIN
+        cb = np.stack([np.full(len(xs), float(c @ n0)), (c[:, None] * e2).sum(0)])
+        cc = float(c @ c)
+        rho2 = (cb * cb).sum(0)
+        K = cc - reach * reach
+        cf = (cb * fz).sum(0)
+        dr = rend - reach
+        arc = (n0[2] <= 0.0) | (K <= 0.0) | ((cb[1] >= 0.0) & (cb[0] * fz[1] - cb[1] * fz[0] >= 0.0)) \
+            | ((cb[0] > 0.0) & (cb[0] * cb[0] >= K)) | ((cf > 0.0) & (cf * cf >= K * fz2))
+        basic = (rho2 > K) & ((dr < 0.0) | (dr * dr < cc)) & arc
+        if not stretch:
+            may |= basic
+            continue
+        a = np.sqrt(np.maximum(rho2 - K, 0.0))
+        rho = np.sqrt(rho2)
+        r1 = np.where(inward, np.maximum(rho - a, rend), np.maximum(rho - a, rs))
+        r2 = np.where(inward, np.minimum(rho + a, rs), rho + a)
+        psil = np.abs(psie - np.arccos(np.minimum(b / np.where(inward, r1, r2), 1.0)))
+        dev = r2 * psil * (inv_slope(np.where(inward, r1, rs)) - 1.0)
+        near = (r1 <= r2) & (np.abs((cb * tn).sum(0) - b) <= a + dev)
+        tt = np.stack([tn[0], np.abs(tn[1])])
+        c2 = (cb * tt).sum(0)
+        floor_after = (n0[2] <= 0.0) | (tt[0] * fz[1] - tt[1] * fz[0] >= 0.0)
+        after_turn = turn & floor_after & ((n0[2] <= 0.0) | (K <= 0.0)
+            | ((cb[0] * tt[1] - cb[1] * tt[0] <= 0.0) & (cb[1] * fz[0] - cb[0] * fz[1] <= 0.0))
+            | ((c2 > 0.0) & (c2 * c2 >= K)) | ((cf > 0.0) & (cf * cf >= K * fz2)))
+        throat = passing & (((WH.Lc > 0.0) & (np.sqrt(cc) - reach <= WH.rho0) & (abs(C4[3]) - reach <= WH.Lc))
+                            | (side * C4[3] < reach))
+        may |= basic & (near | (inward & (after_turn | throat)))
+    may &= enters
+    if quads:
+        m = may.reshape(-1, 4)
+        may = np.stack([m[:, 0] | m[:, 1] | m[:, 2], m[:, 1] | m[:, 0] | m[:, 3],
+                        m[:, 2] | m[:, 3] | m[:, 0], m[:, 3] | m[:, 2] | m[:, 1]], 1).reshape(-1)
+    return may
 
 
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
@@ -422,27 +488,27 @@ def main():
     lanes = 128 if sh.wave128 else 64
     size = opt['--size']
     share = None
-    plain = None
+    world = None
     if opt['--split']:
-        # the plain ray tracer: its own uniforms are the same material's
-        plain = Shader(opt['--split'], (spec[0] | {'WH_NO_BALLS'}, spec[1]), uniforms)
-        plain.flat_order = order
-        share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
+        # the world's ray tracer: its uniforms are the same as the one with the toys'
+        world = Shader(opt['--split'], (spec[0] | {'WH_WORLD'}, spec[1]), uniforms)
+        world.flat_order = find_flat_order(Shader(opt['--split'], (spec[0] | {'WH_WORLD'}, spec[1]),
+                                                  dict(entries[0].get('uniforms', {}))), entries)
+        share = lambda e, xs, ys, tan: float(may_meet(e, xs, ys, size, tan, tan).mean())
     res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
-    resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
-                lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis) if plain else None
+    resw = cost(world, entries, n, size, opt['--fov'], opt['--seed'], None, None, unis) if world else None
     for k, (pose, st) in enumerate(res):
         alu, nop, c4, c5 = per64(sh, st, n)
         busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)
-        if plain:
-            a2, n2, c42, c52 = per64(plain, resp[k][1], n)
+        if world:
+            a2, n2, c42, c52 = per64(world, resw[k][1], n)
             alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
         ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
         tot.append(ms)
         print('pose l %5.1f yaw %4.0f pitch %4.0f: %5.2f ms; per 64 pixels %5.0f ALU cycles, %4.0f nops, %4.1f transcendental, %3.1f texture unit; lanes busy %3.0f%%%s'
               % (pose[0], pose[1], pose[2], ms, alu, nop, c4, c5, busy,
-                 '; marked %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov'])) if plain else ''))
-    print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
+                 '; with the toys %.0f%%' % (100.0 * share_of(entries[k], size, opt['--fov'])) if world else ''))
+    print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split' if world else ''))
     if prof is not None:
         report(sh, prof)
 

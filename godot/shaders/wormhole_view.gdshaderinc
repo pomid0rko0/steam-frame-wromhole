@@ -47,7 +47,7 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube = 0;
-uniform vec4 wh_bound[4];
+uniform vec4 wh_bound[8];
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
 uniform vec4 wh_fball[12];
@@ -93,5 +93,14 @@ void vertex() {
 void fragment() {
 	vec4 V = normalize(v_ray);
 	vec4 dbg;
+#ifdef WH_WORLD
+	// the ray tracer with the toys takes the pixels where wh_mayMeet holds, and those that take
+	// derivatives with them (wh_renderE): its tag, from the pixel's position, tells the pixels of a
+	// 2x2 group apart
+	float may = wh_mayMeet(v_l, v_n, V.x, V.yzw, v_eye.x) ? 1.0 + FRAGCOORD.x + 2.0 * FRAGCOORD.y : 0.0;
+	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg, may);
+	if (may > 0.5) discard;
+#else
 	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+#endif
 }

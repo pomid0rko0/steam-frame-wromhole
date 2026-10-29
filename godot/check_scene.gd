@@ -10,6 +10,10 @@ extends RefCounted
 const BALLS := [Vector3(7.5, -0.5, 1.5), Vector3(8.0, -1.8, 1.1), Vector3(8.3, 1.6, 1.9)]
 const BALL_RADIUS := 0.3
 const BALL_COLOR := Color(0.85, 0.08, 0.06)
+# Godot's mesh of a ball: its faces lie inside the sphere by at most 1 - cos(pi / 48) cos(pi / 50),
+# 0.4% of the radius (SphereMesh has rings + 1 latitude steps)
+const BALL_SEGMENTS := 48
+const BALL_RINGS := 24
 # and a magenta cube on the floor, turned (half size, chart A centre, yaw)
 const CUBE_HALF := 0.3
 const CUBE := Vector3(6.9, 0.9, CUBE_HALF)
@@ -53,8 +57,8 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
 		s.height = 2.0 * BALL_RADIUS
-		s.radial_segments = Tracer.PROXY_SEGMENTS       # its faces inside the sphere as the proxies' are
-		s.rings = Tracer.PROXY_RINGS
+		s.radial_segments = BALL_SEGMENTS
+		s.rings = BALL_RINGS
 		var m := MeshInstance3D.new()
 		m.name = "Ball%d" % pos.size()
 		m.mesh = s

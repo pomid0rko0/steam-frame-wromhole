@@ -101,7 +101,7 @@ uniform vec4 wh_cube[""" + str(MAXC) + """];
 uniform vec4 wh_cubeE[""" + str(5 * MAXC) + """];
 uniform vec4 wh_cubeCol[""" + str(MAXC) + """];
 uniform int wh_nCube;
-uniform vec4 wh_bound[4];
+uniform vec4 wh_bound[8];
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
 uniform vec4 wh_fball[""" + str(MAXB) + """];
@@ -167,17 +167,25 @@ def render(ctx, state, size, tan, debug):
         r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
         fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
     fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
-    # the bounding spheres of each universe's balls and of its cubes, as Tracer.set_objects makes them
+    # the boxes round each universe's balls and its cubes, in its chart, as Tracer.set_objects makes them
     bound = []
-    for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
+    for group in range(2):
         for side in (1.0, -1.0):
-            pts = [(c[:3], rr) for c, rr in objs if abs(c[3] - side * PROF[1]) < rr]
+            pts = []
+            if group == 0:
+                for (c, rad, _), f in zip(BALLS, fball):
+                    if f[3] > 0.0 and np.sign(c[3]) == side:
+                        pts.append((np.array(f[:3]), np.sqrt(f[3])))
+            else:
+                for c, _, half, _ in CUBES:
+                    if abs(c[3] - side * PROF[1]) < 2.0 * half and np.sign(c[3]) == side:
+                        pts.append((np.array([side * c[0], c[1], c[2]]), 2.0 * half))
             if not pts:
-                bound.append((0.0, 0.0, 0.0, -1.0))
+                bound += [(0.0, 0.0, 0.0, 0.0)] * 2
                 continue
-            P = np.array([p for p, _ in pts])
-            mid = 0.5 * (P.min(0) + P.max(0))
-            bound.append(tuple(mid) + (max(np.linalg.norm(p - mid) + rr for p, rr in pts),))
+            lo = np.min([p - rr for p, rr in pts], 0)
+            hi = np.max([p + rr for p, rr in pts], 0)
+            bound += [tuple(lo) + (1.0,), tuple(hi) + (0.0,)]
     for k, v in dict(wh_sph=[tuple(x) for x in SCENE['spheres_A'] + SCENE['spheres_B']],
                      wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
                      wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),

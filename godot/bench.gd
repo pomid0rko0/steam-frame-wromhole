@@ -23,7 +23,7 @@ extends Node
 ## part decides.
 ## This build's ray tracer is timed each way FOVEATIONS lists (the split pass alone: what
 ## foveation's pass costs without a map) and, with the toys, over the whole view too (what the
-## stencil saves); the others as comparable() takes them.
+## split saves: tracer.gd); the others as comparable() takes them, over the whole view.
 ##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
 ## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),
@@ -112,7 +112,8 @@ func _ready() -> void:
 	while ResourceLoader.exists(AB_DIR % i):
 		var sh: Shader = load(AB_DIR % i)
 		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
-		others.append(Other.new(sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls))
+		others.append(Other.new(sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), _bare(sh),
+				_bare(with_balls) if with_balls else null))
 		i += 1
 	auto = FileAccess.file_exists(AUTO)
 
@@ -121,9 +122,23 @@ func has_ab() -> bool:
 	return not others.is_empty()
 
 
+## A source's ray tracer without its stencil test (what its own build drew around it is not there):
+## over the whole view.
+static func _bare(sh: Shader) -> Shader:
+	if not sh.code.contains("stencil_mode"):
+		return sh
+	var out := Shader.new()
+	var lines := []
+	for line in sh.code.split("\n"):
+		if not line.strip_edges().begins_with("stencil_mode"):
+			lines.append(line)
+	out.code = "\n".join(lines)
+	return out
+
+
 ## The others as variants of the kind this build runs now: without toys, or with them (the demo's),
-## theirs over the whole view: with the stencil test the whole view marked, without it no stencil
-## at all; none with the gravity view on (theirs are without it).
+## theirs over the whole view; none with the gravity view on (theirs are without it). With toys they get
+## this build's uniforms: one that reads the toys' differently (another wh_bound) draws them wrong.
 func comparable() -> Array[Setup]:
 	var tracer: Tracer = main.tracer
 	var out: Array[Setup] = []
@@ -131,10 +146,9 @@ func comparable() -> Array[Setup]:
 		return out
 	for o in others:
 		if tracer.plain():
-			out.append(Setup.new(o.label, o.shader, 0, false, Tracer.BARE))
+			out.append(Setup.new(o.label, o.shader, 0, false, true))
 		elif o.balls != null:
-			var with_stencil := o.balls.code.contains("stencil_mode")
-			out.append(Setup.new(o.label, o.balls, 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE))
+			out.append(Setup.new(o.label, o.balls, 0, false, true))
 	return out
 
 
@@ -185,9 +199,9 @@ func start() -> void:
 	variants = comparable()
 	own = variants.size()
 	for f in FOVEATIONS:
-		variants.append(Setup.new(f[0], own_shader, f[1], f[2], Tracer.SPLIT))
+		variants.append(Setup.new(f[0], own_shader, f[1], f[2], false))
 	if not tracer.plain():
-		variants.append(Setup.new("this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE))
+		variants.append(Setup.new("this build, toys over the whole view", own_shader, 0, false, true))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -295,7 +309,7 @@ func _prepare() -> void:
 ## A variant's ray tracer and foveation.
 func _use(v: Setup) -> void:
 	main.tracer.material.shader = v.shader
-	main.tracer.toy_mode = v.toy_mode
+	main.tracer.whole = v.whole
 	var fov: Foveation = main.foveation
 	if fov.level != v.foveation or fov.split_pass.enabled != (v.foveation > 0 or v.split):
 		fov.set_level(v.foveation, v.split)
@@ -382,9 +396,9 @@ func _compared() -> void:
 			if FOVEATIONS[k][1] > 0:
 				pcts.append("%s %+d%%" % [Menu.FOVEATIONS[FOVEATIONS[k][1]], roundi(100.0 * (_ratio(own + k, own) - 1.0))])
 		parts.append("фовеация: " + ", ".join(pcts))
-		# and what the stencil saves: the toys' ray tracer over the whole view against split
+		# and what the split saves: the toys' ray tracer over the whole view against split
 		if variants.size() > own + FOVEATIONS.size():
-			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
+			parts.append("разделение %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
 		verdict = " · ".join(parts)
 	if _headset():
 		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
@@ -552,7 +566,7 @@ static func _list(v: Array) -> String:
 ## This build's ray tracer as it runs, with the foveation chosen in the menu.
 func _restore() -> void:
 	main.tracer.material.shader = own_shader
-	main.tracer.toy_mode = Tracer.SPLIT
+	main.tracer.whole = false
 	main.foveation.set_level(menu.foveation)
 
 
@@ -571,14 +585,14 @@ class Setup:
 	var shader: Shader
 	var foveation: int              # Foveation.set_level's level
 	var split: bool                 # the split pass without a density map
-	var toy_mode: int               # Tracer.SPLIT, WHOLE or BARE
+	var whole: bool                 # Tracer.whole: the shader over the whole view
 
-	func _init(p_label: String, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
+	func _init(p_label: String, p_shader: Shader, p_foveation: int, p_split: bool, p_whole: bool) -> void:
 		label = p_label
 		shader = p_shader
 		foveation = p_foveation
 		split = p_split
-		toy_mode = p_toy_mode
+		whole = p_whole
 
 
 ## Another source's ray tracers (tools/ab_shaders.sh).

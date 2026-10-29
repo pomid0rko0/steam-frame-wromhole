@@ -9,13 +9,14 @@
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
 # (lavapipe) picture on 256 random tiles a pose (the bound: tools/adreno_cost.py, --check).
 # --toys: tests/emu_dump.gd's scene toys, with --hands or --held its toys+hands or toys+held (the
-# shader with balls, of every source: one without it stops the run).
+# shader with balls, of every source: one without it stops the run; this tree's uniforms, so a source
+# that reads the toys' differently, another wh_bound, is costed with them wrong).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
-# --split: "this" with toys as the app draws it, split by the stencil: the ray tracer with toys
-# where they may be seen, the plain one elsewhere (adreno_cost.py --split); other sources are
-# costed over the whole view, as the speed check times them.
+# --split: "this" with toys as the app draws it (tracer.gd, «The split»): the world's ray tracer over
+# the whole view, the one with toys where it leaves the pixel to it (adreno_cost.py --split); other
+# sources are costed over the whole view, as the speed check times them.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
@@ -93,9 +94,9 @@ for s in "${srcs[@]}"; do
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS" ]; then
-		plog=$WORK/$n.plain.log
-		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
-		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
+		plog=$WORK/$n.world.log
+		psh=res://shaders/wormhole_world$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
+		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the world's: #"
 	fi
 	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" --size "$HEADSET_EYE" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
 done

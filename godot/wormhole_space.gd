@@ -37,7 +37,7 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float) -> vo
 ## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
 ## the shape: the shader's wh_rho0, wh_h, wh_fillet (Tracer.param, set once in Tracer._ready),
 ## Tracer.upload_fillet_table (slow in GDScript: not per frame), Tracer.upload_gravity,
-## Tracer.set_objects (its sorting and proxies use h and Rout), the stereo check scene
+## Tracer.set_objects (its sorting and boxes use h and Rout), the stereo check scene
 ## (check_scene.gd: its grid's rout and lsh, its balls' and cube's R^4 centres from h), and what
 ## stands in chart coordinates outside Rout: godot/scene.json's objects, the toys' places (toys.gd),
 ## CheckScene.BALLS and CUBE, main.START_POS, and bench.gd's PLACES and TOUR_L (metres of l chosen
