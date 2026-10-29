@@ -1,11 +1,11 @@
 extends SceneTree
 ## The CPU time of the app's scripts in a frame, through the headset's code path: from a node
 ## processed before main to one processed after main and the nodes under it (main._process: the
-## walk, the head, the hands, the toys' physics, what goes to the shader; then the menu, the frame
-## rate and the speed check's own, and the XR nodes'). The simulated headset (tests/fake_hmd.gd)
+## walk, the head, the hands, the toys' physics, what goes to the shader; then the menu's, the frame
+## rate's and the speed check's own). The simulated headset (tests/fake_hmd.gd)
 ## and both controllers moving, the right hand holding a new ball, the demo's toys at rest around.
 ## It prints the median, the 90th percentile and the largest of SECONDS of frames, with the feet at
-## the start (a flat universe) and on the fillet (l 5), each after WARM frames there. A measurement,
+## the start (a flat universe) and on the fillet (l 5), each after about WARM frames there. A measurement,
 ## not a test (tools/test.sh does not run it): the times are this machine's.
 ##   godot --path . --fixed-fps 120 --resolution 320x180 -s res://tests/cpu_time.gd    (under xvfb-run)
 ## The headset's log has main._process alone (Main.scripts_ms) in its lines about late frames
@@ -23,7 +23,8 @@ var right: XRControllerTracker
 var frame := 0
 var stamps := {"t0": 0, "t1": 0}
 var times: Array[float] = []
-var places := [["start (flat)", INF], ["fillet (l 5)", 5.0]]     # [label, l: INF the start's place]
+# [label, l to put the feet at (Main.place_on_axis)]; the first is where main puts them at the start
+var places := [["start (flat)", null], ["fillet (l 5)", 5.0]]
 var place := 0
 var place_frame := 0
 

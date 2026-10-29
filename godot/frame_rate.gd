@@ -23,10 +23,12 @@ extends Node
 ##
 ## The log has the GPU's clock because a GPU that lowers it makes the same frame take longer; on
 ## the Frame the readings (one a second) showed its top clock while frames were too slow. The GPU
-## and CPU times it prints are the ones Godot measured last: its GPU timestamps come back when a
-## frame's slot is used again (RenderingDevice), so they belong to a frame a few frames earlier.
-## "process" is Godot's whole process step; main's script (Main.scripts_ms, main._process alone) is
-## this frame's, main being processed before this node, its child, and the frame before's too.
+## and render CPU times it prints are the ones Godot measured last: its GPU timestamps come back
+## when a frame's slot is used again (RenderingDevice), so they belong to a frame a few frames
+## earlier. "process" (Performance.TIME_PROCESS) is the longest stretch of Godot's main loop over
+## about the last second, from the scripts' processing through the rendering's sync and draw,
+## updated once a second. main's script (Main.scripts_ms, main._process alone) is this frame's, main
+## being processed before this node, its child; and the frame before's.
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 

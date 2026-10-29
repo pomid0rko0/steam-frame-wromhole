@@ -13,13 +13,14 @@ extends SceneTree
 ##    of r_min, just below (paths that, far enough, pass the throat) and just above (paths that turn
 ##    back before it), 1 to 6 m: on some throats they are still on their way when they end;
 ## 3. past the shell's edge: from a flat universe with b just below Rout (10^-7 to 10^-3 of it),
-##    paths that only graze the fillet, some in less than one of its steps, 0.5 to 4 m.
+##    paths that only graze the fillet, many in less than one of its steps, and go on 0.1 to 2 m
+##    beyond where they meet it.
 ## Each: where the path ends (in the same universe as the reference's, 2 and 3) and where three
 ## transported vectors point, within TOL (the vectors' own single precision is about 1e-6 at these
 ## distances). Near r_min a path is so sensitive to its direction that a change in its last stored
-## digit can move its end by more than TOL: 2 and 3 are judged beyond the spread of the reference
-## itself, run again with the direction's tangential part 2.4e-7 longer (two to four steps of each
-## component's last stored digit).
+## digit can move its end by more than TOL: 2 is judged beyond the spread of the reference itself,
+## run again with the direction's tangential part 2.4e-7 longer (two to four steps of each
+## component's last stored digit); 3 the same way, though nearly straight there it hardly spreads.
 
 const U := preload("res://tests/util.gd")
 const PROFILES := [[3.0, 5.0, 1.0], [3.0, 1.0, 1.0], [3.0, 0.4, 1.0], [3.0, 0.1, 0.2], [3.0, 3.0, 2.5]]
@@ -72,15 +73,17 @@ func _initialize() -> void:
 		paths = []
 		for i in GRAZING:
 			var sg := 1.0 if i % 2 == 0 else -1.0
-			var l := sg * (sp.L + rng.randf_range(0.05, 1.0))
+			var rr := sp.Rout + rng.randf_range(0.05, 1.0)
 			var b := sp.Rout * (1.0 - pow(10.0, rng.randf_range(-7.0, -3.0)))
-			paths.append(_inward(rng, l, b, rng.randf_range(0.5, 4.0)))
+			# straight in the flat chart up to the shell, r = Rout
+			var s_in := sqrt(rr * rr - b * b) - sqrt(sp.Rout * sp.Rout - b * b)
+			paths.append(_inward(rng, sg * (rr - sp.Rout + sp.L), b, s_in + rng.randf_range(0.1, 2.0)))
 		_check_sensitive("geodesic grazing the shell, throat %s" % [pr], paths)
 	U.finish(self)
 
 
 ## A path from l toward the throat with impact parameter b (b < r(l)), in a random plane, of length
-## dist, with two random vectors to transport: [l, n, dir, dist, frame].
+## dist, and the vectors to transport, two random ones and dir: [l, n, dir, dist, frame].
 func _inward(rng: RandomNumberGenerator, l: float, b: float, dist: float) -> Array:
 	var n := Vector3(rng.randfn(), rng.randfn(), rng.randfn()).normalized()
 	var t := _random_tangent(rng, n)
@@ -90,8 +93,8 @@ func _inward(rng: RandomNumberGenerator, l: float, b: float, dist: float) -> Arr
 	return [l, n, dir, dist, [_random_tangent(rng, n), _random_tangent(rng, n), dir]]
 
 
-## Paths whose ends are sensitive to their direction: each where the reference ends, in the same
-## universe, within TOL beyond the reference's own spread (the header).
+## Each path where the reference ends, in the same universe, within TOL beyond the reference's own
+## spread (the header: paths whose ends may be sensitive to their direction).
 func _check_sensitive(label: String, paths: Array) -> void:
 	var worst_p := 0.0
 	var worst_f := 0.0
