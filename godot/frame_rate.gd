@@ -25,6 +25,8 @@ extends Node
 ## the Frame the readings (one a second) showed its top clock while frames were too slow. The GPU
 ## and CPU times it prints are the ones Godot measured last: its GPU timestamps come back when a
 ## frame's slot is used again (RenderingDevice), so they belong to a frame a few frames earlier.
+## "process" is Godot's whole process step; main's script (Main.scripts_ms, main._process alone) is
+## this frame's, main being processed before this node, its child, and the frame before's too.
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
@@ -78,6 +80,7 @@ var desired := 0.0              # the rate last chosen; written after the one be
 var requested := 0.0            # a rate the display has not followed yet
 var request_from := 0.0
 var request_age := 0.0
+var scripts_before := 0.0       # main's script last frame, ms
 var note := ""                  # what came of the last choice
 var note_failed := false
 var note_left := 0
@@ -139,12 +142,13 @@ func _process(delta: float) -> void:
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()
-			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process"
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms (the frame before %.2f ms)"
 					% [meter.missed() - missed_before, main.foot_l, look.x, look.y,
 					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
 					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
-					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, scripts_before])
 		bench.frame_timing(now, period, reported)
+	scripts_before = main.scripts_ms
 	t += delta
 	now.drawn += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())

@@ -1,17 +1,20 @@
 extends SceneTree
-## The time main._process takes on the CPU (the app's scripts in a frame: the walk, the head, the
-## hands, the toys' physics, what goes to the shader), through the headset's code path: the
-## simulated headset (tests/fake_hmd.gd) and both controllers moving, the right hand holding a new
-## ball, the demo's toys at rest around. It prints the median, the 90th percentile and the
-## largest of SECONDS of frames, with the feet at the start (a flat universe) and on the fillet
-## (l 5). A measurement, not a test (tools/test.sh does not run it): the times are this machine's.
+## The CPU time of the app's scripts in a frame, through the headset's code path: from a node
+## processed before main to one processed after main and the nodes under it (main._process: the
+## walk, the head, the hands, the toys' physics, what goes to the shader; then the menu, the frame
+## rate and the speed check's own, and the XR nodes'). The simulated headset (tests/fake_hmd.gd)
+## and both controllers moving, the right hand holding a new ball, the demo's toys at rest around.
+## It prints the median, the 90th percentile and the largest of SECONDS of frames, with the feet at
+## the start (a flat universe) and on the fillet (l 5), each after WARM frames there. A measurement,
+## not a test (tools/test.sh does not run it): the times are this machine's.
 ##   godot --path . --fixed-fps 120 --resolution 320x180 -s res://tests/cpu_time.gd    (under xvfb-run)
-## The headset's own log has main's scripts in its lines about late frames (frame_rate.gd).
+## The headset's log has main._process alone (Main.scripts_ms) in its lines about late frames
+## (frame_rate.gd).
 
 const U := preload("res://tests/util.gd")
 const SECONDS := 4.0
 const RATE := 120.0             # frames a second (--fixed-fps)
-const WARM := 40                # frames before timing: the ball made, the pipelines compiled
+const WARM := 40                # frames at a place before timing: the ball made, the pipelines compiled
 
 var main: Main
 var hmd
@@ -20,12 +23,13 @@ var right: XRControllerTracker
 var frame := 0
 var stamps := {"t0": 0, "t1": 0}
 var times: Array[float] = []
-var places := [["start (flat)", -1.0], ["fillet (l 5)", 5.0]]
+var places := [["start (flat)", INF], ["fillet (l 5)", 5.0]]     # [label, l: INF the start's place]
 var place := 0
 var place_frame := 0
 
 
-## A node processed right before or right after main (process_priority) that notes the time.
+## A node that notes the time, processed before every node of priority 0 or after them all
+## (process_priority): main and the nodes under it are of 0.
 func _stamp(prio: int, key: String) -> Node:
 	var s := GDScript.new()
 	s.source_code = "extends Node\nvar box: Dictionary\nvar key: String\nfunc _process(_d):\n\tbox[key] = Time.get_ticks_usec()\n"
@@ -60,16 +64,12 @@ func _process(_delta: float) -> bool:
 	# the grip closed, then B: a new ball in the right hand
 	right.set_input(&"grip", 1.0 if frame >= 10 else 0.0)
 	right.set_input(&"by_button", frame >= 12 and frame < 14)
-	if frame - place_frame == WARM:
-		times.clear()
-		if places[place][1] >= 0.0:
-			main.place_on_axis(places[place][1])
-	elif frame - place_frame > WARM and stamps.t1 > stamps.t0:
+	if frame - place_frame > WARM and stamps.t1 > stamps.t0:
 		times.append((stamps.t1 - stamps.t0) / 1000.0)
 	if times.size() >= SECONDS * RATE:
 		times.sort()
 		var k := times.size()
-		print("%s, a ball in the right hand %s: main._process median %.2f ms, 90%% %.2f ms, largest %.2f ms"
+		print("%s, a ball in the right hand %s: scripts median %.2f ms, 90%% %.2f ms, largest %.2f ms"
 				% [places[place][0], main.hands.list[1].held != null, times[k / 2], times[k * 9 / 10], times[k - 1]])
 		place += 1
 		place_frame = frame
@@ -77,4 +77,5 @@ func _process(_delta: float) -> bool:
 		if place == places.size():
 			U.finish(self, hmd, [left, right])
 			return true
+		main.place_on_axis(places[place][1])
 	return false

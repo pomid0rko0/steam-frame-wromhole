@@ -92,6 +92,7 @@ var snap_armed := true          # the right stick went back to the middle since 
 var menu_active := false        # the menu was open this frame: its buttons are its (Menu.handle_input)
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
+var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lines about late frames)
 
 
 func _ready() -> void:
@@ -204,6 +205,7 @@ func _add_controllers() -> void:
 
 
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
@@ -273,6 +275,7 @@ func _process(delta: float) -> void:
 	if toys.enabled:
 		draw_toys()
 	tracer.set_head(hp[0], hp[1], hf, head.origin)
+	scripts_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
 
 func draw_toys() -> void:

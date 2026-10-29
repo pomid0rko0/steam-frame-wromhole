@@ -84,12 +84,18 @@ func dr(l: float) -> float:
 func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> Array:
 	if dist <= 0.0:
 		return [l, n, frame.duplicate()]
-	var size := dir.length()
-	var u := Vector3(dir.y, dir.z, dir.w)
-	u -= u.dot(n) * n
-	var un := u.length() / size
+	# the direction's tangential part and its length in float64 (Vector3 math is single precision):
+	# b, worked out from it, decides paths that pass close to r_min
+	var nn := n.x * n.x + n.y * n.y + n.z * n.z
+	var un_ := (dir.y * n.x + dir.z * n.y + dir.w * n.z) / nn
+	var ux := dir.y - un_ * n.x
+	var uy := dir.z - un_ * n.y
+	var uz := dir.w - un_ * n.z
+	var ul := sqrt(ux * ux + uy * uy + uz * uz)
+	var size := sqrt(dir.x * dir.x + ul * ul)
+	var un := ul / size
 	# a radial direction has no plane of its own: any one through it
-	var e := u.normalized() if un > 1e-9 else _normal_to(n)
+	var e := Vector3(ux, uy, uz) / ul if un > 1e-9 else _normal_to(n)
 	var vl := dir.x / size
 	var r0 := r(l)
 	var b := r0 * un
@@ -136,9 +142,10 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 			var hs := minf(left, STEP * fillet)
 			var y1 := _fillet_step(l, vl, psi, b, hs, sg)
 			# Past a crease (h < fillet: the fillets meet at l = 0 at an angle) the circle's
-			# continuation narrows below r_min: a path that passes the throat (b < r_min) would turn
-			# back there, within the step. Coming in, it turns back on this fillet only if it does not
-			# pass; so if it does, a step that turns it has crossed l = 0.
+			# continuation narrows below r_min, down to rho0: a path with rho0 < b < r_min, which
+			# passes the throat, can turn back there within the step. On this fillet r only grows
+			# away from the throat, so a path coming in with b < r_min does not turn on it: a step
+			# that turns it has crossed l = 0.
 			var bounced := th0 > 0.0 and sg * vl < 0.0 and sg * y1[1] > 0.0 and b < r(0.0)
 			if bounced or sg * y1[0] > L or sg * y1[0] < Lc:
 				# where l first crosses the fillet's end: on the step's cubic in l (its values and
@@ -147,7 +154,7 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 				# crosses at a grazing angle is sensitive to the rate)
 				var out := sg * y1[0] > L and not bounced
 				var target := sg * L if out else sg * Lc
-				hs *= _cross(l, vl * hs, y1[0], y1[1] * hs, target)
+				hs *= _cross(l, vl * hs, y1[0], y1[1] * hs, target, (sg > 0.0) == out)
 				y1 = _fillet_step(l, vl, psi, b, hs, sg)
 				var bt := b / r(target)
 				y1[0] = target
@@ -199,10 +206,10 @@ func _fillet_rate(l: float, b: float, sg: float) -> PackedFloat64Array:
 
 
 ## Where on a step the cubic with values y0, y1 and slopes d0, d1 (per step) at its ends first
-## reaches target (y0 is on one side of it): the step's fraction. Its first sample on the other side
-## of 32, then bisection; where none is, the sample nearest to target (a dip the samples miss).
-static func _cross(y0: float, d0: float, y1: float, d1: float, target: float) -> float:
-	var side := y0 > target
+## crosses target, going up (up) or down: the step's fraction (y0 may lie on target: a path that
+## has just come in there). Its first sample past target of 32, then bisection; where none is, the
+## sample nearest to target (a dip the samples miss).
+static func _cross(y0: float, d0: float, y1: float, d1: float, target: float, up: bool) -> float:
 	var a := 0.0
 	var z := 1.0
 	var nearest := 1.0
@@ -210,7 +217,7 @@ static func _cross(y0: float, d0: float, y1: float, d1: float, target: float) ->
 	for k in range(1, 33):
 		var t := k / 32.0
 		var y := _cubic(y0, d0, y1, d1, t)
-		if (y > target) != side:
+		if (y > target) == up and y != target:
 			z = t
 			break
 		a = t
@@ -221,10 +228,11 @@ static func _cross(y0: float, d0: float, y1: float, d1: float, target: float) ->
 		return nearest
 	for _it in 30:
 		var t := 0.5 * (a + z)
-		if (_cubic(y0, d0, y1, d1, t) > target) == side:
-			a = t
-		else:
+		var y := _cubic(y0, d0, y1, d1, t)
+		if (y > target) == up and y != target:
 			z = t
+		else:
+			a = t
 	return z
 
 

@@ -18,10 +18,10 @@ extends RefCounted
 
 const GRAVITY := 9.81
 const DT := 1.0 / 180.0
-# s: the most one step catches up. A longer frame's rest is dropped: the toys fall behind for once
+# the most substeps one step takes. A longer frame's rest is dropped: the toys fall behind for once
 # instead of a long frame's many substeps making the next frame late as well (72 Hz at SteamVR's
 # half rate is 5 substeps a frame)
-const MAX_LAG := 6.0 * DT
+const MAX_SUBSTEPS := 6
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
 # Rolling friction: a small part that follows the weight, and a part that follows the speed; air
@@ -149,9 +149,16 @@ func distance_to(b: Body, P: Vector4) -> float:
 ## A ball the floor's friction has held for SLEEP_TIME, or a cube that has hardly moved for as
 ## long, is asleep (asleep): not moved until something wakes it.
 func step(delta: float, hands: Array[Ball]) -> void:
-	_acc = minf(_acc + delta, MAX_LAG)
-	while _acc >= DT:
-		_acc -= DT
+	# counted with a little room: subtracting DT while _acc >= DT would in floating point now and
+	# then leave a whole DT to the next frame
+	_acc += delta
+	var count := floori(_acc / DT + 1e-6)
+	if count > MAX_SUBSTEPS:
+		count = MAX_SUBSTEPS
+		_acc = 0.0
+	else:
+		_acc = maxf(_acc - count * DT, 0.0)
+	for _sub in count:
 		for b in balls:
 			if b.held != &"":
 				b.still = 0.0                 # let go, it falls at once

@@ -5,23 +5,26 @@ extends SceneTree
 ##   godot --path . --headless -s res://tests/geodesic_test.gd
 ## The reference: RK4 in float64 of (l, n) and four transported vectors, no plane taken, in steps of
 ## REF_STEP; with no cylinder a step is cut where l crosses 0 (with h < R, r' jumps there; the
-## crossing on the step's cubic in l) and the profile there is taken from the side the step is on. On five throats (docs/geometry.md,
-## «Точность», in metres here):
+## crossing on the step's cubic in l) and the profile there is taken from the side the step is on.
+## On five throats (docs/geometry.md, «Точность», in metres here):
 ## 1. from points in and around the curved zone, in random directions (radial and tangential among
 ##    them), 0 to 12 m;
-## 2. paths that come close to the throat's narrowest circle, r_min: from a fillet toward the
-##    throat with impact parameter b within 1% of r_min, just below (they pass the throat) and just
-##    above (they turn back just before it), up to 6 m.
-## Each: where the path ends and where three transported vectors point, within TOL (the vectors' own
-## single precision is about 1e-6 at these distances). Near r_min a path is so sensitive to its
-## direction that a change of it in its last stored digit can move its end by more than TOL: there
-## within TOL beyond the spread of the reference itself, whose direction a second run takes about
-## two single-precision steps longer across.
+## 2. toward the throat's narrowest circle, r_min: from a fillet with impact parameter b within 1%
+##    of r_min, just below (paths that, far enough, pass the throat) and just above (paths that turn
+##    back before it), 1 to 6 m: on some throats they are still on their way when they end;
+## 3. past the shell's edge: from a flat universe with b just below Rout (10^-7 to 10^-3 of it),
+##    paths that only graze the fillet, some in less than one of its steps, 0.5 to 4 m.
+## Each: where the path ends (in the same universe as the reference's, 2 and 3) and where three
+## transported vectors point, within TOL (the vectors' own single precision is about 1e-6 at these
+## distances). Near r_min a path is so sensitive to its direction that a change in its last stored
+## digit can move its end by more than TOL: 2 and 3 are judged beyond the spread of the reference
+## itself, run again with the direction's tangential part 2.4e-7 longer (two to four steps of each
+## component's last stored digit).
 
 const U := preload("res://tests/util.gd")
 const PROFILES := [[3.0, 5.0, 1.0], [3.0, 1.0, 1.0], [3.0, 0.4, 1.0], [3.0, 0.1, 0.2], [3.0, 3.0, 2.5]]
 const CASES := 60               # per profile: 1
-const GRAZING := 20             # per profile: 2
+const GRAZING := 20             # per profile: 2, and 3
 const REF_STEP := 0.002         # m
 const TOL := 2e-5               # m, and for unit vectors
 
@@ -58,47 +61,70 @@ func _initialize() -> void:
 				String.num_scientific(worst_p), String.num_scientific(worst_f)])
 		# 2
 		var rmin: float = sp.r(0.0)
-		worst_p = 0.0
-		worst_f = 0.0
-		var wrong := 0
-		var spread := 0.0
+		var paths := []
 		for i in GRAZING:
 			var sg := 1.0 if i % 4 < 2 else -1.0
 			var l := sg * rng.randf_range(sp.Lc + 0.5 * (sp.L - sp.Lc), sp.L)
 			var b := rmin * (1.0 + (1.0 if i % 2 == 0 else -1.0) * pow(10.0, rng.randf_range(-6.0, -2.0)))
-			var n := Vector3(rng.randfn(), rng.randfn(), rng.randfn()).normalized()
-			var t := _random_tangent(rng, n)
-			var e := Vector3(t.y, t.z, t.w).normalized()
-			var ut := b / sp.r(l)
-			var dir := Vector4(-sg * sqrt(1.0 - ut * ut), ut * e.x, ut * e.y, ut * e.z)
-			var dist := rng.randf_range(1.0, 6.0)
-			var fr := [_random_tangent(rng, n), _random_tangent(rng, n), dir]
-			var a := sp.geodesic(l, n, dir, dist, fr)
-			var r := _reference(l, n, dir, dist, fr)
-			var wider := Vector4(dir.x, (1.0 + 2.4e-7) * dir.y, (1.0 + 2.4e-7) * dir.z, (1.0 + 2.4e-7) * dir.w)
-			var r2 := _reference(l, n, wider, dist, fr)
-			if signf(a[0]) != signf(r[0]):
-				wrong += 1
-			var sp_p := (sp.embed(r2[0], r2[1]) - sp.embed(r[0], r[1])).length()
-			var sp_f := 0.0
-			var off_f := 0.0
-			for k in 3:
-				sp_f = maxf(sp_f, (sp.embed_vector(r2[0], r2[1], r2[2][k]) - sp.embed_vector(r[0], r[1], r[2][k])).length())
-				off_f = maxf(off_f, (sp.embed_vector(a[0], a[1], a[2][k]) - sp.embed_vector(r[0], r[1], r[2][k])).length())
-			spread = maxf(spread, sp_p)
-			worst_p = maxf(worst_p, (sp.embed(a[0], a[1]) - sp.embed(r[0], r[1])).length() - sp_p)
-			worst_f = maxf(worst_f, off_f - sp_f)
-		U.check("geodesic near r_min, throat %s" % [pr], wrong == 0 and worst_p < TOL and worst_f < TOL,
-				"%d paths, %d in the other universe than the reference's; beyond the reference's spread (up to %s m), end point off by %s m at most, transported vectors by %s"
-				% [GRAZING, wrong, String.num_scientific(spread), String.num_scientific(worst_p), String.num_scientific(worst_f)])
+			paths.append(_inward(rng, l, b, rng.randf_range(1.0, 6.0)))
+		_check_sensitive("geodesic near r_min, throat %s" % [pr], paths)
+		# 3
+		paths = []
+		for i in GRAZING:
+			var sg := 1.0 if i % 2 == 0 else -1.0
+			var l := sg * (sp.L + rng.randf_range(0.05, 1.0))
+			var b := sp.Rout * (1.0 - pow(10.0, rng.randf_range(-7.0, -3.0)))
+			paths.append(_inward(rng, l, b, rng.randf_range(0.5, 4.0)))
+		_check_sensitive("geodesic grazing the shell, throat %s" % [pr], paths)
 	U.finish(self)
+
+
+## A path from l toward the throat with impact parameter b (b < r(l)), in a random plane, of length
+## dist, with two random vectors to transport: [l, n, dir, dist, frame].
+func _inward(rng: RandomNumberGenerator, l: float, b: float, dist: float) -> Array:
+	var n := Vector3(rng.randfn(), rng.randfn(), rng.randfn()).normalized()
+	var t := _random_tangent(rng, n)
+	var e := Vector3(t.y, t.z, t.w).normalized()
+	var ut := b / sp.r(l)
+	var dir := Vector4(-signf(l) * sqrt(1.0 - ut * ut), ut * e.x, ut * e.y, ut * e.z)
+	return [l, n, dir, dist, [_random_tangent(rng, n), _random_tangent(rng, n), dir]]
+
+
+## Paths whose ends are sensitive to their direction: each where the reference ends, in the same
+## universe, within TOL beyond the reference's own spread (the header).
+func _check_sensitive(label: String, paths: Array) -> void:
+	var worst_p := 0.0
+	var worst_f := 0.0
+	var wrong := 0
+	var spread := 0.0
+	for q in paths:
+		var dir: Vector4 = q[2]
+		var a := sp.geodesic(q[0], q[1], dir, q[3], q[4])
+		var r := _reference(q[0], q[1], dir, q[3], q[4])
+		var wider := Vector4(dir.x, (1.0 + 2.4e-7) * dir.y, (1.0 + 2.4e-7) * dir.z, (1.0 + 2.4e-7) * dir.w)
+		var r2 := _reference(q[0], q[1], wider, q[3], q[4])
+		if signf(a[0]) != signf(r[0]):
+			wrong += 1
+		var sp_p := (sp.embed(r2[0], r2[1]) - sp.embed(r[0], r[1])).length()
+		var sp_f := 0.0
+		var off_f := 0.0
+		for k in 3:
+			sp_f = maxf(sp_f, (sp.embed_vector(r2[0], r2[1], r2[2][k]) - sp.embed_vector(r[0], r[1], r[2][k])).length())
+			off_f = maxf(off_f, (sp.embed_vector(a[0], a[1], a[2][k]) - sp.embed_vector(r[0], r[1], r[2][k])).length())
+		spread = maxf(spread, sp_p)
+		worst_p = maxf(worst_p, (sp.embed(a[0], a[1]) - sp.embed(r[0], r[1])).length() - sp_p)
+		worst_f = maxf(worst_f, off_f - sp_f)
+	U.check(label, wrong == 0 and worst_p < TOL and worst_f < TOL,
+			"%d paths, %d in the other universe than the reference's; beyond the reference's spread (up to %s m), end point off by %s m at most, transported vectors by %s"
+			% [paths.size(), wrong, String.num_scientific(spread), String.num_scientific(worst_p), String.num_scientific(worst_f)])
 
 
 func _random_tangent(rng: RandomNumberGenerator, n: Vector3) -> Vector4:
 	return WormholeSpace.tangent(n, Vector4(rng.randfn(), rng.randfn(), rng.randfn(), rng.randfn())).normalized()
 
 
-## The profile on side sg, [r, r'] (float64): as WormholeSpace's r, dr, but at l = 0 that side's.
+## The profile of side sg, [r, r'] (float64): WormholeSpace's r, dr on that side; past l = 0 (where
+## a step looks before it is cut there) that side's goes on: its fillet's circle, or the cylinder.
 func _prof(l: float, sg: float) -> PackedFloat64Array:
 	var al := sg * l
 	if al >= sp.L:
