@@ -1,14 +1,16 @@
 #!/bin/bash
 # Everything the tests and exports need on a Linux machine (or a fresh cloud session):
-# Godot 4.7.2 into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
+# Godot (V below) into tools/.bin, its export templates, and the Python packages of ref/ and tools/.
 # Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL for
-# ref/test_gpu.py, Monado to run the app through a real OpenXR runtime without a headset
-# (CLAUDE.md, "Running things").
-# The four steps don't depend on each other and run at once; each line of output starts with
-# its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
-# is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's
-# shader compiler makes of the ray tracer. No package has it for x86 (~10 min, once).
-# On the Steam Frame all of it goes into tools/box.sh's container, where the tools run (tools/env.sh).
+# ref/'s GPU checks, Monado to run the app through a real OpenXR runtime without a headset.
+# The steps (steps= below) don't depend on each other and run at once; each line of output starts
+# with its step's name. Then, last (adreno), the Steam Frame's Vulkan driver (Mesa's Turnip for
+# Adreno 750) is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the
+# headset's shader compiler makes of the ray tracer) and tools/fdm_check.sh (how its driver renders
+# a pass).
+# No package has the drm-shim (built once).
+# On the Steam Frame all of it goes into tools/box.sh's container, where the tools run
+# (tools/env.sh).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # not there when a cloud environment's setup script, a copy of this one alone, runs it (below)
@@ -20,8 +22,7 @@ GODOT=Godot_v$V-stable_linux.$(uname -m | sed 's/^aarch64$/arm64/')   # x86_64 i
 TPL=${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$V.stable
 mkdir -p "$BIN"
 
-# One connection to GitHub's release storage gives ~25 MB/s; eight pieces (-r) at once are
-# several times faster.
+# GitHub's release storage gives one connection a fraction of the line: eight pieces (-r) at once.
 fetch() {   # url file
 	local url size i n=8 pids="" ok=1
 	url=$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$1")   # the signed link GitHub redirects to
@@ -49,20 +50,20 @@ get_godot() {
 
 get_templates() {
 	[ ! -f "$TPL/linux_release.arm64" ] || return 0
-	echo "downloading export templates (1.3 GB)"
+	echo "downloading export templates (the release's file for every platform: one is kept)"
 	fetch "$REL/Godot_v$V-stable_export_templates.tpz" "$BIN/templates.tpz"
 	# one unzip per core, into a side folder: an interrupted run leaves no half-filled $TPL
 	rm -rf "$TPL.part"
 	mkdir -p "$TPL.part" "$TPL"
-	unzip -Z1 "$BIN/templates.tpz" | grep -v '/$' \
+	# only what the one export preset (Linux arm64) takes
+	unzip -Z1 "$BIN/templates.tpz" | grep -E '/(linux_(debug|release)\.arm64|version\.txt|icudt[^/]*)$' \
 		| xargs -P "$(nproc)" -n 1 unzip -ojq "$BIN/templates.tpz" -d "$TPL.part"
 	mv -f "$TPL.part"/* "$TPL/"
 	rmdir "$TPL.part"
 	rm "$BIN/templates.tpz"
 }
 
-# One pip for all four: PyPI through the cloud session's proxy swings between 0.1 and 35 MB/s
-# per connection, and four pip downloads at once came out slower than one after another.
+# One pip for all four: PyPI through the cloud session's proxy is slow per connection.
 get_pip() {
 	pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/null \
 		|| pip install --quiet numpy scipy pillow moderngl
@@ -70,7 +71,7 @@ get_pip() {
 
 # what Mesa's build needs (Turnip, X11 for Godot's window, the drm-shim)
 MESA_V=25.2.8
-MESA_DEBS="ninja-build python3-mako python3-yaml python3-pycparser flex bison pkg-config glslang-tools
+MESA_DEBS="build-essential xz-utils python3-pip ninja-build python3-mako python3-yaml python3-pycparser flex bison pkg-config glslang-tools
 	libdrm-dev libexpat1-dev zlib1g-dev libzstd-dev libelf-dev libx11-dev libxext-dev libxfixes-dev
 	libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev libxcb-randr0-dev
 	libxcb-sync-dev libxcb-shm0-dev libxcb-xfixes0-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev"
@@ -86,10 +87,12 @@ check_apt() {   # sets $missing to the apt packages still needed
 		done
 	fi
 	command -v xvfb-run >/dev/null || missing="$missing xvfb"
+	command -v xauth >/dev/null || missing="$missing xauth"     # xvfb-run's
+	command -v git >/dev/null || missing="$missing git"         # tools that read the repository
 	ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || missing="$missing mesa-vulkan-drivers"
 	command -v monado-service >/dev/null || missing="$missing monado-service"
 	[ -f /usr/share/openxr/1/openxr_monado.json ] || missing="$missing libopenxr1-monado"
-	local libs   # EGL, for ref/test_gpu.py
+	local libs   # EGL, for ref/'s GPU checks
 	libs=$(ldconfig -p 2>/dev/null) || true
 	{ grep -q "libEGL.so.1 " <<<"$libs" && grep -q libEGL_mesa <<<"$libs"; } || missing="$missing libegl1 libegl-mesa0"
 }
@@ -97,8 +100,9 @@ get_apt() {
 	check_apt
 	if [ -n "$missing" ] && command -v apt-get >/dev/null; then
 		echo "installing:$missing"
-		# a fresh container has empty package lists: without update, install finds nothing
-		{ apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $missing; } || true
+		# a fresh container has empty package lists: without update, install finds nothing; dpkg
+		# first finishes an install a stopped run left
+		{ dpkg --configure -a && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $missing; } || true
 		check_apt
 	fi
 	[ -z "$missing" ] || { echo "still missing:$missing (lavapipe = mesa-vulkan-drivers)"; return 1; }
@@ -108,7 +112,7 @@ get_apt() {
 # The source comes from mesa3d.org, or from Ubuntu's archive where mesa3d.org is unreachable.
 get_adreno() {
 	[ ! -f "$SHIM" ] || return 0
-	# Mesa wants meson 1.4 or newer; Ubuntu 24.04 has 1.3
+	# Mesa wants meson 1.4 or newer, which the system may lack
 	python3 -c "import mesonbuild.coredata as c, sys; sys.exit(tuple(map(int, c.version.split('.')[:2])) < (1, 4))" 2>/dev/null \
 		|| pip install --quiet --break-system-packages "meson>=1.4,<1.9" 2>/dev/null || pip install --quiet "meson>=1.4,<1.9"
 	local src=$BIN/mesa-src tar=$BIN/mesa.tar.xz u
@@ -134,7 +138,7 @@ get_adreno() {
 }
 
 # A cloud environment's setup script is a copy of this one, run outside the repo (ROOT is then
-# not the repo: `/` so far, so its BIN is /tools/.bin); the cloud keeps what it installed and
+# not the repo: `/`, so its BIN is /tools/.bin); the cloud keeps what it installed and
 # clones the repo afresh for each session. Take that install, found through the godot it put on
 # PATH, instead of downloading Godot and building Turnip again.
 reuse() {
@@ -148,7 +152,7 @@ reuse() {
 	fi
 	if [ ! -f "$SHIM" ] && [ -f "$d/mesa-fd/${SHIM#"$MESA_OUT"/}" ]; then
 		rm -rf "$MESA_OUT"
-		ln -sfn "$d/mesa-fd" "$MESA_OUT"   # a link, not a copy: its Vulkan ICD names absolute paths
+		ln -sfn "$d/mesa-fd" "$MESA_OUT"
 		echo "reuse: $d/mesa-fd"
 	fi
 }
@@ -181,7 +185,7 @@ for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}";
 # after apt: it needs the packages that step installs
 [ $adreno = 0 ] || get_adreno 2>&1 | prefix adreno
 
-# also on PATH: the tests fall back to it when this script ran outside the repo,
-# e.g. piped from curl in an environment setup script (then ROOT is not the repo)
+# also on PATH: the tests fall back to it when this script ran outside the repo (a cloud
+# environment's copy: reuse above)
 ln -sf "$(readlink -f "$BIN/$GODOT")" /usr/local/bin/godot 2>/dev/null || true
 echo "ok: $BIN/$GODOT, $MESA_OUT"

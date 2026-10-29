@@ -1,24 +1,22 @@
 """Render the GLSL core headless (EGL/llvmpipe) and compare its per-pixel
 geometry against an independent float64 reference that integrates every
 curved ray with brute-force RK4 (no symmetry reduction)."""
-import sys, os, shutil
-# On a machine without apt (the Steam Frame's SteamOS) this runs in tools/box.sh's container: EGL
-# there is software, here it would be the headset's GPU (tools/env.sh)
-if not shutil.which('apt-get') and shutil.which('podman'):
-    BOX = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools', 'box.sh')
-    os.execv(BOX, [BOX, 'python3', os.path.abspath(sys.argv[0])] + sys.argv[1:])
+import sys, os, re
+import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from PIL import Image
-from wh import Wormhole
+from wh import Wormhole, app_profile, app_max_cubes, app_scene_sizes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
-PROF = tuple(float(v) for v in os.environ.get('WH_PROFILE', '3,5,1').split(','))   # rho0, h, fillet in metres
+TAN = 1.0      # the cameras' tangent of the half field of view, every side
+# rho0, h, fillet in metres: WH_PROFILE="rho0,h,fillet" if set, else the app's throat
+PROF = tuple(float(v) for v in os.environ['WH_PROFILE'].split(',')) if 'WH_PROFILE' in os.environ else app_profile()
 W = Wormhole(*PROF)
 import json
 SCENE = json.load(open(os.path.join(HERE, '..', 'godot', 'scene.json')))
-MAXB = 12
+MAXB = int(re.search(r'const int WH_MAXB = (\d+);', CORE).group(1))    # the shader's ball slots
 
 
 def test_balls():
@@ -37,7 +35,8 @@ def test_balls():
 
 
 BALLS = test_balls() if os.environ.get('WH_BALLS', '1') == '1' else []
-MAXC = 6
+MAXC = app_max_cubes()       # the shader's cube slots
+N_SPH, N_PIL, N_BOX = app_scene_sizes()
 
 
 def test_cubes():
@@ -70,8 +69,7 @@ CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
 
 
 def region_order(objs, reach):
-    """main.region_order: the objects sorted by where they can be met (universe A's sheet, the
-    shell, B's sheet) and the bounds (x, y, z, w): A 0 .. y, the shell x .. w, B z .. the end."""
+    """Tracer.region_order, in float64 (its comment says what it returns)."""
     groups = [[], [], [], [], []]
     for o in objs:
         C, r = np.asarray(o[0]), reach(o)
@@ -81,33 +79,32 @@ def region_order(objs, reach):
     return sum(groups, []), tuple(int(e) for e in ends[:4])
 
 
-# the shader gets them sorted, as from main.set_objects; the reference uses the same order
+# the shader gets them sorted, as from Tracer.set_objects; the reference uses the same order
 BALLS, BIDX = region_order(BALLS, lambda o: o[1])
 CUBES, CIDX = region_order(CUBES, lambda o: 2.0 * o[2])
-# the fillet polynomials from a table, as Godot's shaders do (WH_TABLE=0: worked out per ray, as the
-# web preview does)
-TABLE = os.environ.get('WH_TABLE', '1') == '1'
-
 FRAG = """#version 400
-""" + ("" if BALLS else "#define WH_NO_BALLS\n") + ("#define WH_TABLE\nuniform sampler2D wh_tab;\nuniform vec4 wh_tabLo;\n"
-                                                    "uniform vec4 wh_tabInv;\nuniform vec4 wh_tabReg;\n" if TABLE else "") + """
+""" + ("" if BALLS else "#define WH_NO_BALLS\n") + """
+uniform sampler2D wh_tab;     // the fillet polynomials (WormholeSpace.fillet_table)
+uniform vec4 wh_tabLo;
+uniform vec4 wh_tabInv;
+uniform vec4 wh_tabReg;
 uniform float wh_rho0;
 uniform float wh_h;
 uniform float wh_fillet;
-uniform vec4 wh_sph[6];
-uniform vec4 wh_pil[4];
-uniform vec4 wh_box[4];
-uniform vec4 wh_ball[12];
-uniform vec4 wh_ballCol[12];
+uniform vec4 wh_sph[""" + str(N_SPH) + """];
+uniform vec4 wh_pil[""" + str(N_PIL) + """];
+uniform vec4 wh_box[""" + str(N_BOX) + """];
+uniform vec4 wh_ball[""" + str(MAXB) + """];
+uniform vec4 wh_ballCol[""" + str(MAXB) + """];
 uniform int wh_nBall;
-uniform vec4 wh_cube[6];
-uniform vec4 wh_cubeE[30];
-uniform vec4 wh_cubeCol[6];
+uniform vec4 wh_cube[""" + str(MAXC) + """];
+uniform vec4 wh_cubeE[""" + str(5 * MAXC) + """];
+uniform vec4 wh_cubeCol[""" + str(MAXC) + """];
 uniform int wh_nCube;
 uniform vec4 wh_bound[4];
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
-uniform vec4 wh_fball[12];
+uniform vec4 wh_fball[""" + str(MAXB) + """];
 uniform float wh_pix;
 uniform float uL0;
 uniform vec3 uN0;
@@ -117,7 +114,6 @@ uniform vec4 uUp;
 uniform vec4 uTan;   // tan of left, right, down, up half-angles
 uniform int uDebug;
 uniform vec2 uSize;
-in vec2 vUV;
 out vec4 frag;
 """ + CORE + """
 void main() {
@@ -157,21 +153,21 @@ def render(ctx, state, size, tan, debug):
     vao = ctx.vertex_array(prog, [(vbo, '2f', 'p')])
     balls = [tuple(c) for c, _, _ in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
     bcol = [tuple(col) + (rad,) for _, rad, col in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
-    # per cube: the four axes over the half size, then dot(centre, axis) for the four (main.set_objects)
+    # per cube: the four axes over the half size, then dot(centre, axis) for the four (Tracer.set_objects)
     cpos = [tuple(c) for c, _, _, _ in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
     cax = []
     for c, ax, half, _ in CUBES:
         cax += [tuple(a / half) for a in ax] + [tuple(float(np.dot(c, a / half)) for a in ax)]
     cax += [(0.0, 0.0, 0.0, 0.0)] * (5 * MAXC - len(cax))
     ccol = [tuple(col) + (half,) for _, _, half, col in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
-    # each ball's sphere in the sheet that cuts it, in that chart (main.set_objects)
+    # each ball's sphere in the sheet that cuts it, in that chart (Tracer.set_objects)
     fball = []
     for c, rad, _ in BALLS:
         side = 1.0 if c[3] > 0 else -1.0
         r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
         fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
     fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
-    # the bounding spheres of each universe's balls and of its cubes, as main.set_objects makes them
+    # the bounding spheres of each universe's balls and of its cubes, as Tracer.set_objects makes them
     bound = []
     for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
         for side in (1.0, -1.0):
@@ -191,15 +187,14 @@ def render(ctx, state, size, tan, debug):
                      uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
         if k in prog:      # the balls' and cubes' uniforms are gone from the shader without balls
             prog[k].value = v
-    if TABLE:
-        tab, lo, inv, reg = W.fillet_table()
-        t = ctx.texture((tab.shape[1], 4), 4, tab.tobytes(), dtype='f4')
-        t.filter = (moderngl.LINEAR, moderngl.LINEAR)
-        t.repeat_x = t.repeat_y = False
-        t.use(0)
-        for k, v in dict(wh_tab=0, wh_tabLo=tuple(lo), wh_tabInv=tuple(inv), wh_tabReg=tuple(reg)).items():
-            if k in prog:
-                prog[k].value = v
+    tab, lo, inv, reg = W.fillet_table()
+    t = ctx.texture((tab.shape[1], 4), 4, tab.tobytes(), dtype='f4')
+    t.filter = (moderngl.LINEAR, moderngl.LINEAR)
+    t.repeat_x = t.repeat_y = False
+    t.use(0)
+    for k, v in dict(wh_tab=0, wh_tabLo=tuple(lo), wh_tabInv=tuple(inv), wh_tabReg=tuple(reg)).items():
+        if k in prog:
+            prog[k].value = v
     tex = ctx.texture((size, size), 4, dtype='f4' if debug else 'f1')
     fbo = ctx.framebuffer([tex])
     fbo.use(); fbo.clear()
@@ -216,7 +211,7 @@ BOX = SCENE['boxes_B']
 
 
 def flat_hit(side, x, d, shell):
-    """Returns (t, kind): kind 0 sky, 1 floor, 2 object, 3 shell, 10 + j ball j."""
+    """Returns (t, kind): kind 0 sky, 1 floor, 2 object, 3 shell, 10 + j ball j, 10 + len(BALLS) + j cube j."""
     best, kind = 1e9, 0
     if d[2] < 0:
         t = -x[2] / d[2]
@@ -341,11 +336,11 @@ def reference(state, size, tan):
 
 
 def compare(gpu, ref, name):
-    """Sky: angular error of the final direction. Floor and balls: hit-position error in units of
+    """Sky: angular error of the final direction. Floor, balls and cubes: hit-position error in units of
     the pixel footprint (distance to the neighbouring pixels' hits in the reference), converted to
     an equivalent viewing angle. Errors well below a pixel are invisible."""
     n = gpu.shape[0]
-    px_deg = 90.0 / n
+    px_deg = np.degrees(2.0 * np.arctan(TAN)) / n
     valid = ref[..., 0] >= 0
     k_ok = (gpu[..., 0] == ref[..., 0]) & valid
     code = ref[..., 0]
@@ -384,7 +379,7 @@ def compare(gpu, ref, name):
 
 if __name__ == '__main__':
     ctx = moderngl.create_standalone_context(backend='egl')
-    tan = (1.0, 1.0, 1.0, 1.0)
+    tan = (TAN,) * 4
     cams = {
         'outside_A': frame_from_chart(1, np.array([12.0, 1.0, 1.6]), np.array([-1.0, 0, 0]), np.array([0, 0, 1.0])),
         'outside_B_look_back': frame_from_chart(-1, np.array([-11.0, 2.0, 1.6]), np.array([1.0, 0, 0]), np.array([0, 0, 1.0])),
@@ -407,7 +402,6 @@ if __name__ == '__main__':
         n0 = np.asarray(n0, float); n0 /= np.linalg.norm(n0)
         tz = np.array([0, 0, 1.0]) - n0 * n0[2]; tz /= np.linalg.norm(tz)
         ty = np.cross(tz, n0)
-        to3 = lambda V: np.array([V[0], V[1:] @ ty, V[1:] @ tz])
         from3 = lambda c: np.r_[c[0], c[1] * ty + c[2] * tz]
         F = np.asarray(fwd, float) / np.linalg.norm(fwd)
         up = np.array([0, 0, 1.0]) - F * F[2]; up /= np.linalg.norm(up)

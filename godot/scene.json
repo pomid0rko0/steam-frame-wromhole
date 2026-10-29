@@ -1,5 +1,5 @@
 {
-  "_comment": "Static objects in chart coordinates (metres). Spheres: x, y, z, radius. Pillars: x, y, radius, height. Boxes: x, y, z, half size. Universe A has spheres_A and pillars_A, universe B has spheres_B and boxes_B.",
+  "_comment": "Static objects in chart coordinates (metres). Spheres: x, y, z, radius. Pillars: x, y, radius, height. Boxes: x, y, z, half size. Universe A has spheres_A and pillars_A, universe B has spheres_B and boxes_B. The shader gives each sphere its own colour, in this order, and takes as many spheres in each universe (Tracer._fits_shader).",
   "spheres_A": [[14.0, -5.0, 1.2, 1.2], [-9.0, 10.0, 0.8, 0.8], [-16.0, -8.0, 3.0, 3.0]],
   "pillars_A": [[7.5, 7.5, 0.45, 4.0], [-7.5, 7.5, 0.45, 4.0], [-7.5, -7.5, 0.45, 4.0], [7.5, -7.5, 0.45, 4.0]],
   "spheres_B": [[-14.0, 5.0, 1.5, 1.5], [6.0, -11.0, 1.0, 1.0], [12.0, 12.0, 4.0, 4.0]],

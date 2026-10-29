@@ -9,24 +9,16 @@ branched further ahead wait there and rejoin. Predicated regions (predt/predf/pr
 whole wave. So a wave pays once for every piece of code any of its pixels needs.
 
 This is a model, not a timing: it does not know the cost of waits on transcendental (cat4) and
-texture-unit (cat5: dsx, dsy, samples) results, or memory. Those are counted separately.
+texture-unit (cat5: dsx, dsy, samples) results, or of memory; cat4 and cat5 instructions are counted
+apart.
 
 Only what the wormhole's ray tracer uses is implemented; anything else stops with an error.
 """
 import re
-import struct
 import numpy as np
 
 F32 = np.float32
 U32 = np.uint32
-
-
-def f2u(x):
-    return np.asarray(x, F32).view(U32)
-
-
-def u2f(x):
-    return np.asarray(x, U32).view(F32)
 
 
 IMM_NAMED = {'log2(e)': 1.4426950408889634, '1/log2(e)': 0.6931471805599453,
@@ -38,7 +30,8 @@ class Operand:
 
     def __init__(self):
         self.kind = None      # 'r' (register), 'c' (const), 'i' (immediate), 'p' (predicate), 'l' (label),
-        self.num = 0          # 'a' (address reg), 'cr' (const relative c<a0.x + n>), 'cmem' (c[n] dword)
+        self.num = 0          # 'a' (address reg), 'cr' (const relative c<a0.x + n>), 'cmem' (c[n] dword),
+                              # 'cmem_a1' (c[a1.x]), 'rt' (render target), 'tex' (texture)
         self.half = False
         self.neg = False
         self.abs = False
@@ -104,7 +97,7 @@ def parse_operand(s):
         return o
     m = re.fullmatch(r'(h?)c<a0\.x \+ (\d+)>', s)
     if m:
-        o.kind = 'cr'; o.num = int(m.group(2))
+        o.kind = 'cr'; o.half = m.group(1) == 'h'; o.num = int(m.group(2))
         return o
     m = re.fullmatch(r't#(\d+)', s)
     if m:
@@ -206,8 +199,8 @@ def parse_program(lines):
         for s in ins.srcs:
             if s.kind == 'l':
                 ins.target = labels[s.num]
-        # a 16-bit ALU op (Mesa's uses_significant_16bit_alu): half destination and a half source;
-        # in waves of 128 these run at double rate
+        # a 16-bit ALU op (Mesa's uses_significant_16bit_alu): half destination and a half source
+        # (in waves of 128 these issue at double rate: adreno_cost.per64)
         alu = ins.op.split('.')[0] in ('add', 'mul', 'mad', 'min', 'max', 'absneg', 'floor', 'ceil', 'sign',
                                          'rndne', 'trunc', 'cmps', 'sel', 'and', 'or', 'xor', 'not', 'sub',
                                          'shl', 'shr', 'cov', 'mov') or ins.op in CAT4
@@ -424,11 +417,11 @@ class Stats:
         self.cycles = 0          # issue slots: instructions (with repeats) + nops
         self.instr = 0           # instructions issued (with repeats), without nops
         self.cat4 = 0            # transcendental instructions issued (with repeats)
-        self.cat5 = 0            # texture-unit instructions (derivatives)
+        self.cat5 = 0            # texture-unit instructions: a sample one, a derivative one per component
         self.lane_instr = 0      # instructions times active lanes (useful work)
         self.pc = None           # optional: cycles per instruction index (a numpy array)
         self.nops = 0            # issue slots of nops (nop instructions, nopN flags, their repeats)
-        self.half = 0            # 16-bit ALU instructions issued (16-bit sources and destination)
+        self.half = 0            # 16-bit ALU instructions issued (a half destination and a half source)
 
 
 def run_wave(prog, start, wave, stats, max_steps=200000):
@@ -591,16 +584,12 @@ def execute(ins, w, ex):
             kind = 's' if op.endswith('.s') else 'u'
             a = w.read(ins.srcs[0], k, kind); b = w.read(ins.srcs[1], k, kind)
             w.write(d, k, np.minimum(a, b) if base == 'min' else np.maximum(a, b), kind, ex)
-        elif op in ('shlm', 'shrm', 'shlg', 'shrg', 'andg'):
+        elif op in ('shlm', 'shrm', 'shlg', 'shrg'):
             # a7xx's shift-and-mask family (Mesa isa/ir3-cat3.xml), the shift amount first:
-            # shlm s, a, c = (a << s) & c, shrm (a >> s) & c, shlg (a << s) | c, shrg (a >> s) | c;
-            # andg b, a, c = (a & b) | c
+            # shlm s, a, c = (a << s) & c, shrm (a >> s) & c, shlg (a << s) | c, shrg (a >> s) | c
             s_ = w.read(ins.srcs[0], k, 'u'); a = w.read(ins.srcs[1], k, 'u'); c = w.read(ins.srcs[2], k, 'u')
-            if op == 'andg':
-                v = (a & s_) | c
-            else:
-                sh = (a << (s_ & 31)) & 0xffffffff if op.startswith('shl') else a >> (s_ & 31)
-                v = sh & c if op.endswith('m') else sh | c
+            sh = (a << (s_ & 31)) & 0xffffffff if op.startswith('shl') else a >> (s_ & 31)
+            v = sh & c if op.endswith('m') else sh | c
             w.write(d, k, v, 'u', ex)
         elif op in ('bfrev.b', 'clz.b', 'clz.s', 'cbits.b'):
             # bit reverse, count leading zeros (findLSB is clz(bfrev(x)); 0 gives -1 here), set bits
@@ -633,7 +622,9 @@ def execute(ins, w, ex):
             c = w.read(ins.srcs[2], k, 'u')
             w.write(d, k, ((((a & 0xffff) * (b >> 16)) << 16) + c) & 0xffffffff, 'u', ex)
         elif base in ('shl', 'shr', 'ashr') and op.endswith('.b'):
-            a = w.read(ins.srcs[0], k, 'u'); b = w.read(ins.srcs[1], k, 'u')
+            # the shift amount modulo the width; ashr shifts the sign in
+            b = w.read(ins.srcs[1], k, 'u') & (15 if d.half else 31)
+            a = w.read(ins.srcs[0], k, 's' if base == 'ashr' else 'u')
             v = (a << b) if base == 'shl' else (a >> b)
             w.write(d, k, v, 'u', ex)
         elif base in ('swz', 'gat', 'sct'):

@@ -1,10 +1,8 @@
 #!/bin/bash
 # Other ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of each
 # source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the one
-# with movable balls where the source has it (the speed check times that one while the demo's
-# toys are on: the normal scene). In the
-# headset the panel's "замер" button then times this build's ray tracer and these at the same
-# places, one after the other; the panel compares this build's with the first.
+# with movable balls where the source has it; the speed check (godot/bench.gd) times them against
+# this build's.
 #   tools/ab_shaders.sh <source>...   a source: a commit, or a directory holding wormhole.gdshader,
 #                                     wormhole_view.gdshaderinc, wormhole_core.gdshaderinc
 #                                     (optionally a file "label" naming it), or one of the cost
@@ -13,20 +11,23 @@
 #                                       flat     no wormhole, straight rays, the same shading
 #                                       noshade  the same rays, a plain colour per kind of surface
 #                                       noderiv  grid lines of a fixed width: no screen derivatives
-#                                       nogrid   no grid lines: no atan, asin or derivatives
+#                                       nogrid   no grid lines: none of their atan, asin or derivatives
 #                                       nosky    one colour per sky, the grid lines kept
 #   tools/ab_shaders.sh --auto <source>...   the same, and the build runs the check by itself
-#                                     shortly after it starts (a build for measuring)
+#                                     (bench.gd says when: a build for measuring)
 #   tools/ab_shaders.sh --remove      a build without them
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
 DIR=$ROOT/godot/shaders/ab
-rm -rf "$DIR"
-[ "${1:-}" = "--remove" ] && exit 0
+if [ "${1:-}" = "--remove" ]; then rm -rf "$DIR"; exit 0; fi
 AUTO=""
 [ "${1:-}" = "--auto" ] && { AUTO=1; shift; }
-[ $# -ge 1 ] || { echo "usage: tools/ab_shaders.sh <commit or directory>... | --remove"; exit 2; }
+[ $# -ge 1 ] || { echo "usage: tools/ab_shaders.sh [--auto] <source>... | --remove   (sources: its top)"; exit 2; }
+rm -rf "$DIR"
+# a source that fails halfway leaves no godot/shaders/ab at all: an export would ship it half made
+tmp=""
+trap 'rm -rf "$DIR" "$tmp"' EXIT
 n=0
 for src in "$@"; do
 	n=$((n + 1))
@@ -43,7 +44,7 @@ def patch(name, old, new, label):
     p = d + '/' + name
     s = open(p).read()
     if old not in s:
-        sys.exit('the ray tracer changed: ' + kind + ' does not apply to ' + name)
+        sys.exit(kind + ' does not apply to ' + name + ': it lacks the text the check replaces')
     open(p, 'w').write(s.replace(old, new))
     open(d + '/label', 'w').write(label + '\n')
 if kind == 'empty':
@@ -66,22 +67,22 @@ elif kind in ('noderiv', 'nogrid', 'nosky'):
     s = open(core).read()
     def cut(s, start, end, new):
         if start not in s or end not in s[s.index(start):]:
-            sys.exit('the ray tracer changed: ' + kind + ' does not apply')
+            sys.exit(kind + ' does not apply: the ray tracer lacks the text the check cuts')
         a = s.index(start)
         b = s.index(end, a) + len(end)
         return s[:a] + new + s[b:]
     if kind in ('noderiv', 'nogrid'):
-        s = cut(s, '    float cls = kind == 0 ?', 'max(fw, vec2(1e-4));     // tiny: no line, no circle',
+        s = cut(s, '    float cls = kind == 0 ?', 'max(fw, vec2(1e-4));',
                 '    vec2 fw = vec2(%s);' % ('0.02' if kind == 'noderiv' else '1e-4'))
     if kind == 'nogrid':
-        s = cut(s, '    vec2 ga = kind == 1 ? fn.xy : dn.xy;', '* (180.0 / WH_PI / 15.0);',
+        s = cut(s, '    vec2 ga = ', '* (180.0 / WH_PI / 15.0);',
                 '    vec2 gq = vec2(0.5) + 1e-6 * vec2(fl, fn.x);')
     if kind == 'nosky':
         s = cut(s, '    float sd = dot(d, wh_sunDir(side));', 'clamp(-el * 8.0, 0.0, 1.0));',
                 '    return side > 0.0 ? vec3(0.9, 0.6, 0.4) : vec3(0.5, 0.7, 1.0) + 1e-6 * el;')
     open(core, 'w').write(s)
     open(d + '/label', 'w').write({'noderiv': 'grid lines of a fixed width, no screen derivatives',
-                                   'nogrid': 'no grid lines: no atan, asin or derivatives',
+                                   'nogrid': 'no grid lines: none of their atan, asin or derivatives',
                                    'nosky': 'one colour per sky, the grid lines kept'}[kind] + '\n')
 else:
     s = open(d + '/wormhole_core.gdshaderinc').read()
@@ -114,8 +115,7 @@ PY
 		> "$out/wormhole.gdshader"
 	grep -q "res://shaders/ab/$n/" "$out/wormhole.gdshader" && grep -q "res://shaders/ab/$n/" "$out/wormhole_view.gdshaderinc" \
 		|| { echo "unexpected include paths in $src"; rm -rf "$DIR"; exit 1; }
-	# the one with movable balls too, where the source has it: the speed check times it when the
-	# scene has them (the demo's toys)
+	# the one with movable balls too, where the source has it
 	if get wormhole_balls.gdshader >/dev/null 2>&1; then
 		{ echo "// $label"; get wormhole_balls.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
 			> "$out/wormhole_balls.gdshader"
@@ -124,5 +124,6 @@ PY
 	[ -n "${tmp:-}" ] && rm -rf "$tmp" && tmp=""
 done
 [ -n "$AUTO" ] && echo "run by itself" > "$DIR/auto" && echo "godot/shaders/ab/auto: the check runs by itself"
+trap - EXIT
 # Godot needs to have seen the new files before a script loads them
 "$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1 || true

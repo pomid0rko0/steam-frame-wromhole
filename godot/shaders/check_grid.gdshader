@@ -1,14 +1,14 @@
 shader_type spatial;
 // Stereo check, drawn by Godot's standard renderer: green lines exactly where the ray-traced
-// floor of universe A has its white lines (1 m rings, 24 spokes). The mesh lives in chart
+// floor of universe A has its white lines. The mesh lives in chart
 // coordinates (its node maps chart -> play space). If each eye's ray math is right, the green
 // lines cover the white ones; if not, the viewer sees two grids.
 render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, fog_disabled, shadows_disabled;
 
 uniform float rout;            // chart radius where the flat floor starts
 uniform float lsh;             // l at that radius
-uniform float clear = 0.3;     // keep away from the curved part
-uniform vec4 balls[3];         // the check balls (chart centre, radius) hide the floor behind them
+const float clear = 0.3;       // keep away from the curved part
+uniform vec4 balls[3];         // CheckScene.BALLS (chart centre, radius) hide the floor behind them
 uniform vec4 cube;             // and the check cube (chart centre, radius of a ball around it)
 uniform bool solid = false;    // tests: fill everywhere a line could be drawn
 
@@ -30,7 +30,7 @@ void fragment() {
 	vec3 d = v_chart - eye;
 	float t = clamp(-dot(eye, d) / dot(d, d), 0.0, 1.0);
 	if (length(eye + t * d) < rout + clear) discard;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < balls.length(); i++) {
 		float tb = clamp(dot(balls[i].xyz - eye, d) / dot(d, d), 0.0, 1.0);
 		if (length(eye + tb * d - balls[i].xyz) < balls[i].w) discard;
 	}

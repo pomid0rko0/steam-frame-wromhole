@@ -1,14 +1,15 @@
 """Are two sets of renders the same picture? For each pair of prefixes a:b, every image
 <dir>/<b><rest>.png against <dir>/<a><rest>.png: the largest difference of any colour channel
-of any pixel, in 1/255, and how many pixels differ by more than 1/255. Passes when every pair
-matches within 1/255 (the GPU may round a colour either way) and pixels off by more are fewer
-than 1 in 10 000. Used for foveation on against off (tools/test_stereo.sh): on software Vulkan
-there is no density map, so only the split render pass could change anything.
-   python3 same_images.py dir a:b [a:b ...]"""
+of any pixel, in 1/255, and how many pixels differ by more than ROUNDING (in 1/255: the GPU may
+round a colour either way). Passes when in every pair those pixels are fewer than MAX_SHARE of
+them.
+   python3 tools/compare/same_images.py dir a:b [a:b ...]     (where numpy is: tools/box.sh)"""
 import sys, glob, os
 import numpy as np
 from PIL import Image
 
+ROUNDING = 1
+MAX_SHARE = 1e-4
 d = sys.argv[1]
 ok = True
 n = 0
@@ -27,10 +28,10 @@ for pair in sys.argv[2:]:
             ok = False
             continue
         diff = np.abs(A - B).max(axis=2)
-        big = int((diff > 1).sum())
+        big = int((diff > ROUNDING).sum())
         n += 1
-        if diff.max() > 1:
-            print(f'{os.path.basename(fb)} vs {os.path.basename(fa)}: max {diff.max()}/255, {big} px off by more than 1')
-        ok &= big * 10000 < diff.size
+        if diff.max() > ROUNDING:
+            print(f'{os.path.basename(fb)} vs {os.path.basename(fa)}: max {diff.max()}/255, {big} px off by more than {ROUNDING}')
+        ok &= big < MAX_SHARE * diff.size
 print(f'{n} image pairs compared')
 print('PASS' if ok and n > 0 else 'FAIL')

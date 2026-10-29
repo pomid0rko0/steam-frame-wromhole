@@ -1,9 +1,12 @@
 """Ray-traced ball vs Godot's rasterized ball, one image pair per eye (or one pair on desktop).
 Arguments: ray.png mesh.png [ray2.png mesh2.png ...]. PASS: in every pair the red silhouettes
-overlap (IoU > 0.99) and their centroids differ by less than 0.5 px."""
+overlap (IoU above MIN_IOU) and their centroids differ by less than MAX_OFFSET px."""
 import sys
 import numpy as np
 from PIL import Image
+
+MIN_IOU = 0.99
+MAX_OFFSET = 0.5
 
 
 def mask(p):
@@ -23,5 +26,5 @@ for a, b in zip(sys.argv[1::2], sys.argv[2::2]):
     iou = (A & B).sum() / (A | B).sum()
     d = np.hypot(ax - bx, ay - by)
     print(f'{a.split("/")[-1]} vs {b.split("/")[-1]}: centroid offset {d:.2f} px, IoU {iou:.4f}')
-    ok &= iou > 0.99 and d < 0.5
+    ok &= iou > MIN_IOU and d < MAX_OFFSET
 print('PASS' if ok else 'FAIL')

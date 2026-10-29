@@ -1,4 +1,4 @@
 @echo off
-rem Copies Wormhole VR's logs from the Steam Frame into Downloads as one text file, to attach to the chat.
+rem Runs frame_logs.ps1: what it does, its top says.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0frame_logs.ps1" %*
 pause

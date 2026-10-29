@@ -3,9 +3,7 @@ render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip
 // where no movable ball or cube can be seen (stencil_mark.gdshader)
 stencil_mode read, compare_not_equal, 1;
 
-// The ray tracer for scenes without movable balls (wh_nBall = 0): the balls' code is left out.
-// It needs registers even where no ray runs it, and the GPU then runs fewer pixels at once.
+// The ray tracer without movable balls and cubes: the normal scene where none can be seen, and
+// scenes without any (Tracer). Their code is left out (tracer.gd: a shader per combination).
 #define WH_NO_BALLS
-// The fillet polynomials from a table (main.gd sets it), not worked out per ray.
-#define WH_TABLE
 #include "res://shaders/wormhole_view.gdshaderinc"

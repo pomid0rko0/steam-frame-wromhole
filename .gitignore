@@ -2,11 +2,11 @@
 godot/.godot/
 godot/build/
 # tools/setup.sh downloads
-tools/.bin/
+tools/.bin
 # generated
-preview/wormhole.html
 ref/out/
 __pycache__/
 *.zip
 godot/shaders/ab/
-godot/check
+# tasks' worktrees, runs' files, box.sh's lock (tools/box.sh)
+.wt/

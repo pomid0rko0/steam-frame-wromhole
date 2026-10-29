@@ -2,14 +2,13 @@
 """Where a shader's registers go: live register components at every instruction of the program
 Mesa's compiler made for the Frame (tools/adreno_stats.sh's log, KEEP_LOG=...).
 
-The compiler reserves a shader's registers for its heaviest point, whatever the other pixels run
-(CLAUDE.md, «Registers are taken by code no pixel runs»), so the point with the most values alive
-at once decides the waves. This finds it: backward liveness over the program's branches and loops,
-on the components the register allocator assigned. The register file is shared: a half register
-hrN.c is half of the full component (4N + c) / 2, so the half registers (flags, small ints) count
-too, two per full component; the shared registers r48-r55 (values the same in every lane) and r63
-do not. It prints the peak, the instructions around it, and the uniform loads nearby (which tell
-where in the source it is).
+The point with the most values alive at once decides the waves
+(godot/shaders/wormhole_core.gdshaderinc, «The compiler»). This finds it: backward liveness over the
+program's branches and loops, on the components the register allocator assigned. The register file
+is shared: a half register hrN.c is half of the full component (4N + c) / 2, so the half registers
+(flags, small ints) count too, two per full component; the shared registers r48-r55 (values the same
+in every lane) and r63 do not. It prints the peak and the instructions around it (their uniform
+loads tell where in the source it is).
 
   python3 tools/ir3_live.py LOG [--around N] [--top K]
 """
@@ -17,8 +16,10 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'ref'))
+import in_box  # noqa: F401,E402 (first: on the Frame, into tools/box.sh's container)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ir3_emu as E
+import ir3_emu as E  # noqa: E402
 import adreno_cost as A
 
 BRANCH = ('br', 'brao', 'braa', 'bany', 'ball', 'getone')
@@ -35,10 +36,8 @@ def components(o, reps, advance):
     out = []
     for k in range(reps):
         c = o.num + (k if advance else 0)
-        if o.half:
-            out.append(HALF + c)
-        elif c < 192:
-            out.append(c)
+        if c < 192:
+            out.append(HALF + c if o.half else c)
     return out
 
 
@@ -61,7 +60,9 @@ def analyse(instrs):
                 u |= 1 << c
         d = 0
         if ins.dst is not None and ins.op not in E.NO_DST:
-            width = max(ins.wrmask, 1) if ins.wrmask > 1 else reps
+            # an ldc writes its N dwords (ldc.offsetC.N...), a texture-unit op its write mask
+            m = re.match(r'ldc(?:\.u)?(?:\.offset\d+)?\.(\d+)\.', ins.op)
+            width = int(m.group(1)) if m else ins.wrmask if ins.wrmask > 1 else reps
             for c in components(ins.dst, width, True):
                 d |= 1 << c
         uses.append(u)

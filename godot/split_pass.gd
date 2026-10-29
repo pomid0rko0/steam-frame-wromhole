@@ -5,10 +5,12 @@ extends CompositorEffect
 ##
 ## Why: foveated rendering on the Steam Frame is the GPU driver's (Mesa's Turnip): it renders
 ## each tile of the screen at the density map's resolution there, and only when it renders in
-## tiles. Godot 4.7.2 gives its two subpasses a dependency without VK_DEPENDENCY_BY_REGION_BIT,
-## and Turnip then renders the whole pass straight to memory, without tiles: the density map is
-## ignored (godotengine/godot#124141, fixed in #124811, not in 4.7.2). A pass of its own has no
-## such dependency, and Turnip renders it in tiles. main.set_foveation turns this on and off.
+## tiles. Godot (the version tools/setup.sh installs) gives its two subpasses a dependency without
+## VK_DEPENDENCY_BY_REGION_BIT, and Turnip then renders the whole pass straight to memory, without
+## tiles: the density map is ignored (godotengine/godot#124141, fixed in #124811, which that version
+## lacks; tools/fdm_check.sh shows which passes render in tiles and says when "off" does too). A
+## pass of its own has no such dependency, and Turnip renders it in tiles. Foveation.set_level
+## turns this on and off.
 
 
 func _init() -> void:

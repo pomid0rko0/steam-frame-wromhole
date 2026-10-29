@@ -1,8 +1,7 @@
 extends RefCounted
 ## Frame pacing as the headset sees it, from the display times that OpenXR's xrWaitFrame
-## predicts for our frames: the display's refresh period, whatever the runtime reports through
-## XR_FB_display_refresh_rate, and every refresh that passes without a new frame from us is a
-## missed frame.
+## predicts for our frames: the display's refresh period, and every refresh that passes without a
+## new frame from us is a missed frame.
 ##
 ## xrWaitFrame's predictedDisplayPeriod is the time until the next frame the runtime expects to
 ## show; a runtime that paces a slow app at every 2nd refresh reports twice the refresh period
@@ -18,7 +17,7 @@ extends RefCounted
 
 const PAUSE_NS := 500_000_000  # a longer gap is a pause (session not running), not missed frames
 const WHOLE := 0.03            # how close to a whole number a ratio of periods must be
-const MAX_PACE := 4            # the slowest pacing believed: every 4th refresh
+const MAX_PACE := 4            # the slowest pacing an expected rate is matched to: every MAX_PACE-th refresh
 
 var period := 0          # the display's refresh period, ns
 var paced := 0           # the period the runtime last predicted, ns
