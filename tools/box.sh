@@ -86,16 +86,19 @@ inbox() {   # command...: runs it in the container, stopped with this script; it
 	run=""
 	return $s
 }
-# Making, starting and setting up the container, one box.sh at a time (another task's waits)
+# Making, starting and setting up the container, one box.sh at a time (another task's waits).
+# Starting it leaves podman's conmon running as long as the container does, keeping the
+# descriptors past 0-2 that the podman command inherited: without 9>&- conmon would hold the
+# lock, and every later box.sh would wait until the container stopped
 mkdir -p "$REPO/.wt"
 exec 9>"$REPO/.wt/.box.lock"
 flock 9
 if ! podman container exists $NAME; then
 	podman run -d --name $NAME --init --cpus $CPUS --memory $MEM --memory-swap $MEM \
-		-v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null
+		-v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null 9>&-
 fi
 podman update --cpus $CPUS --memory $MEM --memory-swap $MEM $NAME >/dev/null   # also when they change
-[ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null
+[ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null 9>&-
 # podman update records the swap limit but leaves the cgroup's at max: the Frame's
 # swap is zram, in the same memory
 cg=/sys/fs/cgroup$(podman inspect -f '{{.State.CgroupPath}}' $NAME)/memory.swap.max
