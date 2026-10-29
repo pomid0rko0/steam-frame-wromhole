@@ -49,8 +49,9 @@
 //
 // The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
 // - Registers go to the heaviest point of the code, run or not: code for something not in view
-//   still costs (hence a shader per combination: tracer.gd), and a loop with a constant bound and a
-//   break is unrolled. Registers per pixel decide how many waves run (adreno_stats.sh).
+//   still costs (hence a shader per combination: tracer.gd), and a short loop with a constant bound
+//   is unrolled, a break or not, a long one is not (wh_curved: it < 2 short, j <= 160 long).
+//   Registers per pixel decide how many waves run (adreno_stats.sh).
 // - An if becomes selects, even around a square root: every lane pays. A loop of one pass with a
 //   bound the compiler can't see (k < 1 + min(wh_nBall, 0)) stays a branch that waves skip; the
 //   same trick stops unrolling (k < 4 + min(wh_nCube, 0)).
@@ -718,7 +719,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     float tHit = 2.0;        // the chord's fraction where it enters the object
                     float sag = 0.0;         // how far the chord can be from the path
                     // it 0: the sample at qb and the chord from the previous one; it 1: the path's
-                    // point where the chord enters (one sample routine for both: its code exists once)
+                    // point where the chord enters. The compiler unrolls this loop and the j loop
+                    // above stays a loop, so the body's code (the point at q) is there twice; with
+                    // a bound of 2 + min(wh_nBall, 0), once (tools/adreno_stats.sh balls: the
+                    // program that runs, 5649 instructions instead of 5802, the same 24 registers;
+                    // its speed is not measured)
                     for (int it = 0; it < 2; it++) {
                         float q = it == 0 ? qb : mix(q0, qb, tHit);
                         // the point at q, from the ray's values (the piece's own would be held through the search)

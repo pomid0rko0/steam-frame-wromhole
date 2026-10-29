@@ -5,9 +5,11 @@
 # ref/'s GPU checks, Monado to run the app through a real OpenXR runtime without a headset.
 # The four steps don't depend on each other and run at once; each line of output starts with
 # its step's name. Then, as a fifth, the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750)
-# is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh: what the headset's
-# shader compiler makes of the ray tracer. No package has the drm-shim (built once).
-# On the Steam Frame all of it goes into tools/box.sh's container, where the tools run (tools/env.sh).
+# is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the headset's
+# shader compiler makes of the ray tracer) and tools/fdm_check.sh (how its driver renders a pass).
+# No package has the drm-shim (built once).
+# On the Steam Frame all of it goes into tools/box.sh's container, where the tools run
+# (tools/env.sh).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # not there when a cloud environment's setup script, a copy of this one alone, runs it (below)

@@ -8,7 +8,7 @@
 # elsewhere, and gamescope's Vulkan layer puts its swapchains on the owner's screen even under
 # xvfb-run; without the layer Turnip finds no queue that presents to Xvfb, and there is no lavapipe.
 # Anywhere with apt (a cloud session, the container itself) it runs the command right here.
-#   tools/box.sh godot --headless --path godot --import       (any command, in the same directory there)
+#   tools/box.sh godot --headless --path godot --import   (any command, in the same directory there)
 # The tools and ref/'s checks go there by themselves (tools/env.sh, ref/in_box.py), so this is for
 # commands of one's own.
 # Made on first use and kept, stopped or not; `podman rm -f wormhole-box` throws it away. It
@@ -104,7 +104,7 @@ if [ "$(podman exec $NAME cat /box-ready 2>/dev/null)" != "$SETUP" ]; then
 	echo "setting up the $NAME container"
 	# what setup.sh itself needs to run, then setup.sh
 	inbox sh -c 'dpkg --configure -a && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-		curl unzip python3-pip >/dev/null'
+		curl unzip python3-pip git >/dev/null'
 	inbox "$ROOT/tools/setup.sh"
 	podman exec $NAME sh -c "echo $SETUP > /box-ready"
 fi

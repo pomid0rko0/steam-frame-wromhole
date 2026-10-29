@@ -26,7 +26,7 @@ mkdir -p "$OUTS"
 # A Godot run with -s knows the project's script classes (WormholeSpace...) only from an import:
 # import when there was none or a script changed since.
 import_scripts() {
-	local stamp=$ROOT/godot/.godot/imported
+	local stamp=$ROOT/godot/.godot/scripts_imported     # a file: Godot's own imported/ is a folder
 	[ -f "$stamp" ] && [ -z "$(find "$ROOT/godot" -name '*.gd' -newer "$stamp" -print -quit)" ] && return 0
 	"$GODOT" --headless --path "$ROOT/godot" --import >/dev/null 2>&1
 	touch "$stamp"

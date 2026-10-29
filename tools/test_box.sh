@@ -62,7 +62,8 @@ check "test_openxr.sh's Monado is in its own directory, not where any Godot look
 wait $po
 
 w=$REPO/.wt/test-box-$$
-git -C "$REPO" worktree add -q --detach "$w" HEAD
+# from this tree's commit, not the main checkout's
+git -C "$REPO" worktree add -q --detach "$w" "$(git -C "$ROOT" rev-parse HEAD)"
 "$w/tools/test.sh" refresh_rate > "$TMP/w.txt" 2>&1
 rw=$?
 ow=$(sed -n 's/^logs: //p' "$TMP/w.txt")
