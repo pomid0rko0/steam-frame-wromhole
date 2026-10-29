@@ -8,7 +8,7 @@ extends RefCounted
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 
-const STEP := 0.02  # m: the longest RK4 step (geodesic cuts a path into equal steps no longer)
+const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet radii (it takes none elsewhere)
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
 const GRAV_SUB := 2      # RK4 steps between nodes
 # the degree of the shader's polynomials on the fillet (gravity_shader): their GRAV_DEG + 1
@@ -71,52 +71,154 @@ func dr(l: float) -> float:
 	return signf(l) * sin(_theta(al))
 
 
-## d/ds of (l, n, vectors) for a geodesic whose velocity is vectors[0];
-## every vector in the list is parallel-transported.
-func _deriv(l: float, n: Vector3, vecs: Array) -> Array:
-	var rr := r(l)
-	var k := dr(l) / rr
-	var vel: Vector4 = vecs[0]
-	var v := Vector3(vel.y, vel.z, vel.w)
-	var dvecs := []
-	for U: Vector4 in vecs:
-		var u := Vector3(U.y, U.z, U.w)
-		var du := -k * U.x * v - (u.dot(v) / rr) * n
-		dvecs.append(Vector4(k * v.dot(u), du.x, du.y, du.z))
-	return [vel.x, v / rr, dvecs]
-
-
-func _shift(l: float, n: Vector3, vecs: Array, d: Array, ds: float) -> Array:
-	var out := []
-	for i in vecs.size():
-		out.append(vecs[i] + ds * d[2][i])
-	return [l + ds * d[0], n + ds * d[1], out]
-
-
-## Follow the geodesic from (l, n) with unit initial direction dir for length dist,
+## Follow the geodesic from (l, n) with initial direction dir (a unit vector) for length dist,
 ## transporting frame (Array of Vector4). Returns [l, n, frame].
+## The geodesic lies in the plane through the centre spanned by n and dir's tangential part e
+## (docs/geometry.md, «Почему луч считается быстро», 1): n = cos psi n0 + sin psi e, with
+## b = r |u| kept. Only l, its rate vl and psi change: along a straight line in a flat chart and on
+## the cylinder (closed forms, exact), in RK4 steps of l'' = r' b^2 / r^3, psi' = b / r^2 on a
+## fillet (a step that leaves it is cut where it does). The surface the plane cuts out is totally
+## geodesic (the space's mirror image in the plane leaves it in place), so a transported vector keeps
+## its part along the plane's normal, and its part in the plane, (U_l, the part toward growing psi),
+## keeps its angle to the geodesic's direction, which is (vl, b / r) there.
 func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> Array:
 	if dist <= 0.0:
 		return [l, n, frame.duplicate()]
-	var vecs := [dir]
-	vecs.append_array(frame)
-	var steps := maxi(1, ceili(dist / STEP))
-	var ds := dist / steps
-	for _s in steps:
-		var k1 := _deriv(l, n, vecs)
-		var y2 := _shift(l, n, vecs, k1, 0.5 * ds)
-		var k2 := _deriv(y2[0], y2[1], y2[2])
-		var y3 := _shift(l, n, vecs, k2, 0.5 * ds)
-		var k3 := _deriv(y3[0], y3[1], y3[2])
-		var y4 := _shift(l, n, vecs, k3, ds)
-		var k4 := _deriv(y4[0], y4[1], y4[2])
-		l += ds / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
-		n += ds / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])
-		n = n.normalized()
-		for i in vecs.size():
-			var U: Vector4 = vecs[i] + ds / 6.0 * (k1[2][i] + 2.0 * k2[2][i] + 2.0 * k3[2][i] + k4[2][i])
-			vecs[i] = tangent(n, U)
-	return [l, n, vecs.slice(1)]
+	var size := dir.length()
+	var u := Vector3(dir.y, dir.z, dir.w)
+	u -= u.dot(n) * n
+	var un := u.length() / size
+	# a radial direction has no plane of its own: any one through it
+	var e := u.normalized() if un > 1e-9 else _normal_to(n)
+	var vl := dir.x / size
+	var r0 := r(l)
+	var b := r0 * un
+	var chi0 := atan2(un, vl)
+	var psi := 0.0
+	var left := dist
+	for _pass in 100000:           # each pass uses up length or moves to the next piece: a bound against a hang
+		if left <= 0.0:
+			break
+		var al := absf(l)
+		var sg := signf(l)
+		if al > L or (al == L and sg * vl >= 0.0):
+			# a flat chart: in the plane the straight line from (rr, 0) along (rd, b / rr), until it
+			# meets the shell (r = Rout, only coming in with b < Rout)
+			var rr := al - L + Rout
+			var rd := sg * vl              # dr/ds
+			var bt := b / rr
+			var s_in := INF
+			if rd < 0.0 and b < Rout:
+				s_in = maxf(-rr * rd - sqrt(Rout * Rout - b * b), 0.0)
+			var s := minf(left, s_in)
+			var x := rr + rd * s
+			var y := bt * s
+			var r1 := sqrt(x * x + y * y)
+			psi += atan2(y, x)
+			vl = sg * (x * rd + y * bt) / r1
+			l = sg * L if s == s_in else sg * (r1 - Rout + L)
+			left -= s
+		elif Lc > 0.0 and (al < Lc or (al == Lc and sg * vl <= 0.0)):
+			# the cylinder: l and psi at constant rates until an end
+			var s_out := INF
+			if vl > 0.0:
+				s_out = (Lc - l) / vl
+			elif vl < 0.0:
+				s_out = (Lc + l) / -vl
+			var s := minf(left, s_out)
+			l = (Lc if vl > 0.0 else -Lc) if s == s_out else l + vl * s
+			psi += b / (rho0 * rho0) * s
+			left -= s
+		else:
+			# a fillet, on side sg (at l = 0, where fillets meet with no cylinder: the side it goes to)
+			if sg == 0.0:
+				sg = signf(vl)
+			var hs := minf(left, STEP * fillet)
+			var y1 := _fillet_step(l, vl, psi, b, hs, sg)
+			var lo := sg * Lc
+			var hi := sg * L
+			var out := sg * y1[0] > L or sg * y1[0] < Lc
+			if out:
+				# where l crosses the fillet's end: on the step's cubic in l (its values and slopes at
+				# both ends), then the step again up to there
+				var target := hi if sg * y1[0] > L else lo
+				var t := _cross(l, vl * hs, y1[0], y1[1] * hs, target)
+				hs *= t
+				y1 = _fillet_step(l, vl, psi, b, hs, sg)
+				y1[0] = target
+			l = y1[0]
+			vl = y1[1]
+			psi = y1[2]
+			left -= hs
+	var d := atan2(b / r(l), vl) - chi0       # the in-plane turn of the direction
+	var c := cos(d)
+	var s := sin(d)
+	var cp := cos(psi)
+	var sp := sin(psi)
+	var t1 := -sp * n + cp * e
+	var m := n.cross(e)
+	var out_frame := []
+	for U: Vector4 in frame:
+		var uu := Vector3(U.y, U.z, U.w)
+		var ct := uu.dot(e)
+		var tu := (U.x * s + ct * c) * t1 + uu.dot(m) * m
+		out_frame.append(Vector4(U.x * c - ct * s, tu.x, tu.y, tu.z))
+	return [l, (cp * n + sp * e).normalized(), out_frame]
+
+
+## One RK4 step of (l, vl, psi) on the fillet of side sg: l'' = r' b^2 / r^3, psi' = b / r^2, with
+## that fillet's r and r' (smooth past its ends, where a step that is cut there looks).
+func _fillet_step(l: float, vl: float, psi: float, b: float, hs: float, sg: float) -> PackedFloat64Array:
+	var b2 := b * b
+	var th := th0 + (sg * l - Lc) / fillet
+	var p := rho0 + fillet * (1.0 - cos(th))
+	var a1 := sg * sin(th) * b2 / (p * p * p)
+	var w1 := b / (p * p)
+	var l2 := l + 0.5 * hs * vl
+	var v2 := vl + 0.5 * hs * a1
+	th = th0 + (sg * l2 - Lc) / fillet
+	p = rho0 + fillet * (1.0 - cos(th))
+	var a2 := sg * sin(th) * b2 / (p * p * p)
+	var w2 := b / (p * p)
+	var l3 := l + 0.5 * hs * v2
+	var v3 := vl + 0.5 * hs * a2
+	th = th0 + (sg * l3 - Lc) / fillet
+	p = rho0 + fillet * (1.0 - cos(th))
+	var a3 := sg * sin(th) * b2 / (p * p * p)
+	var w3 := b / (p * p)
+	var l4 := l + hs * v3
+	var v4 := vl + hs * a3
+	th = th0 + (sg * l4 - Lc) / fillet
+	p = rho0 + fillet * (1.0 - cos(th))
+	var a4 := sg * sin(th) * b2 / (p * p * p)
+	var w4 := b / (p * p)
+	return PackedFloat64Array([l + hs / 6.0 * (vl + 2.0 * v2 + 2.0 * v3 + v4),
+			vl + hs / 6.0 * (a1 + 2.0 * a2 + 2.0 * a3 + a4),
+			psi + hs / 6.0 * (w1 + 2.0 * w2 + 2.0 * w3 + w4)])
+
+
+## Where on a step the cubic with values y0, y1 and slopes d0, d1 (per step) at its ends reaches
+## target, which lies between y0 and y1: the step's fraction, by bisection.
+static func _cross(y0: float, d0: float, y1: float, d1: float, target: float) -> float:
+	var a := 0.0
+	var z := 1.0
+	var up := y1 > y0
+	for _it in 40:
+		var t := 0.5 * (a + z)
+		var t2 := t * t
+		var t3 := t2 * t
+		var y := (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * d0 \
+				+ (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * d1
+		if (y < target) == up:
+			a = t
+		else:
+			z = t
+	return z
+
+
+## A unit vector orthogonal to n.
+static func _normal_to(n: Vector3) -> Vector3:
+	return (Vector3(0.0, 0.0, 1.0) if absf(n.z) < 0.9 else Vector3(1.0, 0.0, 0.0)).cross(n).normalized()
 
 
 ## A short move by the tangent displacement D: one Euler step of the geodesic equation,
