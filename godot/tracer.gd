@@ -34,6 +34,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 
 
 func _ready() -> void:
+	pass_.space = space
 	values["wh_rho0"] = space.rho0
 	values["wh_h"] = space.h
 	values["wh_fillet"] = space.fillet
@@ -77,7 +78,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	if pix != pixel_angle:
 		pixel_angle = pix
 		values["wh_pix"] = pix
-	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), gravity_view, toy_count > 0))
+	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), [l, n, hf.duplicate(), head_pos], gravity_view, toy_count > 0))
 	# shown once the pass has made its picture (a material whose texture does not exist yet is not
 	# drawn: an error each frame)
 	quad.visible = pass_.picture.texture_rd_rid.is_valid()

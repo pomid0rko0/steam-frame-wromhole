@@ -7,4 +7,4 @@ stencil_mode read, compare_equal, 1;
 // gravity and the arrows of its field (the gravity view "floor and arrows": Tracer.GRAVITY_VIEWS).
 #define WH_GRAVITY
 #define WH_ARROWS
-#include "res://shaders/wormhole_view.gdshaderinc"
+#include "res://shaders/frag/wormhole_view.gdshaderinc"

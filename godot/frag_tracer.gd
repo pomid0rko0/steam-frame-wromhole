@@ -22,12 +22,12 @@ extends Node3D
 ## material, a huge program: such a node is made only once its shader is known.
 
 # the ray tracers: [plain, gravity floor, gravity floor and arrows], without and with toys
-const SHADERS := [preload("res://shaders/wormhole.gdshader"), preload("res://shaders/wormhole_gravity.gdshader"),
-		preload("res://shaders/wormhole_arrows.gdshader")]
-const SHADERS_TOYS := [preload("res://shaders/wormhole_balls.gdshader"),
-		preload("res://shaders/wormhole_balls_gravity.gdshader"), preload("res://shaders/wormhole_balls_arrows.gdshader")]
-const SHADER_MARK := preload("res://shaders/stencil_mark.gdshader")
-const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
+const SHADERS := [preload("res://shaders/frag/wormhole.gdshader"), preload("res://shaders/frag/wormhole_gravity.gdshader"),
+		preload("res://shaders/frag/wormhole_arrows.gdshader")]
+const SHADERS_TOYS := [preload("res://shaders/frag/wormhole_balls.gdshader"),
+		preload("res://shaders/frag/wormhole_balls_gravity.gdshader"), preload("res://shaders/frag/wormhole_balls_arrows.gdshader")]
+const SHADER_MARK := preload("res://shaders/frag/stencil_mark.gdshader")
+const SHADER_MARK_ALL := preload("res://shaders/frag/stencil_mark_all.gdshader")
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const MAX_BALLS := 12           # the shader's slots for the toys' and the hands' balls
 const MAX_CUBES := 6
@@ -375,8 +375,8 @@ func plain() -> bool:
 ## polynomials, MAX_BALLS, MAX_CUBES (and BallWorld's), the scene's objects. Each that differs is
 ## printed. Only asserted: debug builds (the tests) run it, an export does not.
 func _fits_shader() -> bool:
-	var src: String = load("res://shaders/wormhole_view.gdshaderinc").code \
-			+ load("res://shaders/wormhole_core.gdshaderinc").code
+	var src: String = load("res://shaders/frag/wormhole_view.gdshaderinc").code \
+			+ load("res://shaders/frag/wormhole_core.gdshaderinc").code
 	var coefs := WormholeSpace.GRAV_DEG + 1
 	var want := ["WH_TABN = %d.0;" % WormholeSpace.TABLE_N, "WH_MAXB = %d;" % MAX_BALLS]
 	var arrays := {"grav_g": coefs / 4, "grav_d": coefs / 4, "wh_ball": MAX_BALLS, "wh_ballCol": MAX_BALLS,

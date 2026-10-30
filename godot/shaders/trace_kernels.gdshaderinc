@@ -18,45 +18,269 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 head_f[3];
     vec3 head_n; float head_l;
     vec3 head_pos; float fr_pad0;
-    // per view: the camera in play space, the eye's offset in it (EYE_OFFSET), and the inverse of
-    // its projection with Vulkan's correction (INV_PROJECTION_MATRIX)
+    // per view: the camera in play space, the eye's offset in it (EYE_OFFSET), the eye's point of
+    // the space (l, n), the play axes f0, f1, f2 moved there and (wh_eye(l), 0, 0) (RayPass, from
+    // the head along the geodesic of the eye's offset), and the inverse of its projection with
+    // Vulkan's correction (INV_PROJECTION_MATRIX)
     mat4 fr_cam;
     vec4 fr_eyeOff[2];
+    vec4 fr_eye[10];
+    vec4 fr_rows[2];         // per view: the tables' rows from angle x to z, split at y (fr_row)
     mat4 fr_invProj[2];
-    ivec4 fr_size;           // the picture's width and height, per view
+    ivec4 fr_size;           // the picture's width and height, the views
 };
 
 layout(set = 0, binding = 1) uniform sampler2D wh_tab;
 layout(rgba16f, set = 0, binding = 2) uniform restrict image2DArray fr_out;
-// per view: (l, n), the play axes f0, f1, f2 at the eye, (wh_eye(l), 0, 0)
-layout(set = 0, binding = 3, std430) restrict buffer Eyes { vec4 fr_eye[]; };
 
 #include_core
 
-#ifdef KERNEL_EYES
-// One invocation per view: the head's point moved along the geodesic of the eye's offset from it,
-// as wormhole_view.gdshaderinc's vertex shader does for a fragment ray tracer.
-layout(local_size_x = 2, local_size_y = 1, local_size_z = 1) in;
-void main() {
-    int v = int(gl_GlobalInvocationID.x);
-    if (v >= fr_views) return;
-    float l = head_l;
-    vec3 n = head_n;
-    vec4 f0 = head_f[0];
-    vec4 f1 = head_f[1];
-    vec4 f2 = head_f[2];
-    vec3 eye = (fr_cam * vec4(fr_eyeOff[v].xyz, 1.0)).xyz;
-    vec3 off = eye - head_pos;                         // this eye relative to the head, play space
-    float len = length(off);
-    if (len > 1e-6) {
-        vec4 dir = (off.x * f0 + off.y * f1 + off.z * f2) / len;
-        wh_geodesic(l, n, dir, len, f0, f1, f2);
+// The per-eye tables (KERNEL_TABLES makes them each frame, the world kernel reads them): the curved
+// part of an eye's rays depends only on the ray's angle alpha to the eye's radial direction (+l), so
+// a table over alpha holds it for every pixel of that eye. Rows: alpha in two grids split at the
+// critical ray (b = rmin toward the throat: rays near it wind round the throat, and what they do
+// changes ever faster with alpha), FR_HALF rows each, dense toward it (fr_warp: part linear, part
+// logarithmic); for an eye outside the shell only the rays that reach it. fr_tabF: by the polar
+// angle psi in the ray's plane from the eye (0..pi, FR_COLS columns), (l, path length) where the
+// path has turned by psi, along the whole path (straight before and after the shell, held after its
+// last point); fr_tabE: by row, (psi and path length where it leaves the shell, the universe it
+// leaves into, psi where it enters it).
+const int FR_HALF = 1024;
+const int FR_COLS = 256;
+const float FR_WLOG = 0.25;
+const float FR_EPS = 1e-6;
+
+float fr_warp(float d, float span) {
+    return (1.0 - FR_WLOG) * d / span + FR_WLOG * log(1.0 + d / FR_EPS) / log(1.0 + span / FR_EPS);
+}
+
+
+#ifdef KERNEL_TABLES
+// A row per invocation: the ray at the row's angle followed along its path.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(rgba32f, set = 0, binding = 6) uniform restrict writeonly image2DArray fr_outF;
+layout(rgba32f, set = 0, binding = 7) uniform restrict writeonly image2DArray fr_outE;
+
+// the inverse of fr_warp (it grows with d)
+float fr_unwarp(float x, float span) {
+    float lo = 0.0;
+    float hi = span;
+    for (int k = 0; k < 48; k++) {
+        float m = 0.5 * (lo + hi);
+        if (fr_warp(m, span) < x) lo = m; else hi = m;
     }
-    fr_eye[5 * v] = vec4(l, n);
-    fr_eye[5 * v + 1] = f0;
-    fr_eye[5 * v + 2] = f1;
-    fr_eye[5 * v + 3] = f2;
-    fr_eye[5 * v + 4] = vec4(wh_eye(l), 0.0, 0.0);
+    return 0.5 * (lo + hi);
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    int v = int(gl_GlobalInvocationID.z);
+    if (i >= 2 * FR_HALF) return;
+    vec4 rows = fr_rows[v];
+    bool up = i >= FR_HALF;
+    float span = max(up ? rows.z - rows.y : rows.y - rows.x, 1e-7);
+    float dA = fr_unwarp((float(i - (up ? FR_HALF : 0)) + 0.5) / float(FR_HALF), span);
+    float alpha = up ? rows.y + dA : rows.y - dA;
+    float l0 = fr_eye[5 * v].x;
+    vec2 eye = fr_eye[5 * v + 4].xy;
+    float vl = cos(alpha);
+    float wn = sin(alpha);
+    float r0 = eye.x;
+    float b = r0 * wn;
+    float Rout = wh_Rout();
+    float L = wh_Lsh();
+    float sg = l0 >= 0.0 ? 1.0 : -1.0;
+    bool outside = abs(l0) >= L;
+    // the straight part before the shell (an eye outside): in its plane the line at distance b from
+    // the centre, chi its polar angle from the closest approach (r = b / cos chi, s = b tan chi)
+    float chi0 = (vl * sg < 0.0 ? -1.0 : 1.0) * acos(min(b / r0, 1.0));
+    float psiIn = 0.0;
+    float sIn = 0.0;
+    WhPath p;
+    if (outside) {
+        psiIn = acos(min(b / r0, 1.0)) - acos(min(b / Rout, 1.0));
+        sIn = sqrt(max(r0 * r0 - b * b, 0.0)) - sqrt(max(Rout * Rout - b * b, 0.0));
+        float bR = min(b / Rout, 1.0);
+        p = wh_path(sg * L, -sg * sqrt(max(1.0 - bR * bR, 0.0)), bR, vec2(Rout, 0.0));
+    } else {
+        p = wh_path(l0, vl, wn, eye);
+    }
+    float psiEx = psiIn + p.tot.x;
+    float sEx = sIn + p.tot.y;
+    float side = p.sideC;
+    float chiX = acos(min(b / Rout, 1.0));      // leaving: from the closest approach, outward
+    vec2 last = vec2(l0, 0.0);
+    for (int k = 0; k < FR_COLS; k++) {
+        float psi = WH_PI * float(k) / float(FR_COLS - 1);
+        vec2 ls;
+        if (psi < psiIn) {
+            float chi = chi0 + psi;
+            ls = vec2(sg * (b / cos(chi) - Rout + L), b * (tan(chi) - tan(chi0)));
+        } else if (psi <= psiEx) {
+            ls = wh_pathAt(p, psi - psiIn) + vec2(0.0, sIn);
+        } else {
+            float chi = chiX + psi - psiEx;
+            ls = chi < 0.5 * WH_PI - 1e-3 ? vec2(side * (b / cos(chi) - Rout + L), sEx + b * (tan(chi) - tan(chiX))) : last;
+        }
+        last = ls;
+        imageStore(fr_outF, ivec3(k, i, v), vec4(ls, 0.0, 0.0));
+    }
+    imageStore(fr_outE, ivec3(i, 0, v), vec4(min(psiEx, 1e4), min(sEx, 1e6), side, psiIn));
+}
+#endif
+
+#if defined(KERNEL_WORLD) || defined(KERNEL_TOYS)
+// the world kernel: whether a ray of the group has a movable object to search for in the shell;
+// the toys kernel then traces the group again with the search (fr_tiles)
+shared uint sh_toys;
+#endif
+
+#ifdef KERNEL_WORLD
+layout(set = 0, binding = 4) uniform sampler2DArray fr_tabF;
+layout(set = 0, binding = 5) uniform sampler2DArray fr_tabE;
+
+// The row's texture coordinate for angle alpha: the grid below the split in [0, 0.5), above in
+// [0.5, 1), each kept half a row inside its own (the grids are not neighbours in alpha).
+float fr_row(float alpha, vec4 rows) {
+    bool up = alpha >= rows.y;
+    float d = max(up ? alpha - rows.y : rows.y - alpha, 0.0);
+    float span = max(up ? rows.z - rows.y : rows.y - rows.x, 1e-7);
+    float x = clamp(fr_warp(d, span), 0.5 / float(FR_HALF), 1.0 - 0.5 / float(FR_HALF));
+    return ((up ? 1.0 : 0.0) + x) * 0.5;
+}
+
+// wh_trace with the curved part from view v's tables: what the ray ends on.
+WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
+    float side = l0 > 0.0 ? 1.0 : -1.0;
+    vec3 x = vec3(0.0);
+    vec3 d = vec3(0.0);
+    float dist = 0.0;
+    int kind = -1;
+    float fl = 0.0;
+    vec3 fn = vec3(1.0, 0.0, 0.0);
+    vec3 col = vec3(0.0);
+    vec3 nrm = vec3(0.0, 0.0, 1.0);
+#ifdef WH_ARROWS
+    vec3 slc = vec3(-1.0);
+#endif
+    // the ray's plane: e1 the eye's n, e2 its direction's part across (as wh_curved)
+    vec3 we = w + 1e-7 * (abs(n0.x) < 0.9 ? vec3(0.0, n0.z, -n0.y) : vec3(-n0.z, 0.0, n0.x));
+    vec3 e2 = we * inversesqrt(dot(we, we));
+    float wn = min(dot(w, e2), 1.0);
+    vec3 e1 = n0;
+    bool curved = abs(l0) < wh_Lsh();
+    bool withShell = !curved;
+    if (!curved) {
+        x = wh_M(side, (abs(l0) - wh_Lsh() + wh_Rout()) * n0);
+        d = wh_M(side, side * vl * n0 + w);
+    }
+    for (int seg = 0; seg < 2; seg++) {
+        if (curved) {
+            if (seg == 1) {
+                // after the straight part: the direction at the eye again, from d (vl and w are not
+                // held through that part's tests: registers)
+                vec3 md = wh_M(side, d);
+                vl = side * dot(md, n0);
+                w = md - side * vl * n0;
+                we = w + 1e-7 * (abs(n0.x) < 0.9 ? vec3(0.0, n0.z, -n0.y) : vec3(-n0.z, 0.0, n0.x));
+                e2 = we * inversesqrt(dot(we, we));
+                wn = min(dot(w, e2), 1.0);
+            }
+            float rowv = fr_row(wh_atan2(wn, vl), fr_rows[v]);
+            vec4 E = texture(fr_tabE, vec3(rowv, 0.5, float(v)));   // psi out, s out, side, psi in
+            float psiF = wh_atan2(e1.z, -e2.z);                     // n.z = 0 there: the floor
+            bool floorHit = psiF < E.x;
+#ifdef WH_NO_SHELL_TOYS
+            // a movable object within reach of the ray's subspace (wh_curved's candidates)
+            for (int i = wh_bIdx.x; i < wh_bIdx.w; i++) {
+                vec4 Cb = wh_ball[i];
+                float c1 = dot(Cb.xyz, e1);
+                float c2 = dot(Cb.xyz, e2);
+                if (dot(Cb.xyz, Cb.xyz) - c1 * c1 - c2 * c2 < wh_ballCol[i].w * wh_ballCol[i].w) sh_toys = 1u;
+            }
+            for (int i = wh_cIdx.x; i < wh_cIdx.w; i++) {
+                vec4 Cc = wh_cube[i];
+                float rad = 2.0 * wh_cubeCol[i].w;
+                float c1 = dot(Cc.xyz, e1);
+                float c2 = dot(Cc.xyz, e2);
+                if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) sh_toys = 1u;
+            }
+#endif
+#ifdef WH_ARROWS
+            if (slc.z < 0.0) {
+                // n.x = 0: the first zero in the shell, unless the ray ends first (wh_curved)
+                float sx = e1.x >= 0.0 ? 1.0 : -1.0;
+                float psiS = wh_atan2(abs(e1.x), -sx * e2.x);
+                if (psiS >= E.w && psiS < (floorHit ? psiF : E.x)) {
+                    vec2 ls = texture(fr_tabF, vec3(psiS / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).xy;
+                    vec3 nS = cos(psiS) * e1 + sin(psiS) * e2;
+                    slc = vec3(ls.x, wh_atan2(nS.z, nS.y), ls.y);
+                }
+            }
+#endif
+            if (floorHit) {
+                vec2 ls = texture(fr_tabF, vec3(psiF / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).xy;
+                kind = 1;
+                fl = ls.x;
+                fn = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
+                dist = ls.y;
+                break;
+            }
+            // leaves the shell where the path has turned by psi out, into universe E.z
+            float c = cos(E.x);
+            float sn = sin(E.x);
+            vec3 n = c * e1 + sn * e2;
+            vec3 tt = c * e2 - sn * e1;
+            float bR = fr_eye[5 * v + 4].x * wn / wh_Rout();
+            side = E.z > 0.0 ? 1.0 : -1.0;
+            x = wh_M(side, wh_Rout() * n);
+            d = wh_M(side, sqrt(max(1.0 - bR * bR, 0.0)) * n + bR * tt);
+            dist = E.y;
+            curved = false;
+            withShell = false;
+            seg = 1;
+        }
+        WhHit h = wh_traceFlat(side, x, d, withShell);
+#ifdef WH_ARROWS
+        float tS = -x.x / (abs(d.x) > 1e-9 ? d.x : 1e-9);
+        if (slc.z < 0.0 && tS > 0.0 && tS < h.t) {
+            vec3 q = x + tS * d;
+            float iq = inversesqrt(dot(q, q));
+            slc = vec3(side * (dot(q, q) * iq - wh_Rout() + wh_Lsh()), wh_atan2(q.z, q.y), dist + tS);
+        }
+#endif
+        if (h.kind == 3) {
+            // into the shell: the tables go on from the eye, with the same plane
+            curved = true;
+            continue;
+        }
+        vec3 q = x + h.t * d;
+        if (h.kind == 0) {
+            kind = 0;
+        } else if (h.kind == 1) {
+            kind = 1;
+            float iq = inversesqrt(dot(q, q));
+            fn = wh_M(side, q) * iq;
+            fl = side * (dot(q, q) * iq - wh_Rout() + wh_Lsh());
+            dist += h.t;
+        } else {
+            kind = 2;
+            col = h.col;
+            nrm = h.nrm;
+            dist += h.t;
+#ifndef WH_NO_BALLS
+            if (h.kind == 5) col = wh_cubeLook(h.idx, vec4(wh_M(side, q), side * wh_h) - wh_cube[h.idx], dist);
+#endif
+        }
+        break;
+    }
+    if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;
+    WhEnd e;
+    e.kind = kind; e.side = side; e.fl = fl; e.fn = fn; e.col = col; e.nrm = nrm; e.d = d; e.dist = dist;
+#ifdef WH_ARROWS
+    e.slc = slc;
+#endif
+    return e;
 }
 #endif
 
@@ -66,12 +290,9 @@ void main() {
 // shared memory.
 layout(local_size_x = 16, local_size_y = 8, local_size_z = 1) in;
 shared vec2 sh_g[128];
-// the world kernel: whether a ray of the group has a movable object to search for in the shell;
-// the toys kernel then traces the group again with the search (fr_tiles)
-shared uint sh_toys;
 // the groups for the toys kernel: the dispatch's group count (x, 1, 1), then each group's (x, y,
 // view)
-layout(set = 0, binding = 4, std430) restrict buffer Tiles { uvec4 fr_tiles[]; };
+layout(set = 0, binding = 3, std430) restrict buffer Tiles { uvec4 fr_tiles[]; };
 
 // The ray of pixel pc of view v, traced and shaded (the group's invocations together: the
 // derivatives), stored if store.
@@ -90,8 +311,12 @@ void fr_pixel(ivec2 px, int v, bool store) {
     vec4 pa = fr_invProj[v] * vec4(ndc, 0.0, 1.0);
     vec3 pd = mat3(fr_cam) * (pa.xyz / pa.w - fr_eyeOff[v].xyz);
     vec4 V = normalize(pd.x * f0 + pd.y * f1 + pd.z * f2);
+#ifdef KERNEL_WORLD
+    WhEnd e = fr_trace(E0.x, E0.yzw, V.x, V.yzw, v);
+#else
     vec4 dbg;
     WhEnd e = wh_trace(E0.x, E0.yzw, V.x, V.yzw, eyeE, dbg);
+#endif
     vec2 g = wh_gridAt(e);
     uint li = gl_LocalInvocationIndex;
     sh_g[li] = g;
@@ -114,7 +339,6 @@ void main() {
 #endif
     fr_pixel(ivec2(gl_GlobalInvocationID.xy), int(gl_GlobalInvocationID.z), true);
 #ifdef WH_NO_SHELL_TOYS
-    if (wh_shellToys && all(lessThan(ivec2(gl_GlobalInvocationID.xy), fr_size.xy))) sh_toys = 1u;
     barrier();
     if (gl_LocalInvocationIndex == 0u && sh_toys != 0u) {
         uint k = atomicAdd(fr_tiles[0].x, 1u);

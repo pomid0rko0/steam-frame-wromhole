@@ -867,6 +867,79 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     return floorHit ? 1 : 0;
 }
 
+#ifdef WH_COMPUTE
+// ---------------------------------------------------------------- a path in the shell, by angle
+// The same path as wh_curved's (its pieces A, B, C), set up for points along it by their polar angle
+// from the start: the per-eye tables of the compute ray tracer (trace_kernels.gdshaderinc) are made
+// of these.
+struct WhPath {
+    WhFil f;
+    float zs; float d; float x0B; float DB; float kc; float ivlc;
+    float sideA; float sideC;
+    vec2 PA; vec2 PB; vec2 C0; vec2 tot;   // (psi, path length) of the pieces, C's start, the whole
+};
+
+// The path of a ray from ls in the shell or on its edge (|ls| <= L) with direction (vl, wn: |w|),
+// eye = wh_eye(ls) (at the edge: (Rout, 0)).
+WhPath wh_path(float ls, float vl, float wn, vec2 eye) {
+    WhPath p;
+    float rho0 = wh_rho0;
+    float R = wh_fillet;
+    float Lc = wh_Lc();
+    float th0 = wh_th0();
+    float s0 = sin(0.5 * th0);
+    float rmin = rho0 + 2.0 * R * s0 * s0;
+    float als = abs(ls);
+    wn = min(wn, 1.0);
+    float rs = eye.x;
+    float b = rs * wn;
+    bool turn = b > rmin;
+    p.f = wh_fil(b, turn, rmin);
+    bool fromEdge = als >= wh_Lsh() * (1.0 - 1e-6);
+    float ts = turn ? rs * vl * vl / (1.0 + wn) : eye.y;
+    p.zs = p.f.zhi;
+    vec2 Ss = vec2(p.f.psi, p.f.arc);
+    if (!fromEdge) {
+        vec4 ms;
+        p.zs = wh_filMomT(p.f, clamp(ts / p.f.span, 0.0, 1.0), ms);
+        Ss = vec2(dot(p.f.e, ms), wh_filLen(p.f, ms));
+    }
+    p.d = vl >= 0.0 ? 1.0 : -1.0;
+    float x = ls * p.d;
+    float sideS = ls > 0.0 ? 1.0 : -1.0;
+    bool hasA = turn ? vl * sideS < 0.0 : x < -Lc;
+    bool hasB = !turn && Lc > 0.0 && x < Lc;
+    bool cFromStart = turn ? !hasA : x > Lc;
+    p.sideA = turn ? sideS : -p.d;
+    p.sideC = turn ? sideS : p.d;
+    p.x0B = max(x, -Lc);
+    p.DB = hasB ? Lc - p.x0B : 0.0;
+    float omb = rs * vl * vl / (1.0 + wn) - (fromEdge ? R : eye.y);
+    p.ivlc = rho0 * inversesqrt(max(omb * (rho0 + b), 1e-14 * rho0 * rho0));
+    p.kc = b / (rho0 * rho0) * p.ivlc;
+    p.PA = hasA ? Ss : vec2(0.0);
+    p.PB = vec2(p.kc, p.ivlc) * p.DB;
+    p.C0 = cFromStart ? Ss : vec2(0.0);
+    p.tot = p.PA + p.PB + vec2(p.f.psi, p.f.arc) - p.C0;
+    return p;
+}
+
+// (l, path length from the start) where the path has turned by psi (0 <= psi <= tot.x): as the floor's
+// point in wh_curved.
+vec2 wh_pathAt(WhPath p, float psi) {
+    if (psi >= p.PA.x && psi < p.PA.x + p.PB.x) {
+        float xF = (psi - p.PA.x) / max(p.kc, 1e-12);
+        return vec2(p.d * (p.x0B + xF), p.PA.y + xF * p.ivlc);
+    }
+    bool inA = psi < p.PA.x;
+    float T = inA ? p.PA.x - psi : p.C0.x + psi - p.PA.x - p.PB.x;
+    float t; vec4 m;
+    wh_filMom(p.f, wh_filSolve(p.f, clamp(T, 0.0, p.f.psi)), t, m);
+    return vec2(wh_filLW(p.f, t, inA ? p.sideA : p.sideC).x,
+                (inA ? p.PA.y : p.PA.y + p.PB.y - p.C0.y) + (inA ? -1.0 : 1.0) * wh_filLen(p.f, m));
+}
+#endif
+
 // ---------------------------------------------------------------- moving an observer
 // The geodesic equation with parallel transport: docs/geometry.md («Движение наблюдателя и
 // предметов»).
@@ -929,28 +1002,35 @@ void wh_enter(float side, vec3 x, vec3 d, out float l, out vec3 n, out float vl,
 }
 
 // ---------------------------------------------------------------- flat scene
-// Each static object is tested in turn and writes its normal and colour when it is the nearest so
-// far; world B's boxes are skipped by rays that go up above all of them. The movable balls and
-// cubes: only those of this universe, after their bounding spheres (wh_bound).
+// Each static object is tested in turn and keeps its distance and what it is (kind, idx) when it
+// is the nearest so far; world B's boxes are skipped by rays that go up above all of them. The
+// movable balls and cubes: only those of this universe, after their bounding spheres (wh_bound).
+// The normal and the colour of what is hit are worked out once, after all the tests (wh_hitLook):
+// held through the loops, they would cost registers.
 struct WhHit {
     float t;
     int kind;      // 0 none, 1 floor, 2 object, 3 shell, 4 ball, 5 cube
-    int idx;       // ball or cube index
+    int idx;       // object: wh_sph i, pillar 10 + i (its side) or 20 + i (its top), box 30 + i; ball or cube index
     vec3 nrm;
     vec3 col;
 };
 
-void wh_hitSphere(vec3 x, vec3 d, vec4 s, vec3 col, inout WhHit h) {
+const vec3 WH_SPH_COL[6] = vec3[](vec3(0.80, 0.15, 0.10), vec3(0.95, 0.75, 0.15), vec3(0.75, 0.75, 0.78),
+                                  vec3(0.75, 0.15, 0.70), vec3(0.15, 0.75, 0.30), vec3(0.20, 0.35, 0.85));
+
+void wh_hitSphere(vec3 x, vec3 d, int i, inout WhHit h) {
+    vec4 s = wh_sph[i];
     vec3 oc = x - s.xyz;
     float bq = dot(oc, d);
     float cq = dot(oc, oc) - s.w * s.w;
     float disc = bq * bq - cq;
     if (disc < 0.0) return;
     float t = -bq - sqrt(disc);
-    if (t > 1e-4 && t < h.t) { h.t = t; h.kind = 2; h.nrm = (x + t * d - s.xyz) / s.w; h.col = col; }
+    if (t > 1e-4 && t < h.t) { h.t = t; h.kind = 2; h.idx = i; }
 }
 
-void wh_hitPillar(vec3 x, vec3 d, vec4 p, vec3 col, inout WhHit h) {
+void wh_hitPillar(vec3 x, vec3 d, int i, inout WhHit h) {
+    vec4 p = wh_pil[i];
     vec2 oc = x.xy - p.xy;
     float A = dot(d.xy, d.xy);
     if (A < 1e-9) return;
@@ -960,17 +1040,17 @@ void wh_hitPillar(vec3 x, vec3 d, vec4 p, vec3 col, inout WhHit h) {
     if (disc < 0.0) return;
     float t = (-B - sqrt(disc)) / A;
     float zz = x.z + t * d.z;
-    if (t > 1e-4 && t < h.t && zz > 0.0 && zz < p.w) {
-        h.t = t; h.kind = 2; h.nrm = vec3((x.xy + t * d.xy - p.xy) / p.z, 0.0); h.col = col;
-    }
+    if (t > 1e-4 && t < h.t && zz > 0.0 && zz < p.w) { h.t = t; h.kind = 2; h.idx = 10 + i; }
     if (d.z < 0.0) {   // flat top
         float tt = (p.w - x.z) / d.z;
         vec2 q = x.xy + tt * d.xy - p.xy;
-        if (tt > 1e-4 && tt < h.t && dot(q, q) < p.z * p.z) { h.t = tt; h.kind = 2; h.nrm = vec3(0.0, 0.0, 1.0); h.col = col; }
+        if (tt > 1e-4 && tt < h.t && dot(q, q) < p.z * p.z) { h.t = tt; h.kind = 2; h.idx = 20 + i; }
     }
 }
 
-void wh_hitBox(vec3 x, vec3 d, vec3 c, vec3 hs, vec3 col, inout WhHit h) {
+void wh_hitBox(vec3 x, vec3 d, int i, inout WhHit h) {
+    vec3 c = wh_box[i].xyz;
+    vec3 hs = vec3(wh_box[i].w);
     vec3 inv = 1.0 / d;
     vec3 t0 = (c - hs - x) * inv;
     vec3 t1 = (c + hs - x) * inv;
@@ -979,8 +1059,48 @@ void wh_hitBox(vec3 x, vec3 d, vec3 c, vec3 hs, vec3 col, inout WhHit h) {
     float tin = max(max(tn.x, tn.y), tn.z);
     float tout = min(min(tf.x, tf.y), tf.z);
     if (tin > tout || tin < 1e-4 || tin >= h.t) return;
-    h.t = tin; h.kind = 2; h.col = col;
-    h.nrm = tin == tn.x ? vec3(-sign(d.x), 0.0, 0.0) : (tin == tn.y ? vec3(0.0, -sign(d.y), 0.0) : vec3(0.0, 0.0, -sign(d.z)));
+    h.t = tin; h.kind = 2; h.idx = 30 + i;
+}
+
+// The normal and colour of what wh_traceFlat's ray x + t d (universe side) hit, from what it is.
+void wh_hitLook(float side, vec3 x, vec3 d, inout WhHit h) {
+    vec3 p = x + h.t * d;
+    int i = h.idx;
+    if (h.kind == 2) {
+        if (i < 10) {
+            h.nrm = (p - wh_sph[i].xyz) / wh_sph[i].w;
+            h.col = WH_SPH_COL[i];
+        } else if (i < 30) {
+            vec4 q = wh_pil[i < 20 ? i - 10 : i - 20];
+            h.nrm = i < 20 ? vec3((p.xy - q.xy) / q.z, 0.0) : vec3(0.0, 0.0, 1.0);
+            h.col = vec3(0.85, 0.80, 0.70);
+        } else {
+            // the face: where the point is farthest out along an axis, in half sizes
+            vec3 o = (p - wh_box[i - 30].xyz) / wh_box[i - 30].w;
+            vec3 ao = abs(o);
+            h.nrm = ao.x >= ao.y && ao.x >= ao.z ? vec3(sign(o.x), 0.0, 0.0)
+                  : (ao.y >= ao.z ? vec3(0.0, sign(o.y), 0.0) : vec3(0.0, 0.0, sign(o.z)));
+            h.col = vec3(0.90, 0.90, 0.95);
+        }
+    }
+#ifndef WH_NO_BALLS
+    else if (h.kind == 4) {
+        vec4 S = wh_fball[i];
+        h.nrm = (p - S.xyz) * inversesqrt(S.w);
+        h.col = wh_ballCol[i].rgb;
+    } else if (h.kind == 5) {
+        // the entry face: the slab whose boundary the point is on, the largest |offset| of the four
+        vec4 X = vec4(wh_M(side, p), side * wh_h) - wh_cube[i];
+        int k = 0;
+        float best = -1.0;
+        for (int j = 0; j < 4 + min(wh_nCube, 0); j++) {
+            float a = abs(dot(X, wh_cubeE[5 * i + j]));
+            if (a > best) { best = a; k = j; }
+        }
+        h.nrm = normalize(wh_M(side, (dot(X, wh_cubeE[5 * i + k]) > 0.0 ? 1.0 : -1.0) * wh_cubeE[5 * i + k].xyz));
+        h.col = wh_cubeCol[i].rgb;
+    }
+#endif
 }
 
 WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
@@ -993,19 +1113,19 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     // the boxes stand on the floor: a ray above the tallest one's top going up passes over all of
     // them (whole regions of the view at once: the sky). The pillars test themselves.
     if (side > 0.0) {
-        wh_hitSphere(x, d, wh_sph[0], vec3(0.80, 0.15, 0.10), h);
-        wh_hitSphere(x, d, wh_sph[1], vec3(0.95, 0.75, 0.15), h);
-        wh_hitSphere(x, d, wh_sph[2], vec3(0.75, 0.75, 0.78), h);
-        for (int i = 0; i < wh_pil.length(); i++) wh_hitPillar(x, d, wh_pil[i], vec3(0.85, 0.80, 0.70), h);
+        wh_hitSphere(x, d, 0, h);
+        wh_hitSphere(x, d, 1, h);
+        wh_hitSphere(x, d, 2, h);
+        for (int i = 0; i < wh_pil.length(); i++) wh_hitPillar(x, d, i, h);
     } else {
-        wh_hitSphere(x, d, wh_sph[3], vec3(0.75, 0.15, 0.70), h);
-        wh_hitSphere(x, d, wh_sph[4], vec3(0.15, 0.75, 0.30), h);
-        wh_hitSphere(x, d, wh_sph[5], vec3(0.20, 0.35, 0.85), h);
+        wh_hitSphere(x, d, 3, h);
+        wh_hitSphere(x, d, 4, h);
+        wh_hitSphere(x, d, 5, h);
         float top = 0.0;
         for (int i = 0; i < wh_box.length(); i++) top = max(top, wh_box[i].z + wh_box[i].w);
         if (x.z < top || d.z < 0.0) {
             for (int i = 0; i < wh_box.length(); i++)
-                wh_hitBox(x, d, wh_box[i].xyz, vec3(wh_box[i].w), vec3(0.90, 0.90, 0.95), h);
+                wh_hitBox(x, d, i, h);
         }
     }
 #ifndef WH_NO_BALLS
@@ -1045,17 +1165,9 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
             }
         }
     }
-    if (bi >= 0) {
-        vec4 S = wh_fball[bi];
-        h.t = bt; h.kind = 4; h.idx = bi;
-        h.nrm = (x + bt * d - S.xyz) * inversesqrt(S.w);
-        h.col = wh_ballCol[bi].rgb;
-    }
+    if (bi >= 0) { h.t = bt; h.kind = 4; h.idx = bi; }
     // cubes: the 4D box cut by this sheet is a convex solid bounded by four pairs of planes; entries
     // only
-    vec3 md = wh_M(side, d);
-    vec3 mx = wh_M(side, x);
-    int bf = 0;                    // the nearest cube's entry face: axis k + 1, negative for -axis
     bi = -1;
     bb = wh_bound[side > 0.0 ? 2 : 3];
     ob = x - wh_M(side, bb.xyz);
@@ -1065,7 +1177,9 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     eb = -bqb - bt;
     bool nearC = bb.w > 0.0 && (cqb <= 0.0 || (bqb < 0.0 && dsb >= 0.0 && (eb < 0.0 || eb * eb < dsb)));
     for (int i = side > 0.0 ? 0 : wh_cIdx.z; i < (nearC ? (side > 0.0 ? wh_cIdx.y : wh_nCube) : 0); i++) {
-        vec4 X = vec4(mx, sheet) - wh_cube[i];
+        // the ray in R^4 (its chart mirrored back): worked out here, not held through the loop
+        vec3 md = wh_M(side, d);
+        vec4 X = vec4(wh_M(side, x), sheet) - wh_cube[i];
         // first the box's bounding sphere in R^4 (radius: half diagonal, 2 half sizes)
         float rb = 2.0 * wh_cubeCol[i].w;
         float bs = dot(X.xyz, md);
@@ -1073,7 +1187,6 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
         if (cs > 0.0 && (bs > 0.0 || bs * bs < cs)) continue;
         float tin = -1e30;
         float tout = 1e30;
-        int face = 0;
         for (int k = 0; k < 4 + min(wh_nCube, 0); k++) {
             vec4 ax = wh_cubeE[5 * i + k];
             float A = dot(X, ax);
@@ -1084,17 +1197,12 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
             }
             float t0 = (-1.0 - A) / B;
             float t1 = (1.0 - A) / B;
-            if (min(t0, t1) > tin) { tin = min(t0, t1); face = B > 0.0 ? -(k + 1) : k + 1; }
+            tin = max(tin, min(t0, t1));
             tout = min(tout, max(t0, t1));
         }
-        if (tin <= tout && tin > 0.0 && tin < bt) { bt = tin; bi = i; bf = face; }
+        if (tin <= tout && tin > 0.0 && tin < bt) { bt = tin; bi = i; }
     }
-    if (bi >= 0) {
-        int k = abs(bf) - 1;
-        h.t = bt; h.kind = 5; h.idx = bi;
-        h.nrm = normalize(wh_M(side, (bf > 0 ? 1.0 : -1.0) * wh_cubeE[5 * bi + k].xyz));
-        h.col = wh_cubeCol[bi].rgb;
-    }
+    if (bi >= 0) { h.t = bt; h.kind = 5; h.idx = bi; }
 #endif
     if (withShell) {
         float R = wh_Rout();
@@ -1106,6 +1214,7 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
             if (t > 0.0 && t < h.t) { h.t = t; h.kind = 3; }
         }
     }
+    wh_hitLook(side, x, d, h);
     return h;
 }
 
