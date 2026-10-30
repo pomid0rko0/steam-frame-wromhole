@@ -12,7 +12,6 @@ const U := preload("res://tests/util.gd")
 var main: Main
 var frames := 0
 var pose_before: Array
-var main_shader: Shader
 var started := false
 
 
@@ -36,7 +35,6 @@ func _process(_d: float) -> bool:
 		check("the menu has the speed check's row", has_row)
 		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
-		main_shader = main.frag.material.shader
 		b.warm = 0.1
 		b.time = 0.2
 		b.start()
@@ -56,6 +54,9 @@ func _process(_d: float) -> bool:
 				started = false
 			if main.tracer.whole != v.whole:
 				check("this build: the toys kernel over every group or the listed", false, b.plan[b.step].y)
+				started = false
+			if main.hide_toys != v.plain or (v.plain and main.frag.toy_count > 0):
+				check("main's: the segment's toys drawn or not", false, b.plan[b.step].y)
 				started = false
 			if v.frag and (main.frag.material.shader != v.shader or main.frag.toy_mode != v.toy_mode):
 				check("main's: the segment's shader and stencil split", false, b.plan[b.step].y)
@@ -79,7 +80,9 @@ func _process(_d: float) -> bool:
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("this build's ray tracer back, main's as it was", not main.use_frag and main.tracer.visible and not main.tracer.whole
-					and not main.frag.visible and main.frag.material.shader == main_shader and main.frag.toy_mode == FragTracer.SPLIT)
+					and not main.hide_toys
+					and not main.frag.visible and main.frag.material.shader == b.main_shader and b.main_shader == FragTracer.SHADERS_TOYS[0]
+					and main.frag.toy_mode == FragTracer.SPLIT)
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.frag and not main.foveation.split_pass.enabled)
 			check("the menu shows the result against main", main.menu.bench_text.contains("main"), main.menu.bench_text)
 			U.finish(self)

@@ -57,6 +57,9 @@ var tab_f: RID                          # fr_tabF, fr_tabE, fr_tabP: a layer per
 var tab_e: RID
 var tab_p: RID
 var shell_toys := false                 # movable objects within reach of the shell: fr_tabP made
+var uniforms: Array[RDUniform] = []    # every binding of the kernels (_make_uniforms)
+var uniforms_tex: RID                   # the fillet table's they were made with
+var used_sets := {}                     # their subsets by the bindings a kernel takes (_used)
 var image_size := Vector2i.ZERO
 var image_views := 0
 
@@ -144,37 +147,9 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	bytes.encode_s32(VIEWS_AT, views)
 	rd.buffer_update(ubo, 0, SIZE, bytes)
 	var tex := RenderingServer.texture_get_rd_texture(table.get_rid())
-	var u_ubo := RDUniform.new()
-	u_ubo.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
-	u_ubo.binding = 0
-	u_ubo.add_id(ubo)
-	var u_tab := RDUniform.new()
-	u_tab.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-	u_tab.binding = 1
-	u_tab.add_id(sampler)
-	u_tab.add_id(tex)
-	var u_img := RDUniform.new()
-	u_img.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	u_img.binding = 2
-	u_img.add_id(image)
-	var u_tiles := RDUniform.new()
-	u_tiles.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_tiles.binding = 3
-	u_tiles.add_id(tiles)
-	var all := [u_ubo, u_tab, u_img, u_tiles]
-	for k in 3:
-		var t: RID = [tab_f, tab_e, tab_p][k]
-		var u := RDUniform.new()
-		u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-		u.binding = [4, 5, 9][k]
-		u.add_id(sampler)
-		u.add_id(t)
-		all.append(u)
-		var o := RDUniform.new()
-		o.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-		o.binding = 6 + k
-		o.add_id(t)
-		all.append(o)
+	if tex != uniforms_tex or uniforms.is_empty():
+		_make_uniforms(tex)
+	var all := uniforms
 	var w := gravity + (GRAVITY_DEFINES.size() if toys else 0)
 	if toys:
 		rd.buffer_update(tiles, 0, 16, PackedInt32Array([0, 1, 1, 0]).to_byte_array())
@@ -196,6 +171,44 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	rd.compute_list_end()
 
 
+## The kernels' uniforms (made again with the picture, or when the fillet table is another texture).
+func _make_uniforms(tex: RID) -> void:
+	uniforms_tex = tex
+	uniforms.clear()
+	used_sets.clear()
+	var u_ubo := RDUniform.new()
+	u_ubo.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	u_ubo.binding = 0
+	u_ubo.add_id(ubo)
+	var u_tab := RDUniform.new()
+	u_tab.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u_tab.binding = 1
+	u_tab.add_id(sampler)
+	u_tab.add_id(tex)
+	var u_img := RDUniform.new()
+	u_img.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	u_img.binding = 2
+	u_img.add_id(image)
+	var u_tiles := RDUniform.new()
+	u_tiles.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_tiles.binding = 3
+	u_tiles.add_id(tiles)
+	uniforms.append_array([u_ubo, u_tab, u_img, u_tiles])
+	for k in 3:
+		var t: RID = [tab_f, tab_e, tab_p][k]
+		var u := RDUniform.new()
+		u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+		u.binding = [4, 5, 9][k]
+		u.add_id(sampler)
+		u.add_id(t)
+		uniforms.append(u)
+		var o := RDUniform.new()
+		o.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+		o.binding = 6 + k
+		o.add_id(t)
+		uniforms.append(o)
+
+
 ## The kernels a frame runs with this gravity view (GRAVITY_DEFINES) and with toys or none, by name:
 ## [the world kernel's, the toys kernel's or ""].
 static func kernels(p_gravity: int, p_toys: bool) -> Array[String]:
@@ -209,8 +222,11 @@ static func _groups(size: Vector2i) -> Vector2i:
 
 
 ## The uniforms of all with these bindings (a texture is not both sampled and stored in one set).
-static func _used(all: Array, bindings: Array) -> Array:
-	return all.filter(func(u: RDUniform) -> bool: return bindings.has(u.binding))
+func _used(all: Array[RDUniform], bindings: Array) -> Array:
+	var key := str(bindings)
+	if not used_sets.has(key):
+		used_sets[key] = all.filter(func(u: RDUniform) -> bool: return bindings.has(u.binding))
+	return used_sets[key]
 
 
 ## The tables' rows for an eye at l: (from, split, to) in angle to +l (fr_row): every ray, or for an
@@ -340,6 +356,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 		rd.free_rid(tiles)
 	var n := _groups(size).x * _groups(size).y * views + 1
 	tiles = rd.storage_buffer_create(16 * n, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
+	uniforms.clear()
 
 
 static func _put_vec4(b: StreamPeerBuffer, v: Vector4) -> void:

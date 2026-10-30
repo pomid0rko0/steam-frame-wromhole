@@ -240,12 +240,25 @@ float fr_search(int i, float rowv, int v, float sigEnd, float send, vec3 cb, flo
     for (int it = 0; it < 24 + min(wh_nBall, 0); it++) {
         if (s >= send) break;
         if (d >= size) {
+            float sp = s;
+            float dp = d;
             s += d;
             q = fr_path(rowv, v, s, sigEnd).xyz;
             d = fr_dist(i, q, cb, perp2, e1, e2);
-            if (d <= 0.0 && s < send) {
-                // stepped exactly onto it (d was the distance): the entry is between, refine there
-                d = 1e-6;
+            if (d <= 0.0) {
+                // a step of the distance ends at most on it, by the tables' error just inside: the
+                // entry is between, refined from both ends
+                if (s >= send) break;
+                float sa = sp;
+                float da = dp;
+                float sb = s;
+                float db = d;
+                for (int r = 0; r < 3 + min(wh_nBall, 0); r++) {
+                    float sx = (sa * db - sb * da) / (db - da);
+                    float dx = fr_dist(i, fr_path(rowv, v, sx, sigEnd).xyz, cb, perp2, e1, e2);
+                    if (dx > 0.0) { sa = sx; da = dx; } else { sb = sx; db = dx; }
+                }
+                return sb;
             }
             continue;
         }

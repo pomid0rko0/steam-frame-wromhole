@@ -22,7 +22,12 @@ var pass_: RayPass = RayPass.new()      # on the camera's compositor (main.gd pu
 var quad: MeshInstance3D
 var values := {}                # the kernels' uniforms by name (get_param)
 var toy_count := 0              # balls and cubes the kernels have (set_objects)
-var whole := false              # the toys kernel over every group, not only those listed (the tests, the speed check)
+var whole := false:             # the toys kernel over every group, not only those listed (the tests, the speed check)
+	set(on):
+		whole = on
+		body_dirty = true
+var body := PackedByteArray()   # the block up to the head (_pack)
+var body_dirty := true
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var pixel_angle := 0.0          # the pixel angle set_head last saw: wh_pix goes again when it changes
 
@@ -65,6 +70,7 @@ func get_param(name: StringName) -> Variant:
 ## Set one (the stereo check scene's static objects out of sight).
 func param(name: StringName, value: Variant) -> void:
 	values[String(name)] = value
+	body_dirty = true
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there and its place
@@ -80,6 +86,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3, gaze := Vector
 	if pix != pixel_angle:
 		pixel_angle = pix
 		values["wh_pix"] = pix
+		body_dirty = true
 	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), [l, n, hf.duplicate(), head_pos, gaze], gravity_view, toy_count > 0, _shell_toys()))
 	# shown once the pass has made its picture (a material whose texture does not exist yet is not
 	# drawn: an error each frame)
@@ -124,6 +131,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			o[k] = cpos[i].dot(axes[4 * i + k])
 		ax.append(o)
 	toy_count = n + nc
+	body_dirty = true
 	values["wh_ball"] = p
 	values["wh_ballCol"] = c
 	values["wh_nBall"] = n
@@ -195,6 +203,7 @@ static func region_order(pos: PackedVector4Array, reach: PackedFloat64Array, h: 
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	values["wh_pix"] = _pixel_angle()
+	body_dirty = true
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
@@ -217,39 +226,35 @@ func plain() -> bool:
 
 
 ## The block of the kernels' uniforms up to the views' part (RayPass: the order of Frame in
-## shaders/trace_kernels.gdshaderinc), from values.
+## shaders/trace_kernels.gdshaderinc), from values: everything before the head made again only when
+## one of its values changed (body_dirty), the head every frame.
 func _pack() -> PackedByteArray:
-	var b := StreamPeerBuffer.new()
-	for k in ["wh_rho0", "wh_h", "wh_fillet", "wh_pix"]:
-		b.put_float(values.get(k, 0.0))
-	for k in ["wh_tabLo", "wh_tabInv", "wh_tabReg", "grav_cyl"]:
-		_put4(b, values.get(k, Vector4.ZERO))
-	for k: String in ["grav_g:2", "grav_d:2", "wh_sph:6", "wh_pil:4", "wh_box:4", "wh_ball:12", "wh_ballCol:12",
-			"wh_fball:12", "wh_cube:6", "wh_cubeE:30", "wh_cubeCol:6", "wh_bound:4"]:
-		var name := k.get_slice(":", 0)
-		var count := int(k.get_slice(":", 1))
-		var arr: PackedVector4Array = values.get(name, PackedVector4Array())
-		for i in count:
-			_put4(b, arr[i] if i < arr.size() else Vector4.ZERO)
-	for k in ["wh_bIdx", "wh_cIdx"]:
-		var v: Vector4i = values.get(k, Vector4i.ZERO)
-		for j in 4:
-			b.put_32(v[j])
-	for v in [values.get("wh_nBall", 0), values.get("wh_nCube", 0), 1, 1 if whole else 0]:
-		b.put_32(v)
+	if body_dirty:
+		body_dirty = false
+		var b := PackedByteArray()
+		b.append_array(PackedFloat32Array([values.get("wh_rho0", 0.0), values.get("wh_h", 0.0),
+				values.get("wh_fillet", 0.0), values.get("wh_pix", 0.0)]).to_byte_array())
+		var v4 := PackedVector4Array()
+		for k in ["wh_tabLo", "wh_tabInv", "wh_tabReg", "grav_cyl"]:
+			v4.append(values.get(k, Vector4.ZERO))
+		b.append_array(v4.to_byte_array())
+		for k: String in ["grav_g:2", "grav_d:2", "wh_sph:6", "wh_pil:4", "wh_box:4", "wh_ball:12", "wh_ballCol:12",
+				"wh_fball:12", "wh_cube:6", "wh_cubeE:30", "wh_cubeCol:6", "wh_bound:4"]:
+			var arr: PackedVector4Array = values.get(k.get_slice(":", 0), PackedVector4Array()).duplicate()
+			arr.resize(int(k.get_slice(":", 1)))
+			b.append_array(arr.to_byte_array())
+		var bi: Vector4i = values.get("wh_bIdx", Vector4i.ZERO)
+		var ci: Vector4i = values.get("wh_cIdx", Vector4i.ZERO)
+		b.append_array(PackedInt32Array([bi.x, bi.y, bi.z, bi.w, ci.x, ci.y, ci.z, ci.w, values.get("wh_nBall", 0),
+				values.get("wh_nCube", 0), 1, 1 if whole else 0]).to_byte_array())
+		body = b
 	var hf: PackedVector4Array = values.get("head_f", PackedVector4Array([Vector4.ZERO, Vector4.ZERO, Vector4.ZERO]))
-	for i in 3:
-		_put4(b, hf[i])
 	var hn: Vector3 = values.get("head_n", Vector3(1.0, 0.0, 0.0))
-	_put4(b, Vector4(hn.x, hn.y, hn.z, values.get("head_l", 10.0)))
 	var hp: Vector3 = values.get("head_pos", Vector3.ZERO)
-	_put4(b, Vector4(hp.x, hp.y, hp.z, 0.0))
-	return b.data_array
-
-
-static func _put4(b: StreamPeerBuffer, v: Vector4) -> void:
-	for k in 4:
-		b.put_float(v[k])
+	var out := body.duplicate()
+	out.append_array(PackedVector4Array([hf[0], hf[1], hf[2], Vector4(hn.x, hn.y, hn.z, values.get("head_l", 10.0)),
+			Vector4(hp.x, hp.y, hp.z, 0.0)]).to_byte_array())
+	return out
 
 
 ## A pixel's angle in the middle of the view, radians (soft edges of the gravity arrows and the
@@ -287,6 +292,7 @@ func upload_gravity() -> void:
 	values["grav_g"] = PackedVector4Array(g.g)
 	values["grav_d"] = PackedVector4Array(g.d)
 	values["wh_pix"] = _pixel_angle()
+	body_dirty = true
 
 
 ## The fillet polynomials by impact parameter (WormholeSpace.fillet_table).
@@ -296,6 +302,7 @@ func upload_fillet_table() -> void:
 	values["wh_tabLo"] = tab.lo
 	values["wh_tabInv"] = tab.inv
 	values["wh_tabReg"] = tab.reg
+	body_dirty = true
 
 
 ## The static objects (scene.json, which the physics and the tests read too).
@@ -308,3 +315,4 @@ func upload_scene() -> void:
 	values["wh_sph"] = to_v4.call(scene["spheres_A"] + scene["spheres_B"])
 	values["wh_pil"] = to_v4.call(scene["pillars_A"])
 	values["wh_box"] = to_v4.call(scene["boxes_B"])
+	body_dirty = true

@@ -68,6 +68,7 @@ var camera: XRCamera3D
 var tracer: Tracer
 var frag: FragTracer            # main's fragment ray tracer, for the speed check's comparison (use_frag)
 var use_frag := false           # it draws instead of tracer
+var hide_toys := false          # the toys not drawn (the speed check's variants without them)
 var foveation: Foveation
 var rate: FrameRate
 var menu: Menu
@@ -301,6 +302,11 @@ func _process(delta: float) -> void:
 	hands.update(delta, hp, head, active, new_ball, new_cube)
 	if toys.enabled:
 		draw_toys()
+	if tracer.pass_.failed and not use_frag:
+		# no RenderingDevice or a kernel that did not compile (its error is in the log above): main's
+		# ray tracer instead of a black view
+		print("ray pass: failed, main's fragment ray tracer draws instead")
+		set_frag(true)
 	if use_frag:
 		frag.set_head(hp[0], hp[1], hf, head.origin)
 	else:
@@ -312,7 +318,8 @@ func _process(delta: float) -> void:
 
 
 func draw_toys() -> void:
-	toys.draw(frag if use_frag else tracer, hands.drawn())
+	if not hide_toys:
+		toys.draw(frag if use_frag else tracer, hands.drawn())
 
 
 ## Main's fragment ray tracer instead of this build's (the speed check compares them), or back.

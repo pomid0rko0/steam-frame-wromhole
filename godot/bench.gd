@@ -309,10 +309,13 @@ func _prepare() -> void:
 
 ## A variant's ray tracer and foveation.
 func _use(v: Setup) -> void:
+	if not v.frag:
+		main.hide_toys = false
 	main.set_frag(v.frag)
 	main.tracer.whole = v.whole
 	if v.frag:
 		# the toys first: set_objects picks main's own shader
+		main.hide_toys = v.plain
 		if v.plain:
 			main.frag.set_objects(PackedVector4Array(), PackedVector4Array())
 		elif main.toys.enabled:
@@ -578,6 +581,7 @@ static func _list(v: Array) -> String:
 ## This build's ray tracer as it runs, with the foveation chosen in the menu.
 func _restore() -> void:
 	main.tracer.whole = false
+	main.hide_toys = false
 	if main.toys.enabled:
 		main.frag.set_objects(PackedVector4Array(), PackedVector4Array())
 		main.toys.draw(main.frag, main.hands.drawn())     # main's with the toys again, its own shader
