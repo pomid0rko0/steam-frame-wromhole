@@ -11,9 +11,11 @@ extends Node3D
 ## the GPU compiles the other one, so the shader changes only when what is shown changes.
 ##
 ## The stencil split. The shader with toys holds more registers and costs more even where it finds
-## nothing, so with toys the frame is split: proxies drawn first (stencil_mark.gdshader) mark the
+## nothing, so with toys the frame is split: marks drawn first (stencil_mark.gdshader over proxies,
+## with the head in the curved region stencil_mark_all over the whole view) set the stencil at the
 ## pixels whose rays may meet a toy, the shader with toys runs only there, the plain one of the same
-## view everywhere else (a second quad). Godot geometry drawn before the ray tracers must not write
+## view everywhere else (a second quad). A mark keeps only the pixels whose ray's plane passes within
+## reach of a toy (wh_toysNear): the whole ray lies in that plane. Godot geometry drawn before the ray tracers must not write
 ## the stencil. The
 ## stencil (stencil_mode in a shader) works on Mobile, with multiview and on lavapipe; opaque draws
 ## go by render_priority, lower first.
@@ -45,10 +47,11 @@ const EYE_REACH := 0.05
 const PROXY_SEGMENTS := 48
 const PROXY_RINGS := 24
 const PROXY_SLACK := 1.02
-# how the shader with toys gets its pixels: SPLIT by the stencil (the plain one elsewhere), WHOLE
-# the whole view marked, BARE no stencil at all (another source's shader in the speed check, which
-# has no stencil test)
-enum {SPLIT, WHOLE, BARE}
+# how the shader with toys gets its pixels: SPLIT by the stencil (the plain one elsewhere), ROUGH
+# the same without the rays' planes (the proxies' pixels, with the head in the curved region the
+# whole view: the speed check's comparison), WHOLE the whole view marked, BARE no stencil at all
+# (another source's shader in the speed check, which has no stencil test)
+enum {SPLIT, ROUGH, WHOLE, BARE}
 
 var space: WormholeSpace
 var scene: Dictionary
@@ -59,6 +62,7 @@ var plain_material := ShaderMaterial.new()  # with toys: the plain one where non
 var plain_quad: MeshInstance3D
 var proxies: MultiMeshInstance3D   # spheres around the shell and this universe's toys (play space)
 var mark_all: MeshInstance3D       # the whole view marked instead
+var marks: Array[ShaderMaterial] = []   # the proxies' and the whole view's marks
 var toy_mode := SPLIT
 var toy_count := 0              # balls and cubes the shader has (set_objects)
 var toy_spheres := [PackedVector4Array(), PackedVector4Array()]   # per universe A, B: the toys' chart spheres
@@ -91,6 +95,7 @@ func _ready() -> void:
 	var mark := ShaderMaterial.new()
 	mark.shader = SHADER_MARK
 	mark.render_priority = -1
+	marks.append(mark)
 	var sphere := SphereMesh.new()
 	sphere.radius = 1.0
 	sphere.height = 2.0
@@ -110,6 +115,8 @@ func _ready() -> void:
 	var all := ShaderMaterial.new()
 	all.shader = SHADER_MARK_ALL
 	all.render_priority = -1
+	marks.append(all)
+	_copy_params()
 	mark_all = _screen_quad(all)
 	mark_all.visible = false
 	add_child(mark_all)
@@ -127,10 +134,28 @@ static func _screen_quad(mat: ShaderMaterial) -> MeshInstance3D:
 	return q
 
 
-## A uniform both ray tracers read (the toys' own, wh_ball..., go only to material: set_objects).
+## A uniform both ray tracers and the marks read (the toys' own, wh_ball...: _toy_param).
 func param(name: StringName, value: Variant) -> void:
 	material.set_shader_parameter(name, value)
 	plain_material.set_shader_parameter(name, value)
+	for m in marks:
+		m.set_shader_parameter(name, value)
+
+
+## A uniform of the toys: the ray tracer with them and the marks read it.
+func _toy_param(name: StringName, value: Variant) -> void:
+	material.set_shader_parameter(name, value)
+	for m in marks:
+		m.set_shader_parameter(name, value)
+
+
+## What material holds so far, into the marks (made after the first uniforms).
+func _copy_params() -> void:
+	for p in material.shader.get_shader_uniform_list():
+		var v: Variant = material.get_shader_parameter(p.name)
+		if v != null:
+			for m in marks:
+				m.set_shader_parameter(p.name, v)
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there and its place
@@ -145,11 +170,17 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	if pix != pixel_angle:
 		pixel_angle = pix
 		param("wh_pix", pix)
-	var split := toy_count > 0 and toy_mode == SPLIT and absf(l) > space.L
+	# marks: the proxies' pixels with the head in a flat universe, else the whole view's; of those,
+	# with SPLIT, only the ones whose ray's plane passes near a toy
+	var marked := toy_count > 0 and (toy_mode == SPLIT or toy_mode == ROUGH)
+	var outside := absf(l) > space.L
+	var split := marked and outside
 	proxies.visible = split
 	if plain_quad:
-		plain_quad.visible = split
+		plain_quad.visible = split or (marked and toy_mode == SPLIT)
 	mark_all.visible = toy_count > 0 and not split and toy_mode != BARE
+	for m in marks:
+		m.set_shader_parameter("mark_near", toy_mode == SPLIT)
 	if not split:
 		return
 	var side := 1.0 if l > 0.0 else -1.0
@@ -178,7 +209,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 ## split with these).
 func proxy_spheres(l: float) -> PackedVector4Array:
 	var out := PackedVector4Array()
-	if toy_count == 0 or toy_mode != SPLIT or absf(l) <= space.L:
+	if toy_count == 0 or not (toy_mode == SPLIT or toy_mode == ROUGH) or absf(l) <= space.L:
 		return out
 	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + _margin(Vector3.ZERO, space.Rout)) * PROXY_SLACK))
 	for s in toy_spheres[0 if l > 0.0 else 1]:
@@ -265,16 +296,16 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	toy_count = n + nc
 	if (toy_count > 0) != had:
 		_pick_shader()
-	material.set_shader_parameter("wh_ball", p)
-	material.set_shader_parameter("wh_ballCol", c)
-	material.set_shader_parameter("wh_nBall", n)
-	material.set_shader_parameter("wh_bIdx", ob[1])
-	material.set_shader_parameter("wh_fball", fb)
-	material.set_shader_parameter("wh_cube", cp)
-	material.set_shader_parameter("wh_cubeE", ax)
-	material.set_shader_parameter("wh_cubeCol", cc)
-	material.set_shader_parameter("wh_nCube", nc)
-	material.set_shader_parameter("wh_cIdx", oc[1])
+	_toy_param("wh_ball", p)
+	_toy_param("wh_ballCol", c)
+	_toy_param("wh_nBall", n)
+	_toy_param("wh_bIdx", ob[1])
+	_toy_param("wh_fball", fb)
+	_toy_param("wh_cube", cp)
+	_toy_param("wh_cubeE", ax)
+	_toy_param("wh_cubeCol", cc)
+	_toy_param("wh_nCube", nc)
+	_toy_param("wh_cIdx", oc[1])
 	# each universe's toys as spheres in its chart (the proxies)
 	toy_spheres = [PackedVector4Array(), PackedVector4Array()]
 	for k in 2:
@@ -313,7 +344,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			for q in pts:
 				rad = maxf(rad, mid.distance_to(q[0]) + q[1])
 			bounds.append(Vector4(mid.x, mid.y, mid.z, rad))
-	material.set_shader_parameter("wh_bound", bounds)
+	_toy_param("wh_bound", bounds)
 
 
 ## Where each object can be met: in universe A's flat sheet (its reach crosses w = h), in the

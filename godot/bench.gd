@@ -23,7 +23,8 @@ extends Node
 ## part decides.
 ## This build's ray tracer is timed each way FOVEATIONS lists (the split pass alone: what
 ## foveation's pass costs without a map) and, with the toys, over the whole view too (what the
-## stencil saves); the others as comparable() takes them.
+## stencil saves) and with marks that leave the rays' planes out, without foveation and with own
+## narrow (what the planes save: Tracer.ROUGH); the others as comparable() takes them.
 ##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
 ## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),
@@ -71,6 +72,8 @@ const TILT_PERIOD := 2.0        # s: its tilts (roll)
 const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
 	["this build, SteamVR low", 1, false], ["this build, SteamVR high", 3, false],
 	["this build, own wide", 4, false], ["this build, own narrow", 5, false]]
+# the foveation levels this build's ray tracer is timed at with Tracer.ROUGH's marks (with the toys)
+const ROUGH_FOVEATIONS := [0, 5]
 
 var main: Main
 var menu: Menu                  # the result goes there; its render scale
@@ -188,6 +191,9 @@ func start() -> void:
 		variants.append(Setup.new(f[0], own_shader, f[1], f[2], Tracer.SPLIT))
 	if not tracer.plain():
 		variants.append(Setup.new("this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE))
+		for f in ROUGH_FOVEATIONS:
+			variants.append(Setup.new("this build, %smarks without the planes" % ("" if f == 0 else "own narrow, "),
+					own_shader, f, false, Tracer.ROUGH))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -375,7 +381,7 @@ func _compared() -> void:
 		summary.clear()
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v].label.trim_prefix("this build, "), _ratio(v, own)])
-		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
+		print("bench: foveation (the toys over the whole view, the marks without the planes), on average over the places against this build as it ran: %s" % ", ".join(summary))
 		# for the menu, what each foveation (a density map on) saves, by the menu's names
 		var pcts := []
 		for k in FOVEATIONS.size():
@@ -385,6 +391,13 @@ func _compared() -> void:
 		# and what the stencil saves: the toys' ray tracer over the whole view against split
 		if variants.size() > own + FOVEATIONS.size():
 			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
+			# the rays' planes in the marks: this build against its marks without them, by foveation
+			var planes := []
+			for k in ROUGH_FOVEATIONS.size():
+				var f: int = ROUGH_FOVEATIONS[k]
+				var with_planes := own + FOVEATIONS.map(func(x: Array) -> int: return x[1]).find(f)
+				planes.append("%s %+d%%" % [Menu.FOVEATIONS[f], roundi(100.0 * (_ratio(with_planes, own) / _ratio(own + FOVEATIONS.size() + 1 + k, own) - 1.0))])
+			parts.append("плоскости лучей в метках: " + ", ".join(planes))
 		verdict = " · ".join(parts)
 	if _headset():
 		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
