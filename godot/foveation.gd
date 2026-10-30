@@ -1,31 +1,24 @@
 class_name Foveation
 extends RefCounted
 ## Foveated rendering: what lies away from where the eyes look is rendered coarser. Level 0 is
-## off, 1..3 the runtime's density map at its level low, medium, high, 4 and 5 our own
-## (OWN_MAPS); split: the 3D scene in a render pass of its own without a density map (the speed
-## check times that alone).
+## off, 1..5 ever coarser away from the middle.
 ##
-## On the Steam Frame the runtime's density map is SteamVR's (XR_FB_foveation). SteamVR tracks the
-## eyes and hands Godot each frame where each eye looks (XR_META_foveation_eye_tracked; Godot asks
-## only with the eye gaze extension on, project.godot), and Godot hands the driver offsets
-## that move the density map there (VK_QCOM_fragment_density_map_offset), whichever map it is: so
-## our own maps follow the eyes too. They are centred in each eye's picture, where SteamVR's are
-## (the offsets are taken from the picture's centre). The GPU driver applies a density map only
-## to a pass it renders in tiles: split_pass.gd. The swapchain gets SteamVR's map when
-## it is created, so project.godot asks for the high level and "off" is the viewport's density
-## map taken away (vrs_mode), not the runtime's level 0. Without the runtime's map (Monado,
-## Godot's "Native mobile") levels 1..3 are Godot's own, round each eye's centre.
+## This build's ray tracer (tracer.gd) does it itself: its kernels trace a ray per cell of 1, 2 or
+## 4 pixels a side, the cell's size by the ring (RAY_MAPS) the cell's block is in, the rings round
+## the pixel each eye looks at (ray_pass.gd: the gaze, XR_EXT_eye_gaze_interaction, when the
+## tracker has a pose; else straight ahead). Each coarse cell gets the ray through its middle and
+## its colour over the cell, as a GPU's coarse fragment would. No density map, no split pass, any
+## render scale.
 ##
-## The ray tracer stays exact under it: each pixel's ray is interpolated from the screen's
-## corners (shaders/wormhole_view.gdshaderinc), and a coarse pixel gets the ray through its
-## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position.
-##
-## Godot asks for the eye-tracked density map's offsets in the headset's full-size pixels: at a
-## render scale below 100% the sharp spot would sit beside where one looks, so foveation goes with
-## 100% only.
-##
-## Subsampled images stay off (project.godot): SteamVR can't read them. verbose_stdout lists the
-## OpenXR extensions and what the driver supports (long: keep it off).
+## Main's fragment ray tracer (frag_tracer.gd, in the build for the speed check's comparison) takes
+## the levels as main does (set_level with frag): 1..3 the runtime's density map at its level low,
+## medium, high, 4 and 5 our own (OWN_MAPS); split: the 3D scene in a render pass of its own without
+## a density map. On the Steam Frame the runtime's density map is SteamVR's (XR_FB_foveation),
+## moved to where the eyes look by offsets Godot hands the driver (XR_META_foveation_eye_tracked,
+## VK_QCOM_fragment_density_map_offset), applied only to a pass the driver renders in tiles
+## (split_pass.gd). The swapchain gets SteamVR's map when it is created, so project.godot asks for
+## the high level and "off" is the viewport's density map taken away (vrs_mode). Subsampled images
+## stay off (project.godot): SteamVR can't read them.
 
 const LEVELS := 3                    # the runtime's levels: low, medium, high
 # Our own density maps (levels 4 and 5), each eye alike, centred: rings out from where the eyes
@@ -36,8 +29,8 @@ const OWN_MAPS := {
 	4: [[0.7, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
 	5: [[0.45, 1, 1], [0.65, 2, 1], [0.85, 2, 2], [1.05, 4, 2], [99.0, 4, 4]],
 }
-# This build's ray tracer at levels 1..5 (RayPass traces a ray per shading cell): 4 and 5 our maps
-# above, 1..3 coarser outside ever smaller middles, for the runtime's three levels' place.
+# This build's ray tracer at levels 1..5 (a ray per shading cell, ray_pass.gd): 4 and 5 our maps
+# above, 1..3 coarser outside ever smaller middles.
 const RAY_MAPS := {
 	1: [[0.8, 1, 1], [1.1, 2, 1], [99.0, 2, 2]],
 	2: [[0.65, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],

@@ -15,7 +15,8 @@ extends Node
 ## and the ray tracer is timed on the GPU (the median frame of each segment): this build's
 ## (tracer.gd, compute kernels) each way FOVEATIONS lists, and main's fragment ray tracer
 ## (frag_tracer.gd, in this build for the comparison) each way MAIN_WAYS lists, with the toys also
-## over the whole view. A build can carry other fragment ray tracers in res://shaders/ab/1, 2, ...
+## over the whole view, and this build's with the toys kernel over every group (what its list
+## saves). A build can carry other fragment ray tracers in res://shaders/ab/1, 2, ...
 ## (tools/ab_shaders.sh), timed in main's: those of the kind this build runs. Every pose is timed
 ## with all of them in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
@@ -191,6 +192,10 @@ func start() -> void:
 	own = variants.size()
 	for f in FOVEATIONS:
 		variants.append(Setup.new(f[0], false, null, f[1], false, FragTracer.SPLIT))
+	if not tracer.plain():
+		var all := Setup.new("this build, toys kernel over every group", false, null, 0, false, FragTracer.SPLIT)
+		all.whole = true
+		variants.append(all)
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -297,6 +302,7 @@ func _prepare() -> void:
 ## A variant's ray tracer and foveation.
 func _use(v: Setup) -> void:
 	main.set_frag(v.frag)
+	main.tracer.whole = v.whole
 	if v.frag:
 		main.frag.material.shader = v.shader
 		main.frag.toy_mode = v.toy_mode
@@ -375,7 +381,7 @@ func _compared() -> void:
 		parts.append("этот и main одинаковы" if absf(1.0 - m) <= 0.02 else
 				"этот %s, чем main, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", pct])
 		# with foveation: this build's narrow against main's own narrow, the menu's usual
-		var narrow := own + FOVEATIONS.size() - 1
+		var narrow := own + FOVEATIONS.size() - 1     # this build, narrow
 		var m5 := _ratio(narrow, MAIN_WAYS.size() - 1)
 		parts.append("с узкой фовеацией %s на %d%%" % ["быстрее" if m5 < 1.0 else "медленнее", roundi(absf(1.0 - m5) * 100.0)])
 		# this build's foveation against itself without it
@@ -551,6 +557,7 @@ static func _list(v: Array) -> String:
 func _restore() -> void:
 	main.frag.material.shader = main_shader
 	main.frag.toy_mode = FragTracer.SPLIT
+	main.tracer.whole = false
 	main.set_frag(false)
 	main.foveation.set_level(menu.foveation)
 
@@ -572,6 +579,7 @@ class Setup:
 	var foveation: int              # Foveation.set_level's level
 	var split: bool                 # main's: the split pass without a density map
 	var toy_mode: int               # main's: FragTracer.SPLIT, WHOLE or BARE
+	var whole := false              # this build's: the toys kernel over every group (Tracer.whole)
 
 	func _init(p_label: String, p_frag: bool, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
 		label = p_label

@@ -122,9 +122,10 @@ func _process(_delta: float) -> bool:
 			U.check("the menu heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		U.check("frames judged, green", green, "after %d frames, seconds %s" % [frames - 232, r.seconds])
 		# after the green check: each step of the render scale rebuilds the buffers, a missed frame or two
-		U.check("foveation at first: our narrow map, the width first", main.foveation.level == p.DEFAULT_FOVEATION
-				and main.foveation.order == p.DEFAULT_ORDER and _value(p, "fov") == "плавная узкая"
-				and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.foveation.split_pass.enabled)
+		U.check("foveation at first: our narrow rings, the width first, by rays (no density map, no split)",
+				main.foveation.level == p.DEFAULT_FOVEATION and main.foveation.order == p.DEFAULT_ORDER
+				and _value(p, "fov") == "плавная узкая" and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+				and not main.foveation.split_pass.enabled and main.tracer.pass_.rings == Foveation.rings(5, 0))
 		U.check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _value(p, "scale") == "100% (128×128)")
 		p.select("scale")
 		p.change(1)
@@ -172,11 +173,11 @@ func _process(_delta: float) -> bool:
 		U.check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
-		U.check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
-				and main.tracer.material.shader == b.own_shader and b.own_shader == Tracer.SHADERS_TOYS[0])
+		U.check("speed check: back where it stood, this build's ray tracer, main's as it was", absf(pose[0] - b.saved_pose[0]) < 1e-3
+				and not main.use_frag and main.frag.material.shader == b.main_shader and b.main_shader == FragTracer.SHADERS_TOYS[0])
 		U.check("speed check: the rate set back", r.desired == bench_stored)
-		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled
-				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
+		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.frag
+				and not main.foveation.split_pass.enabled and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
 		U.check("speed check: the menu says it is done (the tour's result)", p.bench_text.contains("Гц"))
 		U.check("... on the line below, until the menu opens", p.strip_label.text.contains(p.bench_text))
 		p.set_open(true)
@@ -191,15 +192,15 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-## The foveation rows (off by now: the scale was 90% a moment ago): off; the right hand presses
-## "сильная" with the scale at 80%.
+## The foveation rows: off; the right hand presses "сильная" with the scale at 80% (they go
+## together: rays of their own density at any scale); our wide rings, then the height first. The
+## rings reach the pass at once: rendering runs on this thread (call_on_render_thread calls then).
 func _foveation(p: Menu) -> void:
-	var oxr := main.xr as OpenXRInterface
 	p.choose_foveation(0)
-	U.check("выкл: no density map, no split", main.foveation.level == 0 and _value(p, "fov") == "выкл"
-			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled)
-	U.check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported()
-			and _row(p, "fov").name_label.text == "фовеация · без SteamVR")
+	U.check("выкл: no rings, no density map, no split", main.foveation.level == 0 and _value(p, "fov") == "выкл"
+			and main.tracer.pass_.rings.is_empty() and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+			and not main.foveation.split_pass.enabled)
+	U.check("Monado: no gaze, the middle straight ahead", _row(p, "fov").name_label.text == "фовеация · по центру")
 	p.choose_scale(0.8)
 	p.select("fov")
 	p.change(1)
@@ -207,41 +208,29 @@ func _foveation(p: Menu) -> void:
 	p.press()
 	var cfg := ConfigFile.new()
 	cfg.load("user://settings.cfg")
-	U.check("the foveation row, right twice, A: сильная, foveation 3, density map on, 3D pass split", main.foveation.level == 3
-			and main.xr_view.vrs_mode == Viewport.VRS_XR and main.foveation.split_pass.enabled and _value(p, "fov") == "SteamVR сильная")
-	U.check("Godot's own map at the strongest", is_equal_approx(oxr.vrs_strength, Foveation.OWN_MAP_STRENGTH[2]))
-	U.check("foveation on: scale back to 100%, both kept", p.target.scaling_3d_scale == 1.0
-			and cfg.get_value("render", "foveation", -1) == 3 and cfg.get_value("render", "scale", 0.0) == 1.0)
-	p.choose_scale(0.9)
-	cfg.load("user://settings.cfg")
-	U.check("scale 90%: foveation off, kept", main.foveation.level == 0 and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
-			and not main.foveation.split_pass.enabled and cfg.get_value("render", "foveation", -1) == 0)
+	U.check("the foveation row, right twice, A: сильная, foveation 3, its rings", main.foveation.level == 3
+			and main.tracer.pass_.rings == Foveation.rings(3, 0) and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+			and _value(p, "fov") == "сильная")
+	U.check("foveation and the scale together, both kept", p.target.scaling_3d_scale == 0.8
+			and cfg.get_value("render", "foveation", -1) == 3 and cfg.get_value("render", "scale", 0.0) == 0.8)
 	p.choose_scale(1.0)
-	# our own map: the viewport's density map from a texture, the pass split
 	for k in 3:
 		p.change(1)
 	p.press()
-	U.check("широкая: our own map, from a texture, the pass split", main.foveation.level == 4
-			and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.foveation.split_pass.enabled and _value(p, "fov") == "плавная широкая")
-	var img: Image = main.foveation.maps[4 * 2 + 0].get_layer_data(0)
-	var mid: Color = img.get_pixel(32, 32)
-	var corner: Color = img.get_pixel(0, 0)
-	U.check("its map: full rate in the middle, 4x2 in the corner", mid.r8 == 0 and mid.g8 == 0 and corner.r8 == 192 and corner.g8 == 128)
-	# the height first: the same map turned, 2x4 in the corner, at once and kept
+	U.check("широкая: our wide rings, the width first", main.foveation.level == 4 and _value(p, "fov") == "плавная широкая"
+			and main.tracer.pass_.rings == Foveation.rings(4, 0) and main.tracer.pass_.rings.back() == [99.0, 4, 2])
+	# the height first: the same rings turned, at once and kept
 	p.move(1)
 	p.change(1)
 	p.press()
-	var img2: Image = main.foveation.maps[4 * 2 + 1].get_layer_data(0)
-	var corner2: Color = img2.get_pixel(0, 0)
-	var ring2: Color = img2.get_pixel(32 + 26, 32)    # r 0.83: the ring after full rate
 	cfg.load("user://settings.cfg")
-	U.check("по вертикали: 2x4 in the corner, 1x2 next to the middle, kept", main.foveation.order == 1 and corner2.r8 == 128
-			and corner2.g8 == 192 and ring2.r8 == 0 and ring2.g8 == 128 and cfg.get_value("render", "own_order", -1) == 1
-			and p.picked() == "order" and _value(p, "order") == "по вертикали" and main.foveation.level == 4)
+	U.check("по вертикали: 2x4 at the edge, kept", main.foveation.order == 1 and main.tracer.pass_.rings.back() == [99.0, 2, 4]
+			and cfg.get_value("render", "own_order", -1) == 1 and p.picked() == "order" and _value(p, "order") == "по вертикали"
+			and main.foveation.level == 4)
 	p.choose_order(0)
 	U.check("по горизонтали again", main.foveation.order == 0 and _value(p, "order") == "по горизонтали")
 	p.choose_foveation(0)
-	U.check("off again: no density map, no split", main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled)
+	U.check("off again: no rings", main.tracer.pass_.rings.is_empty())
 	# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides
 	p.move(1)
 	p.press()
@@ -260,10 +249,9 @@ func _gravity(p: Menu) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_NAMES[v]])
-	# the demo's balls and cubes are there: the ray tracers with them
-	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
-			[0, "wormhole_balls.gdshader", true]]
+		seen.append([main.tracer.gravity_view, main.tracer.kernels()[0], _value(p, "grav") == p.GRAVITY_NAMES[v]])
+	# the demo's balls and cubes are there: the kernels with them
+	var want := [[1, "world toys gravity", true], [2, "world toys arrows", true], [0, "world toys", true]]
 	U.check("the gravity row: each view, then off", seen == want)
 	if seen != want:
 		print("  ", seen)

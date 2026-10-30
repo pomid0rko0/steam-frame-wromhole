@@ -14,7 +14,7 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 wh_cube[6]; vec4 wh_cubeE[30]; vec4 wh_cubeCol[6];
     vec4 wh_bound[4];
     ivec4 wh_bIdx; ivec4 wh_cIdx;
-    int wh_nBall; int wh_nCube; int fr_views; int fr_flags;
+    int wh_nBall; int wh_nCube; int fr_views; int fr_whole;   // fr_whole: the toys kernel over every group
     vec4 head_f[3];
     vec3 head_n; float head_l;
     vec3 head_pos; float fr_pad0;
@@ -368,7 +368,7 @@ void main() {
     fr_cell(p0, cs, int(gl_WorkGroupID.z));
 #ifdef WH_NO_SHELL_TOYS
     barrier();
-    if (gl_LocalInvocationIndex == 0u && sh_toys != 0u) {
+    if (gl_LocalInvocationIndex == 0u && (sh_toys != 0u || fr_whole != 0)) {
         uint k = atomicAdd(fr_tiles[0].x, 1u);
         fr_tiles[k + 1u] = uvec4(gl_WorkGroupID, 0u);
     }

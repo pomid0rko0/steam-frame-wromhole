@@ -185,6 +185,13 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	rd.compute_list_end()
 
 
+## The kernels a frame runs with this gravity view (GRAVITY_DEFINES) and with toys or none, by name:
+## [the world kernel's, the toys kernel's or ""].
+static func kernels(p_gravity: int, p_toys: bool) -> Array[String]:
+	var view: String = ["", " gravity", " arrows"][p_gravity]
+	return ["world" + (" toys" if p_toys else "") + view, ("toys" + view) if p_toys else ""]
+
+
 ## The world kernel's groups: 4 x 4 a block of 64 x 32 pixels (trace_kernels.gdshaderinc, fr_cells).
 static func _groups(size: Vector2i) -> Vector2i:
 	return Vector2i((size.x + 63) / 64 * 4, (size.y + 31) / 32 * 4)

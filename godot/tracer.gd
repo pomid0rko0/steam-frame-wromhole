@@ -22,6 +22,7 @@ var pass_: RayPass = RayPass.new()      # on the camera's compositor (main.gd pu
 var quad: MeshInstance3D
 var values := {}                # the kernels' uniforms by name (get_param)
 var toy_count := 0              # balls and cubes the kernels have (set_objects)
+var whole := false              # the toys kernel over every group, not only those listed (the tests, the speed check)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var pixel_angle := 0.0          # the pixel angle set_head last saw: wh_pix goes again when it changes
 
@@ -197,6 +198,11 @@ func set_gravity_view(view: int) -> void:
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
+## The kernels the pass runs now (RayPass.kernels).
+func kernels() -> Array[String]:
+	return RayPass.kernels(gravity_view, toy_count > 0)
+
+
 ## Whether there are no movable objects (the speed check compares like with like).
 func plain() -> bool:
 	return toy_count == 0
@@ -221,7 +227,7 @@ func _pack() -> PackedByteArray:
 		var v: Vector4i = values.get(k, Vector4i.ZERO)
 		for j in 4:
 			b.put_32(v[j])
-	for v in [values.get("wh_nBall", 0), values.get("wh_nCube", 0), 1, 0]:
+	for v in [values.get("wh_nBall", 0), values.get("wh_nCube", 0), 1, 1 if whole else 0]:
 		b.put_32(v)
 	var hf: PackedVector4Array = values.get("head_f", PackedVector4Array([Vector4.ZERO, Vector4.ZERO, Vector4.ZERO]))
 	for i in 3:
