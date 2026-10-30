@@ -73,9 +73,10 @@ func _process(_d: float) -> bool:
 					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
 			check("every segment timed", all_timed, "%d ray tracers" % b.variants.size())
 			# main's each way, with toys one more (over the whole view), the others of this kind, this
-			# build each way of FOVEATIONS
+			# build each way of FOVEATIONS, with toys its toys kernel over every group, and its three
+			# variants of the bytes (tables in two channels, a picture of 8 bits without and with foveation)
 			check("main's each way, the others of this kind, this build each way", b.variants.size() == b.MAIN_WAYS.size()
-					+ b.comparable().size() + b.FOVEATIONS.size() + (2 if main.tracer.toy_count > 0 else 0))
+					+ b.comparable().size() + b.FOVEATIONS.size() + (2 if main.tracer.toy_count > 0 else 0) + 3)
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])

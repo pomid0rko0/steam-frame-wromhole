@@ -35,7 +35,10 @@ const VIEWS_AT := 1720          # bytes: fr_views
 const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#define WH_ARROWS\n"]
 # the kernels in the order _setup compiles them (tools/adreno_stats.sh names them so)
 const ORDER := ["world", "world gravity", "world arrows", "world toys", "world toys gravity", "world toys arrows",
-		"table rows", "tables", "tables and paths", "toys", "toys arrows"]
+		"table rows", "tables", "tables and paths", "toys", "toys arrows",
+		"tables, two channels", "tables and paths, two channels",
+		"world, 8 bits", "world gravity, 8 bits", "world arrows, 8 bits", "world toys, 8 bits",
+		"world toys gravity, 8 bits", "world toys arrows, 8 bits", "toys, 8 bits", "toys arrows, 8 bits"]
 
 # GPU timestamps after each kernel (RenderingDevice.capture_timestamp), STAMPS[0] before them: a
 # frame split into its passes for the speed check (pass_ms)
@@ -48,6 +51,12 @@ var frame := PackedByteArray()          # Tracer's part of the block
 var head: Array = [10.0, Vector3(1.0, 0.0, 0.0), [Vector4.ZERO, Vector4.ZERO, Vector4.ZERO], Vector3.ZERO]
 var gravity := 0                        # the gravity view (GRAVITY_DEFINES)
 var toys := false                       # movable objects in the kernels
+# the speed check's variants, each with kernels of its own: the picture of eight bits a channel
+# (FR_PICTURE8: the colour's square root, Tracer squares it on the quad), fr_tabF in its two
+# channels (FR_TABF2); off: RGBA16F and RGBA32F
+var picture8 := false
+var tables2 := false
+var made_as := Vector2i(-1, -1)         # (picture8, tables2) the picture and the tables were made with
 var rings: Array = []                   # Foveation.rings: none, every pixel its own ray
 var gaze_px: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]   # the rings' middle the last frame had, per view (the tests)
 var table: Texture2D                    # the fillet table (WormholeSpace.fillet_table)
@@ -64,6 +73,12 @@ var tiles: RID                          # the toys kernel's groups (fr_tiles)
 var rows_pipe: RID                      # the tables' rows (fr_rowData), then their cells
 var rows_shader: RID
 var rows_buf: RID
+var tab2_pipes: Array[RID] = []         # the tables' cells in two channels: without, with fr_tabP
+var tab2_shaders: Array[RID] = []
+var world8_pipes: Array[RID] = []       # with a picture of eight bits: as world_pipes, toys_pipes
+var world8_shaders: Array[RID] = []
+var toys8_pipes: Array[RID] = []
+var toys8_shaders: Array[RID] = []
 var tab_pipe: RID                       # the tables' cells, and with fr_tabP (shell_toys)
 var tab_shader: RID
 var tabp_pipe: RID
@@ -92,7 +107,7 @@ func _init() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and rd != null:
-		for r: RID in [ubo, sampler, image, tiles, rows_pipe, rows_shader, rows_buf, tab_pipe, tab_shader, tabp_pipe, tabp_shader, tab_f, tab_e, tab_p] + world_pipes + world_shaders + toys_pipes + toys_shaders:
+		for r: RID in [ubo, sampler, image, tiles, rows_pipe, rows_shader, rows_buf, tab_pipe, tab_shader, tabp_pipe, tabp_shader, tab_f, tab_e, tab_p] + world_pipes + world_shaders + toys_pipes + toys_shaders + tab2_pipes + tab2_shaders + world8_pipes + world8_shaders + toys8_pipes + toys8_shaders:
 			if r.is_valid():
 				rd.free_rid(r)
 
@@ -127,7 +142,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var views := buffers.get_view_count()
 	if size.x <= 0 or size.y <= 0:
 		return
-	if size != image_size or views != image_views:
+	var as_now := Vector2i(1 if picture8 else 0, 1 if tables2 else 0)
+	if size != image_size or views != image_views or as_now != made_as:
 		_make_image(size, views)
 	# new textures or another fillet table: the uniforms again
 	var tex := RenderingServer.texture_get_rd_texture(table.get_rid())
@@ -189,23 +205,26 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	rd.compute_list_end()
 	rd.capture_timestamp(STAMPS[1])
 	cl = rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
-	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
+	var tpipe := (tab2_pipes[1 if paths else 0] if made_as.y == 1 else (tabp_pipe if paths else tab_pipe))
+	var tshader := (tab2_shaders[1 if paths else 0] if made_as.y == 1 else (tabp_shader if paths else tab_shader))
+	rd.compute_list_bind_compute_pipeline(cl, tpipe)
+	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tshader, 0,
 			_used(all, [0, 1, 2, 6, 8, 10] if paths else [0, 1, 2, 6, 10])), 0)
 	rd.compute_list_dispatch(cl, 2 * table_size.x * table_size.y / 256, 1, views)
 	rd.compute_list_end()
 	rd.capture_timestamp(STAMPS[2])
 	cl = rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
-	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[w], 0, _used(all, [0, 1, 2, 3, 4, 5])), 0)
+	var p8 := made_as.x == 1
+	rd.compute_list_bind_compute_pipeline(cl, world8_pipes[w] if p8 else world_pipes[w])
+	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world8_shaders[w] if p8 else world_shaders[w], 0, _used(all, [0, 1, 2, 3, 4, 5])), 0)
 	rd.compute_list_dispatch(cl, _groups(size).x, _groups(size).y, views)
 	rd.compute_list_end()
 	rd.capture_timestamp(STAMPS[3])
 	if toys:
 		cl = rd.compute_list_begin()
 		var t := 1 if gravity == 2 else 0
-		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[t])
-		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[t], 0, _used(all, [0, 1, 2, 3, 4, 5, 9])), 0)
+		rd.compute_list_bind_compute_pipeline(cl, toys8_pipes[t] if p8 else toys_pipes[t])
+		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys8_shaders[t] if p8 else toys_shaders[t], 0, _used(all, [0, 1, 2, 3, 4, 5, 9])), 0)
 		rd.compute_list_dispatch_indirect(cl, tiles, 0)
 		rd.compute_list_end()
 		rd.capture_timestamp(STAMPS[4])
@@ -391,6 +410,27 @@ func _setup() -> bool:
 			return false
 		toys_shaders.append(made[0])
 		toys_pipes.append(made[1])
+	# the speed check's variants (picture8, tables2), after the kernels above (ORDER)
+	for d: String in ["#define KERNEL_TABLES\n#define FR_TABF2\n#define WH_NO_BALLS\n",
+			"#define KERNEL_TABLES\n#define FR_PATHS\n#define FR_TABF2\n#define WH_NO_BALLS\n"]:
+		var made := _kernel(d)
+		if made.is_empty():
+			return false
+		tab2_shaders.append(made[0])
+		tab2_pipes.append(made[1])
+	for toy in ["#define WH_NO_BALLS\n", "#define WH_NO_SHELL_TOYS\n"]:
+		for d: String in GRAVITY_DEFINES:
+			var made := _kernel("#define KERNEL_WORLD\n#define FR_PICTURE8\n" + toy + d)
+			if made.is_empty():
+				return false
+			world8_shaders.append(made[0])
+			world8_pipes.append(made[1])
+	for d: String in [GRAVITY_DEFINES[0], GRAVITY_DEFINES[2]]:
+		var made := _kernel("#define KERNEL_TOYS\n#define FR_PICTURE8\n" + d)
+		if made.is_empty():
+			return false
+		toys8_shaders.append(made[0])
+		toys8_pipes.append(made[1])
 	ubo = rd.uniform_buffer_create(SIZE)
 	var ss := RDSamplerState.new()
 	ss.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
@@ -422,7 +462,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 		picture.texture_rd_rid = RID()
 		rd.free_rid(image)
 	var fmt := RDTextureFormat.new()
-	fmt.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+	fmt.format = RenderingDevice.DATA_FORMAT_R8G8B8A8_UNORM if picture8 else RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
 	fmt.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	fmt.width = size.x
 	fmt.height = size.y
@@ -443,8 +483,11 @@ func _make_image(size: Vector2i, views: int) -> void:
 	table_size = _table_size(size)
 	tf.width = table_size.y
 	tf.height = 2 * table_size.x
-	tab_f = rd.texture_create(tf, RDTextureView.new(), [])
 	tab_p = rd.texture_create(tf, RDTextureView.new(), [])
+	if tables2:
+		tf.format = RenderingDevice.DATA_FORMAT_R32G32_SFLOAT
+	tab_f = rd.texture_create(tf, RDTextureView.new(), [])
+	tf.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	tf.width = 2 * table_size.x
 	tf.height = 2
 	tab_e = rd.texture_create(tf, RDTextureView.new(), [])
@@ -455,6 +498,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 		rd.free_rid(tiles)
 	var n := _groups(size).x * _groups(size).y * views + 1
 	tiles = rd.storage_buffer_create(16 * n, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
+	made_as = Vector2i(1 if picture8 else 0, 1 if tables2 else 0)
 	uniforms.clear()
 
 

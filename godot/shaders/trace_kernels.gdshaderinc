@@ -34,7 +34,13 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 };
 
 layout(set = 0, binding = 1) uniform sampler2D wh_tab;
+// the picture: colour and the distance the ray went (fr_pix); FR_PICTURE8, eight bits a channel
+// (the speed check's variant: RayPass.picture8)
+#ifdef FR_PICTURE8
+layout(rgba8, set = 0, binding = 2) uniform restrict image2DArray fr_out;
+#else
 layout(rgba16f, set = 0, binding = 2) uniform restrict image2DArray fr_out;
+#endif
 
 #include_core
 
@@ -135,7 +141,12 @@ void main() {
 
 #ifdef KERNEL_TABLES
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+// FR_TABF2: fr_tabF in its two channels (the speed check's variant: RayPass.tables2)
+#ifdef FR_TABF2
+layout(rg32f, set = 0, binding = 6) uniform restrict writeonly image2DArray fr_outF;
+#else
 layout(rgba32f, set = 0, binding = 6) uniform restrict writeonly image2DArray fr_outF;
+#endif
 #ifdef FR_PATHS
 layout(rgba32f, set = 0, binding = 8) uniform restrict writeonly image2DArray fr_outP;
 #endif
@@ -531,8 +542,26 @@ vec4 fr_ray(ivec2 px, ivec2 cs, int v) {
     return normalize(pd.x * f0 + pd.y * f1 + pd.z * f2);
 }
 
-// c over the cell at px (size cs) of view v; its alpha: the distance along the ray to what it
-// ended on (the toys kernel's test)
+// The picture's pixel for colour c and the distance dist the ray went (the toys kernel's test:
+// fr_pixDist). Eight bits: the colour's square root (show.gdshader squares it), the distance on a
+// log scale, about 4 % a step.
+vec4 fr_pix(vec3 c, float dist) {
+#ifdef FR_PICTURE8
+    return vec4(sqrt(max(c, vec3(0.0))), log2(1.0 + 64.0 * max(dist, 0.0)) / 16.0);
+#else
+    return vec4(c, min(dist, 6e4));
+#endif
+}
+
+float fr_pixDist(vec4 p) {
+#ifdef FR_PICTURE8
+    return (exp2(16.0 * p.a) - 1.0) / 64.0;
+#else
+    return p.a;
+#endif
+}
+
+// c over the cell at px (size cs) of view v
 void fr_store(ivec2 px, ivec2 cs, int v, vec4 c) {
     for (int j = 0; j < cs.y; j++)
         for (int i = 0; i < cs.x; i++) {
@@ -561,7 +590,7 @@ void fr_cell(ivec2 p0, ivec2 cs, int v) {
     uint ly = gl_LocalInvocationID.y;
     vec2 gdx = sh_g[(ly << 4) | (lx | 1u)] - sh_g[(ly << 4) | (lx & ~1u)];
     vec2 gdy = sh_g[((ly | 1u) << 4) | lx] - sh_g[((ly & ~1u) << 4) | lx];
-    vec4 c = vec4(wh_shadeEnd(e, g, gdx, gdy), min(e.dist, 6e4));
+    vec4 c = fr_pix(wh_shadeEnd(e, g, gdx, gdy), e.dist);
     fr_store(p0 + ivec2(gl_LocalInvocationID.xy) * cs, cs, v, c);
 }
 #endif
@@ -621,7 +650,7 @@ bool fr_toysEnd(float l0, vec3 n0, float vl, vec3 w, int v, ivec2 px, out WhEnd 
     }
     float rowv = fr_row(wh_atan2(wn, vl), fr_rows[v]);
     vec4 E1 = texture(fr_tabE, vec3(rowv, 0.75, float(v)));    // the search's length, the length before
-    if (imageLoad(fr_out, ivec3(px, v)).a < 0.999 * E1.y) return false;
+    if (fr_pixDist(imageLoad(fr_out, ivec3(px, v))) < 0.999 * E1.y) return false;
     vec4 E = texture(fr_tabE, vec3(rowv, 0.25, float(v)));     // psi out, s out, side, psi in
     float psiF = wh_atan2(e1.z, -e2.z);                        // n.z = 0 there: the floor
     float send = E1.x;
@@ -700,6 +729,6 @@ void main() {
     WhEnd e;
     if (!fr_toysEnd(E0.x, E0.yzw, V.x, V.yzw, v, px, e)) return;
     // an object's colour takes no grid (wh_shadeEnd): no derivatives
-    fr_store(px, cs, v, vec4(wh_shadeEnd(e, vec2(0.0), vec2(0.0), vec2(0.0)), min(e.dist, 6e4)));
+    fr_store(px, cs, v, fr_pix(wh_shadeEnd(e, vec2(0.0), vec2(0.0), vec2(0.0)), e.dist));
 }
 #endif

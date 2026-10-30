@@ -26,6 +26,18 @@ var whole := false:             # the toys kernel over every group, not only tho
 	set(on):
 		whole = on
 		body_dirty = true
+# the speed check's variants of the pass (RayPass.picture8, tables2): the quad squares the colour
+# of a picture of eight bits a channel
+var picture8 := false:
+	set(on):
+		picture8 = on
+		pass_.picture8 = on
+		if quad:
+			(quad.material_override as ShaderMaterial).set_shader_parameter("squared", on)
+var tables2 := false:
+	set(on):
+		tables2 = on
+		pass_.tables2 = on
 var body := PackedByteArray()   # the block up to the head (_pack)
 var body_dirty := true
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field

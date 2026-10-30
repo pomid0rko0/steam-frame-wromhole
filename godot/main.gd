@@ -371,6 +371,18 @@ func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	view_roll = roll
 
 
+## The point dist m ahead of the head along the middle of its view, with the head's frame carried
+## there along the geodesic: [l, n, frame] (the speed check's cube in front of the eyes).
+func ahead(dist: float) -> Array:
+	var head := camera.transform
+	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
+	var hf: Array = hp[2]
+	if view_pitch != 0.0 or view_roll != 0.0:
+		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll), _head_forward_xz())
+	var dir := WormholeSpace.combine(hf, -head.basis.z)
+	return space.geodesic(hp[0], hp[1], dir / dir.length(), dist, hf)
+
+
 ## Where the feet are and the frame there, to come back to (set_pose).
 func get_pose() -> Array:
 	return [foot_l, foot_n, frame.duplicate()]
