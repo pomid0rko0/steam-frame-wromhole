@@ -741,7 +741,10 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 float sn = sin(P.x);
                 vec3 Q = vec3(P.y * cs, P.y * sn, P.z);
                 float g = wh_toyDist(isCube, i, Q, cb, perp2, size, e1, e2);
-                float dsdq = max(P.w, 1e-3);
+                // the length per q for the next step: where it starts, at least a quarter of the
+                // piece's on average (at a turning point on a fillet it is 0 in some regimes)
+                float dsmin = max(0.25 * (pA ? PA.y : (cyl ? PB.y : PC.y)), 1e-3);
+                float dsdq = max(P.w, dsmin);
                 for (int j = 0; j < WH_SAMPLES; j++) {
                     if (q >= qw.y) break;
                     bool far = g > fine;
@@ -753,11 +756,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     float c2 = dot(D, D);
                     if (far) {
                         // the path from Q to Q1 is no longer than c (1 + c^2 / 12 Rk^2) (a curve that
-                        // bends by at most 1 / Rk, c the chord, up to 1.5 Rk, its length below pi Rk:
-                        // the length per q at most doubles along the step): within g, it cannot reach
-                        // the toy. Else the same step again, half as long
+                        // bends by at most 1 / Rk, c the chord up to 1.5 Rk; its length is below pi Rk,
+                        // as psi grows by less than pi and r and w go one way along a piece): within
+                        // g, it cannot reach the toy. Else the same step again, half as long
                         float k = 1.0 + c2 / (12.0 * Rk * Rk);
-                        if (c2 * k * k > g * g || c2 > dsMax * dsMax || P1.w > 2.0 * dsdq) {
+                        if (c2 * k * k > g * g || c2 > dsMax * dsMax) {
                             dsdq *= 2.0;
                             continue;
                         }
@@ -796,7 +799,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     Q = Q1;
                     cs = r1.x;
                     sn = r1.y;
-                    dsdq = max(P1.w, 1e-3);
+                    dsdq = max(P1.w, dsmin);
                     g = wh_toyDist(isCube, i, Q, cb, perp2, size, e1, e2);
                     if (2.0 * float(p - 1) + q > hitK) break;     // a hit before here (the later pieces end there too)
                 }
@@ -1124,22 +1127,36 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
 // ---------------------------------------------------------------- the stencil's mark
 // Whether the ray from (l0, n0) along (vl, w) may meet a movable ball or cube anywhere on its way:
 // stencil_mark.gdshader marks the pixels where it may, and only there the ray tracer with them runs
-// (tracer.gd, «The stencil split»). The whole ray lies in span(e1, e2, w axis) of R^4 (wh_curved),
-// the straight parts outside the shell too, so a toy whose centre is farther than its reach from
-// that subspace is never met. A ray from a flat universe that misses the shell goes straight and
-// meets only that universe's toys, each within its sphere in the chart (wh_traceFlat's). Reaches a
-// thousandth larger, plus 0.1 mm: the ray tracer works out the subspace from where the ray enters
-// the shell, with other round-off.
+// (tracer.gd, «The stencil split»). A toy is met only
+//  - near the ray's plane: the whole ray lies in span(e1, e2, w axis) of R^4 (wh_curved), the
+//    straight parts outside the shell too, so a toy whose centre is farther than its reach from
+//    that subspace is never met;
+//  - within reach of the w the ray passes: w(l) grows with l, so a ray that does not turn round
+//    in a fillet (b <= rmin) passes the w from its start to the sheet it goes to, and one that
+//    turns those from its start, or from where it turns (r = b), to its own side's sheet;
+//  - and from a flat universe, if the ray misses the shell: on its straight line, as one of that
+//    universe's toys (each in its sphere in the chart, wh_traceFlat's).
+// Reaches a thousandth larger, plus 0.1 mm, and a band round b = rmin taken both ways: the ray
+// tracer works these out from where the ray enters the shell, with other round-off.
 bool wh_mayMeetToy(float l0, vec3 n0, float vl, vec3 w) {
     float side = l0 > 0.0 ? 1.0 : -1.0;
-    bool shell = abs(l0) < wh_Lsh();
-    if (!shell) {
+    float h = wh_h;
+    float R = wh_fillet;
+    float b;               // the impact parameter
+    float w0;              // w where the ray starts in the shell, or enters it
+    bool inward = true;    // toward the throat there
+    if (abs(l0) < wh_Lsh()) {
+        vec4 pr = wh_prof(l0);
+        b = pr.x * length(w);
+        w0 = pr.y;
+        inward = vl * side < 0.0;
+    } else {
         vec3 x = wh_M(side, (abs(l0) - wh_Lsh() + wh_Rout()) * n0);
         vec3 d = wh_M(side, side * vl * n0 + w);
         float bq = dot(x, d);
         float Ro = 1.001 * wh_Rout() + 1e-4;
         float cq = dot(x, x) - Ro * Ro;
-        shell = bq < 0.0 && bq * bq >= cq;
+        bool shell = bq < 0.0 && bq * bq >= cq;
         // this universe's balls (the sphere its sheet cuts from each) and cubes (their bounding
         // spheres in R^4 cut by the sheet), along the line
         bool A = side > 0.0;
@@ -1147,39 +1164,54 @@ bool wh_mayMeetToy(float l0, vec3 n0, float vl, vec3 w) {
             vec4 S = wh_fball[i];
             float rr = 1.001 * sqrt(max(S.w, 0.0)) + 1e-4;
             vec3 oc = x - S.xyz;
-            float b = dot(oc, d);
+            float bb = dot(oc, d);
             float c = dot(oc, oc) - rr * rr;
-            shell = shell || (S.w > 0.0 && (c <= 0.0 || (b < 0.0 && b * b >= c)));
+            if (S.w > 0.0 && (c <= 0.0 || (bb < 0.0 && bb * bb >= c))) return true;
         }
         for (int i = A ? 0 : wh_cIdx.z; i < (A ? wh_cIdx.y : wh_nCube); i++) {
             vec4 Cc = wh_cube[i];
-            float dw = side * wh_h - Cc.w;
+            float dw = side * h - Cc.w;
             float rb = 2.0 * wh_cubeCol[i].w;
             float rr = 1.001 * sqrt(max(rb * rb - dw * dw, 0.0)) + 1e-4;
             vec3 oc = x - wh_M(side, Cc.xyz);
-            float b = dot(oc, d);
+            float bb = dot(oc, d);
             float c = dot(oc, oc) - rr * rr;
-            shell = shell || (c <= 0.0 || (b < 0.0 && b * b >= c));
+            if (c <= 0.0 || (bb < 0.0 && bb * bb >= c)) return true;
         }
         if (!shell) return false;
+        b = length(cross(x, d));
+        w0 = side * h;
+    }
+    // the w the path passes, [wlo, whi]
+    float s0 = sin(0.5 * wh_th0());
+    float rmin = wh_rho0 + 2.0 * R * s0 * s0;
+    vec2 wr = vec2(-h, h);
+    if (!inward) {
+        wr = side > 0.0 ? vec2(w0, h) : vec2(-h, w0);
+    } else if (b > 1.0001 * rmin + 1e-4) {
+        float c = clamp(1.0 - (b - wh_rho0) / R, 0.0, 1.0);    // cos th where r = b
+        float wt = h - R + R * sqrt(1.0 - c * c);
+        wr = side > 0.0 ? vec2(min(wt, w0), h) : vec2(-h, max(-wt, w0));
+    } else if (b < 0.9999 * rmin - 1e-4) {
+        wr = side > 0.0 ? vec2(-h, w0) : vec2(w0, h);
     }
     // the subspace, as wh_curved takes it
     vec3 we = w + 1e-7 * (abs(n0.x) < 0.9 ? vec3(0.0, n0.z, -n0.y) : vec3(-n0.z, 0.0, n0.x));
     vec3 e2 = we * inversesqrt(dot(we, we));
     bool any = false;
     for (int i = 0; i < wh_nBall; i++) {
-        vec3 c = wh_ball[i].xyz;
-        float c1 = dot(c, n0);
-        float c2 = dot(c, e2);
+        vec4 c = wh_ball[i];
+        float c1 = dot(c.xyz, n0);
+        float c2 = dot(c.xyz, e2);
         float rr = 1.001 * wh_ballCol[i].w + 1e-4;
-        any = any || dot(c, c) - c1 * c1 - c2 * c2 < rr * rr;
+        any = any || (dot(c.xyz, c.xyz) - c1 * c1 - c2 * c2 < rr * rr && c.w + rr >= wr.x && c.w - rr <= wr.y);
     }
     for (int i = 0; i < wh_nCube; i++) {
-        vec3 c = wh_cube[i].xyz;
-        float c1 = dot(c, n0);
-        float c2 = dot(c, e2);
+        vec4 c = wh_cube[i];
+        float c1 = dot(c.xyz, n0);
+        float c2 = dot(c.xyz, e2);
         float rr = 2.002 * wh_cubeCol[i].w + 1e-4;
-        any = any || dot(c, c) - c1 * c1 - c2 * c2 < rr * rr;
+        any = any || (dot(c.xyz, c.xyz) - c1 * c1 - c2 * c2 < rr * rr && c.w + rr >= wr.x && c.w - rr <= wr.y);
     }
     return any;
 }
