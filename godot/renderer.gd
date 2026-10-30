@@ -48,11 +48,11 @@ const LINE_REACH := 4.5
 const LINE_STEP := 1.0          # m between the lines' starts, across (chart y)
 const LINE_DS := 0.2            # m: the steps a line is traced and drawn in
 const LINE_MAX_STEPS := 300
-const LINE_WIDTH := 0.012       # half a line's width, m
+const LINE_WIDTH := 0.03        # half a line's width, m
 const ARROW_GAP := 1.0          # m along a line between its arrows
-const ARROW_LENGTH := 0.16      # m
-const ARROW_HALF := 0.075       # half an arrow's width, m
-const ARROW_RIM := 0.012        # the outline's width, m
+const ARROW_LENGTH := 0.24      # m
+const ARROW_HALF := 0.12        # half an arrow's width, m
+const ARROW_RIM := 0.008        # the outline's width, m
 const ARROW_RIM_COLOR := Color(0.02, 0.02, 0.02)
 const ARROW_GLOW := 1.15        # an arrow is its g's colour this much brighter (_gravity_color)
 
