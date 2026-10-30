@@ -50,6 +50,7 @@ const ARROW_SHAFT := 0.035      # half the shaft's width, m
 const ARROW_HEAD := 0.13        # half the head's width, m
 const ARROW_RIM := 0.02         # the outline's width, m
 const ARROW_RIM_COLOR := Color(0.02, 0.02, 0.02)
+const ARROW_GLOW := 1.15        # an arrow is its band's colour this much brighter (_gravity_color)
 
 var space: WormholeSpace
 var scene: Dictionary
@@ -390,13 +391,17 @@ static func _arrow(st: SurfaceTool, l: float, beta: float, rr: float, dir: Vecto
 		st.add_vertex(Vector3(0.0, cos(b2), sin(b2)))
 
 
-## look.gdshaderinc's look_gravity: the colour of g, in g.
+## An arrow's colour at g (in g): look.gdshaderinc's look_grav_colour of its band, brighter by
+## ARROW_GLOW.
 static func _gravity_color(g: float) -> Color:
-	var dark := Color(0.01, 0.0085, 0.0134)
-	var yellow := Color(1.0, 0.7106, 0.0196)
-	var red := Color(0.8276, 0.0272, 0.0072)
-	if g < 1.0:
-		return dark.lerp(yellow, g)
-	if g < 3.0:
-		return yellow.lerp(red, (g - 1.0) * 0.5)
-	return red.lerp(Color.WHITE, clampf((g - 3.0) / 7.0, 0.0, 1.0))
+	var t := 10.0 * g if g < 1.0 else 10.0 + 4.342944819 * log(g)
+	var band := floorf(t)
+	var u := clampf((band + 0.5) / 10.0, 0.0, 1.0)
+	var c := Color(0.03, 0.03, 0.10).lerp(Color(0.45, 0.08, 0.50), u * 2.0) if u < 0.5 \
+			else Color(0.45, 0.08, 0.50).lerp(Color(0.95, 0.40, 0.12), u * 2.0 - 1.0)
+	c = c.lerp(Color(0.95, 0.80, 0.18), smoothstep(0.85, 0.95, u))
+	if t >= 10.0:
+		var v := clampf((band - 9.5) / 10.0, 0.0, 1.0)
+		c = Color(0.95, 0.80, 0.18).lerp(Color(0.95, 0.12, 0.05), v * 2.0) if v < 0.5 \
+				else Color(0.95, 0.12, 0.05).lerp(Color.WHITE, v * 2.0 - 1.0)
+	return Color(c.r * ARROW_GLOW, c.g * ARROW_GLOW, c.b * ARROW_GLOW)

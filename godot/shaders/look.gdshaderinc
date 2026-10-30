@@ -56,12 +56,31 @@ vec3 look_sky(vec3 d, float side) {
 	return col;
 }
 
-// gravity's colour on the floor: dark where there is none, yellow at 1 g, then red, white at 10 g
+// gravity's colours: optozorax's palette (docs/gravity.md, «Показ»), dark blue where there is none,
+// purple, orange, yellow at 1 g, then red, white at 10 g, in bands of 0.1 g below 1 g and of a tenth
+// of a decade above. look_grav_band(g) is the band coordinate, look_grav_colour(t) its band's colour;
+// Renderer._gravity_color is the same for the arrows.
+float look_grav_band(float g) {
+	return g < 1.0 ? 10.0 * g : 10.0 + 4.342944819 * log(g);
+}
+vec3 look_grav_colour(float t) {
+	float band = floor(t);
+	float u = clamp((band + 0.5) / 10.0, 0.0, 1.0);
+	vec3 c = u < 0.5 ? mix(vec3(0.03, 0.03, 0.10), vec3(0.45, 0.08, 0.50), u * 2.0)
+			: mix(vec3(0.45, 0.08, 0.50), vec3(0.95, 0.40, 0.12), u * 2.0 - 1.0);
+	c = mix(c, vec3(0.95, 0.80, 0.18), smoothstep(0.85, 0.95, u));
+	if (t >= 10.0) {
+		float v = clamp((band - 9.5) / 10.0, 0.0, 1.0);
+		c = v < 0.5 ? mix(vec3(0.95, 0.80, 0.18), vec3(0.95, 0.12, 0.05), v * 2.0)
+				: mix(vec3(0.95, 0.12, 0.05), vec3(1.0), v * 2.0 - 1.0);
+	}
+	return c;
+}
+// the floor's colour at gravity g: its band's, darker at the bands' edges (the field's contours)
 vec3 look_gravity(float g) {
-	vec3 dark = vec3(0.01, 0.0085, 0.0134), yellow = vec3(1.0, 0.7106, 0.0196), red = vec3(0.8276, 0.0272, 0.0072);
-	if (g < 1.0) return mix(dark, yellow, g);
-	if (g < 3.0) return mix(yellow, red, (g - 1.0) * 0.5);
-	return mix(red, vec3(1.0), clamp((g - 3.0) / 7.0, 0.0, 1.0));
+	float t = look_grav_band(g);
+	float edge = clamp(abs(fract(t + 0.5) - 0.5) / max(fwidth(t), 1e-4), 0.0, 1.0);
+	return look_grav_colour(t) * (0.8 + 0.2 * edge);
 }
 
 // light on a body at l: the sun's direction there as a vector of R^4 (each universe's sun, A's in
