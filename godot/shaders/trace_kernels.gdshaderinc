@@ -30,6 +30,7 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 fr_rings[5];        // foveation's rings: (radius, cell width, height), fr_size.w of them
     mat4 fr_invProj[2];
     ivec4 fr_size;           // the picture's width and height, the views, the rings
+    ivec4 fr_tab;            // the tables' rows a grid and columns (FR_HALF, FR_COLS)
 };
 
 layout(set = 0, binding = 1) uniform sampler2D wh_tab;
@@ -51,8 +52,9 @@ layout(rgba16f, set = 0, binding = 2) uniform restrict image2DArray fr_out;
 // the shell): by the square root of the length along the path in the shell over that length
 // (FR_COLS columns: dense near the start, where the objects near the eyes are), the path's point in
 // the ray's subspace (r cos psi, r sin psi, w, psi from the eye) and l there.
-const int FR_HALF = 1024;
-const int FR_COLS = 256;
+// (their sizes follow the picture's: RayPass._table_size)
+#define FR_HALF (fr_tab.x)
+#define FR_COLS (fr_tab.y)
 const float FR_WLOG = 0.25;
 const float FR_EPS = 1e-6;
 
@@ -62,14 +64,17 @@ float fr_warp(float d, float span) {
 
 
 #ifdef KERNEL_TABLES
-// A row a group, a column an invocation: the ray at the row's angle, at the column's point of its
-// path (each invocation sets the path up itself: a few hundred instructions, all of them at once).
+// A row a group, a column an invocation: the first sets the row's ray and path up (into shared
+// memory), each then its column's point of the path.
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 layout(rgba32f, set = 0, binding = 6) uniform restrict writeonly image2DArray fr_outF;
 layout(rgba32f, set = 0, binding = 7) uniform restrict writeonly image2DArray fr_outE;
 #ifdef FR_PATHS
 layout(rgba32f, set = 0, binding = 8) uniform restrict writeonly image2DArray fr_outP;
 #endif
+shared WhPath sh_p;
+shared vec4 sh_in;      // the straight part before the shell: (psi, length, chi0, b)
+shared vec4 sh_out;     // (psi and length where it leaves the shell, the universe, the search's length)
 
 // the inverse of fr_warp (it grows with d)
 float fr_unwarp(float x, float span) {
@@ -86,66 +91,69 @@ void main() {
     int i = int(gl_WorkGroupID.x);
     int k = int(gl_LocalInvocationID.x);
     int v = int(gl_WorkGroupID.z);
-    vec4 rows = fr_rows[v];
-    bool up = i >= FR_HALF;
-    float span = max(up ? rows.z - rows.y : rows.y - rows.x, 1e-7);
-    float dA = fr_unwarp((float(i - (up ? FR_HALF : 0)) + 0.5) / float(FR_HALF), span);
-    float alpha = up ? rows.y + dA : rows.y - dA;
     float l0 = fr_eye[5 * v].x;
-    vec2 eye = fr_eye[5 * v + 4].xy;
-    float vl = cos(alpha);
-    float wn = sin(alpha);
-    float r0 = eye.x;
-    float b = r0 * wn;
     float Rout = wh_Rout();
     float L = wh_Lsh();
     float sg = l0 >= 0.0 ? 1.0 : -1.0;
-    bool outside = abs(l0) >= L;
-    // the straight part before the shell (an eye outside): in its plane the line at distance b from
-    // the centre, chi its polar angle from the closest approach (r = b / cos chi, s = b tan chi)
-    float chi0 = (vl * sg < 0.0 ? -1.0 : 1.0) * acos(min(b / r0, 1.0));
-    float psiIn = 0.0;
-    float sIn = 0.0;
-    WhPath p;
-    if (outside) {
-        psiIn = acos(min(b / r0, 1.0)) - acos(min(b / Rout, 1.0));
-        sIn = sqrt(max(r0 * r0 - b * b, 0.0)) - sqrt(max(Rout * Rout - b * b, 0.0));
-        float bR = min(b / Rout, 1.0);
-        p = wh_path(sg * L, -sg * sqrt(max(1.0 - bR * bR, 0.0)), bR, vec2(Rout, 0.0));
-    } else {
-        p = wh_path(l0, vl, wn, eye);
+    if (k == 0) {
+        vec4 rows = fr_rows[v];
+        bool up = i >= FR_HALF;
+        float span = max(up ? rows.z - rows.y : rows.y - rows.x, 1e-7);
+        float dA = fr_unwarp((float(i - (up ? FR_HALF : 0)) + 0.5) / float(FR_HALF), span);
+        float alpha = up ? rows.y + dA : rows.y - dA;
+        vec2 eye = fr_eye[5 * v + 4].xy;
+        float vl = cos(alpha);
+        float wn = sin(alpha);
+        float r0 = eye.x;
+        float b = r0 * wn;
+        // the straight part before the shell (an eye outside): in its plane the line at distance b
+        // from the centre, chi its polar angle from the closest approach (r = b / cos chi, s = b tan chi)
+        float chi0 = (vl * sg < 0.0 ? -1.0 : 1.0) * acos(min(b / r0, 1.0));
+        float psiIn = 0.0;
+        float sIn = 0.0;
+        WhPath p;
+        if (abs(l0) >= L) {
+            psiIn = acos(min(b / r0, 1.0)) - acos(min(b / Rout, 1.0));
+            sIn = sqrt(max(r0 * r0 - b * b, 0.0)) - sqrt(max(Rout * Rout - b * b, 0.0));
+            float bR = min(b / Rout, 1.0);
+            p = wh_path(sg * L, -sg * sqrt(max(1.0 - bR * bR, 0.0)), bR, vec2(Rout, 0.0));
+        } else {
+            p = wh_path(l0, vl, wn, eye);
+        }
+        // the toys' search: the path in the shell up to where it leaves it, or has turned to pi (it
+        // has met the floor by then)
+        float sigEnd = p.tot.y;
+        if (psiIn + p.tot.x > WH_PI) sigEnd = wh_pathAt(p, WH_PI - psiIn).y;
+        sh_p = p;
+        sh_in = vec4(psiIn, sIn, chi0, b);
+        sh_out = vec4(psiIn + p.tot.x, sIn + p.tot.y, p.sideC, max(sigEnd, 1e-4));
+        imageStore(fr_outE, ivec3(i, 0, v), vec4(min(sh_out.x, 1e4), min(sh_out.y, 1e6), p.sideC, psiIn));
+        imageStore(fr_outE, ivec3(i, 1, v), vec4(sh_out.w, sIn, 0.0, 0.0));
     }
-    float psiEx = psiIn + p.tot.x;
-    float sEx = sIn + p.tot.y;
-    float side = p.sideC;
+    barrier();
+    if (k >= FR_COLS) return;
+    WhPath p = sh_p;
+    vec4 a = sh_in;
+    vec4 o = sh_out;
     // column k by angle: before the shell, in it, after it (straight, held once it no longer turns)
     float psi = WH_PI * float(k) / float(FR_COLS - 1);
     vec2 ls;
-    if (psi < psiIn) {
-        float chi = chi0 + psi;
-        ls = vec2(sg * (b / cos(chi) - Rout + L), b * (tan(chi) - tan(chi0)));
-    } else if (psi <= psiEx) {
-        ls = wh_pathAt(p, psi - psiIn) + vec2(0.0, sIn);
+    if (psi < a.x) {
+        float chi = a.z + psi;
+        ls = vec2(sg * (a.w / cos(chi) - Rout + L), a.w * (tan(chi) - tan(a.z)));
+    } else if (psi <= o.x) {
+        ls = wh_pathAt(p, psi - a.x) + vec2(0.0, a.y);
     } else {
-        float chiX = acos(min(b / Rout, 1.0));      // leaving: from the closest approach, outward
-        float chi = min(chiX + psi - psiEx, 0.5 * WH_PI - 1e-3);
-        ls = vec2(side * (b / cos(chi) - Rout + L), sEx + b * (tan(chi) - tan(chiX)));
+        float chiX = acos(min(a.w / Rout, 1.0));    // leaving: from the closest approach, outward
+        float chi = min(chiX + psi - o.x, 0.5 * WH_PI - 1e-3);
+        ls = vec2(o.z * (a.w / cos(chi) - Rout + L), o.y + a.w * (tan(chi) - tan(chiX)));
     }
     imageStore(fr_outF, ivec3(k, i, v), vec4(ls, 0.0, 0.0));
-    // the toys' search: the path in the shell up to where it leaves it, or has turned to pi (it
-    // has met the floor by then)
-    float sigEnd = p.tot.y;
-    if (psiIn + p.tot.x > WH_PI) sigEnd = wh_pathAt(p, WH_PI - psiIn).y;
-    sigEnd = max(sigEnd, 1e-4);
-    if (k == 0) {
-        imageStore(fr_outE, ivec3(i, 0, v), vec4(min(psiEx, 1e4), min(sEx, 1e6), side, psiIn));
-        imageStore(fr_outE, ivec3(i, 1, v), vec4(sigEnd, sIn, 0.0, 0.0));
-    }
 #ifdef FR_PATHS
     float c = float(k) / float(FR_COLS - 1);
     vec3 q;
-    vec4 pt = wh_pathPoint(p, sigEnd * c * c, q);
-    float psiP = psiIn + pt.y;
+    vec4 pt = wh_pathPoint(p, o.w * c * c, q);
+    float psiP = a.x + pt.y;
     imageStore(fr_outP, ivec3(k, i, v), vec4(pt.z * cos(psiP), pt.z * sin(psiP), pt.w, pt.x));
 #endif
 }

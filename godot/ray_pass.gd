@@ -21,11 +21,14 @@ extends CompositorEffect
 const KERNELS := "res://shaders/trace_kernels.gdshaderinc"
 const CORE := "res://shaders/wormhole_core.gdshaderinc"
 const VIEW_AT := 1808           # bytes: where the views' part of the block starts (fr_cam)
-const SIZE := 2352              # bytes: the block (Frame in trace_kernels.gdshaderinc)
+const SIZE := 2368              # bytes: the block (Frame in trace_kernels.gdshaderinc)
 const MAX_RINGS := 5            # fr_rings
-const ROWS := 2048              # the tables' rows (2 FR_HALF) and columns (FR_COLS)
 const TABLE_MOVE := 1e-4        # m along l an eye moves before its tables are made again
-const COLS := 256
+# the tables' rows a grid (FR_HALF) and columns (FR_COLS) for a picture of TABLE_PX pixels a side,
+# fewer for a smaller one (_table_size)
+const TABLE_HALF := 1024
+const TABLE_COLS := 256
+const TABLE_PX := 1728
 const VIEWS_AT := 1720          # bytes: fr_views
 const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#define WH_ARROWS\n"]
 # the kernels in the order _setup compiles them (tools/adreno_stats.sh names them so)
@@ -67,6 +70,7 @@ var uniforms: Array[RDUniform] = []    # every binding of the kernels (_make_uni
 var uniforms_tex: RID                   # the fillet table's they were made with
 var used_sets := {}                     # their subsets by the bindings a kernel takes (_used)
 var image_size := Vector2i.ZERO
+var table_size := Vector2i(TABLE_HALF, TABLE_COLS)   # rows a grid, columns
 var image_views := 0
 
 
@@ -163,7 +167,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		_put_vec4(block, Vector4(ring[0], ring[1], ring[2], 0.0))
 	for v in 2:
 		_put_projection(block, projs[v].inverse())
-	for k in [size.x, size.y, views, mini(rings.size(), MAX_RINGS)]:
+	for k in [size.x, size.y, views, mini(rings.size(), MAX_RINGS), table_size.x, table_size.y, 0, 0]:
 		block.put_32(k)
 	var bytes := block.data_array
 	bytes.resize(SIZE)
@@ -178,7 +182,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
 		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
 				_used(all, [0, 1, 2, 6, 7, 8] if paths else [0, 1, 2, 6, 7])), 0)
-		rd.compute_list_dispatch(cl, ROWS, 1, views)
+		rd.compute_list_dispatch(cl, 2 * table_size.x, 1, views)
 		rd.compute_list_add_barrier(cl)
 		tables_built += 1
 	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
@@ -236,6 +240,16 @@ func _make_uniforms(tex: RID) -> void:
 static func kernels(p_gravity: int, p_toys: bool) -> Array[String]:
 	var view: String = ["", " gravity", " arrows"][p_gravity]
 	return ["world" + (" toys" if p_toys else "") + view, ("toys" + view) if p_toys else ""]
+
+
+## The tables' rows a grid and columns for a picture: TABLE_HALF and TABLE_COLS at TABLE_PX pixels
+## a side, fewer below as the square root of its pixels (whole groups of 64 rows and 32 columns, at
+## least 128 and 64): linear interpolation is off by the square of a step, a pixel is 1 / its size,
+## so the tables' error in pixels stays what it is at TABLE_PX.
+static func _table_size(size: Vector2i) -> Vector2i:
+	var k := sqrt(minf(float(maxi(size.x, size.y)) / TABLE_PX, 1.0))
+	return Vector2i(clampi(ceili(TABLE_HALF * k / 64.0) * 64, 128, TABLE_HALF),
+			clampi(ceili(TABLE_COLS * k / 32.0) * 32, 64, TABLE_COLS))
 
 
 ## The world kernel's groups: 4 x 4 a block of 64 x 32 pixels (trace_kernels.gdshaderinc, fr_cells).
@@ -367,11 +381,12 @@ func _make_image(size: Vector2i, views: int) -> void:
 	tf.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	tf.array_layers = maxi(views, 2)
 	tf.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
-	tf.width = COLS
-	tf.height = ROWS
+	table_size = _table_size(size)
+	tf.width = table_size.y
+	tf.height = 2 * table_size.x
 	tab_f = rd.texture_create(tf, RDTextureView.new(), [])
 	tab_p = rd.texture_create(tf, RDTextureView.new(), [])
-	tf.width = ROWS
+	tf.width = 2 * table_size.x
 	tf.height = 2
 	tab_e = rd.texture_create(tf, RDTextureView.new(), [])
 	if tiles.is_valid():
