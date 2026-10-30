@@ -293,7 +293,6 @@ struct WhFil {
     float al; float ga; float mn; float mx;
     int reg;
     float E0;              // sqrt(al) + sqrt(ga)
-    float sC;              // sqrt(al) sqrt(ga): the moments' constant, once per ray
     float zlo; float zhi;  // z at tau = 0 and 1
     float psi; float arc;  // the whole fillet, tau 0 -> 1
     float ra; float span;  // r = ra + span tau
@@ -322,7 +321,7 @@ vec4 wh_filRec(WhFil f, float z, float t, float S) {
     float B = f.al + f.ga;
     float C = f.al * f.ga;
     float D0 = 2.0 * z;
-    float D1 = S - f.sC - 0.5 * B * D0;
+    float D1 = S - sqrt(C) - 0.5 * B * D0;
     float tS = t * S;
     float D2 = 0.5 * (tS - 1.5 * B * D1 - C * D0);
     float D3 = (tS * t - 2.5 * B * D2 - 2.0 * C * D1) / 3.0;
@@ -402,7 +401,6 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     float sal = turn ? sq : sqrt((rmin - rho0) / max(wh_Rout() - rmin, 1e-6 * R));   // uniforms only
     float sga = turn ? 0.0 : sq;
     f.E0 = max(sal + sga, 1e-6);
-    f.sC = sal * sga;
     // f.e depends on b alone: sampled from the row of b's regime (the regime is taken from the row,
     // so that the moments match the table), with the factor the table leaves out put back
     int row = turn ? (b >= wh_tabLo.w ? 3 : 2) : (b >= wh_tabLo.y ? 1 : 0);
@@ -741,10 +739,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 float sn = sin(P.x);
                 vec3 Q = vec3(P.y * cs, P.y * sn, P.z);
                 float g = wh_toyDist(isCube, i, Q, cb, perp2, size, e1, e2);
-                // the length per q for the next step: where it starts, at least a quarter of the
-                // piece's on average (at a turning point on a fillet it is 0 in some regimes)
-                float dsmin = max(0.25 * (pA ? PA.y : (cyl ? PB.y : PC.y)), 1e-3);
-                float dsdq = max(P.w, dsmin);
+                float dsdq = max(P.w, 1e-3);         // the path length per q for the next step
                 for (int j = 0; j < WH_SAMPLES; j++) {
                     if (q >= qw.y) break;
                     bool far = g > fine;
@@ -799,7 +794,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     Q = Q1;
                     cs = r1.x;
                     sn = r1.y;
-                    dsdq = max(P1.w, dsmin);
+                    dsdq = max(P1.w, 1e-3);
                     g = wh_toyDist(isCube, i, Q, cb, perp2, size, e1, e2);
                     if (2.0 * float(p - 1) + q > hitK) break;     // a hit before here (the later pieces end there too)
                 }
