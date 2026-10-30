@@ -34,12 +34,30 @@ float geo_atan2(float y, float x) {
 float geo_asin(float x) { return geo_atan2(x, sqrt(max((1.0 - x) * (1.0 + x), 0.0))); }
 float geo_acos(float x) { return geo_atan2(sqrt(max((1.0 - x) * (1.0 + x), 0.0)), x); }
 
+// (sin x, cos x), not the GPU's own: Turnip (the headset's driver) takes every sin and cos through
+// 2 pi fract(x / 2 pi + 1/2) - pi, which puts x on a grid of 4e-7 rad, so a small angle keeps none of
+// its digits (ref/test_gpu.py takes the shaders' every sin and cos the same way). Here x less its
+// nearest multiple of pi/2 (pi/2 in three parts, each product with it exact), then Cephes'
+// polynomials on [-pi/4, pi/4]: a float32 step of the result off, at any x up to thousands.
+vec2 geo_sincos(float x) {
+	float k = round(x * 0.636619772);
+	float r = ((x - k * 1.5703125) - k * 4.83751297e-4) - k * 7.54978995e-8;
+	float s = r * r;
+	float sn = r + r * s * (-0.166666546 + s * (0.00833216087 + s * -0.000195152959));
+	float cs = 1.0 - 0.5 * s + s * s * (0.0416666418 + s * (-0.00138873165 + s * 2.44331571e-5));
+	int q = int(k) & 3;
+	vec2 v = (q & 1) == 0 ? vec2(sn, cs) : vec2(cs, -sn);
+	return q >= 2 ? -v : v;
+}
+float geo_sin(float x) { return geo_sincos(x).x; }
+float geo_cos(float x) { return geo_sincos(x).y; }
+
 // r(|l|) - rho0, without the difference: near the cylinder's end r and rho0 share their first seven
 // digits, and what a ray does there hangs on the rest (sigma below and every test against r_min)
 float geo_dr(float al) {
 	if (al >= g_prof.w) return al - g_prof.w + (g_prof2.x - g_prof.x);
 	float th = g_prof2.w + (max(al, g_prof.z) - g_prof.z) / g_prof.y;
-	float s = sin(0.5 * th);
+	float s = geo_sin(0.5 * th);
 	return 2.0 * g_prof.y * s * s;
 }
 
@@ -51,13 +69,14 @@ vec2 geo_drdw(float l) {
 	if (al >= g_prof.w) return vec2(sign(l), 0.0);
 	if (al <= g_prof.z) return vec2(0.0, 1.0);
 	float th = g_prof2.w + (al - g_prof.z) / g_prof.y;
-	return vec2(sign(l) * sin(th), cos(th));
+	vec2 sc = geo_sincos(th);
+	return vec2(sign(l) * sc.x, sc.y);
 }
 
 // u = sin^2(theta / 2) on the fillet
 float geo_u(float al) {
 	float th = g_prof2.w + (clamp(al, g_prof.z, g_prof.w) - g_prof.z) / g_prof.y;
-	float s = sin(0.5 * th);
+	float s = geo_sin(0.5 * th);
 	return s * s;
 }
 
@@ -214,7 +233,7 @@ vec2 geo_fillet_at(float b, float sigma, float psi) {
 // |l| where the sweep from the origin is psi (>= 0), or -1 if only at infinity
 float geo_l_at(float b, float sigma, float psi) {
 	float Lc = g_prof.z, L = g_prof.w, Rout = g_prof2.x;
-	if (b >= Rout) return psi < 0.5 * GEO_PI ? b / cos(psi) - Rout + L : -1.0;
+	if (b >= Rout) return psi < 0.5 * GEO_PI ? b / geo_cos(psi) - Rout + L : -1.0;
 	float pc = 0.0;
 	if (sigma < g_prof2.y && Lc > 0.0) {
 		float k = sqrt(max(-2.0 * g_prof.y * sigma * (g_prof.x + b), 0.0));
@@ -225,7 +244,7 @@ float geo_l_at(float b, float sigma, float psi) {
 	float whole = 0.5 - ul > 0.0 ? geo_fillet(b, sigma, ul, ul - sigma, 0.5, 0.5 - sigma, true, true).x : 0.0;
 	if (psi > pc + whole) {
 		float a = psi - pc - whole + geo_acos(clamp(b / Rout, 0.0, 1.0));
-		return a < 0.5 * GEO_PI ? b / cos(a) - Rout + L : -1.0;
+		return a < 0.5 * GEO_PI ? b / geo_cos(a) - Rout + L : -1.0;
 	}
 	float u = geo_fillet_at(b, sigma, psi - pc).x;
 	return Lc + g_prof.y * (2.0 * geo_asin(sqrt(u)) - g_prof2.w);
@@ -267,7 +286,8 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 // The geodesic along which the eye at (el, en) sees the point (pl, pn): the only one whose position
 // angle turns by the angle between en and pn (less than pi; any other crosses the floor first:
 // docs/geometry.md). Returns the launch direction as a tangent vector at the eye (.xyzw) and the
-// length (out len); arrive: the direction it comes in at the point, as a vector of R^4.
+// length (out len); arrive: the direction it comes in at the point, as a vector of R^4; fell: 1 where
+// the search came out not finite and the stand-in below took its place (ref/test_gpu.py: never).
 // Taken at once: where the eye and the point are in the same flat universe and the segment between
 // them stays out of the curved zone, the segment (most of a scene seen not through the throat);
 // where both are in the throat's cylinder, the straight line on it unrolled. Else the ray is found
@@ -275,143 +295,169 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 // families, then false position with halving (Illinois) in the family that holds the point.
 const int GEO_ITERS = 12;
 
-vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive) {
+vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive, out float fell) {
 	float side = el < 0.0 ? -1.0 : 1.0;
 	float le = abs(el);
 	float lp = side * pl;           // the eye's side is +
 	float alp = abs(lp);
 	float dre = geo_dr(le), drp = geo_dr(alp);       // r - rho0 at each
 	float re = g_prof.x + dre, rp = g_prof.x + drp;
-	// both in the eye's flat universe and the segment between them clear of the curved zone (its
-	// nearest point to the centre at least Rout from it): the segment itself, in R^4's xyz there
+	// One way out, nothing skipped in the loop: what the wave's vertices do apart is only their
+	// branches. Both in the eye's flat universe and the segment between them clear of the curved
+	// zone (its nearest point to the centre at least Rout from it): the segment itself, in R^4's
+	// xyz there.
+	vec4 dir = vec4(0.0);
+	len = 0.0;
+	arrive = vec4(0.0);
+	fell = 0.0;
+	bool seg = false;
 	if (le >= g_prof.w && lp >= g_prof.w) {
 		vec3 xe = re * en;
 		vec3 dv = rp * pn - xe;
 		float d2 = max(dot(dv, dv), 1e-20);
 		vec3 m = xe + clamp(-dot(xe, dv) / d2, 0.0, 1.0) * dv;
 		if (dot(m, m) >= g_prof2.x * g_prof2.x) {
+			seg = true;
 			len = sqrt(d2);
 			vec3 u = dv / len;
 			arrive = vec4(u, 0.0);
 			float cu = dot(u, en);
-			return vec4(side * cu, u - cu * en);
+			dir = vec4(side * cu, u - cu * en);
 		}
 	}
-	float rmin = g_prof2.z;
-	float dr0 = 2.0 * g_prof.y * g_prof2.y;             // r_min - rho0
-	float c = dot(en, pn);
-	vec3 cr = cross(en, pn);
-	float sd = length(cr);
-	float delta = geo_atan2(sd, c);
-	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : (abs(en.z) < 0.9 ? normalize(cross(en, vec3(0.0, 0.0, 1.0))) : normalize(cross(en, vec3(1.0, 0.0, 0.0))));
-	// both in the throat's cylinder, where the space is the product of l and a sphere of radius
-	// rho0: the geodesic is the straight line of the cylinder unrolled. The family below can't take
-	// a point at about the eye's l there: its rays circle the cylinder, their sweep grows without
-	// bound as they turn tangent, and the length comes out of a division by their dl/ds.
-	if (le <= g_prof.z && alp <= g_prof.z) {
-		float dl = lp - le, arc = re * delta;
-		len = sqrt(dl * dl + arc * arc);
-		float cl = dl / max(len, 1e-20), sl = arc / max(len, 1e-20);
-		arrive = vec4(sl * (c * t - sd * en), side * cl);
-		return vec4(side * cl, sl * t);
-	}
-	// The rays that reach |l| = |lp|, by their launch angle from the radial direction (outward for
-	// lp >= le, else inward): the first crossings, ang in [0, A1) (A1: the tangent going out, else
-	// the ray grazing the point's sphere, or r_min for a point in the cylinder or past l = 0), along
-	// which the turn psi grows from 0; then, where rays turn back to the point, those that turn
-	// first, launched inward at a_min + e from e = A1 - a_min down to the photon sphere's e = 0,
-	// along which it grows on without bound. The ray between the two (eps = 0, e = cT) tells which
-	// holds the point. The first crossings' psi goes as ang near 0, and near A1 (eps = A1 - ang) up
-	// to the ray between's psi_t as eps, or without bound as a power of 1 / eps where that ray keeps
-	// to the cylinder: searched in y = log(ang / eps) on log(psi / (psi_t - psi)) (log psi without
-	// psi_t), near straight in y at both ends whichever. The turned ones' psi goes as log 1 / e:
-	// searched in v = log(cT / e) on psi itself. Every angle near those ends is carried as its
-	// complement, every b - rho0 as a product: float32 keeps them.
-	bool outw = lp >= le;
-	bool cross_ = (lp <= 0.0) || (drp <= dr0);
-	float c1 = geo_atan2(sqrt(max((dre - dr0) * (re + rmin), 0.0)), rmin);   // pi/2 - asin(r_min / re)
-	float a_min = 0.5 * GEO_PI - c1;
-	float cA = 0.0, dA = dre;         // pi/2 - A1, and b - rho0 at A1
-	if (!outw) {
-		cA = cross_ ? c1 : geo_atan2(sqrt(max((dre - drp) * (re + rp), 0.0)), rp);
-		dA = cross_ ? dr0 : drp;
-	}
-	float A1 = 0.5 * GEO_PI - cA;
-	float cT = c1 - cA;               // the turned ones' span of e
-	bool two = outw ? dre > dr0 : !cross_;
-	const float WMAX = 16.0;          // the ends' distances down to 1e-7 of their span: float32's step
-	int fam = two ? -1 : 0;           // -1: the ray between, 0: first crossings, 1: turned
-	float lo = -WMAX, hi = WMAX, flo = 0.0, fhi = 0.0;
-	bool have_lo = false, have_hi = false;
-	float psit = 0.0, gt = 0.0;       // the ray between's psi, the target log(delta / (psi_t - delta))
-	// the first crossings' first guess: the straight line on the cylinder unrolled
-	float ang0 = clamp(geo_atan2(re * delta, abs(lp - le)), 1e-6 * A1, (1.0 - 1e-6) * A1);
-	float x = log(ang0 / (A1 - ang0));
-	int last = 0;
-	vec2 res = vec2(0.0);
-	float dsa = 0.0, dca = 1.0;       // the found ray's launch direction: (along the outward radial, across)
-	bool tlast = false;               // the found ray turned
-	float b = 0.0, gp = 0.0;          // its impact and r - b at the point
-	for (int i = 0; i < GEO_ITERS; i++) {
-		// the ray: sin and cos of its launch angle, b - rho0
-		float sa, ca, bmr;
-		bool turned = fam == 1;
-		if (fam == 1) {
-			float e = cT * exp(-x);
-			sa = cos(c1 - e);
-			ca = sin(c1 - e);
-			bmr = dr0 + 2.0 * re * sin(c1 - 0.5 * e) * sin(0.5 * e);
-		} else {
-			float ex = exp(-abs(x));
-			float eps = fam < 0 ? 0.0 : A1 * (x > 0.0 ? ex : 1.0) / (1.0 + ex);
-			sa = cos(cA + eps);
-			ca = sin(cA + eps);
-			bmr = dA - 2.0 * re * sin(cA + 0.5 * eps) * sin(0.5 * eps);
+	if (!seg) {
+		float rmin = g_prof2.z;
+		float dr0 = 2.0 * g_prof.y * g_prof2.y;             // r_min - rho0
+		float c = dot(en, pn);
+		vec3 cr = cross(en, pn);
+		float sd = length(cr);
+		float delta = geo_atan2(sd, c);
+		vec3 t = sd > 1e-9 ? (pn - c * en) / sd : (abs(en.z) < 0.9 ? normalize(cross(en, vec3(0.0, 0.0, 1.0))) : normalize(cross(en, vec3(1.0, 0.0, 0.0))));
+		// the straight line on the cylinder unrolled. Where both are in the throat's cylinder, the
+		// space there is the product of l and a sphere of radius rho0 and that is the geodesic (the
+		// family below can't take a point at about the eye's l there: its rays circle the cylinder,
+		// their sweep grows without bound as they turn tangent, and the length comes out of a
+		// division by their dl/ds). Elsewhere it stands should the search come out not finite,
+		// which a GPU's arithmetic must never make a hole of; fell says so.
+		float dl0 = lp - le, arc0 = re * delta;
+		len = sqrt(dl0 * dl0 + arc0 * arc0);
+		float cl0 = dl0 / max(len, 1e-20), sl0 = arc0 / max(len, 1e-20);
+		arrive = vec4(sl0 * (c * t - sd * en), side * cl0);
+		dir = vec4(side * cl0, sl0 * t);
+		if (le > g_prof.z || alp > g_prof.z) {
+			// The rays that reach |l| = |lp|, by their launch angle from the radial direction
+			// (outward for lp >= le, else inward): the first crossings, ang in [0, A1) (A1: the
+			// tangent going out, else the ray grazing the point's sphere, or r_min for a point in
+			// the cylinder or past l = 0), along which the turn psi grows from 0; then, where rays
+			// turn back to the point, those that turn first, launched inward at a_min + e from e =
+			// A1 - a_min down to the photon sphere's e = 0, along which it grows on without bound.
+			// The ray between the two (eps = 0, e = cT) tells which holds the point. The first
+			// crossings' psi goes as ang near 0, and near A1 (eps = A1 - ang) up to the ray
+			// between's psi_t as eps, or without bound as a power of 1 / eps where that ray keeps
+			// to the cylinder: searched in y = log(ang / eps) on log(psi / (psi_t - psi)) (log psi
+			// without psi_t), near straight in y at both ends whichever. The turned ones' psi goes
+			// as log 1 / e: searched in v = log(cT / e) on psi itself. Every angle near those ends
+			// is carried as its complement, every b - rho0 as a product: float32 keeps them.
+			bool outw = lp >= le;
+			bool cross_ = (lp <= 0.0) || (drp <= dr0);
+			float c1 = geo_atan2(sqrt(max((dre - dr0) * (re + rmin), 0.0)), rmin);   // pi/2 - asin(r_min / re)
+			float a_min = 0.5 * GEO_PI - c1;
+			float cA = 0.0, dA = dre;         // pi/2 - A1, and b - rho0 at A1
+			if (!outw) {
+				cA = cross_ ? c1 : geo_atan2(sqrt(max((dre - drp) * (re + rp), 0.0)), rp);
+				dA = cross_ ? dr0 : drp;
+			}
+			float A1 = 0.5 * GEO_PI - cA;
+			float cT = c1 - cA;               // the turned ones' span of e
+			bool two = outw ? dre > dr0 : !cross_;
+			const float WMAX = 16.0;          // the ends' distances down to 1e-7 of their span: float32's step
+			int fam = two ? -1 : 0;           // -1: the ray between, 0: first crossings, 1: turned
+			float lo = -WMAX, hi = WMAX, flo = 0.0, fhi = 0.0;
+			bool have_lo = false, have_hi = false;
+			float psit = 0.0, gt = 0.0;       // the ray between's psi, the target log(delta / (psi_t - delta))
+			// the first crossings' first guess: the straight line on the cylinder unrolled
+			float ang0 = clamp(geo_atan2(re * delta, abs(lp - le)), 1e-6 * A1, (1.0 - 1e-6) * A1);
+			float x = log(ang0 / (A1 - ang0));
+			int last = 0;
+			vec2 res = vec2(0.0);
+			float dsa = 0.0, dca = 1.0;       // the found ray's launch direction: (along the outward radial, across)
+			bool tlast = false;               // the found ray turned
+			float b = 0.0, gp = 0.0;          // its impact and r - b at the point
+			for (int i = 0; i < GEO_ITERS; i++) {
+				// the ray: sin and cos of its launch angle, b - rho0
+				float sa, ca, bmr;
+				bool turned = fam == 1;
+				if (fam == 1) {
+					float e = cT * exp(-x);
+					vec2 sc = geo_sincos(c1 - e);
+					sa = sc.y;
+					ca = sc.x;
+					bmr = dr0 + 2.0 * re * geo_sin(c1 - 0.5 * e) * geo_sin(0.5 * e);
+				} else {
+					float ex = exp(-abs(x));
+					float eps = fam < 0 ? 0.0 : A1 * (x > 0.0 ? ex : 1.0) / (1.0 + ex);
+					vec2 sc = geo_sincos(cA + eps);
+					sa = sc.y;
+					ca = sc.x;
+					bmr = dA - 2.0 * re * geo_sin(cA + 0.5 * eps) * geo_sin(0.5 * eps);
+				}
+				b = re * sa;
+				float sigma = geo_sigma(bmr);
+				float gap_e = re * ca * ca / (1.0 + sa);     // re - b
+				float gap_p = (drp - dre) + gap_e;           // rp - b
+				vec2 s;
+				if (outw && !turned) {
+					s = geo_between(b, sigma, le, gap_e, alp, gap_p, false);
+				} else if (!outw && !turned && lp >= 0.0) {
+					s = geo_between(b, sigma, alp, gap_p, le, gap_e, false);
+				} else {
+					s = geo_from_origin(b, sigma, le, gap_e) + geo_from_origin(b, sigma, alp, gap_p);
+				}
+				res = s;
+				dca = (outw && !turned) ? ca : -ca;
+				dsa = sa;
+				tlast = turned;
+				gp = gap_p;
+				if (fam < 0) {
+					// the ray between: the point among the first crossings if this one has turned
+					// past it
+					psit = s.x;
+					gt = log(max(delta, 1e-30) / max(psit - delta, 1e-30));
+					fam = s.x > delta ? 0 : 1;
+					if (fam == 1) { lo = 0.0; flo = s.x - delta; have_lo = true; x = 0.5 * WMAX; }
+				} else {
+					float val = s.x - delta;
+					if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
+					// Illinois: the end kept twice in a row has its value halved. Until a ray each
+					// side of the point is known, halve the bracket: neither end's value is
+					// bounded.
+					if (val > 0.0) { hi = x; fhi = val; if (last > 0) flo *= 0.5; last = 1; have_hi = true; }
+					else { lo = x; flo = val; if (last < 0) fhi *= 0.5; last = -1; have_lo = true; }
+					x = (have_lo && have_hi) ? (lo * fhi - hi * flo) / (fhi - flo) : 0.5 * (lo + hi);
+				}
+			}
+			// arriving: in the plane, (dl/ds, b / rp) in (radial, toward growing angle)
+			float vr = sqrt(max(gp * (rp + b), 0.0)) / rp;
+			bool arrive_out = outw || tlast;          // moving to growing |l| at the point (eye's side +)
+			float dl = (arrive_out ? 1.0 : -1.0) * vr;
+			vec2 dd = geo_drdw(pl);
+			float dls = side * dl;                    // dl/ds in the true l
+			vec3 tau = -sd * en + c * t;              // toward growing angle at pn
+			vec4 arr = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
+			// the search's ray where it is finite (NaN fails every comparison)
+			float lens = res.y;
+			if (lens > 0.0 && lens < 1e7 && abs(dca) <= 1.5 && abs(dsa) <= 1.5 && abs(arr.w) <= 2.0) {
+				len = lens;
+				arrive = arr;
+				dir = vec4(side * dca, dsa * t);
+			} else {
+				fell = 1.0;
+			}
 		}
-		b = re * sa;
-		float sigma = geo_sigma(bmr);
-		float gap_e = re * ca * ca / (1.0 + sa);     // re - b
-		float gap_p = (drp - dre) + gap_e;           // rp - b
-		vec2 s;
-		if (outw && !turned) {
-			s = geo_between(b, sigma, le, gap_e, alp, gap_p, false);
-		} else if (!outw && !turned && lp >= 0.0) {
-			s = geo_between(b, sigma, alp, gap_p, le, gap_e, false);
-		} else {
-			s = geo_from_origin(b, sigma, le, gap_e) + geo_from_origin(b, sigma, alp, gap_p);
-		}
-		res = s;
-		dca = (outw && !turned) ? ca : -ca;
-		dsa = sa;
-		tlast = turned;
-		gp = gap_p;
-		if (fam < 0) {
-			// the ray between: the point among the first crossings if this one has turned past it
-			psit = s.x;
-			gt = log(max(delta, 1e-30) / max(psit - delta, 1e-30));
-			fam = s.x > delta ? 0 : 1;
-			if (fam == 1) { lo = 0.0; flo = s.x - delta; have_lo = true; x = 0.5 * WMAX; }
-			continue;
-		}
-		float val = s.x - delta;
-		if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
-		// Illinois: the end kept twice in a row has its value halved. Until a ray each side of the
-		// point is known, halve the bracket: neither end's value is bounded.
-		if (val > 0.0) { hi = x; fhi = val; if (last > 0) flo *= 0.5; last = 1; have_hi = true; }
-		else { lo = x; flo = val; if (last < 0) fhi *= 0.5; last = -1; have_lo = true; }
-		x = (have_lo && have_hi) ? (lo * fhi - hi * flo) / (fhi - flo) : 0.5 * (lo + hi);
 	}
-	len = res.y;
-	// arriving: in the plane, (dl/ds, b / rp) in (radial, toward growing angle)
-	float vr = sqrt(max(gp * (rp + b), 0.0)) / rp;
-	bool arrive_out = outw || tlast;          // moving to growing |l| at the point (eye's side +)
-	float dl = (arrive_out ? 1.0 : -1.0) * vr;
-	vec2 dd = geo_drdw(pl);
-	float dls = side * dl;                    // dl/ds in the true l
-	vec3 tau = -sd * en + c * t;              // toward growing angle at pn
-	arrive = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
-	return vec4(side * dca, dsa * t);
+	return dir;
 }
+
 
 // ---------------------------------------------------------------- the floor and the sky
 // Where the ray D (a tangent vector at the eye, any length) of the eye at (el, en) ends: true if on
@@ -464,7 +510,8 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 		// divide by the ray's dl/ds, nothing for a ray round the cylinder)
 		hit = true;
 		lh = side * lf;
-		nh = (cos(phif) * en + sin(phif) * t).xy;
+		vec2 scf = geo_sincos(phif);
+		nh = (scf.y * en + scf.x * t).xy;
 		way = re * phif * isa;
 	} else {
 		// what the ray's sweeps share: its impact, the cylinder's rates, the fillet's closed forms
@@ -524,17 +571,19 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 		// t is done with before the fillet's inversion (it costs registers there): where it ends, the
 		// sky's direction, and the floor point's
 		hit = phif < tot;
+		vec2 sct = geo_sincos(tot);
 		if (!hit) {
-			skyd = cos(tot) * en + sin(tot) * t;
+			skyd = sct.y * en + sct.x * t;
 		} else {
-			nh = (cos(phif) * en + sin(phif) * t).xy;
+			vec2 scf = geo_sincos(phif);
+			nh = (scf.y * en + scf.x * t).xy;
 			vec2 at;                        // (|l|, length from the origin)
 			if (target >= SL.x) {
 				// beyond the curved zone: straight
 				float a = target - SL.x + 0.5 * GEO_PI - ab;
 				hit = a < 0.5 * GEO_PI;
-				if (!hit) skyd = cos(tot) * en + sin(tot) * t;
-				float r = b / cos(a);
+				if (!hit) skyd = sct.y * en + sct.x * t;
+				float r = b / geo_cos(a);
 				at = vec2(L + r - Rout, SL.y + sqrt(max((r - b) * (r + b), 0.0)) - qR);
 			} else if (pass && target <= cylL.x) {
 				at = vec2(target / max(cyl.x, 1e-20), 0.0);
@@ -576,7 +625,7 @@ vec3 geo_sdf(float rho, float w) {
 	float a = abs(w);
 	float sw = w < 0.0 ? -1.0 : 1.0;
 	float R = g_prof.y;
-	float Kr = g_prof2.x, Ka = g_prof.z - R * sin(g_prof2.w);
+	float Kr = g_prof2.x, Ka = g_prof.z - R * geo_sin(g_prof2.w);
 	float dr = rho - Kr, da = a - Ka;
 	if (dr <= 0.0 && da <= 0.0) return vec3(rho - g_prof.x, 1.0, 0.0);
 	if (dr >= 0.0 && da >= 0.0) return vec3(Ka + R - a, 0.0, -sw);
@@ -614,7 +663,7 @@ float geo_l_of(vec4 P, out vec3 n) {
 	float a = abs(P.w);
 	float sw = P.w < 0.0 ? -1.0 : 1.0;
 	float R = g_prof.y;
-	float Kr = g_prof2.x, Ka = g_prof.z - R * sin(g_prof2.w);
+	float Kr = g_prof2.x, Ka = g_prof.z - R * geo_sin(g_prof2.w);
 	if (rho >= Kr) return sw * (g_prof.w + rho - Kr);
 	if (a <= Ka) return P.w;
 	return sw * (g_prof.z + R * (geo_atan2(a - Ka, Kr - rho) - g_prof2.w));

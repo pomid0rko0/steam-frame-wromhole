@@ -1,11 +1,13 @@
 """The shaders' geometry (godot/shaders/geo.gdshaderinc) on a GPU, float32, against float64:
 headless (EGL), as a compute shader, with the table and series built as WormholeSpace.sweep_table
-builds them (ref/geo.py), on three throats: the app's, h = R, a crease (h < R).
+builds them (ref/geo.py), on three throats: the app's, h = R, a crease (h < R). Every sin and cos
+goes through the headset driver's range reduction (TURNIP below), as it does on the headset.
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
   where the sweep reaches a value (the floor's hit): the sweep at the GPU's l against the value;
   which way the eye sees a point (geo_see, the bodies' vertices): rays shot by RK4 from an eye to a
-    point, the GPU given the point must find that ray (angle) and its length; half of them launched
-    within a hair to a third of a radian of the tangent, eyes also at the cylinder's end;
+    point, the GPU given the point must find that ray (angle) and its length, without falling back
+    to its stand-in; half of them launched within a hair to a third of a radian of the tangent, eyes
+    also at the cylinder's end;
   the floor (geo_floor, each pixel's ray): where it meets the floor, or that it does not, against
     the same sweeps in float64 (ref/geo.py's floor_hit), half the rays near the tangent;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
@@ -13,6 +15,7 @@ builds them (ref/geo.py), on three throats: the app's, h = R, a crease (h < R).
 Exit status 1 on any failure.
    python3 ref/test_gpu.py"""
 import os
+import re
 import sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
@@ -20,7 +23,15 @@ import moderngl
 from geo import Space, shoot, app_profile, floor_hit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The headset's driver (Turnip, Mesa's ir3) takes every sin and cos through 2 pi fract(x / 2 pi + 1/2)
+# - pi (ir3_nir_trig.py), which puts x on a grid of 4e-7 rad: a small angle keeps none of its digits.
+# The PC's drivers don't: here every sin and cos of the shaders does the same.
+TURNIP = '''
+float turnip_sin(float x) { return sin(fma(6.28318531, fract(fma(x, 0.159154943, 0.5)), -3.14159265)); }
+float turnip_cos(float x) { return cos(fma(6.28318531, fract(fma(x, 0.159154943, 0.5)), -3.14159265)); }
+'''
 INC = open(os.path.join(HERE, '..', 'godot', 'shaders', 'geo.gdshaderinc')).read()
+INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
 PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
@@ -51,10 +62,10 @@ void main() {
 		outp[i] = vec4(geo_from_origin(a.x, geo_sigma(a.z), a.y, a.w), 0.0, 0.0);
 	} else if (mode == 1) {     // a = (b, psi, b - rho0): |l|
 		outp[i] = vec4(geo_l_at(a.x, geo_sigma(a.z), a.y), 0.0, 0.0, 0.0);
-	} else if (mode == 2) {     // a = (eye l, n), c = (point l, n): (direction's radial, tangential, len)
-		float len; vec4 arr;
-		vec4 d = geo_see(a.x, a.yzw, c.x, c.yzw, len, arr);
-		outp[i] = vec4(d.x, length(d.yzw), len, 0.0);
+	} else if (mode == 2) {     // a = (eye l, n), c = (point l, n): (direction's radial, tangential, len, fell)
+		float len, fell; vec4 arr;
+		vec4 d = geo_see(a.x, a.yzw, c.x, c.yzw, len, arr, fell);
+		outp[i] = vec4(d.x, length(d.yzw), len, fell);
 	} else if (mode == 3) {     // a = the eye's place in the room: (l, n), then ex, ey, ez
 		mat4 iv = mat4(vec4(vb0, 0.0), vec4(vb1, 0.0), vec4(vb2, 0.0), vec4(a.xyz, 1.0));
 		float el; vec3 en; vec4 ex, ey, ez;
@@ -170,8 +181,9 @@ def profile_checks(name, S, gpu, rng):
     for (el, alpha, s, phi), g in zip(cases, o):
         derr.append(abs(np.arctan2(g[1], g[0] * (1 if el >= 0 else -1)) - alpha))
         lerr.append(abs(g[2] - s) / (1e-3 + LENGTH_REL * s))
-    fails += not check(f'{name}: which way the eye sees a point', max(derr) <= DIRECTION and max(lerr) <= 1,
-                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit (1200 points)')
+    fell = int((o[:, 3] > 0.5).sum())
+    fails += not check(f'{name}: which way the eye sees a point', max(derr) <= DIRECTION and max(lerr) <= 1 and fell == 0,
+                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit, {fell} fell back (1200 points)')
     # where each pixel's ray meets the floor
     rows, want = [], []
     while len(rows) < 1500:

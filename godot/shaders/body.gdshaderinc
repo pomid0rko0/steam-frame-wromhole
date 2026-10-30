@@ -73,7 +73,7 @@ void vertex() {
 #else
 	vec3 xc = VERTEX;
 	v_col = COLOR.rgb;
-	float h = g_prof.z - g_prof.y * sin(g_prof2.w) + g_prof.y;
+	float h = g_prof.z - g_prof.y * geo_sin(g_prof2.w) + g_prof.y;
 	P = sheet > 0.0 ? vec4(xc, h) : vec4(-xc.x, xc.yz, -h);
 	nrm = vec4(sheet > 0.0 ? NORMAL.x : -NORMAL.x, NORMAL.yz, 0.0);
 #endif
@@ -96,9 +96,9 @@ void vertex() {
 	vec3 en;
 	vec4 ex, ey, ez;
 	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
-	float len;
+	float len, fell;
 	vec4 arrive;
-	vec4 dir = geo_see(el, en, pl, pn, len, arrive);
+	vec4 dir = geo_see(el, en, pl, pn, len, arrive, fell);
 	v_ray = arrive;
 #ifdef ARROWS
 	len *= 1.0 - 1e-3 * COLOR.a;
