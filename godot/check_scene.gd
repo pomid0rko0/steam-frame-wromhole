@@ -53,8 +53,8 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
 		s.height = 2.0 * BALL_RADIUS
-		s.radial_segments = Tracer.PROXY_SEGMENTS       # its faces inside the sphere as the proxies' are
-		s.rings = Tracer.PROXY_RINGS
+		s.radial_segments = 48
+		s.rings = 24
 		var m := MeshInstance3D.new()
 		m.name = "Ball%d" % pos.size()
 		m.mesh = s
@@ -80,7 +80,7 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 			PackedVector4Array([Vector4(CUBE_COLOR.r, CUBE_COLOR.g, CUBE_COLOR.b, CUBE_HALF)]))
 	# each of the scene's static objects (as many as the tracer has) out of sight
 	for p: StringName in [&"wh_sph", &"wh_pil", &"wh_box"]:
-		var rows: PackedVector4Array = tracer.material.get_shader_parameter(p)
+		var rows: PackedVector4Array = tracer.get_param(p)
 		for i in rows.size():
 			# a pillar of no height; a sphere or box below the floor
 			rows[i] = Vector4(0.0, 0.0, 0.001, -1.0) if p == &"wh_pil" else Vector4(0.0, 0.0, -100.0, 0.5)

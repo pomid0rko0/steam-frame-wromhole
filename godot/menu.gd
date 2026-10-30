@@ -13,8 +13,8 @@ extends Node3D
 
 const SCALES := [1.0, 0.9, 0.8, 0.7]
 # names of Foveation.set_level's levels
-const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
-const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
+const FOVEATIONS := ["выкл", "слабая", "средняя", "сильная", "плавная широкая", "плавная узкая"]
+const FOV_LOG := ["off", "low", "medium", "high", "wide", "narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
 # until one is chosen: our narrow map, the width first (its border is not seen in the headset)
 const DEFAULT_FOVEATION := 5
@@ -131,8 +131,6 @@ func _ready() -> void:
 		set_render_scale(float(cfg.get_value("render", "scale", 1.0)))
 		main.foveation.set_order(int(cfg.get_value("render", "own_order", DEFAULT_ORDER)))
 		_set_foveation(int(cfg.get_value("render", "foveation", DEFAULT_FOVEATION)))
-		if foveation > 0:
-			set_render_scale(1.0)
 		print("refresh: foveation %d at the start; runtime density map (XR_FB_foveation) %s, eye gaze (XR_EXT_eye_gaze_interaction) %s, eye-tracked foveation asked %s, render scale %.2f"
 				% [foveation, xr.is_foveation_supported(), xr.is_eye_gaze_interaction_supported(),
 				ProjectSettings.get_setting("xr/openxr/foveation_eye_tracked", false), render_scale])
@@ -506,25 +504,21 @@ func _follow(delta: float, snap := false) -> void:
 
 # ---------------------------------------------------------------- the settings
 
-## A render scale choice; kept for the next start. Below 100% the foveation goes off.
+## A render scale choice; kept for the next start.
 func choose_scale(v: float) -> void:
 	if xr == null:
 		return
 	set_render_scale(v)
-	if render_scale < 1.0 and foveation > 0:
-		_set_foveation(0)
 	_save()
 	print("refresh: render scale %.2f, foveation %d" % [render_scale, foveation])
 	_set_text(_compose())
 
 
-## A foveation choice; kept for the next start. On, the render scale goes back to 100%.
+## A foveation choice; kept for the next start.
 func choose_foveation(level: int) -> void:
 	if xr == null:
 		return
 	_set_foveation(level)
-	if foveation > 0 and render_scale < 1.0:
-		set_render_scale(1.0)
 	_save()
 	print("refresh: foveation %d (%s), render scale %.2f" % [foveation, FOV_LOG[foveation], render_scale])
 	_set_text(_compose())
@@ -574,17 +568,12 @@ func _set_foveation(level: int) -> void:
 	main.foveation.set_level(foveation)
 
 
-## Where SteamVR's density map is: where the eyes look, the middle, or none (Godot's own then).
-## Where the eyes look means Godot asked for that (foveation.gd says when): OpenXRInterface doesn't
-## tell whether the runtime gives it.
+## Where the foveation's sharp middle is: where the eyes look (the gaze tracker has a pose), or
+## straight ahead.
 func foveation_source() -> String:
 	if xr == null:
 		return ""
-	if not xr.is_foveation_supported():
-		return "без SteamVR"
-	var asked: bool = ProjectSettings.get_setting("xr/openxr/foveation_eye_tracked", false) \
-			and xr.is_eye_gaze_interaction_supported()
-	return "по взгляду" if asked else "по центру"
+	return "по взгляду" if main.gaze and main.gaze.get_has_tracking_data() else "по центру"
 
 
 ## The XR viewport's render scale.
@@ -658,11 +647,11 @@ func _update_strip() -> void:
 
 ## Every row, top to bottom; _layout leaves out those not shown here.
 func _make_rows() -> Array[Row]:
-	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
-			FovRow.new(self, "fov", "фовеация"), OrderRow.new(self, "order", "плавная грубее"),
-			GazeRow.new(self, "gaze", "точка взгляда"), GravRow.new(self, "grav", "гравитация"),
-			TurnRow.new(self, "turn", "поворот"), StripRow.new(self, "strip", "строка частоты"),
-			BenchRow.new(self, "bench", "замер скорости")]
+	return [CheckRow.new(self, "check", "проверка одним глазом"), RateRow.new(self, "rate", "частота"),
+			ScaleRow.new(self, "scale", "разрешение"), FovRow.new(self, "fov", "фовеация"),
+			OrderRow.new(self, "order", "плавная грубее"), GazeRow.new(self, "gaze", "точка взгляда"),
+			GravRow.new(self, "grav", "гравитация"), TurnRow.new(self, "turn", "поворот"),
+			StripRow.new(self, "strip", "строка частоты"), BenchRow.new(self, "bench", "замер скорости")]
 
 
 ## A setting: its values 0 .. count() - 1, current() the one in effect.
@@ -754,8 +743,7 @@ class RateRow extends Row:
 		return false
 
 
-## The 3D render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly). It
-## and foveation don't go together (foveation.gd says why): one is chosen, the other goes back.
+## The 3D render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly).
 class ScaleRow extends Row:
 	func shown() -> bool:
 		return menu.xr != null
@@ -879,6 +867,21 @@ class StripRow extends Row:
 
 	func text(i: int) -> String:
 		return ON_OFF[i]
+
+
+## The stereo check scene (main.set_check): the one-eye check (README.md).
+class CheckRow extends Row:
+	func current() -> int:
+		return 1 if menu.main.show_check else 0
+
+	func apply(i: int) -> void:
+		menu.main.set_check(i == 1)
+
+	func text(i: int) -> String:
+		return OFF_ON[i]
+
+	func enabled() -> bool:
+		return not menu.main.hold
 
 
 ## The speed check (bench.gd); its result goes under this row.

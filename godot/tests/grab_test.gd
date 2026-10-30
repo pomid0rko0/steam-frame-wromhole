@@ -107,8 +107,8 @@ func _clear() -> void:
 ## The hands' colours the shader got (the balls of the hands' radius).
 func _hand_colors() -> Array:
 	var out := []
-	var col: PackedVector4Array = main.tracer.material.get_shader_parameter("wh_ballCol")
-	var n: int = main.tracer.material.get_shader_parameter("wh_nBall")
+	var col: PackedVector4Array = main.tracer.get_param("wh_ballCol")
+	var n: int = main.tracer.get_param("wh_nBall")
 	for k in n:
 		if absf(col[k].w - Hands.RADIUS) < 1e-6:
 			out.append(Color(col[k].x, col[k].y, col[k].z))
@@ -158,16 +158,14 @@ func _hands() -> void:
 		ok = cr.distance_to(_chart(pr)) < 1e-4 and cl.distance_to(_chart(pl)) < 1e-4
 		detail = "right at %s (%s), left at %s (%s)" % [cr, _chart(pr), cl, _chart(pl)]
 	U.check("each hand where its grip is, on the curved space", ok, detail)
-	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
-	var proxies: int = main.tracer.proxy_spheres(main.foot_l).size()
-	U.check("the shader draws both hands, the stencil's proxies cover them", nb == 2 and proxies == 3,
-			"shader balls %d (2), proxies %d (the shell and 2 hands)" % [nb, proxies])
+	var nb: int = main.tracer.get_param("wh_nBall")
+	U.check("the ray tracer draws both hands", nb == 2, "balls %d (2)" % nb)
 	# the left eye's picture with the right hand and without it
 	var with_hand := _left_eye()
 	_pose(right, pr, Basis.IDENTITY, false)
 	await _step(3)
-	U.check("a hand that loses its tracking is not drawn", main.tracer.material.get_shader_parameter("wh_nBall") == 1,
-			"shader balls %d" % main.tracer.material.get_shader_parameter("wh_nBall"))
+	U.check("a hand that loses its tracking is not drawn", main.tracer.get_param("wh_nBall") == 1,
+			"shader balls %d" % main.tracer.get_param("wh_nBall"))
 	var without := _left_eye()
 	var sum := Vector2.ZERO
 	var count := 0
@@ -216,10 +214,10 @@ func _near_eye() -> void:
 	ball.held = &"test"                      # kinematic: it stays where it is put
 	await _step(3)
 	var split := _left_eye()
-	main.tracer.toy_mode = Tracer.WHOLE
+	main.tracer.whole = true
 	await _step(3)
 	var whole := _left_eye()
-	main.tracer.toy_mode = Tracer.SPLIT
+	main.tracer.whole = false
 	var differ := 0
 	var red := 0
 	for y in SIZE:
@@ -230,7 +228,7 @@ func _near_eye() -> void:
 				differ += 1
 			if b.r > 0.5 and b.g < 0.35:
 				red += 1
-	U.check("a small ball just in front of the eye, toward a wide frustum's corner: drawn with the stencil as over the whole view",
+	U.check("a small ball just in front of the eye, toward a wide frustum's corner: drawn with the toys kernel where listed as everywhere",
 			red > 0 and differ == 0, "%d pixels differ; the ball covers %d" % [differ, red])
 	_clear()
 	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, FRUSTUM)
@@ -463,7 +461,7 @@ func _grip_and_tracking() -> void:
 	await _step(1)
 	var at := _at(ball)
 	await _step(10)
-	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
+	var nb: int = main.tracer.get_param("wh_nBall")
 	U.check("a hand that loses its tracking leaves its ball where it was", ball.held == &"right_hand"
 			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
 	# at rest there: a ball set on it is not flung with the velocity the hand last had
@@ -493,7 +491,7 @@ func _hold_and_reset() -> void:
 	await _step(2)
 	right.set_input(&"by_button", false)
 	left.set_input(&"ax_button", false)
-	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
+	var nb: int = main.tracer.get_param("wh_nBall")
 	U.check("during the speed check: no hands drawn, no grab, B and X make nothing",
 			nb == 1 and ball.held == &"" and main.toys.world.balls.size() == 1 and main.toys.world.cubes.is_empty(),
 			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball.held, main.toys.world.balls.size(), main.toys.world.cubes.size()])
@@ -564,8 +562,8 @@ func _throat() -> void:
 		return
 	# hand and head: the geodesic between them is as long as the hand is from the head in the room
 	var h := _hand(1)
-	var head_l: float = main.tracer.material.get_shader_parameter("head_l")
-	var head_n: Vector3 = main.tracer.material.get_shader_parameter("head_n")
+	var head_l: float = main.tracer.get_param("head_l")
+	var head_n: Vector3 = main.tracer.get_param("head_n")
 	var gap := sp.toward(head_l, head_n, h.ball.l, h.ball.n).length()
 	U.check("in the throat the hand is the room's distance from the head along the space", absf(gap - (p - HEAD).length()) < 1e-3,
 			"%.4f m (%.4f)" % [gap, (p - HEAD).length()])

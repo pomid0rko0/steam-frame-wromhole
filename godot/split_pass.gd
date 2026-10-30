@@ -1,4 +1,6 @@
 extends CompositorEffect
+## For main's fragment ray tracer (frag_tracer.gd, the speed check's comparison) with a density map:
+## this build's ray tracer foveates by its own rays (foveation.gd).
 ## An effect that does nothing but exist. With it on the XR camera's compositor, Godot's Mobile
 ## renderer draws the 3D scene in a render pass of its own and the tone mapping into the
 ## headset's image in another, instead of one render pass with two subpasses.

@@ -5,9 +5,9 @@
 #     (a running build keeps its old file); the owner starts it from the library
 #   elsewhere (a cloud session): godot/build/wormhole_vr_<label>_steam_frame.zip with the one
 #     .arm64, to attach to the chat; tools/deploy_frame.bat on the PC puts it on the Frame
-#   tools/export.sh [--check] [label]      (label: the branch's name by default)
-# --check: the build for the one-eye check, with the stereo check scene on (its own export preset,
-# whose feature "check" main.show_check reads).
+#   tools/export.sh [label]      (label: the branch's name by default)
+# The one-eye check is a row of the build's menu (main.set_check). The speed check's other ray
+# tracers (tools/ab_shaders.sh) go in when godot/shaders/ab holds them.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/repo.sh"
@@ -20,14 +20,12 @@ if [ "${1:-}" = --godot ]; then   # the export itself (the preset's name), in th
 	mkdir -p build
 	exec "$GODOT" --headless --path . --export-release "$2" build/wormhole_vr.arm64
 fi
-CHECK=""
-[ "${1:-}" = --check ] && { CHECK=1; shift; }
 # the label: the branch checked out, else the task's (its worktree, .wt/<branch>, is detached)
 LABEL=${1:-$(git -C "$ROOT" symbolic-ref --short -q HEAD || true)}
 case $ROOT in "$REPO"/.wt/*) [ -n "$LABEL" ] || LABEL=${ROOT#"$REPO"/.wt/} ;; esac
 [ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" rev-parse --short HEAD)
-LABEL=$(tr '/' '-' <<<"$LABEL")${CHECK:+_check}
-PRESET="Steam Frame${CHECK:+, the one-eye check} (Linux arm64)"
+LABEL=$(tr '/' '-' <<<"$LABEL")
+PRESET="Steam Frame (Linux arm64)"
 rm -f "$BUILD"
 log=$(mktemp)
 "$ROOT/tools/box.sh" "$ROOT/tools/export.sh" --godot "$PRESET" > "$log" 2>&1 || true
@@ -44,7 +42,7 @@ if grep -qsx 'ID=steamos' /etc/os-release; then
 	cp "$BUILD" "$DEST/wormhole_vr.arm64.new"
 	chmod +x "$DEST/wormhole_vr.arm64.new"
 	mv -f "$DEST/wormhole_vr.arm64.new" "$DEST/wormhole_vr.arm64"
-	echo "$DEST/wormhole_vr.arm64${CHECK:+ (the one-eye check)}: start it from the Steam library"
+	echo "$DEST/wormhole_vr.arm64: start it from the Steam library"
 	grep -aqs "$DEST/wormhole_vr.arm64" "$HOME"/.local/share/Steam/userdata/*/config/shortcuts.vdf \
 		|| echo "not in the Steam library yet: steamos-add-to-steam $DEST/wormhole_vr.arm64 adds it (once)"
 else

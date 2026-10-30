@@ -7,4 +7,4 @@ stencil_mode read, compare_not_equal, 1;
 // by the strength of gravity (tracer.gd: a shader per combination).
 #define WH_NO_BALLS
 #define WH_GRAVITY
-#include "res://shaders/wormhole_view.gdshaderinc"
+#include "res://shaders/frag/wormhole_view.gdshaderinc"

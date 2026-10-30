@@ -1,19 +1,20 @@
 class_name Main
 extends Node3D
 ## Real-time wormhole for VR (README.md, docs/). Every pixel is ray traced along a geodesic of
-## the wormhole space in the shader (tracer.gd); this script builds the scene and tracks where the
+## the wormhole space by compute kernels (tracer.gd, ray_pass.gd); this script builds the scene and tracks where the
 ## viewer is in that curved space: walking in the room and with the sticks (the buttons: README.md,
 ## «Управление»).
 ##
 ## Body model: the feet stay on the floor (n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,
 ## parallel-transporting the play-space axes; stick turns rotate those axes; the head sits
-## head-height above the feet along the floor normal. Each eye is derived in the shader from that
-## view's own matrices (shaders/wormhole_view.gdshaderinc).
+## head-height above the feet along the floor normal. Each eye is derived from that view's own eye
+## offset as the frame is drawn (ray_pass.gd).
 ##
-## The parts: the space's geometry (wormhole_space.gd), the ray tracer (tracer.gd), the demo's
+## The parts: the space's geometry (wormhole_space.gd), the ray tracer (tracer.gd, ray_pass.gd;
+## main's fragment one for the speed check's comparison: frag_tracer.gd), the demo's
 ## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
-## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd), the menu and the
+## and throw them (hands.gd), foveated rendering (foveation.gd), the menu and the
 ## line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd), the speed
 ## check (bench.gd) and the stereo check scene (check_scene.gd). Each
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
@@ -58,13 +59,16 @@ var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://s
 var toys := Toys.new(space, scene)
 var hands := Hands.new(space, toys.world)
 var xr_name := "OpenXR"         # tests: "FakeHMD" (tests/fake_hmd.gd), "Native mobile", "none" (the desktop)
-var show_check := OS.has_feature("check")   # the export preset for the one-eye check (tools/export.sh --check)
+var show_check := false         # the stereo check scene at the start (tests); the menu's row: set_check
 var xr: XRInterface
 var in_xr := false
 var xr_view: SubViewport        # XR renders here, so the desktop window gets no mirror image
 var origin: XROrigin3D
 var camera: XRCamera3D
 var tracer: Tracer
+var frag: FragTracer            # main's fragment ray tracer, for the speed check's comparison (use_frag)
+var use_frag := false           # it draws instead of tracer
+var hide_toys := false          # the toys not drawn (the speed check's variants without them)
 var foveation: Foveation
 var rate: FrameRate
 var menu: Menu
@@ -135,7 +139,12 @@ func _ready() -> void:
 	else:
 		camera.position = Vector3(0.0, DESKTOP_HEAD_HEIGHT, 0.0)
 	tracer = Tracer.new(space, scene, xr, xr_view)
+	camera.compositor.compositor_effects = [foveation.split_pass, tracer.pass_]
 	camera.add_child(tracer)
+	foveation.ray_pass = tracer.pass_
+	frag = FragTracer.new(space, scene, xr, xr_view)
+	frag.visible = false
+	camera.add_child(frag)
 
 	rate = FrameRate.new()
 	rate.main = self
@@ -156,12 +165,31 @@ func _ready() -> void:
 
 	place(START_POS, START_FORWARD)
 	if show_check:
-		toys.enabled = false            # the check's red balls take the shader's ball slots
+		show_check = false
+		set_check(true)
+	elif toys.enabled:
+		toys.spawn()
+		draw_toys()
+
+
+## The stereo check scene (the one-eye check, README.md), on or off: its red balls and magenta cube
+## take the toys' slots in the ray tracer, Godot draws its green lines over them and over the floor's
+## white ones (check_scene.gd); off, the toys back where they start.
+func set_check(on: bool) -> void:
+	if on == show_check:
+		return
+	show_check = on
+	if on:
+		toys.enabled = false
 		overlay = Node3D.new()
 		origin.add_child(overlay)
 		CheckScene.build(overlay, space, tracer)
 		_update_chart_map()
-	elif toys.enabled:
+	else:
+		overlay.queue_free()
+		overlay = null
+		tracer.upload_scene()           # the static objects it took out of sight
+		toys.enabled = true
 		toys.spawn()
 		draw_toys()
 
@@ -274,12 +302,41 @@ func _process(delta: float) -> void:
 	hands.update(delta, hp, head, active, new_ball, new_cube)
 	if toys.enabled:
 		draw_toys()
-	tracer.set_head(hp[0], hp[1], hf, head.origin)
+	if tracer.pass_.failed and not use_frag:
+		# no RenderingDevice or a kernel that did not compile (its error is in the log above): main's
+		# ray tracer instead of a black view
+		print("ray pass: failed, main's fragment ray tracer draws instead")
+		set_frag(true)
+	if use_frag:
+		frag.set_head(hp[0], hp[1], hf, head.origin)
+	else:
+		var look := Vector3.ZERO
+		if gaze and gaze.get_has_tracking_data():
+			look = -gaze.transform.basis.z
+		tracer.set_head(hp[0], hp[1], hf, head.origin, look)
 	scripts_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
 
 func draw_toys() -> void:
-	toys.draw(tracer, hands.drawn())
+	if not hide_toys:
+		toys.draw(frag if use_frag else tracer, hands.drawn())
+
+
+## Main's fragment ray tracer instead of this build's (the speed check compares them), or back.
+func set_frag(on: bool) -> void:
+	if on == use_frag:
+		return
+	use_frag = on
+	frag.visible = on
+	tracer.visible = not on
+	tracer.pass_.enabled = not on
+	if not on:
+		frag.proxies.visible = false
+		frag.mark_all.visible = false
+		if frag.plain_quad:
+			frag.plain_quad.visible = false
+	if toys.enabled:
+		draw_toys()
 
 
 ## Put the feet at chart A position pos (z = 0), looking along forward.
@@ -312,6 +369,18 @@ func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	hands.forget_motion()
 	view_pitch = pitch
 	view_roll = roll
+
+
+## The point dist m ahead of the head along the middle of its view, with the head's frame carried
+## there along the geodesic: [l, n, frame] (the speed check's cube in front of the eyes).
+func ahead(dist: float) -> Array:
+	var head := camera.transform
+	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
+	var hf: Array = hp[2]
+	if view_pitch != 0.0 or view_roll != 0.0:
+		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll), _head_forward_xz())
+	var dir := WormholeSpace.combine(hf, -head.basis.z)
+	return space.geodesic(hp[0], hp[1], dir / dir.length(), dist, hf)
 
 
 ## Where the feet are and the frame there, to come back to (set_pose).
@@ -357,6 +426,7 @@ func gaze_text() -> String:
 
 func set_gravity_view(view: int) -> void:
 	tracer.set_gravity_view(view)
+	frag.set_gravity_view(view)
 	menu.refresh()
 
 

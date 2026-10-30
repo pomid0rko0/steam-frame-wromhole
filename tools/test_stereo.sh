@@ -73,13 +73,21 @@ for v in gravity arrows; do
 		for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
 	done
 done
-# foveated rendering on (Foveation.set_level): the 3D scene in a render pass of its own
+# foveated rendering on (Foveation.set_level): the ray tracer's cells coarser away from the middle
+# (ray_pass.gd); what Godot draws over them must still lie on them
 for c in 0 1 2 3; do
 	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
+	# the same without foveation at the size of each of its cells (fake_hmd.gd's eyes are 1000 x 1100;
+	# multiview_check.gd: level 3 in even cases, 4 in odd ones: Foveation.RAY_MAPS)
+	for sz in 500x1100 500x550 250x550 $([ $((c % 2)) = 0 ] && echo 250x275); do
+		render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/ref${c}_$sz" ray $c size=$sz
+	done
 done
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
 done
+# this build's toys (the search along the per-eye path tables) against main's fragment ray tracer
+render --resolution 640x360 -s res://tests/toys_check.gd -- "$OUT/toys"
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
 if cat "$LOGS"/*.log | grep -qE "SCRIPT ERROR|SHADER ERROR"; then
@@ -115,14 +123,21 @@ done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, gravity view: the arrows, shader without balls" python3 "$CMP/check_scene.py" "$OUT/arp$c" --floor-only
 done
+# foveation: where cells are a pixel the overlay as without it; a coarser cell is its middle's colour
+# over the cell, so it must be what the picture without foveation shows at that cell's size (its
+# full size: the stereo check scene's own picture above)
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"
+	verdict "simulated headset, case $c: stereo check scene, foveation on, where its cells are a pixel" python3 "$CMP/check_scene.py" "$OUT/fov$c" --fov
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, shader without balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
+	verdict "simulated headset, case $c: floor lines, shader without balls, foveation on, where its cells are a pixel" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only --fov
 done
-# the split pass changes nothing in the picture: each image with foveation on against the same off
-verdict "foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk:fov pln:fpl
+for c in 0 1 2 3; do
+	for e in left right; do ln -sf "$OUT/chk${c}_ray_$e.png" "$OUT/ref${c}_1000x1100_ray_$e.png"; done
+	verdict "simulated headset, case $c: foveation on, each cell what the picture without it shows at the cell's size" python3 "$CMP/foveated.py" "$OUT/fov$c" "$OUT/ref$c"
+done
+
+verdict "simulated headset: the demo's toys and a held ball, this build against main's ray tracer" python3 "$CMP/same_toys.py" "$OUT/toys"
 
 echo
 echo "images: $OUT"

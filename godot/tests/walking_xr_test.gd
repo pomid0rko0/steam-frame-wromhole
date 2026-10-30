@@ -124,7 +124,7 @@ func _process(_delta: float) -> bool:
 		279:
 			U.check("a left stick click opens the menu, the line hides", main.menu.open and main.menu.menu.visible
 					and not main.menu.strip.visible, "open %s" % main.menu.open)
-			U.check("its rows here (no OpenXR: no rate, scale, foveation or its order)", _keys() == ["gaze", "grav", "turn", "strip", "bench"], str(_keys()))
+			U.check("its rows here (no OpenXR: no rate, scale, foveation or its order)", _keys() == ["check", "gaze", "grav", "turn", "strip", "bench"], str(_keys()))
 			left.set_input(&"primary", Vector2(0.0, 1.0))
 			left.set_input(&"trigger", 1.0)
 		309:

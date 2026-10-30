@@ -5,16 +5,40 @@ away from its edges) that green does NOT cover. With green wider than the white 
 Balls: share of green ball-grid pixels outside the ray-traced red silhouette, and the
 difference of their outlines (bounding boxes). The cube (when its pictures are there): the same
 for Godot's green edges and the ray-traced magenta cube. With
---floor-only (the scene without ray-traced balls) only the floor is compared."""
+--floor-only (the scene without ray-traced balls) only the floor is compared. With --fov (the
+pictures with foveation: <prefix>_ray_fov.json says where the rings were) the floor's lines only
+where the cells are a pixel: a coarser cell is its middle's colour over the cell, its lines as wide
+(tools/compare/foveated.py checks those cells against pictures without foveation)."""
 import os, sys, numpy as np
 from PIL import Image
 from scipy import ndimage
 pre = sys.argv[1]
 floor_only = '--floor-only' in sys.argv[2:]
+fov = None
+if '--fov' in sys.argv[2:]:
+    import json
+    fov = json.load(open(f'{pre}_ray_fov.json'))
+
+
+def fine(shape, v):
+    """Where foveation's cells are a pixel in view v (fr_cells' blocks and rings)."""
+    H, W = shape
+    m = np.ones((H, W), bool)
+    if fov is None:
+        return m
+    gx, gy = fov['gaze'][v]
+    for by in range((H + 31) // 32):
+        for bx in range((W + 63) // 64):
+            r = np.hypot(((bx + 0.5) * 64 - gx) / (0.5 * W), ((by + 0.5) * 32 - gy) / (0.5 * H))
+            for ring in fov['rings']:
+                if r < ring[0]:
+                    m[by * 32:(by + 1) * 32, bx * 64:(bx + 1) * 64] = ring[1] == 1 and ring[2] == 1
+                    break
+    return m
 def img(m, eye): return np.asarray(Image.open(f'{pre}_{m}_{eye}.png').convert('RGB'), int)
 def green(a): return (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 80
 ok = True
-for eye in ('left', 'right'):
+for v, eye in enumerate(('left', 'right')):
     R = img('ray', eye)
     # the balls' red: green and blue both under 0.45 of red (between the shaded balls and the
     # gravity view's red and orange floor)
@@ -24,7 +48,7 @@ for eye in ('left', 'right'):
     W = (gray - ndimage.grey_opening(gray, size=(7, 7))) > 10
     dom = ndimage.binary_erosion(green(img('domain', eye)), iterations=6)
     G = green(img('floor', eye))
-    wl = W & dom
+    wl = W & dom & fine(W.shape, v)
     unc = lambda g: (wl & ~g).sum() / max(wl.sum(), 1)
     u0 = unc(G)
     u2 = max(unc(np.roll(G, 2, axis=1)), unc(np.roll(G, 2, axis=0)))

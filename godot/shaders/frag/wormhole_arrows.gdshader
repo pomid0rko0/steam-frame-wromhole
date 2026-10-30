@@ -8,4 +8,4 @@ stencil_mode read, compare_not_equal, 1;
 #define WH_NO_BALLS
 #define WH_GRAVITY
 #define WH_ARROWS
-#include "res://shaders/wormhole_view.gdshaderinc"
+#include "res://shaders/frag/wormhole_view.gdshaderinc"

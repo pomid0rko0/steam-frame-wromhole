@@ -4,7 +4,7 @@ extends SceneTree
 ## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
 ## ray-traced white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov] [size=WxH]
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
@@ -15,9 +15,11 @@ extends SceneTree
 ## the gravity views "floor" and "floor and arrows" (Tracer.GRAVITY_VIEWS: the floor coloured by
 ## gravity, also the field's arrows), their own ray tracers with the balls and the cube (with
 ## plain, without them).
-## fov: foveated rendering on (the runtime's strongest in even cases, our own map in odd ones):
-## the 3D scene in a render pass of its own, the viewport asking for a density map. Software
-## Vulkan has none, so what this tests is that the split pass draws everything where it was.
+## fov: foveated rendering on (level 3 in even cases, 4 in odd ones): the ray tracer traces cells
+## coarser away from the middle of each eye's picture (ray_pass.gd), and where the rings were
+## (<prefix>_<mode>_fov.json): where cells are 1 pixel Godot's overlay must lie on what they show,
+## and each coarser cell must show what the picture without foveation shows at that cell's size
+## (size=WxH: each eye's pixels; tools/compare/foveated.py).
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
@@ -47,7 +49,11 @@ func _initialize() -> void:
 	plain = args.slice(3).has("plain")
 	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
 	fov = args.slice(3).has("fov")
-	hmd = U.headset(mini(case, 1), -25.0)
+	var size := Vector2i.ZERO
+	for a: String in args.slice(3):
+		if a.begins_with("size="):
+			size = Vector2i(int(a.get_slice("=", 1).get_slice("x", 0)), int(a.get_slice("=", 1).get_slice("x", 1)))
+	hmd = U.headset(mini(case, 1), -25.0, size)
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = true
@@ -81,6 +87,11 @@ func _process(_delta: float) -> bool:
 				U.key(k[1], k[2])
 	if frames == (34 if case == 3 else 24):
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
+		if fov:
+			# where the rings were: tools/compare/foveated.py and check_scene.py --fov take each cell's size
+			var f := FileAccess.open(OS.get_cmdline_user_args()[0] + "_" + mode + "_fov.json", FileAccess.WRITE)
+			f.store_string(JSON.stringify({"gaze": main.tracer.pass_.gaze_px.map(func(g: Vector2) -> Array: return [g.x, g.y]),
+					"rings": main.tracer.pass_.rings}))
 		print("saved ", mode)
 		U.finish(self, hmd)
 		return true

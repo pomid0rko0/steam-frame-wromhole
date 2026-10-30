@@ -1,12 +1,14 @@
 #!/bin/bash
 # What the speed check's poses cost on the Steam Frame's GPU, by a model: Mesa's compiler for the
-# Frame (tools/adreno_stats.sh) compiles each ray tracer, and tools/adreno_cost.py runs the program
-# it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
-# included (what the model is: tools/adreno_cost.py).
+# Frame (tools/adreno_stats.sh) compiles each fragment ray tracer, and tools/adreno_cost.py runs the
+# program it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent
+# branches included (what the model is: tools/adreno_cost.py). Fragment ray tracers only: main's
+# (frag_tracer.gd, in this build for the speed check, its shaders in godot/shaders/frag/) and
+# tools/ab_shaders.sh's sources; this build's compute kernels are not modelled.
 #   tools/adreno_cost.sh [--tiles N] [--check] [--toys [--hands|--held] [--split]] [--gravity 1|2]
 #                        [--poses P] [--profile] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
-# "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
+# "this": main's fragment ray tracer as this tree keeps it (godot/shaders/frag/). --check: also checks the emulated colours against Godot's
 # (lavapipe) picture on 256 random tiles a pose (the bound: tools/adreno_cost.py, --check).
 # --toys: tests/emu_dump.gd's scene toys, with --hands or --held its toys+hands or toys+held (the
 # shader with balls, of every source: one without it stops the run).
@@ -61,10 +63,10 @@ for s in "${srcs[@]}"; do
 	if [ "$s" = this ]; then sh=""; else n=$((n + 1)); sh=res://shaders/ab/$n/wormhole.gdshader; fi
 	sc=$scene
 	stsh=$sh
-	if [ "$s" = this ] && [ -n "$TOYS" ]; then stsh=res://shaders/wormhole_balls.gdshader; fi
+	if [ "$s" = this ]; then stsh=res://shaders/frag/wormhole$([ -n "$TOYS" ] && echo _balls).gdshader; fi
 	if [ "$s" = this ] && [ -n "$GRAV" ]; then
 		sc=$scene+gravity$GRAV
-		stsh=res://shaders/$([ -n "$TOYS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
+		stsh=res://shaders/frag/$([ -n "$TOYS" ] && echo wormhole_balls_ || echo wormhole_)$([ "$GRAV" = 2 ] && echo arrows || echo gravity).gdshader
 	fi
 	[ -n "$TOYS" ] && [ -n "$sh" ] && sh=${sh%wormhole.gdshader}wormhole_balls.gdshader
 	if [ -n "$sh" ] && [ ! -f "$ROOT/godot/${sh#res://}" ]; then
@@ -79,7 +81,7 @@ for s in "${srcs[@]}"; do
 		out=$(KEEP_LOG=$log "$ROOT/tools/adreno_stats.sh" plain ${stsh:+--shader $stsh} 2>&1)
 		# of its two programs, the one that runs: the smaller /1 (as adreno_cost.py picks it)
 		stats=$(grep '^prog [0-9]*/1' <<<"$out" | sort -n -k3 | head -1)
-		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', A.shader_defines('${stsh:-res://shaders/wormhole.gdshader}'))" 2>/dev/null && { parsed=1; break; }
+		python3 -W ignore -c "import sys; sys.path.insert(0, '$ROOT/tools'); import adreno_cost as A; A.Shader('$log', A.shader_defines('${stsh:-res://shaders/frag/wormhole.gdshader}'))" 2>/dev/null && { parsed=1; break; }
 		[ $try = 3 ] || echo "$s: the compiler's log did not parse, compiling again"
 	done
 	[ -n "$parsed" ] || { echo "$s: the compiler's log did not parse three times:"; tail -5 <<<"$out"; exit 1; }
@@ -94,7 +96,7 @@ for s in "${srcs[@]}"; do
 	plog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS" ]; then
 		plog=$WORK/$n.plain.log
-		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
+		psh=res://shaders/frag/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
 		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
 	fi
 	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" --size "$HEADSET_EYE" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"

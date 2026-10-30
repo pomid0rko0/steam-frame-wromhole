@@ -1,8 +1,9 @@
 #!/bin/bash
-# Other ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of each
-# source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the one
-# with movable balls where the source has it; the speed check (godot/bench.gd) times them against
-# this build's.
+# Other fragment ray tracers for the speed check (godot/bench.gd): copies the plain ray tracer of
+# each source into godot/shaders/ab/1, 2, ... (not in git), where an export picks them up, and the
+# one with movable balls where the source has it; the speed check times them in main's fragment ray
+# tracer (frag_tracer.gd) against main's own and this build's. A source's shaders are where its
+# tree keeps them: godot/shaders/frag/ (this tree: main's, frozen) or godot/shaders/.
 #   tools/ab_shaders.sh <source>...   a source: a commit, or a directory holding wormhole.gdshader,
 #                                     wormhole_view.gdshaderinc, wormhole_core.gdshaderinc
 #                                     (optionally a file "label" naming it), or one of the cost
@@ -13,6 +14,12 @@
 #                                       noderiv  grid lines of a fixed width: no screen derivatives
 #                                       nogrid   no grid lines: none of their atan, asin or derivatives
 #                                       nosky    one colour per sky, the grid lines kept
+#                                       bigcode  the same ray tracer and some 4000 instructions more
+#                                                that never run (a branch on a uniform, one number's
+#                                                chain): what a program past the instruction cache costs
+#                                       moreregs the same with 4 values more held through the trace
+#                                                (sines of the ray, added in at 1e-9): past 12
+#                                                registers, waves of 64 instead of 128
 #   tools/ab_shaders.sh --auto <source>...   the same, and the build runs the check by itself
 #                                     (bench.gd says when: a build for measuring)
 #   tools/ab_shaders.sh --remove      a build without them
@@ -33,10 +40,10 @@ for src in "$@"; do
 	n=$((n + 1))
 	out=$DIR/$n
 	mkdir -p "$out"
-	if [[ "$src" =~ ^(empty|flat|noshade|noderiv|nogrid|nosky)$ ]]; then
+	if [[ "$src" =~ ^(empty|flat|noshade|noderiv|nogrid|nosky|bigcode|moreregs)$ ]]; then
 		tmp=$(mktemp -d)
-		cp "$ROOT"/godot/shaders/wormhole.gdshader "$ROOT"/godot/shaders/wormhole_view.gdshaderinc \
-			"$ROOT"/godot/shaders/wormhole_core.gdshaderinc "$tmp/"
+		cp "$ROOT"/godot/shaders/frag/wormhole.gdshader "$ROOT"/godot/shaders/frag/wormhole_view.gdshaderinc \
+			"$ROOT"/godot/shaders/frag/wormhole_core.gdshaderinc "$tmp/"
 		python3 - "$tmp" "$src" <<'PY' || { rm -rf "$DIR" "$tmp"; exit 1; }
 import sys
 d, kind = sys.argv[1], sys.argv[2]
@@ -52,6 +59,26 @@ if kind == 'empty':
     i = s.index('void fragment() {')
     open(d + '/wormhole_view.gdshaderinc', 'w').write(s[:i] + 'void fragment() {\n\tALBEDO = vec3(0.10, 0.11, 0.13) + 1e-6 * v_ray.xyz;\n}\n')
     open(d + '/label', 'w').write("empty: one colour, Godot's own cost\n")
+elif kind == 'bigcode':
+    # one number through a chain of fract(a k + c) with constants of their own: nothing to fold,
+    # one register; with the waits between them some 3300 instructions
+    lines = ''.join('\t\ta = fract(a * %.4f + %.4f);\n' % (1.0 + 0.0001 * k, 0.0003 * k) for k in range(600))
+    patch('wormhole_view.gdshaderinc', """	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+}""", """	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+	if (head_l > 1e8) {
+		float a = V.x;
+""" + lines + """		ALBEDO = vec3(a);
+	}
+}""", "bigcode: the same and 4000 instructions that never run")
+elif kind == 'moreregs':
+    patch('wormhole_view.gdshaderinc', """	vec4 V = normalize(v_ray);
+	vec4 dbg;
+	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+}""", """	vec4 V = normalize(v_ray);
+	vec4 h0 = sin(V * 3.1);
+	vec4 dbg;
+	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg) + 1e-9 * h0.xyz * h0.w;
+}""", "moreregs: the same with 4 values more held: past 12 registers")
 elif kind == 'flat':
     patch('wormhole_core.gdshaderinc', """    bool inShell = abs(l0) < wh_Lsh();
     bool shellAhead = !inShell;     // a straight ray that has left the shell never re-enters it
@@ -104,20 +131,20 @@ PY
 		get() { cat "$src/$1"; }
 		label=$( [ -f "$src/label" ] && head -1 "$src/label" || basename "$src")
 	else
-		get() { git -C "$ROOT" show "$src:godot/shaders/$1"; }
+		get() { git -C "$ROOT" show "$src:godot/shaders/frag/$1" 2>/dev/null || git -C "$ROOT" show "$src:godot/shaders/$1"; }
 		label=$(git -C "$ROOT" log -1 --format='%h, %cs' "$src")
 	fi
 	get wormhole_core.gdshaderinc > "$out/wormhole_core.gdshaderinc"
-	get wormhole_view.gdshaderinc | sed "s#res://shaders/wormhole_core.gdshaderinc#res://shaders/ab/$n/wormhole_core.gdshaderinc#" \
+	get wormhole_view.gdshaderinc | sed "s#res://shaders/\(frag/\)\{0,1\}wormhole_core.gdshaderinc#res://shaders/ab/$n/wormhole_core.gdshaderinc#" \
 		> "$out/wormhole_view.gdshaderinc"
 	# the first line names it: the log shows it
-	{ echo "// $label"; get wormhole.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
+	{ echo "// $label"; get wormhole.gdshader | sed "s#res://shaders/\(frag/\)\{0,1\}wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
 		> "$out/wormhole.gdshader"
 	grep -q "res://shaders/ab/$n/" "$out/wormhole.gdshader" && grep -q "res://shaders/ab/$n/" "$out/wormhole_view.gdshaderinc" \
 		|| { echo "unexpected include paths in $src"; rm -rf "$DIR"; exit 1; }
 	# the one with movable balls too, where the source has it
 	if get wormhole_balls.gdshader >/dev/null 2>&1; then
-		{ echo "// $label"; get wormhole_balls.gdshader | sed "s#res://shaders/wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
+		{ echo "// $label"; get wormhole_balls.gdshader | sed "s#res://shaders/\(frag/\)\{0,1\}wormhole_view.gdshaderinc#res://shaders/ab/$n/wormhole_view.gdshaderinc#"; } \
 			> "$out/wormhole_balls.gdshader"
 	fi
 	echo "godot/shaders/ab/$n: $label"

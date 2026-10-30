@@ -12,18 +12,23 @@ extends Node
 ## density map follows them: foveation.gd) and with SteamVR's half rate after a late frame (below).
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), with the feet held there,
-## and the ray tracer is timed on the GPU (the median frame of each segment). A build can carry
-## other ray tracers in res://shaders/ab/1, 2, ... (tools/ab_shaders.sh). Every pose is then timed
-## with those of the kind this build runs and this build's own, in a palindrome order (1 2 .. n
-## n .. 2 1: a slow drift of heat or clock falls on all alike). RATE is low because a frame that
-## misses its refresh sends SteamVR to half rate (frame_rate.gd), and the GPU time then grows: a
-## variant over the frame's budget reads dearer than it is, and so does the segment after it.
-## Fewer instructions or registers (tools/adreno_stats.sh) are not faster by themselves, and frame
-## times from walking around don't compare between builds (where one looks changes them): this
-## part decides.
-## This build's ray tracer is timed each way FOVEATIONS lists (the split pass alone: what
-## foveation's pass costs without a map) and, with the toys, over the whole view too (what the
-## stencil saves); the others as comparable() takes them.
+## and the ray tracer is timed on the GPU (the median frame of each segment): this build's
+## (tracer.gd, compute kernels) each way FOVEATIONS lists, and main's fragment ray tracer
+## (frag_tracer.gd, in this build for the comparison) each way MAIN_WAYS lists, with the toys also
+## over the whole view, and this build's with the toys kernel over every group (what its list
+## saves) and with half the bytes in a table and in the picture (Tracer.tables2, picture8: what
+## writing and reading them costs). A build can carry other fragment ray tracers in res://shaders/ab/1, 2, ...
+## (tools/ab_shaders.sh), timed in main's: those of the kind this build runs. Every pose is timed
+## with all of them in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
+## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
+## it is, and so does the segment after it. Fewer instructions or registers
+## (tools/adreno_stats.sh) are not faster by themselves, and frame times from walking around don't
+## compare between builds (where one looks changes them): this part decides.
+##
+## This build's segments print its frame split into passes too ("bench: passes" lines,
+## RayPass.pass_ms, GPU timestamps around its kernels): what each costs, and over the foveation
+## levels what of it does not follow the number of rays.
 ##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
 ## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),
@@ -55,7 +60,17 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right, degrees 
 	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat (boxes where A has pillars)
 	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat
 	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
+	# the worst cases: a cube in the middle of the view, [.., its distance ahead of the eyes in m,
+	# its half size in m] (put_cube), with the demo's toys as they lie
+	[5.0, 0.0, 0.0, 0.35, 0.12],   # at the edge, inside: the cube 35 cm ahead
+	[5.0, 0.0, 0.0, 0.15, 0.05],   # the same, a small one 15 cm from the eyes
+	[5.6, 0.0, 0.0, 0.35, 0.12],   # just outside the edge, the cube ahead inside it
+	[6.2, 0.0, 0.0, 0.6, 0.15],    # outside, the cube on the edge
+	[5.0, 0.0, 0.0, 5.0, 0.3],     # from the edge, the cube in the middle of the throat
+	[0.0, 0.0, 0.0, 0.35, 0.12],   # in the throat, the cube ahead
+	[0.0, 90.0, 0.0, 0.35, 0.12],  # in the throat looking sideways round it, the cube ahead
 ]
+const CUBE_COLOR := Color(0.95, 0.45, 0.55)
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
 const PREPARE := 2.0            # s each ray tracer runs before the timing (its pipeline is compiled)
@@ -66,11 +81,14 @@ const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
-# this build's ray tracer: [label, foveation level (Foveation.set_level), split]; the first is the
-# reference the others are compared with
-const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
-	["this build, SteamVR low", 1, false], ["this build, SteamVR high", 3, false],
-	["this build, own wide", 4, false], ["this build, own narrow", 5, false]]
+# this build's ray tracer: [label, foveation level (Foveation.set_level)]; the first is the one the
+# others of this build are compared with
+# without foveation and with own narrow: two densities of rays, from which the speed check's
+# passes lines split each pass into what follows the rays and what does not
+const FOVEATIONS := [["this build", 0], ["this build, narrow", 5]]
+# main's fragment ray tracer: [label, foveation level, split]; the first is the reference of the
+# whole comparison
+const MAIN_WAYS := [["main's", 0, false], ["main's, own narrow", 5, false]]
 
 var main: Main
 var menu: Menu                  # the result goes there; its render scale
@@ -83,11 +101,14 @@ var _next := ""                 # the phase after a rate request
 var others: Array[Other] = []   # from res://shaders/ab/
 var variants: Array[Setup] = []   # this run's ray tracers (start)
 var own := 0                    # the variant that is this build without foveation
-var own_shader: Shader
+var main_shader: Shader         # main's ray tracer as it runs
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
 var gpu_ms: Array = []          # this segment's frames
+var cube: BallWorld.Cube        # the place's cube (put_cube), or null
+var passes: Array = []          # this build's: each frame's RayPass.pass_ms in the segment
+var pass_frame := -1
 var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
@@ -121,20 +142,26 @@ func has_ab() -> bool:
 	return not others.is_empty()
 
 
-## The others as variants of the kind this build runs now: without toys, or with them (the demo's),
-## theirs over the whole view: with the stencil test the whole view marked, without it no stencil
-## at all; none with the gravity view on (theirs are without it).
+## The others, in main's ray tracer: without toys, or with them (the demo's), theirs over the whole
+## view: with the stencil test the whole view marked, without it no stencil at all; none with the
+## gravity view on (theirs are without it). Those without a ray tracer for the toys (the cost checks)
+## are timed without the toys (plain), next to main's without them.
 func comparable() -> Array[Setup]:
-	var tracer: Tracer = main.tracer
 	var out: Array[Setup] = []
-	if tracer.gravity_view != 0:
+	if main.tracer.gravity_view != 0:
 		return out
 	for o in others:
-		if tracer.plain():
-			out.append(Setup.new(o.label, o.shader, 0, false, Tracer.BARE))
-		elif o.balls != null:
+		if main.tracer.plain() or o.balls == null:
+			var v := Setup.new(o.label, true, o.shader, 0, false, FragTracer.BARE)
+			v.plain = not main.tracer.plain()
+			out.append(v)
+		else:
 			var with_stencil := o.balls.code.contains("stencil_mode")
-			out.append(Setup.new(o.label, o.balls, 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE))
+			out.append(Setup.new(o.label, true, o.balls, 0, false, FragTracer.WHOLE if with_stencil else FragTracer.BARE))
+	if out.any(func(v: Setup) -> bool: return v.plain):
+		var ref := Setup.new("main's, no toys", true, FragTracer.SHADERS[0], 0, false, FragTracer.SPLIT)
+		ref.plain = true
+		out.push_front(ref)
 	return out
 
 
@@ -181,13 +208,23 @@ func start() -> void:
 		return
 	running = true
 	var tracer: Tracer = main.tracer
-	own_shader = tracer.material.shader
-	variants = comparable()
+	# main's shader for this scene, as FragTracer picks it (it gets the toys only when it draws)
+	main_shader = (FragTracer.SHADERS if tracer.plain() else FragTracer.SHADERS_TOYS)[tracer.gravity_view]
+	variants.clear()
+	for w in MAIN_WAYS:
+		variants.append(Setup.new(w[0], true, main_shader, w[1], w[2], FragTracer.SPLIT))
 	own = variants.size()
 	for f in FOVEATIONS:
-		variants.append(Setup.new(f[0], own_shader, f[1], f[2], Tracer.SPLIT))
-	if not tracer.plain():
-		variants.append(Setup.new("this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE))
+		variants.append(Setup.new(f[0], false, null, f[1], false, FragTracer.SPLIT))
+	# what the picture's and a table's bytes cost (RayPass.picture8, tables2): the same work, half
+	# the bytes written and read
+	var t2 := Setup.new("this build, tables in two channels", false, null, 0, false, FragTracer.SPLIT)
+	t2.tables2 = true
+	variants.append(t2)
+	for f in [0, 5]:
+		var p8 := Setup.new("this build, %spicture of 8 bits" % ("" if f == 0 else "own narrow, "), false, null, f, false, FragTracer.SPLIT)
+		p8.picture8 = true
+		variants.append(p8)
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -216,9 +253,8 @@ func start() -> void:
 	var names := []
 	for i in variants.size():
 		names.append("%d = %s" % [i + 1, variants[i].label])
-	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first; gravity view %s"
-			% [", ".join(names), PLACES.size(), time, "width" if main.foveation.order == 0 else "height",
-			Tracer.GRAVITY_VIEWS[tracer.gravity_view]])
+	print("bench: start, %s; %d places, %.1f s timed per segment; gravity view %s"
+			% [", ".join(names), PLACES.size(), time, Tracer.GRAVITY_VIEWS[tracer.gravity_view]])
 	var tour_s := 0.0
 	for s in tour:
 		tour_s += s.secs + (TOUR_RECOVER * tour_scale if s.recover else 0.0)
@@ -244,8 +280,8 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
-				% [main.rate.rate, main.foveation.level, "width" if main.foveation.order == 0 else "height", tour.size()])
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
+				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
 
@@ -294,11 +330,24 @@ func _prepare() -> void:
 
 ## A variant's ray tracer and foveation.
 func _use(v: Setup) -> void:
-	main.tracer.material.shader = v.shader
-	main.tracer.toy_mode = v.toy_mode
+	if not v.frag:
+		main.hide_toys = false
+	main.set_frag(v.frag)
+	main.tracer.whole = v.whole
+	main.tracer.picture8 = v.picture8
+	main.tracer.tables2 = v.tables2
+	if v.frag:
+		# the toys first: set_objects picks main's own shader
+		main.hide_toys = v.plain
+		if v.plain:
+			main.frag.set_objects(PackedVector4Array(), PackedVector4Array())
+		elif main.toys.enabled:
+			main.draw_toys()
+		main.frag.material.shader = v.shader
+		main.frag.toy_mode = v.toy_mode
 	var fov: Foveation = main.foveation
-	if fov.level != v.foveation or fov.split_pass.enabled != (v.foveation > 0 or v.split):
-		fov.set_level(v.foveation, v.split)
+	if fov.level != v.foveation or fov.frag != v.frag or fov.split_pass.enabled != (v.frag and (v.foveation > 0 or v.split)):
+		fov.set_level(v.foveation, v.split, v.frag)
 
 
 func _segment() -> void:
@@ -307,6 +356,10 @@ func _segment() -> void:
 	if gpu_ms.is_empty():
 		_clock()
 	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
+	var rp: RayPass = main.tracer.pass_
+	if not variants[plan[step].y].frag and rp.pass_frame != pass_frame and rp.pass_ms.size() == RayPass.PASSES.size():
+		pass_frame = rp.pass_frame
+		passes.append(rp.pass_ms)
 	if phase_t >= warm + time:
 		_clock()
 		_end_segment()
@@ -328,9 +381,14 @@ func _begin(i: int) -> void:
 	step = i
 	var place: Array = PLACES[plan[i].x]
 	main.place_on_axis(_l(place[0]), place[1], place[2])
+	if i == 0 or plan[i].x != plan[i - 1].x:
+		_take_cube()
+		if place.size() > 3:
+			cube = put_cube(main, place[3], place[4])
 	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
+	passes.clear()
 	if i == 0 or plan[i].x != plan[i - 1].x:
 		clock_lo = 0
 		clock_hi = 0
@@ -339,6 +397,17 @@ func _begin(i: int) -> void:
 
 func _end_segment() -> void:
 	var r: Array = results[plan[step].x]
+	if not passes.is_empty():
+		# this build's frame by its passes (RayPass.pass_ms): each one's median over the segment
+		var place_now: Array = PLACES[plan[step].x]
+		var parts := []
+		for k in RayPass.PASSES.size():
+			var vals: Array = passes.map(func(p: PackedFloat64Array) -> float: return p[k])
+			vals.sort()
+			parts.append("%s %.2f" % [RayPass.PASSES[k], vals[vals.size() / 2]])
+		print("bench: passes, l %.1f m, %.0f deg right, %.0f deg up, %d (%s): %s ms; %d frames"
+				% [_l(place_now[0]), place_now[1], place_now[2], plan[step].y + 1, variants[plan[step].y].label,
+				", ".join(parts), passes.size()])
 	gpu_ms.sort()
 	r[plan[step].y].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
 	var last := step + 1 >= plan.size() or plan[step + 1].x != plan[step].x
@@ -360,31 +429,34 @@ func _end_segment() -> void:
 func _compared() -> void:
 	_restore()      # the tour runs with this build's ray tracer and the foveation chosen in the menu
 	if variants.size() > 1:
-		# each variant against the first, averaged over the places (geometric mean)
+		# each variant against the first (main's), averaged over the places (geometric mean)
 		var summary := []
 		for v in range(1, variants.size()):
 			summary.append("%d/1 %.3f" % [v + 1, _ratio(v, 0)])
 		print("bench: compared, on average over the places %s (1 = %s)" % [", ".join(summary), variants[0].label])
 		var parts := []
-		if own > 0:
-			var m := _ratio(own, 0)
-			var pct := roundi(absf(1.0 - m) * 100.0)
-			parts.append(("этот и %s одинаковы" % variants[0].label) if absf(1.0 - m) <= 0.02 else
-					("этот %s, чем %s, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", variants[0].label, pct]))
-		# the foveation against this build without it
+		var m := _ratio(own, 0)
+		var pct := roundi(absf(1.0 - m) * 100.0)
+		parts.append("этот и main одинаковы" if absf(1.0 - m) <= 0.02 else
+				"этот %s, чем main, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", pct])
+		# with foveation: this build's narrow against main's own narrow, the menu's usual
+		var narrow := own + FOVEATIONS.size() - 1     # this build, narrow
+		var m5 := _ratio(narrow, MAIN_WAYS.size() - 1)
+		parts.append("с узкой фовеацией %s на %d%%" % ["быстрее" if m5 < 1.0 else "медленнее", roundi(absf(1.0 - m5) * 100.0)])
+		# this build's foveation against itself without it
 		summary.clear()
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v].label.trim_prefix("this build, "), _ratio(v, own)])
-		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
-		# for the menu, what each foveation (a density map on) saves, by the menu's names
-		var pcts := []
-		for k in FOVEATIONS.size():
-			if FOVEATIONS[k][1] > 0:
-				pcts.append("%s %+d%%" % [Menu.FOVEATIONS[FOVEATIONS[k][1]], roundi(100.0 * (_ratio(own + k, own) - 1.0))])
-		parts.append("фовеация: " + ", ".join(pcts))
-		# and what the stencil saves: the toys' ray tracer over the whole view against split
-		if variants.size() > own + FOVEATIONS.size():
-			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
+		print("bench: this build's foveation, on average over the places against it without: %s" % ", ".join(summary))
+		var ref := -1
+		summary.clear()
+		for k in variants.size():
+			if variants[k].plain and ref < 0:
+				ref = k
+			elif variants[k].plain:
+				summary.append("%s %.3f" % [variants[k].label, _ratio(k, ref)])
+		if ref >= 0:
+			print("bench: without the toys, on average over the places against main's: %s" % ", ".join(summary))
 		verdict = " · ".join(parts)
 	if _headset():
 		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
@@ -550,9 +622,36 @@ static func _list(v: Array) -> String:
 
 
 ## This build's ray tracer as it runs, with the foveation chosen in the menu.
+## A cube of half size half dist m ahead of the eyes in the middle of the view, square to it, held
+## there (the speed check's worst cases; tests/toys_check.gd draws them too).
+static func put_cube(m: Main, dist: float, half: float) -> BallWorld.Cube:
+	var at: Array = m.ahead(dist)
+	var f: Array = at[2]
+	var c := m.toys.world.add_cube(at[0], at[1], Vector4.ZERO, [f[0], f[1], f[2]], Vector3.ZERO, half, CUBE_COLOR)
+	c.held = &"bench"
+	m.draw_toys()
+	return c
+
+
+func _take_cube() -> void:
+	if cube:
+		main.toys.world.cubes.erase(cube)
+		cube = null
+		main.draw_toys()
+
+
 func _restore() -> void:
-	main.tracer.material.shader = own_shader
-	main.tracer.toy_mode = Tracer.SPLIT
+	_take_cube()
+	main.tracer.whole = false
+	main.tracer.picture8 = false
+	main.tracer.tables2 = false
+	main.hide_toys = false
+	if main.toys.enabled:
+		main.frag.set_objects(PackedVector4Array(), PackedVector4Array())
+		main.toys.draw(main.frag, main.hands.drawn())     # main's with the toys again, its own shader
+	main.frag.material.shader = main_shader
+	main.frag.toy_mode = FragTracer.SPLIT
+	main.set_frag(false)
 	main.foveation.set_level(menu.foveation)
 
 
@@ -568,13 +667,19 @@ func _show(s: String) -> void:
 ## A ray tracer the comparison times, and how.
 class Setup:
 	var label: String
-	var shader: Shader
+	var frag: bool                  # main's fragment ray tracer (else this build's)
+	var shader: Shader              # its shader
 	var foveation: int              # Foveation.set_level's level
-	var split: bool                 # the split pass without a density map
-	var toy_mode: int               # Tracer.SPLIT, WHOLE or BARE
+	var split: bool                 # main's: the split pass without a density map
+	var toy_mode: int               # main's: FragTracer.SPLIT, WHOLE or BARE
+	var whole := false              # this build's: the toys kernel over every group (Tracer.whole)
+	var picture8 := false           # this build's: the picture of eight bits a channel (Tracer.picture8)
+	var tables2 := false            # this build's: fr_tabF in two channels (Tracer.tables2)
+	var plain := false              # main's: drawn without the toys (a cost check without their ray tracer)
 
-	func _init(p_label: String, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
+	func _init(p_label: String, p_frag: bool, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
 		label = p_label
+		frag = p_frag
 		shader = p_shader
 		foveation = p_foveation
 		split = p_split

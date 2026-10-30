@@ -53,7 +53,7 @@ uniform ivec4 wh_cIdx;
 uniform vec4 wh_fball[12];
 #endif
 
-#include "res://shaders/wormhole_core.gdshaderinc"
+#include "res://shaders/frag/wormhole_core.gdshaderinc"
 
 varying flat float v_l;
 varying flat vec3 v_n;
