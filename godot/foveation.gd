@@ -18,8 +18,7 @@ extends RefCounted
 ##
 ## The ray tracer stays exact under it: each pixel's ray is interpolated from the screen's
 ## corners (shaders/wormhole_view.gdshaderinc), and a coarse pixel gets the ray through its
-## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position but to tell
-## pixels apart (the split's neighbours: wormhole_view.gdshaderinc).
+## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position.
 ##
 ## Godot asks for the eye-tracked density map's offsets in the headset's full-size pixels: at a
 ## render scale below 100% the sharp spot would sit beside where one looks, so foveation goes with

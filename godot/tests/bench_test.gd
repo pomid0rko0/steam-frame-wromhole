@@ -53,8 +53,8 @@ func _process(_d: float) -> bool:
 			if main.tracer.material.shader != v.shader:
 				check("the segment's shader", false, b.plan[b.step].y)
 				started = false
-			if main.tracer.whole != v.whole:
-				check("the segment's split (or whole view)", false, b.plan[b.step].y)
+			if main.tracer.toy_mode != v.toy_mode:
+				check("the segment's stencil split", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != (v.foveation > 0 or v.split):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.split_pass.enabled])
@@ -73,7 +73,7 @@ func _process(_d: float) -> bool:
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("this build's shader back", main.tracer.material.shader == shader_before and not main.tracer.whole)
+			check("this build's shader back", main.tracer.material.shader == shader_before and main.tracer.toy_mode == Tracer.SPLIT)
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)

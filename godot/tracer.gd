@@ -2,52 +2,70 @@ class_name Tracer
 extends Node3D
 ## The ray tracer: a full-screen quad under the XR camera whose shader traces every pixel along a
 ## geodesic of the wormhole space (shaders/wormhole_core.gdshaderinc), and what it needs: its
-## uniforms, the shader for what is shown, the movable balls and cubes, and the split.
+## uniforms, the shader for what is shown, the movable balls and cubes, and the stencil split.
 ##
 ## Shaders. Code costs registers even where no pixel runs it (wormhole_core.gdshaderinc, «The
 ## compiler»), so each combination is a shader of its own: without movable objects
-## (wormhole.gdshader), the world's with them (wormhole_world, below) and the one with them
-## (wormhole_balls), each also with the gravity view's floor colours (_gravity) or the floor and the
-## field's arrows (_arrows). Switching costs a hitch while the GPU compiles the other one, so the
-## shader changes only when what is shown changes.
+## (wormhole.gdshader) or with them (wormhole_balls), each also with the gravity view's floor
+## colours (_gravity) or the floor and the field's arrows (_arrows). Switching costs a hitch while
+## the GPU compiles the other one, so the shader changes only when what is shown changes.
 ##
-## The split. The search for toys in the curved region holds twice the registers, and a shader
-## that holds them runs at half the pixels a wave and costs more even where it finds nothing
-## (tools/adreno_stats.sh). So with toys a quad with the world's shader draws first, everything but
-## that search: the flat universes' toys too. From the eye's ray alone it knows where the search
-## could find one (wh_mayMeet), leaves those pixels out (a discard) and marks the stencil where it
-## draws; the quad with toys draws after it, only where the stencil is unmarked. Nothing else
-## writes the stencil (stencil_mode in a shader: it works on Mobile, with multiview and on lavapipe);
-## opaque draws go by render_priority, lower first.
+## The stencil split. The shader with toys holds more registers and costs more even where it finds
+## nothing, so with toys the frame is split: proxies drawn first (stencil_mark.gdshader) mark the
+## pixels whose rays may meet a toy, the shader with toys runs only there, the plain one of the same
+## view everywhere else (a second quad). Godot geometry drawn before the ray tracers must not write
+## the stencil. The
+## stencil (stencil_mode in a shader) works on Mobile, with multiview and on lavapipe; opaque draws
+## go by render_priority, lower first.
 ##
 ## A MeshInstance3D whose ShaderMaterial has no shader yet is drawn with Godot's default lit
 ## material, a huge program: such a node is made only once its shader is known.
 
-# the ray tracers: [plain, gravity floor, gravity floor and arrows], without toys, the world's with
-# them, and with them
+# the ray tracers: [plain, gravity floor, gravity floor and arrows], without and with toys
 const SHADERS := [preload("res://shaders/wormhole.gdshader"), preload("res://shaders/wormhole_gravity.gdshader"),
 		preload("res://shaders/wormhole_arrows.gdshader")]
-const SHADERS_WORLD := [preload("res://shaders/wormhole_world.gdshader"),
-		preload("res://shaders/wormhole_world_gravity.gdshader"), preload("res://shaders/wormhole_world_arrows.gdshader")]
 const SHADERS_TOYS := [preload("res://shaders/wormhole_balls.gdshader"),
 		preload("res://shaders/wormhole_balls_gravity.gdshader"), preload("res://shaders/wormhole_balls_arrows.gdshader")]
+const SHADER_MARK := preload("res://shaders/stencil_mark.gdshader")
+const SHADER_MARK_ALL := preload("res://shaders/stencil_mark_all.gdshader")
 const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
 const MAX_BALLS := 12           # the shader's slots for the toys' and the hands' balls
 const MAX_CUBES := 6
+# m around each proxy sphere at least. A ray that meets a toy inside its sphere leaves the proxy at
+# least the margin beyond the hit; it is marked if that is beyond the near plane, which lies
+# Main.NEAR along the view axis and up to near_reach along the frustum's corners. So a proxy (the
+# shell's too) whose sphere comes so near the eyes that this margin would leave such a ray less than
+# 5 mm beyond near_reach gets a larger one (_margin): the rest keep this one.
+const PROXY_MARGIN := 0.08
+# m from the head to either eye that _margin allows for (half an IPD: about 0.032)
+const EYE_REACH := 0.05
+# the proxy sphere's mesh (check_scene.gd's balls take it too); its faces lie inside the sphere
+# (Godot's SphereMesh has rings + 1 latitude steps): grown by PROXY_SLACK, more than they lie in
+# (_ready asserts it)
+const PROXY_SEGMENTS := 48
+const PROXY_RINGS := 24
+const PROXY_SLACK := 1.02
+# how the shader with toys gets its pixels: SPLIT by the stencil (the plain one elsewhere), WHOLE
+# the whole view marked, BARE no stencil at all (another source's shader in the speed check, which
+# has no stencil test)
+enum {SPLIT, WHOLE, BARE}
 
 var space: WormholeSpace
 var scene: Dictionary
 var xr: XRInterface             # null on the desktop
 var xr_view: SubViewport        # where XR renders; null on the desktop
 var material := ShaderMaterial.new()        # with the toys where there are any, else the plain one
-var world_material := ShaderMaterial.new()  # with toys: the world's (the split)
-var world_quad: MeshInstance3D
-# with toys: the one in material over the whole view, the world's not drawn (the speed check: what
-# the split saves, or another source's ray tracer)
-var whole := false
+var plain_material := ShaderMaterial.new()  # with toys: the plain one where none can be seen
+var plain_quad: MeshInstance3D
+var proxies: MultiMeshInstance3D   # spheres around the shell and this universe's toys (play space)
+var mark_all: MeshInstance3D       # the whole view marked instead
+var toy_mode := SPLIT
 var toy_count := 0              # balls and cubes the shader has (set_objects)
+var toy_spheres := [PackedVector4Array(), PackedVector4Array()]   # per universe A, B: the toys' chart spheres
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var pixel_angle := 0.0          # the pixel angle set_head last saw: wh_pix goes again when it changes
+var head_chart := Vector3.ZERO  # the head in its universe's chart (set_head, with the split)
+var near_reach := 3.0 * Main.NEAR   # m to the near plane along the frustum's farthest ray (set_head)
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -58,8 +76,10 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	material.shader = SHADERS[0]
 
 
-## Under the camera: the quads it draws on.
+## Under the camera: the quads it draws on. The proxies go into the play space, the camera's parent.
 func _ready() -> void:
+	assert(PROXY_SLACK * cos(PI / PROXY_SEGMENTS) * cos(PI / (2.0 * (PROXY_RINGS + 1))) > 1.0,
+			"PROXY_SLACK covers the proxy mesh's deepest faces")
 	assert(_fits_shader(), "the shader's sizes follow this code's (the errors above)")
 	param("wh_rho0", space.rho0)
 	param("wh_h", space.h)
@@ -67,8 +87,32 @@ func _ready() -> void:
 	upload_fillet_table()
 	upload_gravity()
 	_upload_scene()
-	material.render_priority = 1        # after the world's (the split)
 	add_child(_screen_quad(material))
+	var mark := ShaderMaterial.new()
+	mark.shader = SHADER_MARK
+	mark.render_priority = -1
+	var sphere := SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	sphere.radial_segments = PROXY_SEGMENTS
+	sphere.rings = PROXY_RINGS
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = sphere
+	mm.instance_count = 1 + MAX_BALLS + MAX_CUBES
+	mm.visible_instance_count = 0
+	proxies = MultiMeshInstance3D.new()
+	proxies.multimesh = mm
+	proxies.material_override = mark
+	proxies.extra_cull_margin = 16384.0
+	proxies.visible = false
+	get_parent().get_parent().add_child(proxies)
+	var all := ShaderMaterial.new()
+	all.shader = SHADER_MARK_ALL
+	all.render_priority = -1
+	mark_all = _screen_quad(all)
+	mark_all.visible = false
+	add_child(mark_all)
 
 
 ## A quad in front of the camera; the shaders put it over the whole screen.
@@ -83,14 +127,14 @@ static func _screen_quad(mat: ShaderMaterial) -> MeshInstance3D:
 	return q
 
 
-## A uniform both ray tracers read.
+## A uniform both ray tracers read (the toys' own, wh_ball..., go only to material: set_objects).
 func param(name: StringName, value: Variant) -> void:
 	material.set_shader_parameter(name, value)
-	world_material.set_shader_parameter(name, value)
+	plain_material.set_shader_parameter(name, value)
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there and its place
-## in the room (the shader puts each eye there).
+## in the room (the shader puts each eye there), and the proxies or the whole view marked.
 func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	param("head_l", l)
 	param("head_n", n)
@@ -101,8 +145,73 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	if pix != pixel_angle:
 		pixel_angle = pix
 		param("wh_pix", pix)
-	if world_quad:
-		world_quad.visible = toy_count > 0 and not whole
+	var split := toy_count > 0 and toy_mode == SPLIT and absf(l) > space.L
+	proxies.visible = split
+	if plain_quad:
+		plain_quad.visible = split
+	mark_all.visible = toy_count > 0 and not split and toy_mode != BARE
+	if not split:
+		return
+	var side := 1.0 if l > 0.0 else -1.0
+	var ch := space.chart_position(l, n)
+	head_chart = ch
+	near_reach = _near_reach()
+	# chart -> play: head_pos + (d . v_k)_k for d = X - ch, v_k the chart directions of the play
+	# axes (the head's frame)
+	var B := Basis(WormholeSpace.vector_to_chart(side, n, hf[0]), WormholeSpace.vector_to_chart(side, n, hf[1]),
+			WormholeSpace.vector_to_chart(side, n, hf[2])).transposed()
+	var to_play := Transform3D(B, head_pos - B * ch)
+	var mm := proxies.multimesh
+	var count := 0
+	for s in proxy_spheres(l):
+		mm.set_instance_transform(count, to_play * Transform3D(Basis.from_scale(Vector3(s.w, s.w, s.w)), Vector3(s.x, s.y, s.z)))
+		count += 1
+	mm.visible_instance_count = count
+
+
+## The proxies as spheres in the chart of the universe at l (centre, the mesh's radius: with the
+## margin and the slack): the shell and that universe's toys. A ray from an eye in a flat universe
+## goes straight until it enters the shell or ends: it meets one of that universe's toys only
+## through the toy's bounding sphere, and anything else only through the shell. Drawn from both
+## sides: an eye inside a sphere sees its inside. With the head in the curved region there is no
+## chart to place them in: none, the whole view is marked (tools/adreno_cost.py --split models the
+## split with these).
+func proxy_spheres(l: float) -> PackedVector4Array:
+	var out := PackedVector4Array()
+	if toy_count == 0 or toy_mode != SPLIT or absf(l) <= space.L:
+		return out
+	out.append(Vector4(0.0, 0.0, 0.0, (space.Rout + _margin(Vector3.ZERO, space.Rout)) * PROXY_SLACK))
+	for s in toy_spheres[0 if l > 0.0 else 1]:
+		var c := Vector3(s.x, s.y, s.z)
+		out.append(Vector4(s.x, s.y, s.z, (s.w + _margin(c, s.w)) * PROXY_SLACK))
+	return out
+
+
+## The margin of the proxy around a sphere (chart centre c, radius rad): enough that a ray from
+## either eye that meets it, at least the sphere's distance from the head less EYE_REACH away,
+## leaves the proxy beyond the near plane.
+func _margin(c: Vector3, rad: float) -> float:
+	var nearest := c.distance_to(head_chart) - rad - EYE_REACH
+	return maxf(PROXY_MARGIN, near_reach - nearest + 0.005)
+
+
+## How far the near plane is from an eye along the frustum's farthest ray, m: Main.NEAR along the
+## view axis, NEAR / cos of its angle off the axis elsewhere. From each eye's frustum, on the
+## desktop from the camera's fov and the window.
+func _near_reach() -> float:
+	var t := Vector2.ZERO           # the largest tangents of the sides, across and up
+	if xr:
+		for v in xr.get_view_count():
+			var f := frustum(v)
+			t = t.max(Vector2(maxf(-f.x, f.y), maxf(-f.z, f.w)))
+	else:
+		var cam := get_parent() as Camera3D
+		var size := get_viewport().get_visible_rect().size
+		var ty := tan(0.5 * deg_to_rad(cam.fov))
+		t = Vector2(ty * size.x / maxf(size.y, 1.0), ty)
+	var reach := Main.NEAR * sqrt(1.0 + t.x * t.x + t.y * t.y)
+	# no frustum from the runtime yet: the last one
+	return reach if is_finite(reach) and reach > 0.0 else near_reach
 
 
 ## Movable balls (pos, col) and cubes (cpos, axes, ccol), laid out as wormhole_core.gdshaderinc's
@@ -156,16 +265,29 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	toy_count = n + nc
 	if (toy_count > 0) != had:
 		_pick_shader()
-	param("wh_ball", p)
-	param("wh_ballCol", c)
-	param("wh_nBall", n)
-	param("wh_bIdx", ob[1])
-	param("wh_fball", fb)
-	param("wh_cube", cp)
-	param("wh_cubeE", ax)
-	param("wh_cubeCol", cc)
-	param("wh_nCube", nc)
-	param("wh_cIdx", oc[1])
+	material.set_shader_parameter("wh_ball", p)
+	material.set_shader_parameter("wh_ballCol", c)
+	material.set_shader_parameter("wh_nBall", n)
+	material.set_shader_parameter("wh_bIdx", ob[1])
+	material.set_shader_parameter("wh_fball", fb)
+	material.set_shader_parameter("wh_cube", cp)
+	material.set_shader_parameter("wh_cubeE", ax)
+	material.set_shader_parameter("wh_cubeCol", cc)
+	material.set_shader_parameter("wh_nCube", nc)
+	material.set_shader_parameter("wh_cIdx", oc[1])
+	# each universe's toys as spheres in its chart (the proxies)
+	toy_spheres = [PackedVector4Array(), PackedVector4Array()]
+	for k in 2:
+		var lo: int = 0 if k == 0 else ob[1].z
+		var hi: int = ob[1].y if k == 0 else n
+		for i in range(lo, hi):
+			if fb[i].w > 0.0:
+				toy_spheres[k].append(Vector4(fb[i].x, fb[i].y, fb[i].z, sqrt(fb[i].w)))
+		lo = 0 if k == 0 else oc[1].z
+		hi = oc[1].y if k == 0 else nc
+		for i in range(lo, hi):
+			var C: Vector4 = cp[i]
+			toy_spheres[k].append(Vector4(C.x if k == 0 else -C.x, C.y, C.z, 2.0 * cc[i].w))
 	# the boxes per flat universe, in its chart: round the spheres its sheet w = side h cuts from the
 	# balls (fb), round the cubes' (centre, half diagonal: 2 half sizes) that reach it; in the order
 	# balls A, balls B, cubes A, cubes B
@@ -183,7 +305,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 					hi = hi.max(c3 + Vector3(rr, rr, rr))
 			bounds.append(Vector4(lo.x, lo.y, lo.z, 1.0) if lo.x <= hi.x else Vector4.ZERO)
 			bounds.append(Vector4(hi.x, hi.y, hi.z, 0.0) if lo.x <= hi.x else Vector4.ZERO)
-	param("wh_bound", bounds)
+	material.set_shader_parameter("wh_bound", bounds)
 
 
 ## Where each object can be met: in universe A's flat sheet (its reach crosses w = h), in the
@@ -222,19 +344,18 @@ func set_gravity_view(view: int) -> void:
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
-## The ray tracer for what is shown. With toys, the world's of the same view draws first (the split).
+## The ray tracer for what is shown. With toys, the plain one of the same view draws where none can
+## be seen.
 func _pick_shader() -> void:
 	if toy_count > 0:
 		material.shader = SHADERS_TOYS[gravity_view]
-		world_material.shader = SHADERS_WORLD[gravity_view]
-		if world_quad == null:
+		plain_material.shader = SHADERS[gravity_view]
+		if plain_quad == null:
 			# made once there are toys: an unused ray tracer would be compiled all the same
-			world_quad = _screen_quad(world_material)
-			add_child(world_quad)
+			plain_quad = _screen_quad(plain_material)
+			add_child(plain_quad)
 	else:
 		material.shader = SHADERS[gravity_view]
-	if world_quad:
-		world_quad.visible = toy_count > 0 and not whole
 
 
 ## Whether the shader runs without movable objects (the speed check compares like with like).

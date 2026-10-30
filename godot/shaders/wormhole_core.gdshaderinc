@@ -16,9 +16,8 @@
 //   wh_pix                  a pixel's angle: the soft edges of the cubes' edge lines and of the arrows
 //   wh_tab...               the fillet polynomials by impact parameter (WormholeSpace.fillet_table)
 //   grav_*                  the gravity view's constants (WormholeSpace.gravity_shader)
-// WH_NO_BALLS leaves the balls' and cubes' code out, WH_WORLD their search in the curved region
-// (wh_mayMeet says where it is needed), WH_GRAVITY colours the floor by gravity, WH_ARROWS adds the
-// field's arrows.
+// WH_NO_BALLS leaves the balls' and cubes' code out, WH_GRAVITY colours the floor by gravity,
+// WH_ARROWS adds the field's arrows.
 //
 // The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md (here:
 // "curved part").
@@ -563,7 +562,6 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
 #endif
 
 #ifndef WH_NO_BALLS
-#ifndef WH_WORLD
     // Balls and cubes this ray can reach: the whole ray lies in span(e1, e2, w-axis) of R^4, so
     // one whose centre is farther than its reach (a ball's radius, a cube's half diagonal, two half
     // sizes) from that subspace is never hit. Only those within reach of the shell are looked at
@@ -826,9 +824,8 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         return 0;
     }
 #endif
-#endif
-    // No movable object within reach (most rays), no such objects at all, or the world's ray tracer
-    // (WH_WORLD): the floor's point, or where it leaves the shell, straight away
+    // No movable object within reach (most rays), or no such objects at all: the floor's point,
+    // or where it leaves the shell, straight away
     float arcEnd = tot.y;
     if (floorHit) {
         // the floor's psi and T as in the toys' search above
@@ -861,127 +858,6 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     arc = arcEnd;
     return floorHit ? 1 : 0;
 }
-
-#ifdef WH_WORLD
-// Whether the ray from an eye at (l0, n0) along (vl, w) (rs = r(l0)) may meet a movable ball or cube
-// in the curved region, from the eye's ray alone: false only if wh_curved's search could find none of
-// them. Each object is taken with more reach for what lets the search find it beyond its true reach:
-// a hit counts within the chord's sag of it (wh_curved: step^2 / 8 min(R, rho0) + 0.1 mm), its step
-// taken as F times WH_STEP of the object's size. wh_curved spaces a fillet's samples evenly in z, not
-// in length: in z of the table's regime 0 (wh_fil: the rows that hold the rays near rmin) the length
-// per z goes as r / sqrt((Rout + R - r)(r + b)), which grows outward over the fillet, so a step is at
-// most F = (Rout / rmin) sqrt((Rout + R - rmin) / R) times its share of the window (in the other
-// regimes, far from rmin, less); and its count is clamped at WH_SAMPLES only in a window of over
-// WH_SAMPLES times WH_STEP of the size, which the toys' angle and w windows keep theirs from. Then
-// the method's error (docs/geometry.md, «Точность»: under 7.5e-4 rho0 on the shapes there) and the
-// rounding between the eye's terms and wh_curved's: WH_MAY_MARGIN.
-// The path lies in the plane through the centre span(n0, e2), the same in the flat universes, and in
-// it at (r cos psi, r sin psi): psi grows from 0 at the eye toward e2 and never past the floor's (the
-// first zero of n.z, less than pi on). An object is met only where the path enters its shadow on
-// that plane (wh_curved): a disc of radius a round cb, the centre's projection, so
-//  - one whose centre is farther than its reach from span(n0, e2, the w axis) (no disc), or more than
-//    its reach below the path's least r in |xyz| (b where it turns, b > rmin, else rmin), is never met;
-//  - nor one whose disc lies off the arc of angles from 0 to the floor's (seen from the centre the
-//    disc lies within dps of cb's direction, cos dps = sqrt((|C|^2 - reach^2) / |cb|^2)).
-// With the eye on a fillet or outside the shell, the path first runs monotonic in r, on the eye's
-// side: inward to where it turns or to rmin, or outward to the edge. There psi(r) lies between the
-// straight line's (impact parameter b, the flat chart's path), psi_line(r), and psi_line(r) plus the
-// line's angle in the shell, psi_shell, times (1 / r' - 1) with r' the least slope the stretch has
-// crossed by then (dpsi/dr is the line's over r'(r) <= 1, r' = 1 outside, and r' grows outward): in
-// the band [r1, r2] the disc spans, the path is within dev = r2 psi_shell (1 / r' - 1) of the line,
-// r' taken at r1 inward and at the eye outward, psi_shell to the band's far end (beyond Rout too,
-// outward: more than needed), and meets the disc there only if the line passes within a + dev of cb.
-// After that stretch: past the turn (psi beyond the line's, acos(b / rs), and before the floor's) on
-// the eye's side, or through the throat: the cylinder (r = rho0, |w| <= Lc) and the other side's
-// fillet; b within the margin of rmin takes both.
-// A ray from outside the shell that never enters it (b beyond Rout by the margin, or going out) meets
-// none of them.
-const float WH_MAY_MARGIN = 5e-3;
-
-// acos(x) for x in [0, 1]
-float wh_acos01(float x) {
-    return wh_atan2(sqrt(max(1.0 - x * x, 0.0)), x);
-}
-
-// 1 / r' at radius r of a fillet (1 outside the shell)
-float wh_invSlope(float r) {
-    float c = clamp((wh_Rout() - r) / wh_fillet, 0.0, 1.0);    // cos th
-    return inversesqrt(max(1.0 - c * c, 1e-14));
-}
-
-bool wh_mayMeet(float l0, vec3 n0, float vl, vec3 w, float rs) {
-    // the plane's second axis as wh_curved takes it
-    vec3 we = w + 1e-7 * (abs(n0.x) < 0.9 ? vec3(0.0, n0.z, -n0.y) : vec3(-n0.z, 0.0, n0.x));
-    vec3 e2 = we * inversesqrt(dot(we, we));
-    float b = rs * min(dot(w, e2), 1.0);
-    float side = l0 >= 0.0 ? 1.0 : -1.0;
-    bool inward = vl * side < 0.0;
-    if (abs(l0) > wh_Lsh() && (b >= wh_Rout() + WH_MAY_MARGIN || !inward)) return false;
-    float s0 = sin(0.5 * wh_th0());
-    float rmin = wh_rho0 + 2.0 * wh_fillet * s0 * s0;
-    bool turn = b > rmin - WH_MAY_MARGIN;            // it may turn, it may pass the throat
-    bool pass = b < rmin + WH_MAY_MARGIN;
-    float rEnd = max(b, rmin) - WH_MAY_MARGIN;       // where the inward stretch ends, at the deepest
-    vec2 fz = vec2(-e2.z, n0.z);         // the floor's direction in the plane, (cos, sin) of its psi
-    float fz2 = dot(fz, fz);
-    // the line: its closest point to the centre at angle acos(b / rs) ahead (inward) or behind
-    // (outward), its normal there; the line's angle where it enters the shell (at the eye inside it)
-    float ct = min(b / rs, 1.0);
-    vec2 tn = vec2(ct, (inward ? 1.0 : -1.0) * sqrt(max(1.0 - ct * ct, 0.0)));
-    float psiE = wh_acos01(min(b / min(rs, wh_Rout()), 1.0));
-    bool stretch = abs(l0) >= wh_Lc();   // the eye on a fillet or outside: the stretch above
-    float F = wh_Rout() / rmin * sqrt((wh_Rout() + wh_fillet - rmin) / wh_fillet);   // the steps' stretch
-    bool may = false;
-    for (int j = 0; j < 2; j++) {
-        // balls, then cubes: those within reach of the shell (Tracer.set_objects sorts them so)
-        int lo = j == 0 ? wh_bIdx.x : wh_cIdx.x;
-        int hi = j == 0 ? wh_bIdx.w : wh_cIdx.w;
-        for (int i = lo; i < hi; i++) {
-            vec4 C4 = j == 0 ? wh_ball[i] : wh_cube[i];
-            vec3 C = C4.xyz;
-            float size = j == 0 ? wh_ballCol[i].w : wh_cubeCol[i].w;
-            float step = F * WH_STEP * size;
-            float reach = (j == 0 ? size : 2.0 * size) + step * step / (8.0 * min(wh_fillet, wh_rho0)) + 1e-4
-                    + WH_MAY_MARGIN;
-            vec2 cb = vec2(dot(C, n0), dot(C, e2));
-            float cc = dot(C, C);
-            float rho2 = dot(cb, cb);
-            float K = cc - reach * reach;            // |cb|^2 cos^2 dps
-            float cf = dot(cb, fz);
-            float dr = rEnd - reach;
-            bool arc = n0.z <= 0.0 || K <= 0.0 || (cb.y >= 0.0 && cb.x * fz.y - cb.y * fz.x >= 0.0)
-                    || (cb.x > 0.0 && cb.x * cb.x >= K) || (cf > 0.0 && cf * cf >= K * fz2);
-            if (!(rho2 > K && (dr < 0.0 || dr * dr < cc) && arc)) continue;
-            if (!stretch) { may = true; continue; }
-            // the stretch: the disc's radial band [rho - a, rho + a] within it
-            float a = sqrt(rho2 - K);                // the disc's radius
-            float rho = sqrt(rho2);
-            float r1 = inward ? max(rho - a, rEnd) : max(rho - a, rs);
-            float r2 = inward ? min(rho + a, rs) : rho + a;
-            if (r1 <= r2) {
-                // the line's angle in the shell, to the band's far end from where it enters (inward:
-                // the deep end r1; outward: r2), and 1 / r' at the deepest point the stretch reaches
-                float psiL = abs(psiE - wh_acos01(min(b / (inward ? r1 : r2), 1.0)));
-                float dev = r2 * psiL * (wh_invSlope(inward ? r1 : rs) - 1.0);
-                may = may || abs(dot(cb, tn) - b) <= a + dev;
-            }
-            if (inward) {
-                // outward again on the eye's side, past the turn, before the floor (no floor: n.z <= 0)
-                vec2 tt = vec2(tn.x, abs(tn.y));
-                float c2 = dot(cb, tt);
-                bool floorAfter = n0.z <= 0.0 || tt.x * fz.y - tt.y * fz.x >= 0.0;
-                may = may || (turn && floorAfter && (n0.z <= 0.0 || K <= 0.0
-                        || (cb.x * tt.y - cb.y * tt.x <= 0.0 && cb.y * fz.x - cb.x * fz.y <= 0.0)
-                        || (c2 > 0.0 && c2 * c2 >= K) || (cf > 0.0 && cf * cf >= K * fz2)));
-                // through the throat: the cylinder, the other side's fillet
-                may = may || (pass && ((wh_Lc() > 0.0 && sqrt(cc) - reach <= wh_rho0 && abs(C4.w) - reach <= wh_Lc())
-                        || side * C4.w < reach));
-            }
-        }
-    }
-    return may;
-}
-#endif
 
 // ---------------------------------------------------------------- moving an observer
 // The geodesic equation with parallel transport: docs/geometry.md («Движение наблюдателя и
@@ -1285,11 +1161,7 @@ vec3 wh_shade(float side, vec3 col, vec3 nrm) {
 // wave of pixels that end on different things each kind of shading then runs once, not once per
 // place in the trace where a ray can end (but a cube's colour, wh_cubeLook, is taken where its hit
 // is found, in both places).
-vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg
-#ifdef WH_WORLD
-                , inout float may
-#endif
-                ) {
+vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     float side = l0 > 0.0 ? 1.0 : -1.0;
     vec3 x = vec3(0.0);
     vec3 d = vec3(0.0);
@@ -1411,22 +1283,8 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg
     // carries 64 per class (sky A, sky B, floor, object), and between neighbours of one class it
     // changes by 24 at most (the spokes' cut), so a change above 32 is an edge.
     float cls = kind == 0 ? (side > 0.0 ? 0.0 : 1.0) : (kind == 1 ? 2.0 : 3.0);
-#ifdef WH_WORLD
-    // may (wormhole_view.gdshaderinc: non-zero where the ray tracer with the toys takes the pixel,
-    // and different in any two pixels of a 2x2 group where so) goes through the same derivatives: a
-    // pixel whose grid coordinates are taken with those of one that goes to the ray tracer with the
-    // toys goes there too, whichever pixels of its 2x2 group the GPU takes the derivatives from
-    // (coarse or fine). That one's could be another class there (a toy in front of the floor), and so
-    // would this pixel's lines
-    vec3 gdx3 = dFdx(vec3(gq + vec2(0.0, 64.0 * cls), may));
-    vec3 gdy3 = dFdy(vec3(gq + vec2(0.0, 64.0 * cls), may));
-    vec2 gdx = gdx3.xy;
-    vec2 gdy = gdy3.xy;
-    may = may != 0.0 || gdx3.z != 0.0 || gdy3.z != 0.0 ? 1.0 : 0.0;
-#else
     vec2 gdx = dFdx(gq + vec2(0.0, 64.0 * cls));
     vec2 gdy = dFdy(gq + vec2(0.0, 64.0 * cls));
-#endif
     bool ex = abs(gdx.y) > 32.0;
     bool ey = abs(gdy.y) > 32.0;
     vec2 fw = abs(ex ? gdy : gdx) + abs(ey ? gdx : gdy);
@@ -1464,10 +1322,5 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg
 }
 
 vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
-#ifdef WH_WORLD
-    float may = 0.0;
-    return wh_renderE(l0, n0, vl, w, wh_eye(l0), dbg, may);
-#else
     return wh_renderE(l0, n0, vl, w, wh_eye(l0), dbg);
-#endif
 }

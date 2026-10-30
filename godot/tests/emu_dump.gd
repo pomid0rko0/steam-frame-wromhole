@@ -55,8 +55,9 @@ func _initialize() -> void:
 func _process(_d: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
-		main.tracer.material.shader = Bench._bare(load(shader_path))
-		main.tracer.whole = true    # another source's, as the speed check times it
+		main.tracer.material.shader = load(shader_path)
+		if not main.tracer.material.shader.code.contains("stencil_mode"):
+			main.tracer.toy_mode = Tracer.BARE    # another source's: no stencil test, the whole view
 	if frames == 2:
 		if toys:
 			# thrown, dropped, at rest, then held still
@@ -104,8 +105,11 @@ func _process(_d: float) -> bool:
 			"cam_origin": _v3(cam.origin),
 			"proj": [_v4(proj.x), _v4(proj.y), _v4(proj.z), _v4(proj.w)],
 			"size": [img.get_width(), img.get_height()],
-			"shader": shader_path if shader_path != "" else m.shader.resource_path,
+			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
+			# the stencil's proxies (Tracer.proxy_spheres), chart spheres of the head's universe, or
+			# none (the whole view marked, or no toys)
+			"proxies": _proxies(),
 		})
 		i += 1
 	return false
@@ -135,6 +139,18 @@ func _hold_ball() -> void:
 			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
 			main.toys.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97)).held = &"right_hand"
 	main.draw_toys()
+
+
+func _proxies() -> Array:
+	var out := []
+	if main.tracer.toy_count > 0:
+		for s in main.tracer.proxy_spheres(m_head_l()):
+			out.append(_v4(s))
+	return out
+
+
+func m_head_l() -> float:
+	return main.tracer.material.get_shader_parameter("head_l")
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.

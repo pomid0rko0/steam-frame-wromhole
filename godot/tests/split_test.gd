@@ -1,15 +1,14 @@
 extends SceneTree
-## The split (tracer.gd, «The split») draws what the ray tracer with the toys draws over the whole
-## view: at each pose the picture with the split and with Tracer.whole, pixel by pixel. The demo's
+## The stencil split (tracer.gd, «The stencil split») draws what the ray tracer with the toys draws
+## over the whole view: at each pose the picture split and with Tracer.WHOLE, pixel by pixel. The demo's
 ## toys at rest (as tests/emu_dump.gd leaves them: thrown, dropped, 12 s later), and at each pose
 ## both hands' balls and a ball held in front of the right one where tests/emu_dump.gd puts them
 ## (with +held), and a small ball just in front of the eye toward the view's corner. Poses: in front
 ## of the throat, at and inside the shell's edge, in the throat, in world B, also at the start.
 ## Desktop (run with --fixed-fps 60 under a display: xvfb-run), exit status 1 on any failure:
 ##   godot --path . --resolution 256x256 --fixed-fps 60 -s res://tests/split_test.gd
-## Each pose also reports the share of pixels the world's ray tracer leaves to the one with the toys
-## (drawn magenta by a ray tracer that draws only that: _share). The pictures would be the same with
-## the two drawn the other way round: the order is checked from the materials.
+## Each pose also reports the share of pixels the stencil gives the ray tracer with the toys (drawn
+## magenta by a ray tracer that draws only there: _share).
 
 const U := preload("res://tests/util.gd")
 # [l, degrees right, degrees up] (Main.place_on_axis); START: the start's l
@@ -31,9 +30,9 @@ func _initialize() -> void:
 	main.xr_name = "none"
 	main.toys.demo = false
 	root.add_child(main)
-	# a ray tracer that draws only where the world's leaves the pixel: magenta
+	# a ray tracer that draws only where the stencil gives the pixel to the one with the toys: magenta
 	var sh := Shader.new()
-	sh.code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip_vertex_transform, fog_disabled;\nstencil_mode read, compare_not_equal, 1;\nvoid vertex() { POSITION = vec4(VERTEX.xy, 1.0, 1.0); }\nvoid fragment() { ALBEDO = vec3(1.0, 0.0, 1.0); }\n"
+	sh.code = "shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip_vertex_transform, fog_disabled;\nstencil_mode read, compare_equal, 1;\nvoid vertex() { POSITION = vec4(VERTEX.xy, 1.0, 1.0); }\nvoid fragment() { ALBEDO = vec3(1.0, 0.0, 1.0); }\n"
 	magenta.shader = sh
 
 
@@ -41,9 +40,6 @@ func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 2:
 		main.menu.visible = false
-		U.check("the world's ray tracer draws first", main.tracer.world_material.render_priority
-				< main.tracer.material.render_priority, "render priorities %d, %d" % [main.tracer.world_material.render_priority,
-				main.tracer.material.render_priority])
 		main.toys.throw()
 		main.toys.drop()
 		for k in 12 * 60:
@@ -61,13 +57,13 @@ func _process(_delta: float) -> bool:
 		var l: float = p[0] if p[0] != INF else main.space.point_from_chart(1.0, main.START_POS)[0]
 		main.place_on_axis(l, p[1], p[2])
 		_hold_ball()
-		main.tracer.whole = false
+		main.tracer.toy_mode = Tracer.SPLIT
 	elif k == 2:
 		pics["split"] = _picture()
-		main.tracer.whole = true
+		main.tracer.toy_mode = Tracer.WHOLE
 	elif k == 5:
 		pics["whole"] = _picture()
-		main.tracer.whole = false
+		main.tracer.toy_mode = Tracer.SPLIT
 		_share(true)
 	elif k == 8:
 		var share := _magenta(_picture())
@@ -113,7 +109,7 @@ func _compare(pose: Array, split: Image, whole: Image, share: float) -> void:
 			if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > DIFFER:
 				differ += 1
 				where = Vector2i(x, y)
-	U.check("pose %s: the split draws as the whole view" % [pose], differ == 0,
+	U.check("pose %s: the stencil split draws as the whole view" % [pose], differ == 0,
 			"%d pixels differ%s; the ray tracer with the toys draws %.0f%%" % [differ,
 			(" (one at %s)" % where) if differ > 0 else "", 100.0 * share])
 

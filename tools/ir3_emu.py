@@ -182,10 +182,9 @@ def parse_program(lines):
         ins.op = parts[0]
         rest = parts[1] if len(parts) > 1 else ''
         ops = [x for x in (p.strip() for p in split_operands(rest)) if x]
-        if ins.op in DERIV or ins.op.startswith(('sam', 'isam')):
-            # the fine derivatives (dsxpp.1, and its .p twin) name no type: float32
-            m = re.match(r'(?:\((f32|f16)\))?\((\w+)\)(.*)', ops[0])
-            ins.dtype = m.group(1) or 'f32'
+        if ins.op in ('dsx', 'dsy', 'dsxpp.1', 'dsypp.1') or ins.op.startswith(('sam', 'isam')):
+            m = re.match(r'\((f32|f16)\)\((\w+)\)(.*)', ops[0])
+            ins.dtype = m.group(1)
             ins.wrmask = len(m.group(2))
             ops[0] = m.group(3)
         parsed = [parse_operand(o) for o in ops]
@@ -228,8 +227,7 @@ def split_operands(rest):
 NO_DST = {'br', 'brao', 'braa', 'jump', 'end', 'nop', 'predt', 'predf', 'prede', 'shps', 'shpe', 'getone',
           'kill', 'demote', 'bany', 'ball', 'chmask', 'chsh'}
 CAT4 = {'rcp', 'rsq', 'sqrt', 'log2', 'exp2', 'sin', 'cos', 'hrsq', 'hlog2', 'hexp2'}
-DERIV = ('dsx', 'dsy', 'dsxpp.1', 'dsypp.1', 'dsxpp.1.p', 'dsypp.1.p')
-CAT5 = set(DERIV) | {'sam.base3', 'saml.base3', 'sam', 'saml'}
+CAT5 = {'dsx', 'dsy', 'dsxpp.1', 'dsypp.1', 'sam.base3', 'saml.base3', 'sam', 'saml'}
 
 
 class Wave:
@@ -247,7 +245,6 @@ class Wave:
         self.var = varyings        # (8 or more, L) float32: per inloc
         self.pred_mode = 0         # 0 none, 1 true, 2 false
         self.pred_mask = np.ones(L, bool)
-        self.killed = np.zeros(L, bool)   # lanes a kill (discard) ended
         self.out = None
         self.tex = None            # the one texture the program samples (H, W, 4)
         self.alias = {}            # alias.tex: register -> operand, for the next texture instruction
@@ -502,14 +499,7 @@ def run_wave(prog, start, wave, stats, max_steps=200000):
             # the preamble ran separately: skip it
             pc = np.where(at, ins.target, pc)
             continue
-        if op == 'kill':
-            # discard: the lanes whose predicate holds end here
-            k = ex & (wave.read(ins.srcs[0], 0, 'b').astype(bool) if ins.srcs else True)
-            wave.killed |= k
-            done |= k
-            pc = nxt
-            continue
-        if op == 'demote':
+        if op in ('kill', 'demote'):
             raise NotImplementedError(op)
         execute(ins, wave, ex)
         pc = nxt
@@ -687,7 +677,7 @@ def execute(ins, w, ex):
                 elif base == 'cos': v = np.cos(a)
             v = round_half(v.astype(F32), half)
             w.write(d, k, fsat(v, ins.sat), 'f', ex)
-        elif op in DERIV:
+        elif op in ('dsx', 'dsy', 'dsxpp.1', 'dsypp.1'):
             for c in range(ins.wrmask):
                 a = w.read(ins.srcs[0], c, 'f') if ins.srcs[0].rpt or c == 0 else w.read(_shift(ins.srcs[0], c), 0, 'f')
                 v = quad_dx(a) if op.startswith('dsx') else quad_dy(a)
