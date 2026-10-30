@@ -188,8 +188,9 @@ void fragment() {
 		float g;
 		if (al < g_gravx.x) g = textureLod(g_grav, vec2(al / g_gravx.x, 0.5), 0.0).r;
 		else { float r = geo_r(al); g = 1.0 + g_gravx.y / (r * r * r); }
-		vec3 base = look_gravity(g);
-		col = look_floor(c, fw, base, base * 0.85);     // the checker as brightness
+		float t = look_grav_level(g);
+		vec3 base = look_grav_colour(t);
+		col = look_grav_contours(look_floor(c, fw, base, base * 0.85), t);     // the checker as brightness
 #else
 		col = lh >= 0.0 ? look_floor(c, fw, LOOK_FLOOR_A[0], LOOK_FLOOR_A[1]) : look_floor(c, fw, LOOK_FLOOR_B[0], LOOK_FLOOR_B[1]);
 #endif
