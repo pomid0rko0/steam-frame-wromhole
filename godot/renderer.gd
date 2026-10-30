@@ -366,6 +366,7 @@ func _arrow_mesh() -> ArrayMesh:
 			# the outline first, then the arrow over it (the shader puts it a hair nearer the eye)
 			_arrow(st, l, beta, rr, dir, len, head, ARROW_RIM, Color(ARROW_RIM_COLOR, 0.0))
 			_arrow(st, l, beta, rr, dir, len, head, 0.0, Color(_gravity_color(g), 1.0))
+	st.index()          # shared corners once (_scene_mesh)
 	return st.commit()
 
 
