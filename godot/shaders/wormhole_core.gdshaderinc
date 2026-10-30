@@ -495,6 +495,27 @@ float wh_toyDist(bool isCube, int i, vec3 Q, vec3 cb, float perp2, float size, v
 }
 #endif
 
+// Where the ray of wh_curved meets the floor (it does: floorHit there): l and n there, and the path
+// length to it. n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0.
+float wh_floorAt(WhFil f, vec3 e1, vec3 e2, vec2 PA, vec2 PB, vec2 C0, float kc, float ivlc, float x0B,
+                 float d, float sideA, float sideC, out float hitL, out vec3 hitN) {
+    float psiF = wh_atan2(e1.z, -e2.z);
+    hitN = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
+    if (psiF >= PA.x && psiF < PA.x + PB.x) {
+        float xF = (psiF - PA.x) / max(kc, 1e-12);
+        hitL = d * (x0B + xF);
+        return PA.y + xF * ivlc;
+    }
+    bool inA = psiF < PA.x;
+    // psi from the fillet's inner end: piece A runs toward it, piece C away from it; the path length
+    // is a0 + sa * (length from the inner end)
+    float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
+    float t; vec4 m;
+    wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
+    hitL = wh_filLW(f, t, inA ? sideA : sideC).x;
+    return (inA ? PA.y : PA.y + PB.y - C0.y) + (inA ? -1.0 : 1.0) * wh_filLen(f, m);
+}
+
 // Ray starting inside (or on the boundary of) the shell, |ls| <= L. Returns
 //   0: leaves the shell, given in flat chart coordinates (outSide, outX, outD)
 //   1: hits the floor at (hitL, hitN)        2: enters ball ballI at (hitL, hitN)
@@ -669,29 +690,13 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
             cand |= 1 << (16 + i);
     }
     if (cand != 0) {
-        // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
-        // 1 B from 0, 2 C from 2; 4: the edge), as the hits are ordered. The cylinder's fraction
-        // goes without an offset: a ray that winds round the throat meets things at small fractions
-        // of it, whose digits 2 + q would lose (the floor's point and an object's normal off: white
-        // dashes along the throat). The floor's point itself is worked out after the
-        // search, from there, as an object's hit is: the search then holds fewer numbers.
-        float keyEnd = 4.0;
-        if (floorHit) {
-            // n.z = 0 along (cos psi, sin psi) = (-e2.z, e1.z) / |.|: the first zero, sin psi > 0
-            float psiF = wh_atan2(e1.z, -e2.z);
-            if (psiF >= PA.x && psiF < PA.x + PB.x) {
-                keyEnd = (psiF - PA.x) / max(kc * DB, 1e-12);
-            } else {
-                bool inA = psiF < PA.x;
-                // psi from the fillet's inner end: piece A runs toward it, piece C away from it
-                float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
-                float zF = wh_filSolve(f, clamp(T, 0.0, f.psi));
-                float z0 = inA || cFromStart ? zs : f.zlo;
-                float dz = (inA ? f.zlo : f.zhi) - z0;
-                keyEnd = (inA ? -2.0 : 2.0) + clamp((zF - z0) / (abs(dz) > 1e-12 ? dz : 1e-12), 0.0, 1.0);
-            }
-        }
-        float hitK = keyEnd;   // where the nearest hit so far is, or the ray's end
+        // Hits are ordered by where on the path they are, 2 (piece - 1) + the fraction of it (piece
+        // 0 A from -2, 1 B from 0, 2 C from 2; 4: the edge). The cylinder's fraction goes without an
+        // offset: a ray that winds round the throat meets things at small fractions of it, whose
+        // digits 2 + q would lose (an object's normal off: white dashes along the throat). The floor
+        // does not bound the search: psi grows along the path (by b / r^2 per length), so a toy met
+        // past the floor's psi is behind the floor, and the floor's point is worked out only then.
+        float hitK = 4.0;      // where the nearest hit so far is, or the ray's end
         int hitI = -1;         // its object: ball i, or WH_MAXB + cube i
         float Rk = min(R, rho0);                    // the path bends by at most 1 / Rk in R^4
         float dsMax = min(1.5 * Rk, 0.5 * rmin);    // a far step's longest chord
@@ -821,30 +826,37 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                 }
             }
         }
-        if (hitI >= 0 || floorHit) {
-            // the hit's point (an object's, or the floor's), from where on the path it is
+        if (hitI >= 0) {
+            // the toy's point, from where on the path it is
             int p = min(int(floor(0.5 * hitK)) + 1, 2);
             float q = hitK - 2.0 * float(p - 1);
             vec2 cum;
+            float hl;
             if (p == 1) {
                 float xh = DB * q;
                 cum = PA + vec2(kc, ivlc) * xh;
-                hitL = d * (x0B + xh);
+                hl = d * (x0B + xh);
             } else {
                 float z0 = p == 0 ? zs : (cFromStart ? zs : f.zlo);
                 float z1 = p == 0 ? f.zlo : f.zhi;
                 float t;
                 cum = (p == 0 ? PA : PA + PB - C0) + (p == 0 ? -1.0 : 1.0) * wh_filAt(f, mix(z0, z1, q), t);
-                hitL = wh_filLW(f, t, p == 0 ? sideA : sideC).x;
+                hl = wh_filLW(f, t, p == 0 ? sideA : sideC).x;
             }
-            hitN = cos(cum.x) * e1 + sin(cum.x) * e2;
-            ballI = hitI;
-            arc = cum.y;
-            if (hitI < 0) return 1;
+            if (!floorHit || cum.x <= wh_atan2(e1.z, -e2.z)) {
+                hitL = hl;
+                hitN = cos(cum.x) * e1 + sin(cum.x) * e2;
+                ballI = hitI;
+                arc = cum.y;
     #ifdef WH_ARROWS
-            if (slc.z > dist0 + arc) slc = vec3(-1.0);     // the arrows' surface behind it
+                if (slc.z > dist0 + arc) slc = vec3(-1.0);     // the arrows' surface behind it
     #endif
-            return 2;
+                return 2;
+            }
+        }
+        if (floorHit) {
+            arc = wh_floorAt(f, e1, e2, PA, PB, C0, kc, ivlc, x0B, d, sideA, sideC, hitL, hitN);
+            return 1;
         }
         // leaves the shell at its edge, on side sideC, worked out after the search from the half
         // angle: cos and sin of the whole turn are taken before it (floorHit), and the compiler
@@ -866,25 +878,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     // or where it leaves the shell, straight away
     float arcEnd = tot.y;
     if (floorHit) {
-        // the floor's psi and T as in the toys' search above
-        float psiF = wh_atan2(e1.z, -e2.z);
-        hitN = (e1.z * e2 - e2.z * e1) * inversesqrt(e1.z * e1.z + e2.z * e2.z);
-        if (psiF >= PA.x && psiF < PA.x + PB.x) {
-            float xF = (psiF - PA.x) / max(kc, 1e-12);
-            hitL = d * (x0B + xF);
-            arcEnd = PA.y + xF * ivlc;
-        } else {
-            bool inA = psiF < PA.x;
-            // the path length is a0 + sa * (length from the inner end)
-            float T = inA ? PA.x - psiF : C0.x + psiF - PA.x - PB.x;
-            float sa = inA ? -1.0 : 1.0;
-            float a0 = inA ? PA.y : PA.y + PB.y - C0.y;
-            float side = inA ? sideA : sideC;
-            float t; vec4 m;
-            wh_filMom(f, wh_filSolve(f, clamp(T, 0.0, f.psi)), t, m);
-            hitL = wh_filLW(f, t, side).x;
-            arcEnd = a0 + sa * wh_filLen(f, m);
-        }
+        arcEnd = wh_floorAt(f, e1, e2, PA, PB, C0, kc, ivlc, x0B, d, sideA, sideC, hitL, hitN);
     } else {
         // leaves the shell at its edge, on side sideC
         vec3 n = ct * e1 + st * e2;
