@@ -19,7 +19,8 @@ wave width with the same seed K). --profile: cycles per stretch of code.
 --split: the frame split by the stencil (tracer.gd, «The stencil split»): LOG's ray tracer (with the
 toys) where the mark (wh_mayMeetToy, mark() here) says a pixel's ray may meet a toy, PLAINLOG's (the
 plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the GPU
-packs the passing pixels into waves). The mark's own pass is not counted.
+packs the passing pixels into waves). --mark MARKLOG: the mark's own pass (stencil_mark.gdshader) too,
+over the whole view; its emulated mark is checked against mark() (a line when they differ).
 """
 import json
 import os
@@ -428,7 +429,7 @@ def per64(sh, st, n):
 
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 0, '--fov': 104.0, '--seed': 1, '--split': ''}
+    opt = {'--tiles': 300, '--size': 0, '--fov': 104.0, '--seed': 1, '--split': '', '--mark': ''}
     flags = set()
     pos = []
     i = 0
@@ -476,6 +477,11 @@ def main():
         plain.flat_order = order
         share = lambda e, xs, ys, tan: float(mark(e, xs, ys, size, tan, tan).mean())
     res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
+    resm = None
+    if opt['--mark']:
+        mk = Shader(opt['--mark'], shader_defines('res://shaders/stencil_mark.gdshader'), uniforms)
+        mk.flat_order = mark_flat_order(mk, entries, size, opt['--fov'], unis)
+        resm = cost(mk, entries, n, size, opt['--fov'], opt['--seed'], None, None, unis)
     resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
                 lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis) if plain else None
     for k, (pose, st) in enumerate(res):
@@ -483,6 +489,9 @@ def main():
         busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)
         if plain:
             a2, n2, c42, c52 = per64(plain, resp[k][1], n)
+            alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
+        if resm:
+            a2, n2, c42, c52 = per64(mk, resm[k][1], n)
             alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
         ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
         tot.append(ms)
@@ -492,6 +501,39 @@ def main():
     print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
     if prof is not None:
         report(sh, prof)
+
+
+def mark_flat_order(mk, entries, size, fov, unis, ntiles=24):
+    """The packing of the mark's flat inputs (v_l, v_n): the order whose emulated discards agree with
+    mark() on a few tiles of each pose; prints how many lanes differ."""
+    import itertools
+    tan = np.tan(np.radians(fov) / 2.0)
+    names = ['l', 'n', 'eye'] if len(mk.flat) == 6 else ['l', 'n']
+    best = None
+    for order in itertools.permutations(names):
+        mk.flat_order = list(order)
+        bad = tot = 0
+        for k, e in enumerate(entries):
+            if unis:
+                mk.set_uniforms(unis[k])
+            rng = np.random.default_rng(7)
+            for t in range(ntiles):
+                x0 = 8 * rng.integers(0, size // 8)
+                y0 = 8 * rng.integers(0, size // 8)
+                if mk.wave128:
+                    x0 = 16 * (x0 // 16)
+                xs, ys = tile_lanes(x0, y0, mk.wave128)
+                L = len(xs)
+                w = E.Wave(L, mk.consts, mk.ubos, varyings_for(e, xs, ys, size, size, tan, tan, mk))
+                w.tex = mk.tex
+                E.run_wave(mk.instrs, mk.start, w, E.Stats())
+                got = ~getattr(w, 'killed', np.zeros(L, bool))
+                bad += int((got != mark(e, xs, ys, size, tan, tan)).sum())
+                tot += L
+        if best is None or bad < best[0]:
+            best = (bad, list(order), tot)
+    print('the mark: %d of %d lanes differ from mark()%s' % (best[0], best[2], '' if best[0] == 0 else ' (look into it)'))
+    return best[1]
 
 
 def report(sh, prof):

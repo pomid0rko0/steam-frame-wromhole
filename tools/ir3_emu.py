@@ -500,7 +500,13 @@ def run_wave(prog, start, wave, stats, max_steps=200000):
             pc = np.where(at, ins.target, pc)
             continue
         if op in ('kill', 'demote'):
-            raise NotImplementedError(op)
+            # discard: the lanes whose predicate holds stop (a demoted one would go on as a helper
+            # for its quad's derivatives; the stencil's mark takes none); the rest go on
+            c = wave.read(ins.srcs[0], 0, 'b').astype(bool) & ex
+            wave.killed = getattr(wave, 'killed', np.zeros(L, bool)) | c
+            done |= c
+            pc = np.where(at & ~c, nxt, pc)
+            continue
         execute(ins, wave, ex)
         pc = nxt
     return wave
