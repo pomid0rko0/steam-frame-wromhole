@@ -333,7 +333,12 @@ def mark(e, xs, ys, size, tan_x, tan_y):
     vl, w = V[0], V[1:]
     side = 1.0 if l > 0 else -1.0
     shell = np.full(len(xs), abs(l) < WH.L)
-    if not shell.all():
+    toy = np.zeros(len(xs), bool)          # meets one of this universe's toys on its straight line
+    if shell.all():
+        b = float(WH.r(np.array(l))) * np.linalg.norm(w, axis=0)
+        w0 = np.full(len(xs), float(WH.w(np.array(l))))
+        inward = vl * side < 0.0
+    else:
         M = np.array([side, 1.0, 1.0])
         x = M * (abs(l) - WH.L + WH.Rout) * n
         d = M[:, None] * (side * vl[None] * n[:, None] + w)
@@ -343,24 +348,42 @@ def mark(e, xs, ys, size, tan_x, tan_y):
             b = (oc * d).sum(0)
             cq = float((oc * oc).sum()) - rr * rr
             return (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
-        hit = line(np.zeros(3), 1.001 * WH.Rout + 1e-4)
+        shell = line(np.zeros(3), 1.001 * WH.Rout + 1e-4)
         A = side > 0
         for i in range(0 if A else bidx[2], bidx[1] if A else nb):
             if fball[i][3] > 0:
-                hit |= line(fball[i][:3], 1.001 * np.sqrt(fball[i][3]) + 1e-4)
+                toy |= line(fball[i][:3], 1.001 * np.sqrt(fball[i][3]) + 1e-4)
         for i in range(0 if A else cidx[2], cidx[1] if A else nc):
             dw = side * WH.h - cube[i][3]
             rb = 2.0 * ccol[i][3]
-            hit |= line(M * cube[i][:3], 1.001 * np.sqrt(max(rb * rb - dw * dw, 0.0)) + 1e-4)
-        shell = hit
+            toy |= line(M * cube[i][:3], 1.001 * np.sqrt(max(rb * rb - dw * dw, 0.0)) + 1e-4)
+        b = np.linalg.norm(np.cross(x[:, None], d, axis=0), axis=0)
+        w0 = np.full(len(xs), side * WH.h)
+        inward = np.ones(len(xs), bool)
+    # the w the path passes
+    rmin = WH.rho0 + 2.0 * WH.R * np.sin(0.5 * WH.th0) ** 2
+    lo, hi = np.full(len(xs), -WH.h), np.full(len(xs), WH.h)
+    out = ~inward
+    turn = inward & (b > 1.0001 * rmin + 1e-4)
+    pas = inward & (b < 0.9999 * rmin - 1e-4)
+    c = np.clip(1.0 - (b - WH.rho0) / WH.R, 0.0, 1.0)
+    wt = WH.h - WH.R + WH.R * np.sqrt(1.0 - c * c)
+    if side > 0:
+        lo = np.where(out, w0, np.where(turn, np.minimum(wt, w0), lo))
+    else:
+        hi = np.where(out, w0, np.where(turn, np.maximum(-wt, w0), hi))
+    if side > 0:
+        hi = np.where(pas, w0, hi)
+    else:
+        lo = np.where(pas, w0, lo)
     e2 = w / np.linalg.norm(w, axis=0)
     near = np.zeros(len(xs), bool)
-    for c, rr in [(ball[i][:3], 1.001 * bcol[i][3] + 1e-4) for i in range(nb)] + \
-                 [(cube[i][:3], 2.002 * ccol[i][3] + 1e-4) for i in range(nc)]:
-        c1 = c @ n
-        c2 = c @ e2
-        near |= c @ c - c1 * c1 - c2 * c2 < rr * rr
-    return shell & near
+    for C, rr in [(ball[i], 1.001 * bcol[i][3] + 1e-4) for i in range(nb)] + \
+                 [(cube[i], 2.002 * ccol[i][3] + 1e-4) for i in range(nc)]:
+        c1 = C[:3] @ n
+        c2 = C[:3] @ e2
+        near |= (C[:3] @ C[:3] - c1 * c1 - c2 * c2 < rr * rr) & (C[3] + rr >= lo) & (C[3] - rr <= hi)
+    return toy | (shell & near)
 
 
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
