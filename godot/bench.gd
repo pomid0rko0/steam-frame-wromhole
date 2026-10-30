@@ -123,19 +123,26 @@ func has_ab() -> bool:
 	return not others.is_empty()
 
 
-## The others as variants of the kind this build runs now, in main's ray tracer: without toys, or
-## with them (the demo's), theirs over the whole view: with the stencil test the whole view marked,
-## without it no stencil at all; none with the gravity view on (theirs are without it).
+## The others, in main's ray tracer: without toys, or with them (the demo's), theirs over the whole
+## view: with the stencil test the whole view marked, without it no stencil at all; none with the
+## gravity view on (theirs are without it). Those without a ray tracer for the toys (the cost checks)
+## are timed without the toys (plain), next to main's without them.
 func comparable() -> Array[Setup]:
 	var out: Array[Setup] = []
 	if main.tracer.gravity_view != 0:
 		return out
 	for o in others:
-		if main.tracer.plain():
-			out.append(Setup.new(o.label, true, o.shader, 0, false, FragTracer.BARE))
-		elif o.balls != null:
+		if main.tracer.plain() or o.balls == null:
+			var v := Setup.new(o.label, true, o.shader, 0, false, FragTracer.BARE)
+			v.plain = not main.tracer.plain()
+			out.append(v)
+		else:
 			var with_stencil := o.balls.code.contains("stencil_mode")
 			out.append(Setup.new(o.label, true, o.balls, 0, false, FragTracer.WHOLE if with_stencil else FragTracer.BARE))
+	if out.any(func(v: Setup) -> bool: return v.plain):
+		var ref := Setup.new("main's, no toys", true, FragTracer.SHADERS[0], 0, false, FragTracer.SPLIT)
+		ref.plain = true
+		out.push_front(ref)
 	return out
 
 
@@ -182,7 +189,8 @@ func start() -> void:
 		return
 	running = true
 	var tracer: Tracer = main.tracer
-	main_shader = main.frag.material.shader
+	# main's shader for this scene, as FragTracer picks it (it gets the toys only when it draws)
+	main_shader = (FragTracer.SHADERS if tracer.plain() else FragTracer.SHADERS_TOYS)[tracer.gravity_view]
 	variants.clear()
 	for w in MAIN_WAYS:
 		variants.append(Setup.new(w[0], true, main_shader, w[1], w[2], FragTracer.SPLIT))
@@ -304,6 +312,11 @@ func _use(v: Setup) -> void:
 	main.set_frag(v.frag)
 	main.tracer.whole = v.whole
 	if v.frag:
+		# the toys first: set_objects picks main's own shader
+		if v.plain:
+			main.frag.set_objects(PackedVector4Array(), PackedVector4Array())
+		elif main.toys.enabled:
+			main.draw_toys()
 		main.frag.material.shader = v.shader
 		main.frag.toy_mode = v.toy_mode
 	var fov: Foveation = main.foveation
@@ -389,6 +402,15 @@ func _compared() -> void:
 		for v in range(own + 1, variants.size()):
 			summary.append("%s %.3f" % [variants[v].label.trim_prefix("this build, "), _ratio(v, own)])
 		print("bench: this build's foveation, on average over the places against it without: %s" % ", ".join(summary))
+		var ref := -1
+		summary.clear()
+		for k in variants.size():
+			if variants[k].plain and ref < 0:
+				ref = k
+			elif variants[k].plain:
+				summary.append("%s %.3f" % [variants[k].label, _ratio(k, ref)])
+		if ref >= 0:
+			print("bench: without the toys, on average over the places against main's: %s" % ", ".join(summary))
 		verdict = " · ".join(parts)
 	if _headset():
 		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
@@ -555,9 +577,12 @@ static func _list(v: Array) -> String:
 
 ## This build's ray tracer as it runs, with the foveation chosen in the menu.
 func _restore() -> void:
+	main.tracer.whole = false
+	if main.toys.enabled:
+		main.frag.set_objects(PackedVector4Array(), PackedVector4Array())
+		main.toys.draw(main.frag, main.hands.drawn())     # main's with the toys again, its own shader
 	main.frag.material.shader = main_shader
 	main.frag.toy_mode = FragTracer.SPLIT
-	main.tracer.whole = false
 	main.set_frag(false)
 	main.foveation.set_level(menu.foveation)
 
@@ -580,6 +605,7 @@ class Setup:
 	var split: bool                 # main's: the split pass without a density map
 	var toy_mode: int               # main's: FragTracer.SPLIT, WHOLE or BARE
 	var whole := false              # this build's: the toys kernel over every group (Tracer.whole)
+	var plain := false              # main's: drawn without the toys (a cost check without their ray tracer)
 
 	func _init(p_label: String, p_frag: bool, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
 		label = p_label
