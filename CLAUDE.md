@@ -42,6 +42,9 @@ keep and what was learnt about it: the comment at the top of its file.
   still apply.
 - **Make slow frames cheaper without giving anything up,** and without counting on anything
   staying as it is now.
+- **The maths isn't fixed either.** The wormhole's shape and metric, the equations of motion,
+  light and gravity, the methods that solve them and their error budgets can all be revised to make
+  frames cheaper, like the code.
 - **A rule in the way:** say so to the owner and propose a replacement; don't work around it
   silently, and don't change a rule without them.
 - **Long runs in the background, the build at once.** The owner checks builds without waiting for
