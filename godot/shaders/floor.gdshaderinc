@@ -21,6 +21,7 @@ uniform vec2 g_gravx;                                       // (that end, beta: 
 #endif
 
 varying flat float v_el;
+varying flat vec2 v_eye;      // the eye's r, and the root of its u on the fillet (geo_r, geo_u): per eye
 varying flat vec3 v_en;
 varying flat vec4 v_ex;
 varying flat vec4 v_ey;
@@ -38,6 +39,7 @@ void vertex() {
 	vec4 ex, ey, ez;
 	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
 	v_el = el;
+	v_eye = vec2(geo_r(abs(el)), sqrt(geo_u(abs(el))));
 	v_en = en;
 	v_ex = ex;
 	v_ey = ey;
@@ -49,7 +51,7 @@ void fragment() {
 	vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
 	float side = v_el < 0.0 ? -1.0 : 1.0;
 	float le = abs(v_el);
-	float re = geo_r(le);
+	float re = v_eye.x;
 	float L = g_prof.w, Rout = g_prof2.x;
 	float ca = side * D.x;                  // along the outward radial direction
 	float sa = length(D.yzw);
@@ -61,8 +63,8 @@ void fragment() {
 	// where the floor is in the ray's plane: the angle from the eye (0, pi), the eye above it
 	float phif = atan(v_en.z, -t.z);
 	bool hit = false;
-	float lh = 0.0;                         // the floor point's l, its n, the way's length
-	vec3 nh = vec3(1.0, 0.0, 0.0);
+	float lh = 0.0;                         // the floor point's l, its n's x and y (any length), the way's length
+	vec2 nh = vec2(1.0, 0.0);
 	float way = 0.0;
 	vec3 skyd = vec3(0.0, 0.0, 1.0);        // else: the sky's chart direction in universe skys
 	float skys = side;
@@ -76,7 +78,7 @@ void fragment() {
 			float rp = length(p);
 			hit = true;
 			lh = side * (L + rp - Rout);
-			nh = vec3(p / rp, 0.0);
+			nh = p;
 		} else {
 			skyd = dc;
 		}
@@ -108,8 +110,8 @@ void fragment() {
 			float dq = (re - Rout) * (re + Rout) / max(qR + q2, 1e-20);
 			se = SL + vec2(atan(b * dq, b * b + qR * q2), dq);
 		} else if (le > Lc) {
-			float ue = geo_u(le);
-			float su = sqrt(ue), eu = sqrt(gap_e / R2);
+			float su = v_eye.y, eu = sqrt(gap_e / R2);
+			float ue = su * su;
 			float w = 2.0 * log((su + eu) / D);
 			se = cylL + f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
 		} else {
@@ -135,13 +137,19 @@ void fragment() {
 				skys = -side;
 			}
 		}
+		// t is done with before the fillet's inversion (it costs registers there): where it ends, the
+		// sky's direction, and the floor point's
 		hit = phif < tot;
-		if (hit) {
+		if (!hit) {
+			skyd = cos(tot) * v_en + sin(tot) * t;
+		} else {
+			nh = (cos(phif) * v_en + sin(phif) * t).xy;
 			vec2 at;                        // (|l|, length from the origin)
 			if (target >= SL.x) {
 				// beyond the curved zone: straight
 				float a = target - SL.x + 0.5 * GEO_PI - ab;
 				hit = a < 0.5 * GEO_PI;
+				if (!hit) skyd = cos(tot) * v_en + sin(tot) * t;
 				float r = b / cos(a);
 				at = vec2(L + r - Rout, SL.y + sqrt(max((r - b) * (r + b), 0.0)) - qR);
 			} else if (pass && target <= cylL.x) {
@@ -169,17 +177,12 @@ void fragment() {
 				at = vec2(Lc + g_prof.y * (2.0 * geo_asin(sqrt(u)) - g_prof2.w), cylL.y + val.y);
 			}
 			lh = side * far * at.x;
-			nh = cos(phif) * v_en + sin(phif) * t;
-			nh = vec3(normalize(nh.xy), 0.0);
 			way = ca >= 0.0 ? at.y - se.y : se.y + sgnw * at.y;
-		}
-		if (!hit) {
-			skyd = cos(tot) * v_en + sin(tot) * t;
 		}
 	}
 	vec3 col;
 	if (hit) {
-		vec2 c = look_floor_coords(lh, nh);
+		vec2 c = look_floor_coords(lh, vec3(nh, 0.0));
 		vec2 fw = fwidth(c);
 		// the sectors' seam at the chart's -x: the other branch of the angle there
 		fw.y = min(fw.y, fwidth(fract(c.y / 24.0 + 0.5) * 24.0));
