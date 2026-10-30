@@ -7,10 +7,12 @@
 #   waves            how many waves of 64 (128) a core keeps at once (ir3's max_waves)
 #   cat4             transcendental instructions (exp, log, sqrt, rcp, sin...)
 #   cat5             texture-unit instructions (samples, derivatives)
-# The fragment programs of more than a third of the biggest one's size: the floor's (floor.gdshader;
-# Godot compiles it twice, a generic "ubershader" first, then the one specialised for the scene,
-# which runs from then on), and the vertex programs likewise: the bodies' (body.gdshaderinc).
-# Code size is not what runs: a pixel runs one way through the floor's branches.
+# The fragment programs of more than a third of the biggest one's size: the floor's, the biggest
+# (floor.gdshader; Godot compiles it twice, a generic "ubershader" first, then the one specialised
+# for the scene, which runs from then on), and the generic programs of Godot's own StandardMaterial3D
+# (the menu's and the gaze dot's: two inputs, texture samples, loops); the bodies' are smaller. The
+# vertex programs likewise: the bodies' (body.gdshaderinc). Code size is not what runs: a pixel
+# runs one way through the floor's branches.
 #   tools/adreno_stats.sh [--full]      (--full: ir3's own lines too)
 # KEEP_LOG=file keeps the compiler's whole log (on the Frame a file in the repository, which the host
 # sees too). Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured:
@@ -47,7 +49,7 @@ for stage in ('FRAG', 'VERT'):
     if not progs:
         sys.exit('no %s program statistics in the log' % stage)
     big = max(v[0] for v in progs.values())
-    print('fragment programs (the floor):' if stage == 'FRAG' else 'vertex programs (the bodies):')
+    print('fragment programs (the floor, the biggest):' if stage == 'FRAG' else 'vertex programs (the bodies):')
     for p, (n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl) in progs.items():
         if n < big / 3:
             continue
