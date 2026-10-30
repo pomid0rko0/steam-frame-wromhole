@@ -15,9 +15,9 @@ extends SceneTree
 ## the gravity views "floor" and "floor and arrows" (Tracer.GRAVITY_VIEWS: the floor coloured by
 ## gravity, also the field's arrows), their own ray tracers with the balls and the cube (with
 ## plain, without them).
-## fov: foveated rendering on (the runtime's strongest in even cases, our own map in odd ones):
-## the 3D scene in a render pass of its own, the viewport asking for a density map. Software
-## Vulkan has none, so what this tests is that the split pass draws everything where it was.
+## fov: foveated rendering on (level 3 in even cases, 4 in odd ones): the ray tracer traces cells
+## coarser away from the middle of each eye's picture (ray_pass.gd); Godot's overlay must still lie
+## on what they show.
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)

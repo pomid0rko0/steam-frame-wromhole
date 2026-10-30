@@ -284,7 +284,10 @@ func _process(delta: float) -> void:
 	if use_frag:
 		frag.set_head(hp[0], hp[1], hf, head.origin)
 	else:
-		tracer.set_head(hp[0], hp[1], hf, head.origin)
+		var look := Vector3.ZERO
+		if gaze and gaze.get_has_tracking_data():
+			look = -gaze.transform.basis.z
+		tracer.set_head(hp[0], hp[1], hf, head.origin, look)
 	scripts_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
 

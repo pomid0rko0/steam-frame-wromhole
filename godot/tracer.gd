@@ -67,8 +67,9 @@ func param(name: StringName, value: Variant) -> void:
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there and its place
-## in the room (the kernels move it to each eye), then the frame's values to the pass.
-func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
+## in the room (the kernels move it to each eye), where the eyes look (a play-space direction; zero:
+## not known, straight ahead: foveation's middle), then the frame's values to the pass.
+func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3, gaze := Vector3.ZERO) -> void:
 	values["head_l"] = l
 	values["head_n"] = n
 	values["head_f"] = PackedVector4Array(hf)
@@ -78,7 +79,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	if pix != pixel_angle:
 		pixel_angle = pix
 		values["wh_pix"] = pix
-	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), [l, n, hf.duplicate(), head_pos], gravity_view, toy_count > 0))
+	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), [l, n, hf.duplicate(), head_pos, gaze], gravity_view, toy_count > 0))
 	# shown once the pass has made its picture (a material whose texture does not exist yet is not
 	# drawn: an error each frame)
 	quad.visible = pass_.picture.texture_rd_rid.is_valid()

@@ -21,7 +21,8 @@ extends CompositorEffect
 const KERNELS := "res://shaders/trace_kernels.gdshaderinc"
 const CORE := "res://shaders/wormhole_core.gdshaderinc"
 const VIEW_AT := 1808           # bytes: where the views' part of the block starts (fr_cam)
-const SIZE := 2240              # bytes: the block (Frame in trace_kernels.gdshaderinc)
+const SIZE := 2352              # bytes: the block (Frame in trace_kernels.gdshaderinc)
+const MAX_RINGS := 5            # fr_rings
 const ROWS := 2048              # the tables' rows (2 FR_HALF) and columns (FR_COLS)
 const COLS := 256
 const VIEWS_AT := 1720          # bytes: fr_views
@@ -71,7 +72,8 @@ func set_rings(r: Array) -> void:
 
 
 ## Tracer's values for the frame (on the render thread: RenderingServer.call_on_render_thread):
-## the block's part, the head [l, n, its frame, its place in the room], what is shown.
+## the block's part, the head [l, n, its frame, its place in the room, where the eyes look (play
+## space; zero: unknown)], what is shown.
 func set_frame(bytes: PackedByteArray, p_head: Array, p_gravity: int, p_toys: bool) -> void:
 	frame = bytes
 	head = p_head
@@ -112,10 +114,22 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		rows.append(_rows(e[0].x))
 	for v in 2:
 		_put_vec4(block, rows[v])
+	var projs: Array[Projection] = []
 	for v in 2:
-		var p := sd.get_view_projection(mini(v, views - 1))
-		_put_projection(block, (Projection.create_depth_correction(false) * p).inverse())
-	for k in [size.x, size.y, views, 0]:
+		projs.append(Projection.create_depth_correction(false) * sd.get_view_projection(mini(v, views - 1)))
+	# where each eye looks, in its picture's pixels: the gaze, else straight ahead
+	var look: Vector3 = head[4] if head.size() > 4 and head[4] != Vector3.ZERO else -cam.basis.z
+	var at := cam.affine_inverse() * (cam.origin + 10.0 * look)
+	for v in 2:
+		var c := projs[v] * Vector4(at.x, at.y, at.z, 1.0)
+		var ndc := Vector2(c.x, c.y) / c.w if c.w > 1e-6 else Vector2.ZERO
+		_put_vec4(block, Vector4((ndc.x + 1.0) * 0.5 * size.x, (ndc.y + 1.0) * 0.5 * size.y, 0.0, 0.0))
+	for k in MAX_RINGS:
+		var ring: Array = rings[k] if k < rings.size() else [0.0, 1, 1]
+		_put_vec4(block, Vector4(ring[0], ring[1], ring[2], 0.0))
+	for v in 2:
+		_put_projection(block, projs[v].inverse())
+	for k in [size.x, size.y, views, mini(rings.size(), MAX_RINGS)]:
 		block.put_32(k)
 	var bytes := block.data_array
 	bytes.resize(SIZE)
@@ -162,13 +176,18 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	rd.compute_list_add_barrier(cl)
 	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[w], 0, _used(all, [0, 1, 2, 3, 4, 5])), 0)
-	rd.compute_list_dispatch(cl, (size.x + 15) / 16, (size.y + 7) / 8, views)
+	rd.compute_list_dispatch(cl, _groups(size).x, _groups(size).y, views)
 	if toys:
 		rd.compute_list_add_barrier(cl)
 		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[gravity])
 		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[gravity], 0, _used(all, [0, 1, 2, 3])), 0)
 		rd.compute_list_dispatch_indirect(cl, tiles, 0)
 	rd.compute_list_end()
+
+
+## The world kernel's groups: 4 x 4 a block of 64 x 32 pixels (trace_kernels.gdshaderinc, fr_cells).
+static func _groups(size: Vector2i) -> Vector2i:
+	return Vector2i((size.x + 63) / 64 * 4, (size.y + 31) / 32 * 4)
 
 
 ## The uniforms of all with these bindings (a texture is not both sampled and stored in one set).
@@ -275,7 +294,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 	fmt.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	fmt.width = size.x
 	fmt.height = size.y
-	fmt.array_layers = views
+	fmt.array_layers = maxi(views, 2)        # a 2D array has at least two layers
 	fmt.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	image = rd.texture_create(fmt, RDTextureView.new(), [])
 	image_size = size
@@ -287,7 +306,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 	var tf := RDTextureFormat.new()
 	tf.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	tf.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
-	tf.array_layers = views
+	tf.array_layers = maxi(views, 2)
 	tf.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	tf.width = COLS
 	tf.height = ROWS
@@ -297,7 +316,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 	tab_e = rd.texture_create(tf, RDTextureView.new(), [])
 	if tiles.is_valid():
 		rd.free_rid(tiles)
-	var n := ((size.x + 15) / 16) * ((size.y + 7) / 8) * views + 1
+	var n := _groups(size).x * _groups(size).y * views + 1
 	tiles = rd.storage_buffer_create(16 * n, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
 
 

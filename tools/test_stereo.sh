@@ -73,7 +73,8 @@ for v in gravity arrows; do
 		for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
 	done
 done
-# foveated rendering on (Foveation.set_level): the 3D scene in a render pass of its own
+# foveated rendering on (Foveation.set_level): the ray tracer's cells coarser away from the middle
+# (ray_pass.gd); what Godot draws over them must still lie on them
 for c in 0 1 2 3; do
 	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
 done
@@ -121,8 +122,6 @@ done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, shader without balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
 done
-# the split pass changes nothing in the picture: each image with foveation on against the same off
-verdict "foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk:fov pln:fpl
 
 echo
 echo "images: $OUT"

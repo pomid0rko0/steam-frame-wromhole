@@ -26,8 +26,10 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 fr_eyeOff[2];
     vec4 fr_eye[10];
     vec4 fr_rows[2];         // per view: the tables' rows from angle x to z, split at y (fr_row)
+    vec4 fr_gaze[2];         // per view: the pixel the eye looks at (foveation's middle)
+    vec4 fr_rings[5];        // foveation's rings: (radius, cell width, height), fr_size.w of them
     mat4 fr_invProj[2];
-    ivec4 fr_size;           // the picture's width and height, the views
+    ivec4 fr_size;           // the picture's width and height, the views, the rings
 };
 
 layout(set = 0, binding = 1) uniform sampler2D wh_tab;
@@ -285,29 +287,47 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
 #endif
 
 #if defined(KERNEL_WORLD) || defined(KERNEL_TOYS)
-// A pixel per invocation, 16 x 8 of them a group (one wave of 128 on the Frame's GPU), in quads of
+// A ray per invocation, 16 x 8 of them a group (one wave of 128 on the Frame's GPU), in quads of
 // 2 x 2 as a fragment shader's: the grid's screen derivatives are the quad's differences, through
-// shared memory.
+// shared memory. Foveation: the picture is split into blocks of 64 x 32 pixels, each traced in
+// cells of cs = (1, 2 or 4) x (1, 2 or 4) pixels by the ring (fr_rings) its middle is in, a ray
+// through each cell's middle, its colour over the cell; a block takes (4 / cs.x) x (4 / cs.y) of
+// the groups laid out over it, the others have nothing to do.
 layout(local_size_x = 16, local_size_y = 8, local_size_z = 1) in;
 shared vec2 sh_g[128];
 // the groups for the toys kernel: the dispatch's group count (x, 1, 1), then each group's (x, y,
 // view)
 layout(set = 0, binding = 3, std430) restrict buffer Tiles { uvec4 fr_tiles[]; };
 
-// The ray of pixel pc of view v, traced and shaded (the group's invocations together: the
-// derivatives), stored if store.
-void fr_pixel(ivec2 px, int v, bool store) {
+// Group wg's cells: their size cs and where its first one starts (p0, pixels); false: none.
+bool fr_cells(uvec3 wg, out ivec2 cs, out ivec2 p0) {
+    int v = int(wg.z);
+    ivec2 blk = ivec2(wg.xy) >> 2;              // 4 x 4 groups' places a block
+    ivec2 sub = ivec2(wg.xy) & 3;
+    vec2 mid = (vec2(blk) + 0.5) * vec2(64.0, 32.0);
+    vec2 q = (mid - fr_gaze[v].xy) / (0.5 * vec2(fr_size.xy));
+    float r = length(q);
+    cs = ivec2(1);
+    for (int k = 0; k < fr_size.w; k++) {
+        if (r < fr_rings[k].x) { cs = ivec2(fr_rings[k].yz); break; }
+    }
+    p0 = blk * ivec2(64, 32) + sub * ivec2(16, 8) * cs;
+    return all(lessThan(sub * cs, ivec2(4))) && all(lessThan(p0, fr_size.xy));
+}
+
+// The ray of the cell at p0 + cs * this invocation's place (pixels, size cs) of view v, traced and
+// shaded (the group's invocations together: the derivatives), stored over the cell.
+void fr_cell(ivec2 p0, ivec2 cs, int v) {
     ivec2 sz = fr_size.xy;
-    ivec2 pc = min(px, sz - 1);
+    ivec2 px = p0 + ivec2(gl_LocalInvocationID.xy) * cs;
     vec4 E0 = fr_eye[5 * v];
     vec4 f0 = fr_eye[5 * v + 1];
     vec4 f1 = fr_eye[5 * v + 2];
     vec4 f2 = fr_eye[5 * v + 3];
-    vec2 eyeE = fr_eye[5 * v + 4].xy;
-    // this pixel's ray: the line from the eye through its centre unprojected onto the near plane
+    // this cell's ray: the line from the eye through its middle unprojected onto the near plane
     // (depth 0: fr_invProj maps depths 0..1, near to far), turned into play space and onto the
     // eye's axes
-    vec2 ndc = (vec2(pc) + 0.5) / vec2(sz) * 2.0 - 1.0;
+    vec2 ndc = (vec2(min(px, sz - 1)) + 0.5 * vec2(cs)) / vec2(sz) * 2.0 - 1.0;
     vec4 pa = fr_invProj[v] * vec4(ndc, 0.0, 1.0);
     vec3 pd = mat3(fr_cam) * (pa.xyz / pa.w - fr_eyeOff[v].xyz);
     vec4 V = normalize(pd.x * f0 + pd.y * f1 + pd.z * f2);
@@ -315,7 +335,7 @@ void fr_pixel(ivec2 px, int v, bool store) {
     WhEnd e = fr_trace(E0.x, E0.yzw, V.x, V.yzw, v);
 #else
     vec4 dbg;
-    WhEnd e = wh_trace(E0.x, E0.yzw, V.x, V.yzw, eyeE, dbg);
+    WhEnd e = wh_trace(E0.x, E0.yzw, V.x, V.yzw, fr_eye[5 * v + 4].xy, dbg);
 #endif
     vec2 g = wh_gridAt(e);
     uint li = gl_LocalInvocationIndex;
@@ -326,18 +346,26 @@ void fr_pixel(ivec2 px, int v, bool store) {
     uint ly = gl_LocalInvocationID.y;
     vec2 gdx = sh_g[(ly << 4) | (lx | 1u)] - sh_g[(ly << 4) | (lx & ~1u)];
     vec2 gdy = sh_g[((ly | 1u) << 4) | lx] - sh_g[((ly & ~1u) << 4) | lx];
-    vec3 c = wh_shadeEnd(e, g, gdx, gdy);
-    if (store && all(lessThan(px, sz))) imageStore(fr_out, ivec3(px, v), vec4(c, 1.0));
+    vec4 c = vec4(wh_shadeEnd(e, g, gdx, gdy), 1.0);
+    px = p0 + ivec2(gl_LocalInvocationID.xy) * cs;
+    for (int j = 0; j < cs.y; j++)
+        for (int i = 0; i < cs.x; i++) {
+            ivec2 q = px + ivec2(i, j);
+            if (all(lessThan(q, sz))) imageStore(fr_out, ivec3(q, v), c);
+        }
 }
 #endif
 
 #ifdef KERNEL_WORLD
 void main() {
+    ivec2 cs;
+    ivec2 p0;
+    if (!fr_cells(gl_WorkGroupID, cs, p0)) return;
 #ifdef WH_NO_SHELL_TOYS
     if (gl_LocalInvocationIndex == 0u) sh_toys = 0u;
     barrier();
 #endif
-    fr_pixel(ivec2(gl_GlobalInvocationID.xy), int(gl_GlobalInvocationID.z), true);
+    fr_cell(p0, cs, int(gl_WorkGroupID.z));
 #ifdef WH_NO_SHELL_TOYS
     barrier();
     if (gl_LocalInvocationIndex == 0u && sh_toys != 0u) {
@@ -351,7 +379,10 @@ void main() {
 #ifdef KERNEL_TOYS
 // The groups the world kernel listed, again, with the search for the movable objects.
 void main() {
-    uvec4 t = fr_tiles[gl_WorkGroupID.x + 1u];
-    fr_pixel(ivec2(t.xy * uvec2(16u, 8u) + gl_LocalInvocationID.xy), int(t.z), true);
+    uvec3 wg = fr_tiles[gl_WorkGroupID.x + 1u].xyz;
+    ivec2 cs;
+    ivec2 p0;
+    fr_cells(wg, cs, p0);
+    fr_cell(p0, cs, int(wg.z));
 }
 #endif
