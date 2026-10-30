@@ -23,7 +23,6 @@ const CORE := "res://shaders/wormhole_core.gdshaderinc"
 const VIEW_AT := 1808           # bytes: where the views' part of the block starts (fr_cam)
 const SIZE := 2368              # bytes: the block (Frame in trace_kernels.gdshaderinc)
 const MAX_RINGS := 5            # fr_rings
-const TABLE_MOVE := 1e-4        # m along l an eye moves before its tables are made again
 # the tables' rows a grid (FR_HALF) and columns (FR_COLS) for a picture of TABLE_PX pixels a side,
 # fewer for a smaller one (_table_size)
 const TABLE_HALF := 1024
@@ -62,10 +61,6 @@ var tab_f: RID                          # fr_tabF, fr_tabE, fr_tabP: a layer per
 var tab_e: RID
 var tab_p: RID
 var shell_toys := false                 # movable objects within reach of the shell: fr_tabP made
-var built_l: Array[float] = [INF, INF]  # each eye's l the tables were made at (TABLE_MOVE)
-var built_rows: Array[Vector4] = [Vector4.ZERO, Vector4.ZERO]   # and their rows (_rows)
-var built_paths := false                # with fr_tabP
-var tables_built := 0                   # times made (the tests)
 var uniforms: Array[RDUniform] = []    # every binding of the kernels (_make_uniforms)
 var uniforms_tex: RID                   # the fillet table's they were made with
 var used_sets := {}                     # their subsets by the bindings a kernel takes (_used)
@@ -118,7 +113,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		return
 	if size != image_size or views != image_views:
 		_make_image(size, views)
-	# new textures or another fillet table: the uniforms again, and the tables (below)
+	# new textures or another fillet table: the uniforms again
 	var tex := RenderingServer.texture_get_rd_texture(table.get_rid())
 	if tex != uniforms_tex or uniforms.is_empty():
 		_make_uniforms(tex)
@@ -131,26 +126,17 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	for v in 2:
 		offs.append(sd.get_view_eye_offset(mini(v, views - 1)))
 		_put_vec4(block, Vector4(offs[v].x, offs[v].y, offs[v].z, 1.0))
-	# the tables again only when an eye has moved along l by more than TABLE_MOVE (or the paths are
-	# needed now, or the textures are new): they are the eye's at the l they were made at, its
-	# hits off by that much at most
+	# the tables every frame, for the eyes where they are: a frame costs what it costs while the head
+	# moves (it always does), also where the speed check holds it still
 	var paths := toys and shell_toys
-	var eyes_l: Array[float] = []
+	var rows: Array[Vector4] = []
 	for v in 2:
 		var e := _eye(cam * offs[v])
 		for q in e:
 			_put_vec4(block, q)
-		eyes_l.append(e[0].x)
-	var build := paths != built_paths
+		rows.append(_rows(e[0].x))
 	for v in 2:
-		build = build or absf(eyes_l[v] - built_l[v]) > TABLE_MOVE
-	if build:
-		for v in 2:
-			built_l[v] = eyes_l[v]
-			built_rows[v] = _rows(eyes_l[v])
-		built_paths = paths
-	for v in 2:
-		_put_vec4(block, built_rows[v])
+		_put_vec4(block, rows[v])
 	var projs: Array[Projection] = []
 	for v in 2:
 		projs.append(Projection.create_depth_correction(false) * sd.get_view_projection(mini(v, views - 1)))
@@ -178,13 +164,11 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if toys:
 		rd.buffer_update(tiles, 0, 16, PackedInt32Array([0, 1, 1, 0]).to_byte_array())
 	var cl := rd.compute_list_begin()
-	if build:
-		rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
-		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
-				_used(all, [0, 1, 2, 6, 7, 8] if paths else [0, 1, 2, 6, 7])), 0)
-		rd.compute_list_dispatch(cl, 2 * table_size.x, 1, views)
-		rd.compute_list_add_barrier(cl)
-		tables_built += 1
+	rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
+	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
+			_used(all, [0, 1, 2, 6, 7, 8] if paths else [0, 1, 2, 6, 7])), 0)
+	rd.compute_list_dispatch(cl, 2 * table_size.x, 1, views)
+	rd.compute_list_add_barrier(cl)
 	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[w], 0, _used(all, [0, 1, 2, 3, 4, 5])), 0)
 	rd.compute_list_dispatch(cl, _groups(size).x, _groups(size).y, views)
@@ -199,7 +183,6 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 ## The kernels' uniforms (made again with the picture, or when the fillet table is another texture).
 func _make_uniforms(tex: RID) -> void:
 	uniforms_tex = tex
-	built_l = [INF, INF]            # new textures, or another shape: the tables again
 	uniforms.clear()
 	used_sets.clear()
 	var u_ubo := RDUniform.new()
