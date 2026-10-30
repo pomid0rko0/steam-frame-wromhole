@@ -53,8 +53,9 @@ failed=0
 for t in "${names[@]}"; do
 	read -r code secs < "$DATA/$t.status"
 	errors=$(grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$OUT/$t.log")
+	hung=$(grep -q "^godot_x: still in Godot's exit" "$OUT/$t.log" && echo ", hung in Godot's exit after its verdict: killed")
 	if [ "$code" = 0 ] && [ -z "$errors" ]; then
-		echo "PASS $t (${secs} s)"
+		echo "PASS $t (${secs} s$hung)"
 		continue
 	fi
 	failed=1

@@ -94,6 +94,7 @@ fi
 for f in "$LOGS"/*.status; do
 	read -r code args < "$f"
 	[ "$code" = 0 ] || { echo "render exit status $code: $args"; tail -3 "${f%.status}.log"; failed=1; }
+	grep -q "^godot_x: still in Godot's exit" "${f%.status}.log" && echo "render hung in Godot's exit after its verdict, killed: $args"
 done
 
 verdict "desktop: the app's ball vs Godot's" python3 "$CMP/one_ball.py" "$OUT/dsk_app.png" "$OUT/dsk_mesh.png"
