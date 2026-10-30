@@ -569,7 +569,7 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 		} else {
 			se = cyl * le;
 		}
-		float ab = geo_asin(b / Rout);
+		float ab = geo_atan2(b, qR);        // asin(b / Rout)
 		float pinf = SL.x + ab;             // to infinity
 		float target = 0.0;                 // the sweep from the ray's origin to the floor point
 		float far = 1.0;                    // +1: the point's |l| on the eye's side, -1 the other
