@@ -250,7 +250,9 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 // docs/geometry.md). Returns the launch direction as a tangent vector at the eye (.xyzw) and the
 // length (out len); arrive: the direction it comes in at the point, as a vector of R^4.
 // The rays that reach |l| = |pl| form one family along which that turn grows from 0 without bound,
-// parametrised by the launch angle (q below): bisection with false position steps.
+// parametrised by the launch angle (q below): bisection with false position steps. Where the eye
+// and the point are in the same flat universe and the segment between them stays out of the curved
+// zone, that geodesic is the segment, taken at once: most of a scene seen not through the throat.
 const int GEO_ITERS = 12;
 
 vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive) {
@@ -259,6 +261,21 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 	float lp = side * pl;           // the eye's side is +
 	float alp = abs(lp);
 	float re = geo_r(le), rp = geo_r(alp);
+	// both in the eye's flat universe and the segment between them clear of the curved zone (its
+	// nearest point to the centre at least Rout from it): the segment itself, in R^4's xyz there
+	if (le >= g_prof.w && lp >= g_prof.w) {
+		vec3 xe = re * en;
+		vec3 dv = rp * pn - xe;
+		float d2 = max(dot(dv, dv), 1e-20);
+		vec3 m = xe + clamp(-dot(xe, dv) / d2, 0.0, 1.0) * dv;
+		if (dot(m, m) >= g_prof2.x * g_prof2.x) {
+			len = sqrt(d2);
+			vec3 u = dv / len;
+			arrive = vec4(u, 0.0);
+			float cu = dot(u, en);
+			return vec4(side * cu, u - cu * en);
+		}
+	}
 	float rmin = g_prof2.z;
 	float c = dot(en, pn);
 	vec3 cr = cross(en, pn);
