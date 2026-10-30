@@ -293,6 +293,7 @@ struct WhFil {
     float al; float ga; float mn; float mx;
     int reg;
     float E0;              // sqrt(al) + sqrt(ga)
+    float sC;              // sqrt(al) sqrt(ga): the moments' constant, once per ray
     float zlo; float zhi;  // z at tau = 0 and 1
     float psi; float arc;  // the whole fillet, tau 0 -> 1
     float ra; float span;  // r = ra + span tau
@@ -321,7 +322,7 @@ vec4 wh_filRec(WhFil f, float z, float t, float S) {
     float B = f.al + f.ga;
     float C = f.al * f.ga;
     float D0 = 2.0 * z;
-    float D1 = S - sqrt(C) - 0.5 * B * D0;
+    float D1 = S - f.sC - 0.5 * B * D0;
     float tS = t * S;
     float D2 = 0.5 * (tS - 1.5 * B * D1 - C * D0);
     float D3 = (tS * t - 2.5 * B * D2 - 2.0 * C * D1) / 3.0;
@@ -401,6 +402,7 @@ WhFil wh_fil(float b, bool turn, float rmin) {
     float sal = turn ? sq : sqrt((rmin - rho0) / max(wh_Rout() - rmin, 1e-6 * R));   // uniforms only
     float sga = turn ? 0.0 : sq;
     f.E0 = max(sal + sga, 1e-6);
+    f.sC = sal * sga;
     // f.e depends on b alone: sampled from the row of b's regime (the regime is taken from the row,
     // so that the moments match the table), with the factor the table leaves out put back
     int row = turn ? (b >= wh_tabLo.w ? 3 : 2) : (b >= wh_tabLo.y ? 1 : 0);
@@ -751,10 +753,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
                     float c2 = dot(D, D);
                     if (far) {
                         // the path from Q to Q1 is no longer than c (1 + c^2 / 12 Rk^2) (a curve that
-                        // bends by at most 1 / Rk, c the chord, up to 1.5 Rk): within g, it cannot
-                        // reach the toy. Else the same step again, half as long
+                        // bends by at most 1 / Rk, c the chord, up to 1.5 Rk, its length below pi Rk:
+                        // the length per q at most doubles along the step): within g, it cannot reach
+                        // the toy. Else the same step again, half as long
                         float k = 1.0 + c2 / (12.0 * Rk * Rk);
-                        if (c2 * k * k > g * g || c2 > dsMax * dsMax) {
+                        if (c2 * k * k > g * g || c2 > dsMax * dsMax || P1.w > 2.0 * dsdq) {
                             dsdq *= 2.0;
                             continue;
                         }
