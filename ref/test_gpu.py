@@ -4,7 +4,10 @@ builds them (ref/geo.py), on three throats: the app's, h = R, a crease (h < R).
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
   where the sweep reaches a value (the floor's hit): the sweep at the GPU's l against the value;
   which way the eye sees a point (geo_see, the bodies' vertices): rays shot by RK4 from an eye to a
-    point, the GPU given the point must find that ray (angle) and its length;
+    point, the GPU given the point must find that ray (angle) and its length; half of them launched
+    within a hair to a third of a radian of the tangent, eyes also at the cylinder's end;
+  the floor (geo_floor, each pixel's ray): where it meets the floor, or that it does not, against
+    the same sweeps in float64 (ref/geo.py's floor_hit), half the rays near the tangent;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Exit status 1 on any failure.
@@ -14,7 +17,7 @@ import sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
-from geo import Space, shoot, app_profile
+from geo import Space, shoot, app_profile, floor_hit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INC = open(os.path.join(HERE, '..', 'godot', 'shaders', 'geo.gdshaderinc')).read()
@@ -28,6 +31,7 @@ SWEEP_ABS, SWEEP_REL = 5e-5, 1e-5
 INVERSE = 5e-4
 DIRECTION = 5e-4
 LENGTH_REL = 1e-2
+FLOOR_ABS, FLOOR_REL = 1e-3, 2e-3     # metres of l where a ray meets the floor, and a share of its way
 EYE_POS, EYE_AXES = 2e-5, 3e-4
 CHORD = 5e-5
 
@@ -43,11 +47,10 @@ uniform int mode;
 void main() {
 	uint i = gl_GlobalInvocationID.x;
 	vec4 a = inp[2 * i], c = inp[2 * i + 1];
-	if (mode == 0) {            // a = (b, |l|): (psi, len) from the origin
-		float sig = geo_sigma(a.x - g_prof.x);
-		outp[i] = vec4(geo_from_origin(a.x, sig, a.y, geo_r(a.y) - a.x), 0.0, 0.0);
-	} else if (mode == 1) {     // a = (b, psi): |l|
-		outp[i] = vec4(geo_l_at(a.x, geo_sigma(a.x - g_prof.x), a.y), 0.0, 0.0, 0.0);
+	if (mode == 0) {            // a = (b, |l|, b - rho0, r - b): (psi, len) from the origin
+		outp[i] = vec4(geo_from_origin(a.x, geo_sigma(a.z), a.y, a.w), 0.0, 0.0);
+	} else if (mode == 1) {     // a = (b, psi, b - rho0): |l|
+		outp[i] = vec4(geo_l_at(a.x, geo_sigma(a.z), a.y), 0.0, 0.0, 0.0);
 	} else if (mode == 2) {     // a = (eye l, n), c = (point l, n): (direction's radial, tangential, len)
 		float len; vec4 arr;
 		vec4 d = geo_see(a.x, a.yzw, c.x, c.yzw, len, arr);
@@ -57,6 +60,12 @@ void main() {
 		float el; vec3 en; vec4 ex, ey, ez;
 		geo_eye(iv, vec3(0.0), el, en, ex, ey, ez);
 		outp[4 * i] = vec4(el, en); outp[4 * i + 1] = ex; outp[4 * i + 2] = ey; outp[4 * i + 3] = ez;
+	} else if (mode == 5) {     // a = (eye l, n), c = a ray (tangent vector there): (hit, l, way, 0)
+		float al = abs(a.x), lh, way, skys;
+		vec2 nh;
+		vec3 skyd;
+		bool hit = geo_floor(a.x, vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al)), a.yzw, c, lh, nh, way, skyd, skys);
+		outp[i] = vec4(hit ? 1.0 : 0.0, lh, way, 0.0);
 	} else {                    // a = a ball's centre, c = (direction in its tangent frame, radius): (chord, sdf)
 		vec4 N = geo_normal(a);
 		vec4 e1 = vec4(0.0, 0.0, 0.0, 1.0) - N.w * N;
@@ -117,16 +126,17 @@ def check(name, ok, detail):
 
 def profile_checks(name, S, gpu, rng):
     fails = 0
-    # sweep and length from the origin
+    # sweep and length from the origin; b as float32 has it, b - rho0 and r - b as the shaders
+    # carry them, exact (geo_dr, geo_sigma)
     rows, ref = [], []
     while len(rows) < 1500:
-        b = rng.uniform(0, S.Rout * 1.3)
+        b = float(np.float32(rng.uniform(0, S.Rout * 1.3)))
         lo = 0.0 if b < S.rmin else S.l_turn(b)
         l = lo + rng.uniform(0, 1) ** 2 * 12
         e = S.sweep(b, l)
         if not np.all(np.isfinite(e)) or e[0] > 2 * np.pi:      # past half a turn the floor stops any ray
             continue
-        rows.append([b, l, 0, 0, 0, 0, 0, 0]); ref.append(e)
+        rows.append([b, l, b - S.rho0, float(S.r(l)) - b, 0, 0, 0, 0]); ref.append(e)
     o = gpu.run(0, rows)[:, :2]; ref = np.array(ref)
     err = np.abs(o[:, 0] - ref[:, 0]) / (SWEEP_ABS + SWEEP_REL * np.abs(ref[:, 0]))
     lerr = np.abs(o[:, 1] - ref[:, 1]) / (1e-3 + LENGTH_REL * ref[:, 1])
@@ -134,23 +144,20 @@ def profile_checks(name, S, gpu, rng):
     # where the sweep reaches a value
     rows, want = [], []
     while len(rows) < 1000:
-        b = rng.uniform(0, S.Rout * 1.2); psi = rng.uniform(0, 2.5)
+        b = float(np.float32(rng.uniform(0, S.Rout * 1.2))); psi = rng.uniform(0, 2.5)
         L = S.l_at(b, psi)
         if not np.isfinite(L):
             continue
-        rows.append([b, psi, 0, 0, 0, 0, 0, 0]); want.append(psi)
+        rows.append([b, psi, b - S.rho0, 0, 0, 0, 0, 0]); want.append(psi)
     o = gpu.run(1, rows)[:, 0]
     err = [abs(S.sweep(r[0], max(l, S.l_turn(r[0]) if r[0] >= S.rmin else l))[0] - w) for r, l, w in zip(rows, o, want)]
     fails += not check(f'{name}: where the sweep reaches a value', max(err) <= INVERSE, f'sweep at the GPU l off by {max(err):.1e} rad at most (1000 rays)')
     # which way the eye sees a point
     rows, cases = [], []
-    # where the eye stands: on a cylinder if there is one; without one, off l = 0, the photon sphere's
-    # point or the crease (no eye stands within a hair of either: see docs/geometry.md, «Точность»)
-    places = [0.0, 0.5, S.Lc - 0.1] if S.Lc > 0 else [0.3, -0.4]
-    places += [0.5 * (S.Lc + S.L), S.L - 0.05, S.L + 0.5, S.L + 5, -0.5 * (S.Lc + S.L), -(S.L + 1), 25.0]
+    places = eye_places(S)
     while len(rows) < 1200:
-        el = rng.choice(places) + rng.uniform(-0.1, 0.1)
-        alpha = rng.uniform(0, np.pi)
+        el = eye_at(places, rng)
+        alpha = launch(rng, len(rows) % 2)
         s = rng.choice([rng.uniform(0.05, 0.6), rng.uniform(0.6, 4), rng.uniform(4, 30)])
         sol = shoot(S, el, alpha, smax=s)
         lp, vl, phi = sol.y[:, -1]
@@ -162,11 +169,32 @@ def profile_checks(name, S, gpu, rng):
     derr, lerr = [], []
     for (el, alpha, s, phi), g in zip(cases, o):
         derr.append(abs(np.arctan2(g[1], g[0] * (1 if el >= 0 else -1)) - alpha))
-        b = float(S.r(el)) * np.sin(alpha)
-        if abs(b - S.rmin) > 5e-2:          # not round the photon sphere, where length is ill-posed
-            lerr.append(abs(g[2] - s) / (1e-3 + LENGTH_REL * s))
+        lerr.append(abs(g[2] - s) / (1e-3 + LENGTH_REL * s))
     fails += not check(f'{name}: which way the eye sees a point', max(derr) <= DIRECTION and max(lerr) <= 1,
                        f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit (1200 points)')
+    # where each pixel's ray meets the floor
+    rows, want = [], []
+    while len(rows) < 1500:
+        el = eye_at(places, rng)
+        r = float(S.r(abs(el)))
+        h = rng.uniform(0.3, 2.0) / r                      # the eye 0.3 to 2 m over the floor
+        en = np.array([np.cos(h), 0.0, np.sin(h)])
+        beta = rng.uniform(0, np.pi)                       # the ray's plane: from straight down to level
+        t = np.cos(beta) * np.array([np.sin(h), 0.0, -np.cos(h)]) + np.sin(beta) * np.array([0.0, 1.0, 0.0])
+        phif = np.arctan2(en[2], -t[2])
+        alpha = launch(rng, len(rows) % 2)
+        ref = floor_hit(S, el, alpha, phif)
+        rows.append([el, *en, (1 if el >= 0 else -1) * np.cos(alpha), *(np.sin(alpha) * t)]); want.append((ref, phif))
+    o = gpu.run(5, rows)
+    perr, wrong = [], 0
+    for g, (ref, phif) in zip(o, want):
+        if (ref[0] is not None) != (g[0] > 0.5):
+            # floor or sky: may differ only where the ray goes off at the horizon
+            wrong += not ((ref[0] is None and abs(ref[1] - phif) < 1e-4) or (ref[0] is not None and abs(ref[0]) > 1e3))
+        elif ref[0] is not None:
+            perr.append(abs(g[1] - ref[0]) / (FLOOR_ABS + FLOOR_REL * ref[1]))
+    fails += not check(f'{name}: where a ray meets the floor', wrong == 0 and max(perr) <= 1,
+                       f'{wrong} floor for sky or back, l off by {max(perr):.2f} of the limit at most (1500 rays)')
     # a ball's surface
     rows = []
     for k in range(400):
@@ -182,6 +210,27 @@ def profile_checks(name, S, gpu, rng):
     cerr = np.abs(o[:, 0] - rad).max(); serr = np.abs(o[:, 1]).max()
     fails += not check(f'{name}: a ball\'s vertices', cerr <= CHORD and serr <= CHORD, f'chord off by {cerr:.1e} m, off the space by {serr:.1e} m (400 vertices)')
     return fails
+
+
+def eye_places(S):
+    """Where the eye stands, (l, spread): on the cylinder if there is one, and at its end; without one,
+    off l = 0, the photon sphere's point or the crease (no eye stands within a hair of either: see
+    docs/geometry.md, «Точность»); the fillet, its end, the flat universes."""
+    places = [(0.0, 0.1), (0.5, 0.1), (S.Lc - 0.1, 0.1), (S.Lc, 0.01), (-S.Lc, 0.01)] if S.Lc > 0 else [(0.3, 0.1), (-0.4, 0.1)]
+    return places + [(0.5 * (S.Lc + S.L), 0.1), (S.L - 0.05, 0.1), (S.L + 0.5, 0.1), (S.L + 5, 0.1),
+                     (-0.5 * (S.Lc + S.L), 0.1), (-(S.L + 1), 0.1), (25.0, 0.1)]
+
+
+def eye_at(places, rng):
+    c, w = places[rng.integers(len(places))]
+    return c + rng.uniform(-w, w)
+
+
+def launch(rng, near_tangent):
+    """A launch angle from the outward radial direction: any, or within 1e-6 to 0.3 rad of the tangent."""
+    if near_tangent:
+        return 0.5 * np.pi + rng.choice([-1, 1]) * 10 ** rng.uniform(-6, -0.5)
+    return rng.uniform(0, np.pi)
 
 
 def eye_checks(S, gpu, rng):

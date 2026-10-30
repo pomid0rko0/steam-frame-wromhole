@@ -1,6 +1,7 @@
 extends SceneTree
-## A scene for tools/adreno_stats.sh --paths (not a test): the floor's shader (floor.gdshaderinc)
-## with each of its ways through forced by replacing its branches' conditions, drawn one at a time,
+## A scene for tools/adreno_stats.sh --paths (not a test): the floor's shader (floor.gdshaderinc,
+## its ray's way in geo.gdshaderinc's geo_floor, pasted in for it) with each of its ways through
+## forced by replacing its branches' conditions, drawn one at a time,
 ## so that the compiler gives each way's statistics after a line "variant <name>". Each runs WAIT
 ## seconds, and the scene as it starts START seconds before the first: Godot specialises a pipeline
 ## on a thread of its own, after the first draw.
@@ -8,8 +9,9 @@ extends SceneTree
 
 const START := 4.0
 const WAIT := 1.5
-# the branches' conditions in floor.gdshaderinc, as written there
+# the branches' conditions in geo_floor, as written there
 const STRAIGHT := "if (le >= L && (ca >= 0.0 || b >= Rout)) {"
+const UNROLLED := "} else if (max(le, abs(lf)) <= g_prof.z) {"
 const STRAIGHT_FLOOR := "if (dc.z < 0.0) {"
 const EYE_FLAT := "if (le >= L) {"
 const EYE_FILLET := "} else if (le > Lc) {"
@@ -29,7 +31,7 @@ func _initialize() -> void:
 	main.xr_name = "none"
 	main.toys.enabled = false
 	root.add_child(main)
-	var curved := [[STRAIGHT, "if (false) {"]]
+	var curved := [[STRAIGHT, "if (false) {"], [UNROLLED, "} else if (false) {"]]
 	var eye_flat := [[EYE_FLAT, "if (true) {"]]
 	var eye_fillet := [[EYE_FLAT, "if (false) {"], [EYE_FILLET, "} else if (true) {"]]
 	var eye_cyl := [[EYE_FLAT, "if (false) {"], [EYE_FILLET, "} else if (false) {"]]
@@ -40,6 +42,7 @@ func _initialize() -> void:
 	var fillet := [[BEYOND, "if (false) {"], [CYLINDER, "} else if (false) {"]]
 	_variant("eye in a flat universe, the ray straight to the floor", [[STRAIGHT, "if (true) {"], [STRAIGHT_FLOOR, "if (true) {"]])
 	_variant("eye in a flat universe, the ray straight to the sky", [[STRAIGHT, "if (true) {"], [STRAIGHT_FLOOR, "if (false) {"]])
+	_variant("eye in the throat's cylinder, the ray straight on it unrolled to the floor", [[STRAIGHT, "if (false) {"], [UNROLLED, "} else if (true) {"]])
 	_variant("curved: the sky, the eye in a flat universe", curved + eye_flat + sky)
 	_variant("curved: the sky, the eye on the fillet", curved + eye_fillet + sky)
 	_variant("curved: the floor beyond the curved zone, the eye in a flat universe", curved + eye_flat + hit + beyond)
@@ -51,8 +54,11 @@ func _initialize() -> void:
 
 func _variant(name: String, swaps: Array) -> void:
 	var code := FileAccess.get_file_as_string("res://shaders/floor.gdshaderinc")
+	var inc := "#include \"res://shaders/geo.gdshaderinc\""
+	assert(code.count(inc) == 1, "floor.gdshaderinc no longer includes geo.gdshaderinc once")
+	code = code.replace(inc, FileAccess.get_file_as_string("res://shaders/geo.gdshaderinc"))
 	for s: Array in swaps:
-		assert(code.count(s[0]) == 1, "floor.gdshaderinc no longer has one '%s'" % s[0])
+		assert(code.count(s[0]) == 1, "the floor's shader no longer has one '%s'" % s[0])
 		code = code.replace(s[0], s[1])
 	var sh := Shader.new()
 	sh.code = "shader_type spatial;\n" + code
