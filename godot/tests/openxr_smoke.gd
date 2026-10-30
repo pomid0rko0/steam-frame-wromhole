@@ -5,8 +5,8 @@ extends SceneTree
 ## from the Steam library, the menu's rate row (right: picked, not yet in effect; A: in effect)
 ## sets this app's rate in SteamVR's settings, and as the display stays at 20 Hz the head asks for
 ## a restart (a display that follows is answered too); choices made while vrcmd runs end with the
-## last one written; the scale row sets the render scale and keeps it; foveation starts with our
-## narrow map; the foveation row turns foveated rendering
+## last one written; the scale row sets the render scale and keeps it; foveation starts with
+## SteamVR's strong map; the foveation row turns foveated rendering
 ## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
 ## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
 ## below 100% turns it off again; our own density map comes from a texture, and the order of its
@@ -117,9 +117,9 @@ func _process(_delta: float) -> bool:
 			U.check("the menu heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		U.check("frames judged, green", green, "after %d frames, seconds %s" % [frames - 232, r.seconds])
 		# after the green check: each step of the render scale rebuilds the buffers, a missed frame or two
-		U.check("foveation at first: our narrow map, the width first", main.foveation.level == p.DEFAULT_FOVEATION
-				and main.foveation.order == p.DEFAULT_ORDER and _value(p, "fov") == "плавная узкая"
-				and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.foveation.split_pass.enabled)
+		U.check("foveation at first: SteamVR's strong map, our own the width first", main.foveation.level == p.DEFAULT_FOVEATION
+				and main.foveation.order == p.DEFAULT_ORDER and _value(p, "fov") == "SteamVR сильная"
+				and main.xr_view.vrs_mode == Viewport.VRS_XR and main.foveation.split_pass.enabled)
 		U.check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _value(p, "scale") == "100% (128×128)")
 		p.select("scale")
 		p.change(1)

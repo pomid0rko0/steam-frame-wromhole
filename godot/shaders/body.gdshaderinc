@@ -51,7 +51,6 @@ void vertex() {
 	// orientation is the eyes' (geo_normal points to A's -w, B's +w), so the mesh keeps its winding
 	vec4 E3 = -geo_cross4(E1, E2, N);
 	float size = INSTANCE_CUSTOM.a;
-	v_col = INSTANCE_CUSTOM.rgb;
 	vec4 x = size * (VERTEX.x * E1 + VERTEX.y * E2 + VERTEX.z * E3);
 	P = geo_onto(C + x, N);
 #ifdef BALL
@@ -63,16 +62,13 @@ void vertex() {
 	}
 	nrm = P - C;
 #else
-	v_box = VERTEX;
 	nrm = abs(VERTEX.x) > 0.999 ? sign(VERTEX.x) * E1 : (abs(VERTEX.y) > 0.999 ? sign(VERTEX.y) * E2 : sign(VERTEX.z) * E3);
 #endif
 #elif defined(ARROWS)
 	P = vec4(0.0);
 	nrm = vec4(0.0);
-	v_col = COLOR.rgb;
 #else
 	vec3 xc = VERTEX;
-	v_col = COLOR.rgb;
 	float h = g_prof.z - g_prof.y * geo_sin(g_prof2.w) + g_prof.y;
 	P = sheet > 0.0 ? vec4(xc, h) : vec4(-xc.x, xc.yz, -h);
 	nrm = vec4(sheet > 0.0 ? NORMAL.x : -NORMAL.x, NORMAL.yz, 0.0);
@@ -81,17 +77,11 @@ void vertex() {
 #ifdef ARROWS
 	pn = normalize(VERTEX);
 	float pl = UV.x;
-	vec4 Np = vec4(0.0);
 #else
 	float pl = geo_l_of(P, pn);
-	vec4 Np = geo_normal(P);
 #endif
-	v_n = nrm - dot(nrm, Np) * Np;
-	vec4 s4 = look_sun4(pl);
-	v_sun = s4 - dot(s4, Np) * Np;
-	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
-	v_l = pl;
-	v_h = P.z;
+	// the place in the view first: what only the shading needs is worked out after the search,
+	// not held through it
 	float el;
 	vec3 en;
 	vec4 ex, ey, ez;
@@ -99,14 +89,34 @@ void vertex() {
 	float len, fell;
 	vec4 arrive;
 	vec4 dir = geo_see(el, en, pl, pn, len, arrive, fell);
-	v_ray = arrive;
-	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
-	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
-	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 #ifdef ARROWS
 	len *= 1.0 - 1e-3 * COLOR.a;
 #endif
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+	v_ray = arrive;
+#ifdef ARROWS
+	vec4 Np = vec4(0.0);
+	v_col = COLOR.rgb;
+#else
+	vec4 Np = geo_normal(P);
+#ifdef TOY
+	v_col = INSTANCE_CUSTOM.rgb;
+#ifdef CUBE
+	v_box = VERTEX;
+#endif
+#else
+	v_col = COLOR.rgb;
+#endif
+#endif
+	v_n = nrm - dot(nrm, Np) * Np;
+	vec4 s4 = look_sun4(pl);
+	v_sun = s4 - dot(s4, Np) * Np;
+	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
+	v_l = pl;
+	v_h = P.z;
+	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
+	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
+	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 }
 
 void fragment() {

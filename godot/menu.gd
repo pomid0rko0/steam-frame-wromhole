@@ -16,8 +16,9 @@ const SCALES := [1.0, 0.9, 0.8, 0.7]
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
-# until one is chosen: our narrow map, the width first (its border is not seen in the headset)
-const DEFAULT_FOVEATION := 5
+# until one is chosen: SteamVR's strong map, the cheapest frame of all in the headset's speed check
+# (bench.gd); our own maps the width first
+const DEFAULT_FOVEATION := 3
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1

@@ -342,17 +342,7 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 		float sd = length(cr);
 		float delta = geo_atan2(sd, c);
 		vec3 t = sd > 1e-9 ? (pn - c * en) / sd : (abs(en.z) < 0.9 ? normalize(cross(en, vec3(0.0, 0.0, 1.0))) : normalize(cross(en, vec3(1.0, 0.0, 0.0))));
-		// the straight line on the cylinder unrolled. Where both are in the throat's cylinder, the
-		// space there is the product of l and a sphere of radius rho0 and that is the geodesic (the
-		// family below can't take a point at about the eye's l there: its rays circle the cylinder,
-		// their sweep grows without bound as they turn tangent, and the length comes out of a
-		// division by their dl/ds). Elsewhere it stands should no ray of the search come out
-		// finite, which a GPU's arithmetic must never make a hole of; fell says so.
-		float dl0 = lp - le, arc0 = re * delta;
-		len = sqrt(dl0 * dl0 + arc0 * arc0);
-		float cl0 = dl0 / max(len, 1e-20), sl0 = arc0 / max(len, 1e-20);
-		arrive = vec4(sl0 * (c * t - sd * en), side * cl0);
-		dir = vec4(side * cl0, sl0 * t);
+		bool found = false;
 		if (le > g_prof.z || alp > g_prof.z) {
 			// The rays that reach |l| = |lp|, by their launch angle from the radial direction
 			// (outward for lp >= le, else inward): the first crossings, ang in [0, A1) (A1: the
@@ -412,13 +402,16 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 				float sigma = geo_sigma(bmr);
 				float gap_e = re * ca * ca / (1.0 + sa);     // re - b
 				float gap_p = (drp - dre) + gap_e;           // rp - b
-				vec2 s;
-				if (outw && !turned) {
-					s = geo_between(bp, sigma, le, gap_e, alp, gap_p, false);
-				} else if (!outw && !turned && lp >= 0.0) {
-					s = geo_between(bp, sigma, alp, gap_p, le, gap_e, false);
-				} else {
-					s = geo_from_origin(bp, sigma, le, gap_e) + geo_from_origin(bp, sigma, alp, gap_p);
+				// its sweep and length to the point: between the two |l| on one stretch, or from its
+				// origin to each (turned, or through l = 0): one geo_between in the code, run once or twice
+				bool twice = turned || (!outw && lp < 0.0);
+				float org = twice ? geo_origin(bp, sigma) : 0.0;
+				vec2 s = vec2(0.0);
+				for (int k = 0; k < 2; k++) {
+					if (k == 1 && !twice) break;
+					bool to_p = twice ? k == 1 : outw;           // the stretch ends at the point
+					s += geo_between(bp, sigma, twice ? org : (outw ? le : alp), twice ? 0.0 : (outw ? gap_e : gap_p),
+							to_p ? alp : le, to_p ? gap_p : gap_e, twice);
 				}
 				float val = s.x - delta;
 				if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
@@ -467,13 +460,24 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 			vec4 arr = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
 			// the search's ray if any was finite
 			float lens = res.y;
-			if (geo_finite(lens + dca + dsa + arr.x + arr.y + arr.z + arr.w) && lens > 0.0 && lens < 1e7) {
-				len = lens;
-				arrive = arr;
-				dir = vec4(side * dca, dsa * t);
-			} else {
-				fell = 1.0;
-			}
+			found = geo_finite(lens + dca + dsa + arr.x + arr.y + arr.z + arr.w) && lens > 0.0 && lens < 1e7;
+			len = lens;
+			arrive = arr;
+			dir = vec4(side * dca, dsa * t);
+			if (!found) fell = 1.0;
+		}
+		if (!found) {
+			// the straight line on the cylinder unrolled. Where both are in the throat's cylinder,
+			// the space there is the product of l and a sphere of radius rho0 and that is the
+			// geodesic (the family above can't take a point at about the eye's l there: its rays
+			// circle the cylinder, their sweep grows without bound as they turn tangent, and the
+			// length comes out of a division by their dl/ds). Elsewhere it stands should no ray of
+			// the search come out finite, which a GPU's arithmetic must never make a hole of.
+			float dl0 = lp - le, arc0 = re * delta;
+			len = sqrt(dl0 * dl0 + arc0 * arc0);
+			float cl0 = dl0 / max(len, 1e-20), sl0 = arc0 / max(len, 1e-20);
+			arrive = vec4(sl0 * (c * t - sd * en), side * cl0);
+			dir = vec4(side * cl0, sl0 * t);
 		}
 	}
 	return dir;
