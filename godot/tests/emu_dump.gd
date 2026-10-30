@@ -112,9 +112,6 @@ func _process(_d: float) -> bool:
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
-			# the stencil's proxies (Tracer.proxy_spheres), chart spheres of the head's universe, or
-			# none (the whole view marked, or no toys)
-			"proxies": _proxies(),
 		})
 		i += 1
 	return false
@@ -159,18 +156,6 @@ func _hold_ball() -> void:
 		w.add_cube(g[0], g[1], Vector4.ZERO, [x, y, z], Vector3.ZERO, Hands.NEW_CUBE_HALF,
 				Color(0.95, 0.7, 0.3)).held = &"left_hand"
 	main.draw_toys()
-
-
-func _proxies() -> Array:
-	var out := []
-	if main.tracer.toy_count > 0:
-		for s in main.tracer.proxy_spheres(m_head_l()):
-			out.append(_v4(s))
-	return out
-
-
-func m_head_l() -> float:
-	return main.tracer.material.get_shader_parameter("head_l")
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.

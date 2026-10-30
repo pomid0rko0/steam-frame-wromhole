@@ -6,7 +6,7 @@ extends SceneTree
 ## on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/grab_test.gd
 ## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
-##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is;
+##    them, the stencil's mark knows them, and the left eye sees the hand's ball where it is;
 ##    a small ball just in front of the eye, toward the corner of a wide frustum, is drawn with
 ##    the stencil as over the whole view (the near plane lies farther along a corner ray)
 ## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
@@ -159,9 +159,9 @@ func _hands() -> void:
 		detail = "right at %s (%s), left at %s (%s)" % [cr, _chart(pr), cl, _chart(pl)]
 	U.check("each hand where its grip is, on the curved space", ok, detail)
 	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
-	var proxies: int = main.tracer.proxy_spheres(main.foot_l).size()
-	U.check("the shader draws both hands, the stencil's proxies cover them", nb == 2 and proxies == 3,
-			"shader balls %d (2), proxies %d (the shell and 2 hands)" % [nb, proxies])
+	var marked: int = main.tracer.mark_material.get_shader_parameter("wh_nBall")
+	U.check("the shader draws both hands, the stencil's mark knows them", nb == 2 and marked == 2
+			and main.tracer.mark.visible, "shader balls %d (2), the mark's %d (2)" % [nb, marked])
 	# the left eye's picture with the right hand and without it
 	var with_hand := _left_eye()
 	_pose(right, pr, Basis.IDENTITY, false)
@@ -198,9 +198,8 @@ func _hands() -> void:
 
 # 1
 ## A frustum wider than this test's (tangents 1.8, 61 degrees, its corner 69 degrees off the axis)
-## and a ball of radius 5 mm 3 cm in front of the left eye toward its corner: along the ray through
-## the ball the near plane lies 12.5 cm from the eye, beyond the 11.7 cm the ball's proxy would reach
-## with the fixed margin.
+## and a ball of radius 5 mm 3 cm in front of the left eye toward its corner: drawn with the
+## stencil's split as over the whole view.
 func _near_eye() -> void:
 	_clear()
 	var pr := Vector3(0.3, 0.8, 0.3)          # the hands low and behind: out of view

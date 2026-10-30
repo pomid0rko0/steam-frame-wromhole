@@ -16,10 +16,10 @@ headset, S x S pixels (tools/adreno_cost.sh passes tools/env.sh's HEADSET_EYE) a
 (default 104, a guess at the Frame's: the headset log's per-second "refresh:" line gives the frustum
 the runtime hands Godot), on N random tiles (default 300; the same tiles for every LOG of the same
 wave width with the same seed K). --profile: cycles per stretch of code.
---split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
-toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
-(the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
-GPU packs the passing pixels into waves). The proxies' own pass is not counted.
+--split: the frame split by the stencil (tracer.gd, «The stencil split»): LOG's ray tracer (with the
+toys) where the mark (wh_mayMeetToy, mark() here) says a pixel's ray may meet a toy, PLAINLOG's (the
+plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the GPU
+packs the passing pixels into waves). The mark's own pass is not counted.
 """
 import json
 import os
@@ -275,7 +275,7 @@ def share_of(e, size, fov, step=16):
     tan = np.tan(np.radians(fov) / 2.0)
     g = np.arange(step // 2, size, step)
     xs, ys = np.meshgrid(g, g)
-    return float(proxy_marked(e, xs.ravel(), ys.ravel(), size, tan, tan).mean())
+    return float(mark(e, xs.ravel(), ys.ravel(), size, tan, tan).mean())
 
 
 def srgb(c):
@@ -311,32 +311,56 @@ def check(sh, entries, ntiles, rng, unis=None):
     return worst
 
 
-def proxy_marked(e, xs, ys, size, tan_x, tan_y):
-    """Per lane: whether the stencil marks its pixel (Tracer.set_head, proxy_spheres): its straight ray
-    from the head, in the chart of the head's universe, meets a proxy sphere (or starts in one).
-    No proxies: the whole view is marked."""
-    P = np.array(e.get('proxies') or [], float).reshape(-1, 4)
-    if len(P) == 0:
-        return np.ones(len(xs), bool)
+def mark(e, xs, ys, size, tan_x, tan_y):
+    """Per lane: whether the stencil marks its pixel, wh_mayMeetToy (wormhole_core.gdshaderinc) for its
+    ray from the head, with the pose's uniforms (tests/emu_dump.gd)."""
+    u = e.get('uniforms', {})
     B = np.array(e['cam_basis'], float).T
     f = np.array(e['head_f'], float)
     vx = (2.0 * (xs + 0.5) / size - 1.0) * tan_x
     vy = (1.0 - 2.0 * (ys + 0.5) / size) * tan_y
     pd = B @ np.stack([vx, vy, -np.ones_like(vx)], 0)
     V = pd[0][None] * f[0][:, None] + pd[1][None] * f[1][:, None] + pd[2][None] * f[2][:, None]
+    V /= np.linalg.norm(V, axis=0)
     l, n = e['head_l'], np.array(e['head_n'], float)
+    nb, nc = int(u.get('wh_nBall', 0)), int(u.get('wh_nCube', 0))
+    ball = np.array(u.get('wh_ball', []), float).reshape(-1, 4)[:nb]
+    bcol = np.array(u.get('wh_ballCol', []), float).reshape(-1, 4)[:nb]
+    fball = np.array(u.get('wh_fball', []), float).reshape(-1, 4)[:nb]
+    cube = np.array(u.get('wh_cube', []), float).reshape(-1, 4)[:nc]
+    ccol = np.array(u.get('wh_cubeCol', []), float).reshape(-1, 4)[:nc]
+    bidx, cidx = u.get('wh_bIdx', [0] * 4), u.get('wh_cIdx', [0] * 4)
+    vl, w = V[0], V[1:]
     side = 1.0 if l > 0 else -1.0
-    M = np.array([side, 1.0, 1.0])
-    x = M * WH.eye(l)[0] * n
-    d = M[:, None] * (side * V[0][None] * n[:, None] + V[1:])
-    d /= np.linalg.norm(d, axis=0)
-    hit = np.zeros(len(xs), bool)
-    for c in P:
-        oc = (x - c[:3])[:, None]
-        b = (oc * d).sum(0)
-        cq = float((oc * oc).sum()) - c[3] * c[3]
-        hit |= (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
-    return hit
+    shell = np.full(len(xs), abs(l) < WH.L)
+    if not shell.all():
+        M = np.array([side, 1.0, 1.0])
+        x = M * (abs(l) - WH.L + WH.Rout) * n
+        d = M[:, None] * (side * vl[None] * n[:, None] + w)
+
+        def line(c, rr):
+            oc = (x - c)[:, None]
+            b = (oc * d).sum(0)
+            cq = float((oc * oc).sum()) - rr * rr
+            return (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
+        hit = line(np.zeros(3), 1.001 * WH.Rout + 1e-4)
+        A = side > 0
+        for i in range(0 if A else bidx[2], bidx[1] if A else nb):
+            if fball[i][3] > 0:
+                hit |= line(fball[i][:3], 1.001 * np.sqrt(fball[i][3]) + 1e-4)
+        for i in range(0 if A else cidx[2], cidx[1] if A else nc):
+            dw = side * WH.h - cube[i][3]
+            rb = 2.0 * ccol[i][3]
+            hit |= line(M * cube[i][:3], 1.001 * np.sqrt(max(rb * rb - dw * dw, 0.0)) + 1e-4)
+        shell = hit
+    e2 = w / np.linalg.norm(w, axis=0)
+    near = np.zeros(len(xs), bool)
+    for c, rr in [(ball[i][:3], 1.001 * bcol[i][3] + 1e-4) for i in range(nb)] + \
+                 [(cube[i][:3], 2.002 * ccol[i][3] + 1e-4) for i in range(nc)]:
+        c1 = c @ n
+        c2 = c @ e2
+        near |= c @ c - c1 * c1 - c2 * c2 < rr * rr
+    return shell & near
 
 
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
@@ -427,7 +451,7 @@ def main():
         # the plain ray tracer: its own uniforms are the same material's
         plain = Shader(opt['--split'], (spec[0] | {'WH_NO_BALLS'}, spec[1]), uniforms)
         plain.flat_order = order
-        share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
+        share = lambda e, xs, ys, tan: float(mark(e, xs, ys, size, tan, tan).mean())
     res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
     resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
                 lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis) if plain else None

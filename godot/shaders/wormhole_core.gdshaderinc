@@ -1117,6 +1117,71 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     return h;
 }
 
+#ifndef WH_NO_BALLS
+// ---------------------------------------------------------------- the stencil's mark
+// Whether the ray from (l0, n0) along (vl, w) may meet a movable ball or cube anywhere on its way:
+// stencil_mark.gdshader marks the pixels where it may, and only there the ray tracer with them runs
+// (tracer.gd, «The stencil split»). The whole ray lies in span(e1, e2, w axis) of R^4 (wh_curved),
+// the straight parts outside the shell too, so a toy whose centre is farther than its reach from
+// that subspace is never met. A ray from a flat universe that misses the shell goes straight and
+// meets only that universe's toys, each within its sphere in the chart (wh_traceFlat's). Reaches a
+// thousandth larger, plus 0.1 mm: the ray tracer works out the subspace from where the ray enters
+// the shell, with other round-off.
+bool wh_mayMeetToy(float l0, vec3 n0, float vl, vec3 w) {
+    float side = l0 > 0.0 ? 1.0 : -1.0;
+    bool shell = abs(l0) < wh_Lsh();
+    if (!shell) {
+        vec3 x = wh_M(side, (abs(l0) - wh_Lsh() + wh_Rout()) * n0);
+        vec3 d = wh_M(side, side * vl * n0 + w);
+        float bq = dot(x, d);
+        float Ro = 1.001 * wh_Rout() + 1e-4;
+        float cq = dot(x, x) - Ro * Ro;
+        shell = bq < 0.0 && bq * bq >= cq;
+        // this universe's balls (the sphere its sheet cuts from each) and cubes (their bounding
+        // spheres in R^4 cut by the sheet), along the line
+        bool A = side > 0.0;
+        for (int i = A ? 0 : wh_bIdx.z; i < (A ? wh_bIdx.y : wh_nBall); i++) {
+            vec4 S = wh_fball[i];
+            float rr = 1.001 * sqrt(max(S.w, 0.0)) + 1e-4;
+            vec3 oc = x - S.xyz;
+            float b = dot(oc, d);
+            float c = dot(oc, oc) - rr * rr;
+            shell = shell || (S.w > 0.0 && (c <= 0.0 || (b < 0.0 && b * b >= c)));
+        }
+        for (int i = A ? 0 : wh_cIdx.z; i < (A ? wh_cIdx.y : wh_nCube); i++) {
+            vec4 Cc = wh_cube[i];
+            float dw = side * wh_h - Cc.w;
+            float rb = 2.0 * wh_cubeCol[i].w;
+            float rr = 1.001 * sqrt(max(rb * rb - dw * dw, 0.0)) + 1e-4;
+            vec3 oc = x - wh_M(side, Cc.xyz);
+            float b = dot(oc, d);
+            float c = dot(oc, oc) - rr * rr;
+            shell = shell || (c <= 0.0 || (b < 0.0 && b * b >= c));
+        }
+        if (!shell) return false;
+    }
+    // the subspace, as wh_curved takes it
+    vec3 we = w + 1e-7 * (abs(n0.x) < 0.9 ? vec3(0.0, n0.z, -n0.y) : vec3(-n0.z, 0.0, n0.x));
+    vec3 e2 = we * inversesqrt(dot(we, we));
+    bool any = false;
+    for (int i = 0; i < wh_nBall; i++) {
+        vec3 c = wh_ball[i].xyz;
+        float c1 = dot(c, n0);
+        float c2 = dot(c, e2);
+        float rr = 1.001 * wh_ballCol[i].w + 1e-4;
+        any = any || dot(c, c) - c1 * c1 - c2 * c2 < rr * rr;
+    }
+    for (int i = 0; i < wh_nCube; i++) {
+        vec3 c = wh_cube[i].xyz;
+        float c1 = dot(c, n0);
+        float c2 = dot(c, e2);
+        float rr = 2.002 * wh_cubeCol[i].w + 1e-4;
+        any = any || dot(c, c) - c1 * c1 - c2 * c2 < rr * rr;
+    }
+    return any;
+}
+#endif
+
 // ---------------------------------------------------------------- shading
 // Grid lines need screen-space derivatives (fwidth), which are only defined in uniform control
 // flow: the line coordinates of the sky or the floor are computed for every pixel, their fwidth

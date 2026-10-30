@@ -92,6 +92,14 @@ void vertex() {
 
 void fragment() {
 	vec4 V = normalize(v_ray);
+#ifdef WH_MARK
+	// the stencil's mark (stencil_mark.gdshader): only where the ray may meet a toy
+	if (!wh_mayMeetToy(v_l, v_n, V.x, V.yzw)) {
+		discard;
+	}
+	ALBEDO = vec3(0.0);
+#else
 	vec4 dbg;
 	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+#endif
 }
