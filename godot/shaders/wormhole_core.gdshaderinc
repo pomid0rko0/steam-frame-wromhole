@@ -1153,11 +1153,27 @@ vec3 wh_shade(float side, vec3 col, vec3 nrm) {
 // dbg receives geometry for testing: x = 2*kind + (side > 0 ? 1 : 0), then
 //   kind 0 sky: final chart direction    kind 1 floor: (l, n.x, n.y)    kind 2 object: chart hit point
 //   balls: x = 100 + index, cubes: x = 200 + index, then the hit point's R^4 xyz (= r n)
-// The ray is traced first (flat, curved, flat) to what it ends on, and that is shaded once: in a
-// wave of pixels that end on different things each kind of shading then runs once, not once per
-// place in the trace where a ray can end (but a cube's colour, wh_cubeLook, is taken where its hit
-// is found, in both places).
-vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
+// The ray is traced first (flat, curved, flat) to what it ends on (wh_trace), and that is shaded
+// once (wh_shadeEnd): in a wave of pixels that end on different things each kind of shading then
+// runs once, not once per place in the trace where a ray can end (but a cube's colour, wh_cubeLook,
+// is taken where its hit is found, in both places). Between the two the grid's screen derivatives:
+// dFdx, dFdy in a fragment shader (wh_renderE), the neighbours' values through shared memory in the
+// compute shaders (trace_kernels.gdshaderinc).
+struct WhEnd {
+    int kind;      // 0 sky (side, d), 1 floor (fl, fn), 2 a lit surface (side, col, nrm)
+    float side;
+    float fl;
+    vec3 fn;
+    vec3 col;
+    vec3 nrm;
+    vec3 d;
+    float dist;    // path length from the eye to what the ray ends on
+#ifdef WH_ARROWS
+    vec3 slc;      // the arrows' surface: (l, angle, path length), z < 0: none
+#endif
+};
+
+WhEnd wh_trace(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     float side = l0 > 0.0 ? 1.0 : -1.0;
     vec3 x = vec3(0.0);
     vec3 d = vec3(0.0);
@@ -1168,7 +1184,6 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
         x = wh_M(side, (abs(l0) - wh_Lsh() + wh_Rout()) * n0);
         d = wh_M(side, side * vl * n0 + w);
     }
-    // what the ray ends on: 0 sky (side, d), 1 floor (fl, fn), 2 a lit surface (side, col, nrm)
     int kind = -1;
     float fl = 0.0;
     vec3 fn = vec3(1.0, 0.0, 0.0);
@@ -1264,35 +1279,52 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
         inShell = true;
     }
     if (kind == 1) side = fl > 0.0 ? 1.0 : -1.0;
-    // grid coordinates and their derivatives, for every pixel: the sky's by its direction (d, a
-    // unit vector there), the floor's by l and n; an object's azimuth fixed (it has no grid lines,
-    // and a ray that ends on one in the shell has d = 0, whose angle has none)
-    vec3 dn = d;
-    vec2 ga = kind == 1 ? fn.xy : (kind == 0 ? dn.xy : vec2(1.0, 0.0));
+    WhEnd e;
+    e.kind = kind; e.side = side; e.fl = fl; e.fn = fn; e.col = col; e.nrm = nrm; e.d = d; e.dist = dist;
+#ifdef WH_ARROWS
+    e.slc = slc;
+#endif
+    return e;
+}
+
+// The grid's coordinates for what the ray ends on, with 64 per class in the second one (the class's
+// edges, below): what the screen derivatives are taken of. The sky's by its direction (d, a unit
+// vector there), the floor's by l and n; an object's azimuth fixed (it has no grid lines, and a ray
+// that ends on one in the shell has d = 0, whose angle has none).
+vec2 wh_gridAt(WhEnd e) {
+    vec3 dn = e.d;
+    vec2 ga = e.kind == 1 ? e.fn.xy : (e.kind == 0 ? dn.xy : vec2(1.0, 0.0));
     float az = wh_atan2(ga.y, ga.x);
-    vec2 gq = kind == 1 ? vec2(fl, az * 24.0 / (2.0 * WH_PI))
-                        : vec2(az, wh_asin(dn.z)) * (180.0 / WH_PI / 15.0);
+    vec2 gq = e.kind == 1 ? vec2(e.fl, az * 24.0 / (2.0 * WH_PI))
+                          : vec2(az, wh_asin(dn.z)) * (180.0 / WH_PI / 15.0);
+    float cls = e.kind == 0 ? (e.side > 0.0 ? 0.0 : 1.0) : (e.kind == 1 ? 2.0 : 3.0);
+    return gq + vec2(0.0, 64.0 * cls);
+}
+
+// The colour, from what the ray ends on, its grid coordinates g (wh_gridAt) and their screen
+// derivatives gdx, gdy.
+vec3 wh_shadeEnd(WhEnd e, vec2 g, vec2 gdx, vec2 gdy) {
+    int kind = e.kind;
+    float side = e.side;
+    vec2 gq = vec2(g.x, g.y - 64.0 * (kind == 0 ? (side > 0.0 ? 0.0 : 1.0) : (kind == 1 ? 2.0 : 3.0)));
     // fwidth = |d/dx| + |d/dy|. Across the edge of what the rays end on (floor next to an object,
     // sky of A next to sky of B) a difference is meaningless and huge and would draw grid lines
     // along such edges: there the other screen axis stands in, and with edges both ways there are
     // no lines in that pixel. The edges are found in the same derivatives: the second coordinate
     // carries 64 per class (sky A, sky B, floor, object), and between neighbours of one class it
     // changes by 24 at most (the spokes' cut), so a change above 32 is an edge.
-    float cls = kind == 0 ? (side > 0.0 ? 0.0 : 1.0) : (kind == 1 ? 2.0 : 3.0);
-    vec2 gdx = dFdx(gq + vec2(0.0, 64.0 * cls));
-    vec2 gdy = dFdy(gq + vec2(0.0, 64.0 * cls));
     bool ex = abs(gdx.y) > 32.0;
     bool ey = abs(gdy.y) > 32.0;
     vec2 fw = abs(ex ? gdy : gdx) + abs(ey ? gdx : gdy);
     fw = ex && ey ? vec2(1e-4) : max(fw, vec2(1e-4));     // tiny: no line
     vec3 c;
-    if (kind == 0) c = wh_sky(side, dn);
+    if (kind == 0) c = wh_sky(side, e.d);
 #ifdef WH_GRAVITY
     else if (kind == 1) c = wh_gravFloor(gq, fw);
 #else
     else if (kind == 1) c = wh_floor(gq, fw);
 #endif
-    else if (kind == 2) c = wh_shade(side, col, nrm);
+    else if (kind == 2) c = wh_shade(side, e.col, e.nrm);
     else c = vec3(1.0, 0.0, 1.0);
     // what the kinds share: the grid lines (sky faint, floor bright) and fog on the floor and on
     // objects
@@ -1301,9 +1333,10 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     float line = 1.0 - clamp(min(gf.x, gf.y), 0.0, 1.0);
     c = mix(c, kind == 1 ? vec3(0.95) : (side > 0.0 ? vec3(1.0, 0.9, 0.8) : vec3(1.0)),
             (kind == 1 ? 0.55 : (kind == 0 ? 0.12 : 0.0)) * line);
-    float fog = kind == 1 || kind == 2 ? 1.0 - exp(-dist * 0.012) : 0.0;
+    float fog = kind == 1 || kind == 2 ? 1.0 - exp(-e.dist * 0.012) : 0.0;
 #ifdef WH_ARROWS
     // an arrow lies over what the ray ends on, in the fog of its own distance
+    vec3 slc = e.slc;
     if (slc.z >= 0.0) {
         vec4 ar = wh_arrow(slc.x, slc.y, slc.z * wh_pix);
         c = mix(c, ar.rgb, ar.a);
@@ -1317,6 +1350,14 @@ vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
     return mix(c, side > 0.0 ? vec3(0.95, 0.60, 0.35) : vec3(0.70, 0.82, 0.95), fog);
 }
 
+#ifndef WH_COMPUTE
+vec3 wh_renderE(float l0, vec3 n0, float vl, vec3 w, vec2 eye, out vec4 dbg) {
+    WhEnd e = wh_trace(l0, n0, vl, w, eye, dbg);
+    vec2 g = wh_gridAt(e);
+    return wh_shadeEnd(e, g, dFdx(g), dFdy(g));
+}
+
 vec3 wh_render(float l0, vec3 n0, float vl, vec3 w, out vec4 dbg) {
     return wh_renderE(l0, n0, vl, w, wh_eye(l0), dbg);
 }
+#endif

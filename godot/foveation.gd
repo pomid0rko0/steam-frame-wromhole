@@ -36,6 +36,15 @@ const OWN_MAPS := {
 	4: [[0.7, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
 	5: [[0.45, 1, 1], [0.65, 2, 1], [0.85, 2, 2], [1.05, 4, 2], [99.0, 4, 4]],
 }
+# This build's ray tracer at levels 1..5 (RayPass traces a ray per shading cell): 4 and 5 our maps
+# above, 1..3 coarser outside ever smaller middles, for the runtime's three levels' place.
+const RAY_MAPS := {
+	1: [[0.8, 1, 1], [1.1, 2, 1], [99.0, 2, 2]],
+	2: [[0.65, 1, 1], [0.9, 2, 1], [1.15, 2, 2], [99.0, 4, 2]],
+	3: [[0.5, 1, 1], [0.75, 2, 1], [0.95, 2, 2], [1.15, 4, 2], [99.0, 4, 4]],
+	4: OWN_MAPS[4],
+	5: OWN_MAPS[5],
+}
 # texels a side: the driver takes one density per tile, and a tile spans many texels (tools/fdm_check.sh
 # prints the tiles' size)
 const OWN_MAP_SIZE := 64
@@ -45,6 +54,8 @@ const OWN_MAP_STRENGTH := [0.5, 1.0, 2.0]
 
 var target: Viewport            # the XR viewport (the window's on the desktop)
 var xr: XRInterface             # null on the desktop
+var ray_pass: RayPass           # this build's ray tracer: its own foveation by rays (main.gd sets it)
+var frag := false               # the levels are main's fragment ray tracer's (the speed check)
 var split_pass: CompositorEffect = preload("res://split_pass.gd").new()   # on the XR camera's compositor
 var level := 0
 var order := 0                  # our maps' order of steps (set_order)
@@ -56,9 +67,18 @@ func _init(p_target: Viewport, p_xr: XRInterface) -> void:
 	xr = p_xr
 
 
-func set_level(p_level: int, split := false) -> void:
+func set_level(p_level: int, split := false, p_frag := false) -> void:
 	level = clampi(p_level, 0, 5)
+	frag = p_frag
 	var mode := Viewport.VRS_DISABLED
+	if not frag:
+		# this build's ray tracer: rays of its own density (RayPass), no density map
+		if target.vrs_mode != mode:
+			target.vrs_mode = mode
+		split_pass.enabled = false
+		if ray_pass:
+			RenderingServer.call_on_render_thread(ray_pass.set_rings.bind(rings(level, order)))
+		return
 	if OWN_MAPS.has(level):
 		mode = Viewport.VRS_TEXTURE
 		# a texture array, a layer per eye: Viewport.vrs_texture takes a Texture2D only. Copied
@@ -83,8 +103,18 @@ func set_level(p_level: int, split := false) -> void:
 ## them is on.
 func set_order(p_order: int) -> void:
 	order = clampi(p_order, 0, 1)
-	if OWN_MAPS.has(level):
-		set_level(level)
+	if OWN_MAPS.has(level) or not frag:
+		set_level(level, false, frag)
+
+
+## This build's rings at a level: [radius, shading width, height] from where the eyes look, the
+## radius in each eye's picture (its edge at 1); level 0: none.
+static func rings(lv: int, p_order: int) -> Array:
+	var src: Array = RAY_MAPS.get(lv, [])
+	var out := []
+	for ring: Array in src:
+		out.append([ring[0], ring[1] if p_order == 0 else ring[2], ring[2] if p_order == 0 else ring[1]])
+	return out
 
 
 ## One of OWN_MAPS as a density map Godot takes (Viewport.vrs_texture's colours: red and green

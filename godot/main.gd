@@ -65,6 +65,8 @@ var xr_view: SubViewport        # XR renders here, so the desktop window gets no
 var origin: XROrigin3D
 var camera: XRCamera3D
 var tracer: Tracer
+var frag: FragTracer            # main's fragment ray tracer, for the speed check's comparison (use_frag)
+var use_frag := false           # it draws instead of tracer
 var foveation: Foveation
 var rate: FrameRate
 var menu: Menu
@@ -135,7 +137,12 @@ func _ready() -> void:
 	else:
 		camera.position = Vector3(0.0, DESKTOP_HEAD_HEIGHT, 0.0)
 	tracer = Tracer.new(space, scene, xr, xr_view)
+	camera.compositor.compositor_effects = [foveation.split_pass, tracer.pass_]
 	camera.add_child(tracer)
+	foveation.ray_pass = tracer.pass_
+	frag = FragTracer.new(space, scene, xr, xr_view)
+	frag.visible = false
+	camera.add_child(frag)
 
 	rate = FrameRate.new()
 	rate.main = self
@@ -274,12 +281,32 @@ func _process(delta: float) -> void:
 	hands.update(delta, hp, head, active, new_ball, new_cube)
 	if toys.enabled:
 		draw_toys()
-	tracer.set_head(hp[0], hp[1], hf, head.origin)
+	if use_frag:
+		frag.set_head(hp[0], hp[1], hf, head.origin)
+	else:
+		tracer.set_head(hp[0], hp[1], hf, head.origin)
 	scripts_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
 
 func draw_toys() -> void:
-	toys.draw(tracer, hands.drawn())
+	toys.draw(frag if use_frag else tracer, hands.drawn())
+
+
+## Main's fragment ray tracer instead of this build's (the speed check compares them), or back.
+func set_frag(on: bool) -> void:
+	if on == use_frag:
+		return
+	use_frag = on
+	frag.visible = on
+	tracer.visible = not on
+	tracer.pass_.enabled = not on
+	if not on:
+		frag.proxies.visible = false
+		frag.mark_all.visible = false
+		if frag.plain_quad:
+			frag.plain_quad.visible = false
+	if toys.enabled:
+		draw_toys()
 
 
 ## Put the feet at chart A position pos (z = 0), looking along forward.
@@ -357,6 +384,7 @@ func gaze_text() -> String:
 
 func set_gravity_view(view: int) -> void:
 	tracer.set_gravity_view(view)
+	frag.set_gravity_view(view)
 	menu.refresh()
 
 
