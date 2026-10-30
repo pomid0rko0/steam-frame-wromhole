@@ -46,10 +46,14 @@ var ubo: RID
 var sampler: RID
 var image: RID
 var tiles: RID                          # the toys kernel's groups (fr_tiles)
-var tab_pipe: RID                       # the tables' kernel
+var tab_pipe: RID                       # the tables' kernel, and with fr_tabP (shell_toys)
 var tab_shader: RID
-var tab_f: RID                          # fr_tabF, fr_tabE: a layer per view
+var tabp_pipe: RID
+var tabp_shader: RID
+var tab_f: RID                          # fr_tabF, fr_tabE, fr_tabP: a layer per view
 var tab_e: RID
+var tab_p: RID
+var shell_toys := false                 # movable objects within reach of the shell: fr_tabP made
 var image_size := Vector2i.ZERO
 var image_views := 0
 
@@ -61,7 +65,7 @@ func _init() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and rd != null:
-		for r: RID in [ubo, sampler, image, tiles, tab_pipe, tab_shader, tab_f, tab_e] + world_pipes + world_shaders + toys_pipes + toys_shaders:
+		for r: RID in [ubo, sampler, image, tiles, tab_pipe, tab_shader, tabp_pipe, tabp_shader, tab_f, tab_e, tab_p] + world_pipes + world_shaders + toys_pipes + toys_shaders:
 			if r.is_valid():
 				rd.free_rid(r)
 
@@ -74,11 +78,12 @@ func set_rings(r: Array) -> void:
 ## Tracer's values for the frame (on the render thread: RenderingServer.call_on_render_thread):
 ## the block's part, the head [l, n, its frame, its place in the room, where the eyes look (play
 ## space; zero: unknown)], what is shown.
-func set_frame(bytes: PackedByteArray, p_head: Array, p_gravity: int, p_toys: bool) -> void:
+func set_frame(bytes: PackedByteArray, p_head: Array, p_gravity: int, p_toys: bool, p_shell_toys: bool) -> void:
 	frame = bytes
 	head = p_head
 	gravity = p_gravity
 	toys = p_toys
+	shell_toys = p_shell_toys
 
 
 func _render_callback(_type: int, render_data: RenderData) -> void:
@@ -154,24 +159,27 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	u_tiles.binding = 3
 	u_tiles.add_id(tiles)
 	var all := [u_ubo, u_tab, u_img, u_tiles]
-	for k in 2:
+	for k in 3:
+		var t: RID = [tab_f, tab_e, tab_p][k]
 		var u := RDUniform.new()
 		u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-		u.binding = 4 + k
+		u.binding = [4, 5, 9][k]
 		u.add_id(sampler)
-		u.add_id(tab_f if k == 0 else tab_e)
+		u.add_id(t)
 		all.append(u)
 		var o := RDUniform.new()
 		o.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 		o.binding = 6 + k
-		o.add_id(tab_f if k == 0 else tab_e)
+		o.add_id(t)
 		all.append(o)
 	var w := gravity + (GRAVITY_DEFINES.size() if toys else 0)
 	if toys:
 		rd.buffer_update(tiles, 0, 16, PackedInt32Array([0, 1, 1, 0]).to_byte_array())
 	var cl := rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(cl, tab_pipe)
-	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tab_shader, 0, _used(all, [0, 1, 2, 6, 7])), 0)
+	var paths := toys and shell_toys
+	rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
+	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
+			_used(all, [0, 1, 2, 6, 7, 8] if paths else [0, 1, 2, 6, 7])), 0)
 	rd.compute_list_dispatch(cl, ROWS / 64, 1, views)
 	rd.compute_list_add_barrier(cl)
 	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
@@ -180,7 +188,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if toys:
 		rd.compute_list_add_barrier(cl)
 		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[gravity])
-		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[gravity], 0, _used(all, [0, 1, 2, 3])), 0)
+		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[gravity], 0, _used(all, [0, 1, 2, 3, 4, 5, 9])), 0)
 		rd.compute_list_dispatch_indirect(cl, tiles, 0)
 	rd.compute_list_end()
 
@@ -256,10 +264,13 @@ func _setup() -> bool:
 			world_shaders.append(made[0])
 			world_pipes.append(made[1])
 	var tk := _kernel("#define KERNEL_TABLES\n#define WH_NO_BALLS\n")
-	if tk.is_empty():
+	var tp := _kernel("#define KERNEL_TABLES\n#define FR_PATHS\n#define WH_NO_BALLS\n")
+	if tk.is_empty() or tp.is_empty():
 		return false
 	tab_shader = tk[0]
 	tab_pipe = tk[1]
+	tabp_shader = tp[0]
+	tabp_pipe = tp[1]
 	for d: String in GRAVITY_DEFINES:
 		var made := _kernel("#define KERNEL_TOYS\n" + d)
 		if made.is_empty():
@@ -307,7 +318,7 @@ func _make_image(size: Vector2i, views: int) -> void:
 	image_size = size
 	image_views = views
 	picture.texture_rd_rid = image
-	for t: RID in [tab_f, tab_e]:
+	for t: RID in [tab_f, tab_e, tab_p]:
 		if t.is_valid():
 			rd.free_rid(t)
 	var tf := RDTextureFormat.new()
@@ -318,8 +329,9 @@ func _make_image(size: Vector2i, views: int) -> void:
 	tf.width = COLS
 	tf.height = ROWS
 	tab_f = rd.texture_create(tf, RDTextureView.new(), [])
+	tab_p = rd.texture_create(tf, RDTextureView.new(), [])
 	tf.width = ROWS
-	tf.height = 1
+	tf.height = 2
 	tab_e = rd.texture_create(tf, RDTextureView.new(), [])
 	if tiles.is_valid():
 		rd.free_rid(tiles)

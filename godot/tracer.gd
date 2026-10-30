@@ -80,7 +80,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3, gaze := Vector
 	if pix != pixel_angle:
 		pixel_angle = pix
 		values["wh_pix"] = pix
-	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), [l, n, hf.duplicate(), head_pos, gaze], gravity_view, toy_count > 0))
+	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), [l, n, hf.duplicate(), head_pos, gaze], gravity_view, toy_count > 0, _shell_toys()))
 	# shown once the pass has made its picture (a material whose texture does not exist yet is not
 	# drawn: an error each frame)
 	quad.visible = pass_.picture.texture_rd_rid.is_valid()
@@ -196,6 +196,14 @@ func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	values["wh_pix"] = _pixel_angle()
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
+
+
+## Whether a movable object is within reach of the shell (the toys kernel's search needs the path
+## table then: Tracer.region_order's middle groups).
+func _shell_toys() -> bool:
+	var b: Vector4i = values.get("wh_bIdx", Vector4i.ZERO)
+	var c: Vector4i = values.get("wh_cIdx", Vector4i.ZERO)
+	return b.w > b.x or c.w > c.x
 
 
 ## The kernels the pass runs now (RayPass.kernels).

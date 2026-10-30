@@ -81,6 +81,8 @@ done
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
 done
+# this build's toys (the search along the per-eye path tables) against main's fragment ray tracer
+render --resolution 640x360 -s res://tests/toys_check.gd -- "$OUT/toys"
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
 if cat "$LOGS"/*.log | grep -qE "SCRIPT ERROR|SHADER ERROR"; then
@@ -122,6 +124,8 @@ done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, shader without balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
 done
+
+verdict "simulated headset: the demo's toys and a held ball, this build against main's ray tracer" python3 "$CMP/same_toys.py" "$OUT/toys"
 
 echo
 echo "images: $OUT"

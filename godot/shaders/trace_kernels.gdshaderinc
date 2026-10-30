@@ -46,7 +46,11 @@ layout(rgba16f, set = 0, binding = 2) uniform restrict image2DArray fr_out;
 // angle psi in the ray's plane from the eye (0..pi, FR_COLS columns), (l, path length) where the
 // path has turned by psi, along the whole path (straight before and after the shell, held after its
 // last point); fr_tabE: by row, (psi and path length where it leaves the shell, the universe it
-// leaves into, psi where it enters it).
+// leaves into, psi where it enters it) and below it (the length of the path in the shell the toys'
+// search looks along, the length before the shell); fr_tabP (only with movable objects in reach of
+// the shell): by the square root of the length along the path in the shell over that length
+// (FR_COLS columns: dense near the start, where the objects near the eyes are), the path's point in
+// the ray's subspace (r cos psi, r sin psi, w, psi from the eye) and l there.
 const int FR_HALF = 1024;
 const int FR_COLS = 256;
 const float FR_WLOG = 0.25;
@@ -62,6 +66,9 @@ float fr_warp(float d, float span) {
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(rgba32f, set = 0, binding = 6) uniform restrict writeonly image2DArray fr_outF;
 layout(rgba32f, set = 0, binding = 7) uniform restrict writeonly image2DArray fr_outE;
+#ifdef FR_PATHS
+layout(rgba32f, set = 0, binding = 8) uniform restrict writeonly image2DArray fr_outP;
+#endif
 
 // the inverse of fr_warp (it grows with d)
 float fr_unwarp(float x, float span) {
@@ -127,7 +134,23 @@ void main() {
         last = ls;
         imageStore(fr_outF, ivec3(k, i, v), vec4(ls, 0.0, 0.0));
     }
+    // the toys' search: the path in the shell up to where it leaves it, or has turned to pi (it
+    // has met the floor by then)
+    float sigEnd = p.tot.y;
+    if (psiIn + p.tot.x > WH_PI) sigEnd = wh_pathAt(p, WH_PI - psiIn).y;
+    sigEnd = max(sigEnd, 1e-4);
     imageStore(fr_outE, ivec3(i, 0, v), vec4(min(psiEx, 1e4), min(sEx, 1e6), side, psiIn));
+    imageStore(fr_outE, ivec3(i, 1, v), vec4(sigEnd, sIn, 0.0, 0.0));
+#ifdef FR_PATHS
+    float z0 = p.zs;
+    for (int k = 0; k < FR_COLS; k++) {
+        float c = float(k) / float(FR_COLS - 1);
+        vec3 q;
+        vec4 pt = wh_pathPoint(p, sigEnd * c * c, z0, q);
+        float psi = psiIn + pt.y;
+        imageStore(fr_outP, ivec3(k, i, v), vec4(pt.z * cos(psi), pt.z * sin(psi), pt.w, pt.x));
+    }
+#endif
 }
 #endif
 
@@ -137,9 +160,125 @@ void main() {
 shared uint sh_toys;
 #endif
 
-#ifdef KERNEL_WORLD
+#if defined(KERNEL_WORLD) || defined(KERNEL_TOYS)
 layout(set = 0, binding = 4) uniform sampler2DArray fr_tabF;
 layout(set = 0, binding = 5) uniform sampler2DArray fr_tabE;
+#endif
+
+#ifdef KERNEL_TOYS
+layout(set = 0, binding = 9) uniform sampler2DArray fr_tabP;
+
+// The path's point in the ray's subspace and l, sig along it in the shell (fr_tabP), row rowv of
+// view v, sigEnd its row's length.
+vec4 fr_path(float rowv, int v, float sig, float sigEnd) {
+    float c = sqrt(clamp(sig / sigEnd, 0.0, 1.0));
+    return textureLod(fr_tabP, vec3(c * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v)), 0.0);
+}
+
+// The distance in R^4 from the subspace point q to object i (ball i, or cube i - WH_MAXB), its
+// centre seen in the subspace cb, its distance from it squared perp2; negative inside.
+float fr_dist(int i, vec3 q, vec3 cb, float perp2, vec3 e1, vec3 e2) {
+    if (i < WH_MAXB) {
+        vec3 a = q - cb;
+        return sqrt(dot(a, a) + perp2) - wh_ballCol[i].w;
+    }
+    int c = i - WH_MAXB;
+    float o2 = 0.0;
+    float inside = -1e9;
+    for (int k = 0; k < 4 + min(wh_nCube, 0); k++) {
+        vec4 Ek = wh_cubeE[5 * c + k];
+        float u = abs(dot(q, vec3(dot(Ek.xyz, e1), dot(Ek.xyz, e2), Ek.w)) - wh_cubeE[5 * c + 4][k]) - 1.0;
+        o2 += u > 0.0 ? u * u : 0.0;
+        inside = max(inside, u);
+    }
+    return (o2 > 0.0 ? sqrt(o2) : inside) * wh_cubeCol[c].w;
+}
+
+// Whether the chord q0 -> q1 meets object i grown by g (for a cube: its box grown, a superset).
+bool fr_chord(int i, vec3 q0, vec3 q1, float g, vec3 cb, float perp2, vec3 e1, vec3 e2) {
+    vec3 D = q1 - q0;
+    if (i < WH_MAXB) {
+        vec3 a = q0 - cb;
+        float rr = wh_ballCol[i].w + g;
+        float A = max(dot(D, D), 1e-14);
+        float B = dot(a, D);
+        float C = dot(a, a) + perp2 - rr * rr;
+        float disc = B * B - A * C;
+        float t = (-B - sqrt(max(disc, 0.0))) / A;
+        return C <= 0.0 || (disc >= 0.0 && t >= 0.0 && t <= 1.0);
+    }
+    int c = i - WH_MAXB;
+    float gk = 1.0 + g / wh_cubeCol[c].w;
+    float tin = 0.0;
+    float tout = 1.0;
+    for (int k = 0; k < 4 + min(wh_nCube, 0); k++) {
+        vec4 Ek = wh_cubeE[5 * c + k];
+        vec3 ek = vec3(dot(Ek.xyz, e1), dot(Ek.xyz, e2), Ek.w);
+        float a0 = dot(q0, ek) - wh_cubeE[5 * c + 4][k];
+        float dk = dot(D, ek);
+        float idk = 1.0 / (abs(dk) > 1e-9 ? dk : 1e-9);
+        float t0 = (-gk - a0) * idk;
+        float t1 = (gk - a0) * idk;
+        tin = max(tin, min(t0, t1));
+        tout = min(tout, max(t0, t1));
+    }
+    return tin <= tout;
+}
+
+// Where along the path in the shell (0 .. send) it enters object i, or -1: research's bounded
+// search (PR #20). The path runs at unit speed, so a chord is no longer than its arc: far from the
+// object (distance d at least its size) a step of d cannot reach it; near it, chords of half its size,
+// each tested against the object grown by the chord's sag (the space's curvature 1 / min(R, rho0)
+// at most), and one that meets it split in 8, the entry refined by regula falsi. At most 24 steps.
+// A ray that starts inside an object does not see it from inside.
+float fr_search(int i, float rowv, int v, float sigEnd, float send, vec3 cb, float perp2, float size, vec3 e1, vec3 e2) {
+    float kmax = 1.0 / min(wh_fillet, wh_rho0);
+    float s = 0.0;
+    vec3 q = fr_path(rowv, v, s, sigEnd).xyz;
+    float d = fr_dist(i, q, cb, perp2, e1, e2);
+    if (d <= 0.0) return -1.0;
+    for (int it = 0; it < 24 + min(wh_nBall, 0); it++) {
+        if (s >= send) break;
+        if (d >= size) {
+            s += d;
+            q = fr_path(rowv, v, s, sigEnd).xyz;
+            d = fr_dist(i, q, cb, perp2, e1, e2);
+            if (d <= 0.0 && s < send) {
+                // stepped exactly onto it (d was the distance): the entry is between, refine there
+                d = 1e-6;
+            }
+            continue;
+        }
+        float step = min(0.5 * size, send - s);
+        float s1 = s + step;
+        vec3 q1 = fr_path(rowv, v, s1, sigEnd).xyz;
+        if (fr_chord(i, q, q1, kmax * step * step * 0.125 + 1e-5, cb, perp2, e1, e2)) {
+            float sa = s;
+            float da = d;
+            for (int j = 1; j <= 8 + min(wh_nBall, 0); j++) {
+                float sb = s + step * float(j) * 0.125;
+                float db = fr_dist(i, fr_path(rowv, v, sb, sigEnd).xyz, cb, perp2, e1, e2);
+                if (db <= 0.0) {
+                    for (int r = 0; r < 3 + min(wh_nBall, 0); r++) {
+                        float sx = (sa * db - sb * da) / (db - da);
+                        float dx = fr_dist(i, fr_path(rowv, v, sx, sigEnd).xyz, cb, perp2, e1, e2);
+                        if (dx > 0.0) { sa = sx; da = dx; } else { sb = sx; db = dx; }
+                    }
+                    return sb;
+                }
+                sa = sb;
+                da = db;
+            }
+        }
+        s = s1;
+        q = q1;
+        d = fr_dist(i, q, cb, perp2, e1, e2);
+    }
+    return -1.0;
+}
+#endif
+
+#if defined(KERNEL_WORLD) || defined(KERNEL_TOYS)
 
 // The row's texture coordinate for angle alpha: the grid below the split in [0, 0.5), above in
 // [0.5, 1), each kept half a row inside its own (the grids are not neighbours in alpha).
@@ -189,7 +328,7 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
                 wn = min(dot(w, e2), 1.0);
             }
             float rowv = fr_row(wh_atan2(wn, vl), fr_rows[v]);
-            vec4 E = texture(fr_tabE, vec3(rowv, 0.5, float(v)));   // psi out, s out, side, psi in
+            vec4 E = texture(fr_tabE, vec3(rowv, 0.25, float(v)));  // psi out, s out, side, psi in
             float psiF = wh_atan2(e1.z, -e2.z);                     // n.z = 0 there: the floor
             bool floorHit = psiF < E.x;
 #ifdef WH_NO_SHELL_TOYS
@@ -208,6 +347,57 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
                 if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) sh_toys = 1u;
             }
 #endif
+#ifdef KERNEL_TOYS
+            // the movable objects within reach of the shell, along the path, up to the floor
+            vec4 E1 = texture(fr_tabE, vec3(rowv, 0.75, float(v)));    // the search's length, the length before
+            float send = E1.x;
+            if (floorHit)
+                send = min(send, texture(fr_tabF, vec3(psiF / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).y - E1.y);
+            int hitI = -1;
+            for (int i = wh_bIdx.x; i < wh_bIdx.w + wh_cIdx.w - wh_cIdx.x; i++) {
+                bool isCube = i >= wh_bIdx.w;
+                int k = isCube ? i - wh_bIdx.w + wh_cIdx.x : i;
+                vec4 C = isCube ? wh_cube[k] : wh_ball[k];
+                float size = isCube ? wh_cubeCol[k].w : wh_ballCol[k].w;
+                float reach = isCube ? 2.0 * size : size;
+                vec3 cb = vec3(dot(C.xyz, e1), dot(C.xyz, e2), C.w);
+                float perp2 = dot(C.xyz, C.xyz) - cb.x * cb.x - cb.y * cb.y;
+                if (perp2 >= reach * reach) continue;
+                float sh = fr_search(isCube ? WH_MAXB + k : k, rowv, v, E1.x, send, cb, max(perp2, 0.0), size, e1, e2);
+                if (sh >= 0.0 && sh < send) {
+                    send = sh;
+                    hitI = isCube ? WH_MAXB + k : k;
+                }
+            }
+            if (hitI >= 0) {
+                // as wh_trace's: the normal the R^4 offset from the centre projected onto the space,
+                // a cube's the face's (its largest body-axis coordinate)
+                vec4 Q = fr_path(rowv, v, send, E1.x);
+                float hl = Q.w;
+                vec3 hn = (Q.x * e1 + Q.y * e2) * inversesqrt(Q.x * Q.x + Q.y * Q.y);
+                vec4 pr = wh_prof(hl);
+                bool isCube = hitI >= WH_MAXB;
+                int ci = hitI - WH_MAXB;
+                vec4 N4 = vec4(pr.x * hn, pr.y) - (isCube ? wh_cube[ci] : wh_ball[hitI]);
+                dist = E1.y + send;
+                if (isCube) {
+                    col = wh_cubeLook(ci, N4, dist);
+                    vec3 sd = vec3(dot(N4, wh_cubeE[5 * ci]), dot(N4, wh_cubeE[5 * ci + 1]), dot(N4, wh_cubeE[5 * ci + 2]));
+                    vec3 ad = abs(sd);
+                    int k = ad.x >= ad.y && ad.x >= ad.z ? 0 : (ad.y >= ad.z ? 1 : 2);
+                    N4 = (sd[k] >= 0.0 ? 1.0 : -1.0) * wh_cubeE[5 * ci + k];
+                } else {
+                    col = wh_ballCol[hitI].rgb;
+                }
+                float rad = dot(N4.xyz, hn);
+                side = hl >= 0.0 ? 1.0 : -1.0;
+                kind = 2;
+                nrm = normalize(wh_M(side, side * (pr.z * rad + pr.w * N4.w) * hn + N4.xyz - rad * hn));
+                // the ray ends there: the arrows' surface counts up to it (below)
+                floorHit = false;
+                E.x = wh_atan2(Q.y, Q.x);
+            }
+#endif
 #ifdef WH_ARROWS
             if (slc.z < 0.0) {
                 // n.x = 0: the first zero in the shell, unless the ray ends first (wh_curved)
@@ -219,6 +409,9 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
                     slc = vec3(ls.x, wh_atan2(nS.z, nS.y), ls.y);
                 }
             }
+#endif
+#ifdef KERNEL_TOYS
+            if (kind == 2) break;
 #endif
             if (floorHit) {
                 vec2 ls = texture(fr_tabF, vec3(psiF / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).xy;
@@ -331,12 +524,7 @@ void fr_cell(ivec2 p0, ivec2 cs, int v) {
     vec4 pa = fr_invProj[v] * vec4(ndc, 0.0, 1.0);
     vec3 pd = mat3(fr_cam) * (pa.xyz / pa.w - fr_eyeOff[v].xyz);
     vec4 V = normalize(pd.x * f0 + pd.y * f1 + pd.z * f2);
-#ifdef KERNEL_WORLD
     WhEnd e = fr_trace(E0.x, E0.yzw, V.x, V.yzw, v);
-#else
-    vec4 dbg;
-    WhEnd e = wh_trace(E0.x, E0.yzw, V.x, V.yzw, fr_eye[5 * v + 4].xy, dbg);
-#endif
     vec2 g = wh_gridAt(e);
     uint li = gl_LocalInvocationIndex;
     sh_g[li] = g;

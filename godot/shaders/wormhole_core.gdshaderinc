@@ -868,15 +868,71 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
 }
 
 #ifdef WH_COMPUTE
+// ---------------------------------------------------------------- the exact path length
+// The path length from the fillet's inner end is int r^2 dpsi / b, r = ra + span tau: with psi's
+// polynomial F its moments up to tau^5 against the weight (wh_filMom has them up to tau^3; the
+// recursions go on the same way), not wh_filLen's estimate. The compute tables use it: the toys'
+// search steps by length (a step no longer than the distance to an object cannot pass through it).
+
+// tau at z and the moments int_0^tau t^k w dt, k = 0..3 in m and 4, 5 in m45
+void wh_filMom6(WhFil f, float z, out float t, out vec4 m, out vec2 m45) {
+    if (f.reg == 0) {
+        float Es = f.E0 * exp(z);
+        float sm = 0.5 * (Es - wh_dm(f) / Es);
+        t = max(sm * sm - wh_mn(f), 0.0);
+        float S = sm * (Es - sm);
+        float B = f.al + f.ga;
+        float C = f.al * f.ga;
+        float D0 = 2.0 * z;
+        float D1 = S - sqrt(C) - 0.5 * B * D0;
+        float tS = t * S;
+        float D2 = 0.5 * (tS - 1.5 * B * D1 - C * D0);
+        float D3 = (tS * t - 2.5 * B * D2 - 2.0 * C * D1) / 3.0;
+        float D4 = (tS * t * t - 3.5 * B * D3 - 3.0 * C * D2) * 0.25;
+        float D5 = (tS * t * t * t - 4.5 * B * D4 - 4.0 * C * D3) * 0.2;
+        m = 0.5 * vec4(D0, D1, D2, D3);
+        m45 = 0.5 * vec2(D4, D5);
+    } else {
+        float mn = wh_mn(f);
+        t = max(z * z - mn, 0.0);
+        if (f.reg == 1) {
+            float n0 = max(z - f.zlo, 0.0);
+            float ty = t * z;
+            float n1 = (ty - 2.0 * mn * n0) / 3.0;
+            ty *= t;
+            float n2 = (ty - 4.0 * mn * n1) / 5.0;
+            ty *= t;
+            float n3 = (ty - 6.0 * mn * n2) / 7.0;
+            ty *= t;
+            float n4 = (ty - 8.0 * mn * n3) / 9.0;
+            m = vec4(n0, n1, n2, n3);
+            m45 = vec2(n4, (ty * t - 10.0 * mn * n4) / 11.0);
+        } else {
+            float t2 = t * t;
+            m = vec4(0.5 * t, 0.25 * t2, t2 * t / 6.0, 0.125 * t2 * t2);
+            m45 = vec2(0.1 * t2 * t2 * t, t2 * t2 * t2 / 12.0);
+        }
+    }
+}
+
+// the path length from the fillet's inner end, from the moments up to tau^5
+float wh_filS(WhFil f, vec4 m, vec2 m45) {
+    float a = dot(f.e, m);
+    float b1 = dot(f.e, vec4(m.yzw, m45.x));
+    float b2 = dot(f.e, vec4(m.zw, m45));
+    return (f.ra * f.ra * a + 2.0 * f.ra * f.span * b1 + f.span * f.span * b2) * f.ib;
+}
+
 // ---------------------------------------------------------------- a path in the shell, by angle
 // The same path as wh_curved's (its pieces A, B, C), set up for points along it by their polar angle
 // from the start: the per-eye tables of the compute ray tracer (trace_kernels.gdshaderinc) are made
 // of these.
 struct WhPath {
     WhFil f;
-    float zs; float d; float x0B; float DB; float kc; float ivlc;
+    float zs; float zc; float d; float x0B; float DB; float kc; float ivlc;
     float sideA; float sideC;
     vec2 PA; vec2 PB; vec2 C0; vec2 tot;   // (psi, path length) of the pieces, C's start, the whole
+    float arc;                             // the whole fillet's path length (wh_filS)
 };
 
 // The path of a ray from ls in the shell or on its edge (|ls| <= L) with direction (vl, wn: |w|),
@@ -897,12 +953,16 @@ WhPath wh_path(float ls, float vl, float wn, vec2 eye) {
     p.f = wh_fil(b, turn, rmin);
     bool fromEdge = als >= wh_Lsh() * (1.0 - 1e-6);
     float ts = turn ? rs * vl * vl / (1.0 + wn) : eye.y;
+    float tw; vec4 mw; vec2 mw45;
+    wh_filMom6(p.f, p.f.zhi, tw, mw, mw45);
+    p.arc = wh_filS(p.f, mw, mw45);
     p.zs = p.f.zhi;
-    vec2 Ss = vec2(p.f.psi, p.f.arc);
+    vec2 Ss = vec2(p.f.psi, p.arc);
     if (!fromEdge) {
         vec4 ms;
         p.zs = wh_filMomT(p.f, clamp(ts / p.f.span, 0.0, 1.0), ms);
-        Ss = vec2(dot(p.f.e, ms), wh_filLen(p.f, ms));
+        wh_filMom6(p.f, p.zs, tw, mw, mw45);
+        Ss = vec2(dot(p.f.e, mw), wh_filS(p.f, mw, mw45));
     }
     p.d = vl >= 0.0 ? 1.0 : -1.0;
     float x = ls * p.d;
@@ -920,7 +980,8 @@ WhPath wh_path(float ls, float vl, float wn, vec2 eye) {
     p.PA = hasA ? Ss : vec2(0.0);
     p.PB = vec2(p.kc, p.ivlc) * p.DB;
     p.C0 = cFromStart ? Ss : vec2(0.0);
-    p.tot = p.PA + p.PB + vec2(p.f.psi, p.f.arc) - p.C0;
+    p.zc = cFromStart ? p.zs : p.f.zlo;
+    p.tot = p.PA + p.PB + vec2(p.f.psi, p.arc) - p.C0;
     return p;
 }
 
@@ -933,10 +994,56 @@ vec2 wh_pathAt(WhPath p, float psi) {
     }
     bool inA = psi < p.PA.x;
     float T = inA ? p.PA.x - psi : p.C0.x + psi - p.PA.x - p.PB.x;
-    float t; vec4 m;
-    wh_filMom(p.f, wh_filSolve(p.f, clamp(T, 0.0, p.f.psi)), t, m);
+    float t; vec4 m; vec2 m45;
+    wh_filMom6(p.f, wh_filSolve(p.f, clamp(T, 0.0, p.f.psi)), t, m, m45);
     return vec2(wh_filLW(p.f, t, inA ? p.sideA : p.sideC).x,
-                (inA ? p.PA.y : p.PA.y + p.PB.y - p.C0.y) + (inA ? -1.0 : 1.0) * wh_filLen(p.f, m));
+                (inA ? p.PA.y : p.PA.y + p.PB.y - p.C0.y) + (inA ? -1.0 : 1.0) * wh_filS(p.f, m, m45));
+}
+
+// The point where the path has gone sig (0 <= sig <= tot.y) from its start: (its l, its point in
+// the ray's subspace (r cos psi, r sin psi, w), psi from the start), found from z, the fillets'
+// variable (Newton from z0 on the exact length, ds/dz = r^2 / b dpsi/dz; z0 is returned updated: the
+// next point's start, sig growing).
+vec4 wh_pathPoint(WhPath p, float sig, inout float z0, out vec3 q) {
+    float rho0 = wh_rho0;
+    float R = wh_fillet;
+    float psi;
+    float r;
+    float w4;
+    float l;
+    if (sig >= p.PA.y && sig < p.PA.y + p.PB.y) {
+        float x = (sig - p.PA.y) / max(p.ivlc, 1e-12);
+        psi = p.PA.x + p.kc * x;
+        r = rho0;
+        l = p.d * (p.x0B + x);
+        w4 = l;
+        z0 = p.zc;
+    } else {
+        bool inA = sig < p.PA.y;
+        // the length from the inner end it is at, and where on the piece z can be
+        float S = inA ? p.PA.y - sig : sig - p.PA.y - p.PB.y + p.C0.y;
+        float lo = inA ? p.f.zlo : p.zc;
+        float hi = inA ? p.zs : p.f.zhi;
+        float z = clamp(z0, lo, hi);
+        float t; vec4 m; vec2 m45;
+        for (int it = 0; it < 4; it++) {
+            wh_filMom6(p.f, z, t, m, m45);
+            float rr = p.f.ra + p.f.span * t;
+            float dz = rr * rr * p.f.ib * wh_poly(p.f.e, t) * (p.f.reg == 2 ? z : 1.0);
+            z = clamp(z - (wh_filS(p.f, m, m45) - S) / max(dz, 1e-9), lo, hi);
+        }
+        wh_filMom6(p.f, z, t, m, m45);
+        z0 = z;
+        float pf = dot(p.f.e, m);
+        psi = inA ? p.PA.x - pf : p.PA.x + p.PB.x - p.C0.x + pf;
+        r = p.f.ra + p.f.span * t;
+        float side = inA ? p.sideA : p.sideC;
+        float cth = rho0 + R - r;           // R cos th
+        w4 = side * (wh_h - R + sqrt(max(R * R - cth * cth, 0.0)));
+        l = wh_filLW(p.f, t, side).x;
+    }
+    q = vec3(r * cos(psi), r * sin(psi), w4);
+    return vec4(l, psi, r, w4);
 }
 #endif
 
