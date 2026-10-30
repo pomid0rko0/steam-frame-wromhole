@@ -3,12 +3,13 @@
 # Frame (tools/adreno_stats.sh) compiles each ray tracer, and tools/adreno_cost.py runs the program
 # it made on waves of pixels (tools/ir3_emu.py), counting what they issue, divergent branches
 # included (what the model is: tools/adreno_cost.py).
-#   tools/adreno_cost.sh [--tiles N] [--check] [--toys [--hands|--held] [--split]] [--gravity 1|2]
+#   tools/adreno_cost.sh [--tiles N] [--check] [--toys [--hands|--held|--cube] [--split]] [--gravity 1|2]
 #                        [--poses P] [--profile] [source]...
 # A source is what tools/ab_shaders.sh takes (a commit, a directory, a cost check); none or
 # "this": the tree's own ray tracer. --check: also checks the emulated colours against Godot's
 # (lavapipe) picture on 256 random tiles a pose (the bound: tools/adreno_cost.py, --check).
-# --toys: tests/emu_dump.gd's scene toys, with --hands or --held its toys+hands or toys+held (the
+# --toys: tests/emu_dump.gd's scene toys, with --hands, --held or --cube its toys+hands, toys+held
+# or toys+cube (a cube held at the eyes, the worst case) (the
 # shader with balls, of every source: one without it stops the run).
 # --gravity: "this" is the gravity view's ray tracer (main.set_gravity_view: 1 the floor, 2 also the
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
@@ -39,11 +40,12 @@ while [ $# -gt 0 ]; do
 		--split) SPLIT=1; shift ;;
 		--held) HELD=+held; shift ;;
 		--hands) HELD=+hands; shift ;;
+		--cube) HELD=+cube; shift ;;
 		*) srcs+=("$1"); shift ;;
 	esac
 done
 [ ${#srcs[@]} -gt 0 ] || srcs=(this)
-[ -z "$HELD$SPLIT" ] || [ -n "$TOYS" ] || { echo "--hands, --held and --split go with --toys"; exit 2; }
+[ -z "$HELD$SPLIT" ] || [ -n "$TOYS" ] || { echo "--hands, --held, --cube and --split go with --toys"; exit 2; }
 WORK=$(mktemp -d)
 AB=$ROOT/godot/shaders/ab
 # tools/ab_shaders.sh's directory is the build's: keep what is there
