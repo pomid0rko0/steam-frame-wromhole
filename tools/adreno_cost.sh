@@ -15,8 +15,7 @@
 # arrows); other sources stay as they are. --poses: other poses than the speed check's, as
 # "l,yaw,pitch;..." (place_on_axis); --profile: cycles per stretch of code (adreno_cost.py).
 # --split: "this" with toys as the app draws it, split by the stencil: the ray tracer with toys
-# where they may be seen, the plain one elsewhere, and the mark's own pass (adreno_cost.py --split,
-# --mark); other sources are
+# where they may be seen, the plain one elsewhere (adreno_cost.py --split); other sources are
 # costed over the whole view, as the speed check times them.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -95,13 +94,10 @@ for s in "${srcs[@]}"; do
 	free_display $d
 	[ -n "$CHECK" ] && { python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --check --tiles 256 || echo "$s: emulated colours differ from Godot's"; }
 	plog=""
-	mlog=""
 	if [ -n "$SPLIT" ] && [ "$s" = this ] && [ -n "$TOYS" ]; then
 		plog=$WORK/$n.plain.log
 		psh=res://shaders/wormhole$([ "$GRAV" = 2 ] && echo _arrows)$([ "$GRAV" = 1 ] && echo _gravity).gdshader
 		KEEP_LOG=$plog "$ROOT/tools/adreno_stats.sh" plain --shader $psh | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the plain part: #"
-		mlog=$WORK/$n.mark.log
-		KEEP_LOG=$mlog "$ROOT/tools/adreno_stats.sh" plain --shader res://shaders/stencil_mark.gdshader | grep '^prog [0-9]*/1' | sort -n -k3 | head -1 | sed "s#^#$s, the mark: #"
 	fi
-	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" --size "$HEADSET_EYE" $PROF ${plog:+--split $plog --mark $mlog} | tail -n +2 | sed "s#^#$s: #"
+	python3 -W ignore "$ROOT/tools/adreno_cost.py" "$log" "$WORK/d$n.json" --tiles "$TILES" --size "$HEADSET_EYE" $PROF ${plog:+--split $plog} | tail -n +2 | sed "s#^#$s: #"
 done

@@ -16,11 +16,10 @@ headset, S x S pixels (tools/adreno_cost.sh passes tools/env.sh's HEADSET_EYE) a
 (default 104, a guess at the Frame's: the headset log's per-second "refresh:" line gives the frustum
 the runtime hands Godot), on N random tiles (default 300; the same tiles for every LOG of the same
 wave width with the same seed K). --profile: cycles per stretch of code.
---split: the frame split by the stencil (tracer.gd, «The stencil split»): LOG's ray tracer (with the
-toys) where the mark (wh_mayMeetToy, mark() here) says a pixel's ray may meet a toy, PLAINLOG's (the
-plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the GPU
-packs the passing pixels into waves). --mark MARKLOG: the mark's own pass (stencil_mark.gdshader) too,
-over the whole view; its emulated mark is checked against mark() (a line when they differ).
+--split: the frame split by the stencil (Tracer.set_head, proxy_spheres): LOG's ray tracer (with the
+toys) where a pixel's straight ray from the head meets one of the dump's proxy spheres, PLAINLOG's
+(the plain one) elsewhere; each tile's cost is weighted by the share of its pixels each runs (the
+GPU packs the passing pixels into waves). The proxies' own pass is not counted.
 """
 import json
 import os
@@ -276,7 +275,7 @@ def share_of(e, size, fov, step=16):
     tan = np.tan(np.radians(fov) / 2.0)
     g = np.arange(step // 2, size, step)
     xs, ys = np.meshgrid(g, g)
-    return float(mark(e, xs.ravel(), ys.ravel(), size, tan, tan).mean())
+    return float(proxy_marked(e, xs.ravel(), ys.ravel(), size, tan, tan).mean())
 
 
 def srgb(c):
@@ -312,79 +311,32 @@ def check(sh, entries, ntiles, rng, unis=None):
     return worst
 
 
-def mark(e, xs, ys, size, tan_x, tan_y):
-    """Per lane: whether the stencil marks its pixel, wh_mayMeetToy (wormhole_core.gdshaderinc) for its
-    ray from the head, with the pose's uniforms (tests/emu_dump.gd)."""
-    u = e.get('uniforms', {})
+def proxy_marked(e, xs, ys, size, tan_x, tan_y):
+    """Per lane: whether the stencil marks its pixel (Tracer.set_head, proxy_spheres): its straight ray
+    from the head, in the chart of the head's universe, meets a proxy sphere (or starts in one).
+    No proxies: the whole view is marked."""
+    P = np.array(e.get('proxies') or [], float).reshape(-1, 4)
+    if len(P) == 0:
+        return np.ones(len(xs), bool)
     B = np.array(e['cam_basis'], float).T
     f = np.array(e['head_f'], float)
     vx = (2.0 * (xs + 0.5) / size - 1.0) * tan_x
     vy = (1.0 - 2.0 * (ys + 0.5) / size) * tan_y
     pd = B @ np.stack([vx, vy, -np.ones_like(vx)], 0)
     V = pd[0][None] * f[0][:, None] + pd[1][None] * f[1][:, None] + pd[2][None] * f[2][:, None]
-    V /= np.linalg.norm(V, axis=0)
     l, n = e['head_l'], np.array(e['head_n'], float)
-    nb, nc = int(u.get('wh_nBall', 0)), int(u.get('wh_nCube', 0))
-    ball = np.array(u.get('wh_ball', []), float).reshape(-1, 4)[:nb]
-    bcol = np.array(u.get('wh_ballCol', []), float).reshape(-1, 4)[:nb]
-    fball = np.array(u.get('wh_fball', []), float).reshape(-1, 4)[:nb]
-    cube = np.array(u.get('wh_cube', []), float).reshape(-1, 4)[:nc]
-    ccol = np.array(u.get('wh_cubeCol', []), float).reshape(-1, 4)[:nc]
-    bidx, cidx = u.get('wh_bIdx', [0] * 4), u.get('wh_cIdx', [0] * 4)
-    vl, w = V[0], V[1:]
     side = 1.0 if l > 0 else -1.0
-    shell = np.full(len(xs), abs(l) < WH.L)
-    toy = np.zeros(len(xs), bool)          # meets one of this universe's toys on its straight line
-    if shell.all():
-        b = float(WH.r(np.array(l))) * np.linalg.norm(w, axis=0)
-        w0 = np.full(len(xs), float(WH.w(np.array(l))))
-        inward = vl * side < 0.0
-    else:
-        M = np.array([side, 1.0, 1.0])
-        x = M * (abs(l) - WH.L + WH.Rout) * n
-        d = M[:, None] * (side * vl[None] * n[:, None] + w)
-
-        def line(c, rr):
-            oc = (x - c)[:, None]
-            b = (oc * d).sum(0)
-            cq = float((oc * oc).sum()) - rr * rr
-            return (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
-        shell = line(np.zeros(3), 1.001 * WH.Rout + 1e-4)
-        A = side > 0
-        for i in range(0 if A else bidx[2], bidx[1] if A else nb):
-            if fball[i][3] > 0:
-                toy |= line(fball[i][:3], 1.001 * np.sqrt(fball[i][3]) + 1e-4)
-        for i in range(0 if A else cidx[2], cidx[1] if A else nc):
-            dw = side * WH.h - cube[i][3]
-            rb = 2.0 * ccol[i][3]
-            toy |= line(M * cube[i][:3], 1.001 * np.sqrt(max(rb * rb - dw * dw, 0.0)) + 1e-4)
-        b = np.linalg.norm(np.cross(x[:, None], d, axis=0), axis=0)
-        w0 = np.full(len(xs), side * WH.h)
-        inward = np.ones(len(xs), bool)
-    # the w the path passes
-    rmin = WH.rho0 + 2.0 * WH.R * np.sin(0.5 * WH.th0) ** 2
-    lo, hi = np.full(len(xs), -WH.h), np.full(len(xs), WH.h)
-    out = ~inward
-    turn = inward & (b > 1.0001 * rmin + 1e-4)
-    pas = inward & (b < 0.9999 * rmin - 1e-4)
-    c = np.clip(1.0 - (b - WH.rho0) / WH.R, 0.0, 1.0)
-    wt = WH.h - WH.R + WH.R * np.sqrt(1.0 - c * c)
-    if side > 0:
-        lo = np.where(out, w0, np.where(turn, np.minimum(wt, w0), lo))
-    else:
-        hi = np.where(out, w0, np.where(turn, np.maximum(-wt, w0), hi))
-    if side > 0:
-        hi = np.where(pas, w0, hi)
-    else:
-        lo = np.where(pas, w0, lo)
-    e2 = w / np.linalg.norm(w, axis=0)
-    near = np.zeros(len(xs), bool)
-    for C, rr in [(ball[i], 1.001 * bcol[i][3] + 1e-4) for i in range(nb)] + \
-                 [(cube[i], 2.002 * ccol[i][3] + 1e-4) for i in range(nc)]:
-        c1 = C[:3] @ n
-        c2 = C[:3] @ e2
-        near |= (C[:3] @ C[:3] - c1 * c1 - c2 * c2 < rr * rr) & (C[3] + rr >= lo) & (C[3] - rr <= hi)
-    return toy | (shell & near)
+    M = np.array([side, 1.0, 1.0])
+    x = M * WH.eye(l)[0] * n
+    d = M[:, None] * (side * V[0][None] * n[:, None] + V[1:])
+    d /= np.linalg.norm(d, axis=0)
+    hit = np.zeros(len(xs), bool)
+    for c in P:
+        oc = (x - c[:3])[:, None]
+        b = (oc * d).sum(0)
+        cq = float((oc * oc).sum()) - c[3] * c[3]
+        hit |= (cq <= 0.0) | ((b < 0.0) & (b * b >= cq))
+    return hit
 
 
 def cost(sh, entries, ntiles, size, fov, seed, profile=None, share=None, unis=None):
@@ -429,7 +381,7 @@ def per64(sh, st, n):
 
 def main():
     args = sys.argv[1:]
-    opt = {'--tiles': 300, '--size': 0, '--fov': 104.0, '--seed': 1, '--split': '', '--mark': ''}
+    opt = {'--tiles': 300, '--size': 0, '--fov': 104.0, '--seed': 1, '--split': ''}
     flags = set()
     pos = []
     i = 0
@@ -475,13 +427,8 @@ def main():
         # the plain ray tracer: its own uniforms are the same material's
         plain = Shader(opt['--split'], (spec[0] | {'WH_NO_BALLS'}, spec[1]), uniforms)
         plain.flat_order = order
-        share = lambda e, xs, ys, tan: float(mark(e, xs, ys, size, tan, tan).mean())
+        share = lambda e, xs, ys, tan: float(proxy_marked(e, xs, ys, size, tan, tan).mean())
     res = cost(sh, entries, n, size, opt['--fov'], opt['--seed'], prof, share, unis)
-    resm = None
-    if opt['--mark']:
-        mk = Shader(opt['--mark'], shader_defines('res://shaders/stencil_mark.gdshader'), uniforms)
-        mk.flat_order = mark_flat_order(mk, entries, size, opt['--fov'], unis)
-        resm = cost(mk, entries, n, size, opt['--fov'], opt['--seed'], None, None, unis)
     resp = cost(plain, entries, n, size, opt['--fov'], opt['--seed'], None,
                 lambda e, xs, ys, tan: 1.0 - share(e, xs, ys, tan), unis) if plain else None
     for k, (pose, st) in enumerate(res):
@@ -489,9 +436,6 @@ def main():
         busy = 100.0 * st.lane_instr / max(st.instr * lanes, 1)
         if plain:
             a2, n2, c42, c52 = per64(plain, resp[k][1], n)
-            alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
-        if resm:
-            a2, n2, c42, c52 = per64(mk, resm[k][1], n)
             alu, nop, c4, c5 = alu + a2, nop + n2, c4 + c42, c5 + c52
         ms = GODOT_MS + MS_ALU * alu + MS_NOP * nop + MS_CAT4 * c4 + MS_CAT5 * c5
         tot.append(ms)
@@ -501,39 +445,6 @@ def main():
     print('mean %.2f ms (%s, waves of %d%s)' % (np.mean(tot), sh.name, lanes, ', split by the stencil' if plain else ''))
     if prof is not None:
         report(sh, prof)
-
-
-def mark_flat_order(mk, entries, size, fov, unis, ntiles=24):
-    """The packing of the mark's flat inputs (v_l, v_n): the order whose emulated discards agree with
-    mark() on a few tiles of each pose; prints how many lanes differ."""
-    import itertools
-    tan = np.tan(np.radians(fov) / 2.0)
-    names = ['l', 'n', 'eye'] if len(mk.flat) == 6 else ['l', 'n']
-    best = None
-    for order in itertools.permutations(names):
-        mk.flat_order = list(order)
-        bad = tot = 0
-        for k, e in enumerate(entries):
-            if unis:
-                mk.set_uniforms(unis[k])
-            rng = np.random.default_rng(7)
-            for t in range(ntiles):
-                x0 = 8 * rng.integers(0, size // 8)
-                y0 = 8 * rng.integers(0, size // 8)
-                if mk.wave128:
-                    x0 = 16 * (x0 // 16)
-                xs, ys = tile_lanes(x0, y0, mk.wave128)
-                L = len(xs)
-                w = E.Wave(L, mk.consts, mk.ubos, varyings_for(e, xs, ys, size, size, tan, tan, mk))
-                w.tex = mk.tex
-                E.run_wave(mk.instrs, mk.start, w, E.Stats())
-                got = ~getattr(w, 'killed', np.zeros(L, bool))
-                bad += int((got != mark(e, xs, ys, size, tan, tan)).sum())
-                tot += L
-        if best is None or bad < best[0]:
-            best = (bad, list(order), tot)
-    print('the mark: %d of %d lanes differ from mark()%s' % (best[0], best[2], '' if best[0] == 0 else ' (look into it)'))
-    return best[1]
 
 
 def report(sh, prof):

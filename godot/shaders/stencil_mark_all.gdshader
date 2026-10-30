@@ -2,8 +2,8 @@ shader_type spatial;
 render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, skip_vertex_transform, fog_disabled;
 stencil_mode write, compare_always, 1;
 
-// stencil_mark.gdshader over the whole view: the ray tracer with the toys everywhere (the split
-// turned off: the speed check's comparison, Tracer.WHOLE).
+// stencil_mark.gdshader over the whole view: the ray tracer with the toys everywhere (the head in
+// the curved region, where no chart maps it to the room, or the split turned off).
 void vertex() {
 	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
 }
