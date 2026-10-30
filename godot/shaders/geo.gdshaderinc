@@ -302,6 +302,7 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 // families, then false position with halving (Illinois) in the family that holds the point, until
 // a ray turns to within GEO_TOL of the point's angle (how many it takes: ref/test_gpu.py).
 const int GEO_ITERS = 12;
+const int GEO_SPARE = 8;
 const float GEO_TOL = 1e-5;
 
 vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive, out float fell) {
@@ -378,19 +379,24 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 			float ang0 = clamp(geo_atan2(re * delta, abs(lp - le)), 1e-6 * A1, (1.0 - 1e-6) * A1);
 			float x = log(ang0 / (A1 - ang0));
 			int last = 0;
+			float jeps = 0.0;                 // the ray between, or one beside it should it not be finite
+			float best = 1e30;                // the kept ray's |val|
+			int nbad = 0;                     // rays not finite: each buys one more, up to GEO_SPARE
+			bool blind = false;               // the ray between not known: the family found by searching
 			vec2 res = vec2(0.0);
 			float dsa = 0.0, dca = 1.0;       // the found ray's launch direction: (along the outward radial, across)
 			bool tlast = false;               // the found ray turned
 			float b = 0.0, gp = 0.0;          // its impact and r - b at the point
 			vec2 scA = geo_sincos(cA), sc1 = geo_sincos(c1);
-			for (int i = 0; i < GEO_ITERS; i++) {
+			for (int i = 0; i < GEO_ITERS + GEO_SPARE; i++) {
+				if (i >= GEO_ITERS + nbad) break;
 				// the ray: sin and cos of its launch angle's complement, base + 2 g h (the first
 				// crossings: cA + eps, the turned: c1 - e), from those of the base and of h (half
 				// the step) by the sums; b - rho0 from the product
 				bool turned = fam == 1;
 				float ex = exp(-abs(x));
 				float g = turned ? -1.0 : 1.0;
-				float h = 0.5 * (turned ? cT * exp(-x) : (fam < 0 ? 0.0 : A1 * (x > 0.0 ? ex : 1.0) / (1.0 + ex)));
+				float h = 0.5 * (turned ? cT * exp(-x) : (fam < 0 ? jeps : A1 * (x > 0.0 ? ex : 1.0) / (1.0 + ex)));
 				vec2 sb = turned ? sc1 : scA;
 				vec2 sh = geo_sincos(h);
 				float sm = sb.x * sh.y + g * sb.y * sh.x;     // sin(base + g h)
@@ -416,11 +422,12 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 				float val = s.x - delta;
 				if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
 				// A ray whose numbers came out not finite tells nothing: the bracket stays, the next
-				// ray is a quarter of the way from it to the bracket's far end, and the ray kept is
-				// the last finite one.
+				// ray is a quarter of the way from it to the bracket's far end (the ray between: one
+				// a little beside it), and the ray kept is the finite one nearest the point.
 				bool ok = geo_finite(s.x + s.y + val + ca + sa);
-				if (!ok) fell = 0.5;
-				if (ok) {
+				if (!ok) { fell = 0.5; nbad++; }
+				if (ok && (fam < 0 || abs(val) <= best)) {
+					best = fam < 0 ? 1e30 : abs(val);
 					res = s;
 					dca = (outw && !turned) ? ca : -ca;
 					dsa = sa;
@@ -428,12 +435,16 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 					gp = gap_p;
 					b = bp;
 				}
-				if (fam < 0) {
+				if (fam < 0 && !ok && i < 2) {
+					jeps = jeps > 0.0 ? 30.0 * jeps : 1e-5 * A1;
+				} else if (fam < 0) {
 					// the ray between: the point among the first crossings if this one has turned
-					// past it (or is not finite: then they are searched as if no ray turned)
+					// past it (if neither it nor the ones beside it is finite, they are searched as
+					// if no ray turned)
 					psit = s.x;
 					gt = log(max(delta, 1e-30) / max(psit - delta, 1e-30));
 					fam = ok && s.x <= delta ? 1 : 0;
+					blind = two && !ok;
 					two = ok;
 					if (fam == 1) { lo = 0.0; flo = s.x - delta; have_lo = true; x = 0.5 * WMAX; }
 				} else if (!ok) {
@@ -448,6 +459,10 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 					if (val > 0.0) { hi = x; fhi = val; if (last > 0) flo *= 0.5; last = 1; have_hi = true; }
 					else { lo = x; flo = val; if (last < 0) fhi *= 0.5; last = -1; have_lo = true; }
 					x = (have_lo && have_hi) ? (lo * fhi - hi * flo) / (fhi - flo) : 0.5 * (lo + hi);
+					if (blind && fam == 0 && !have_hi && lo > 0.5 * WMAX) {
+						// all the first crossings fall short of the point: it is among the turned
+						fam = 1; lo = 0.0; hi = WMAX; have_lo = false; last = 0; x = 0.5 * WMAX;
+					}
 				}
 			}
 			// arriving: in the plane, (dl/ds, b / rp) in (radial, toward growing angle)

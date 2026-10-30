@@ -34,7 +34,8 @@ INC = open(os.path.join(HERE, '..', 'godot', 'shaders', 'geo.gdshaderinc')).read
 INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
 # the rays geo_see's search tries, counted
 INC = INC.replace('const int GEO_ITERS', 'int g_rays = 0;\nconst int GEO_ITERS', 1)
-INC = INC.replace('for (int i = 0; i < GEO_ITERS; i++) {', 'for (int i = 0; i < GEO_ITERS; i++) {\n\t\t\t\tg_rays = i + 1;', 1)
+assert INC.count('if (i >= GEO_ITERS + nbad) break;') == 1
+INC = INC.replace('if (i >= GEO_ITERS + nbad) break;', 'if (i >= GEO_ITERS + nbad) break;\n\t\t\t\tg_rays = i + 1;')
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
 PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
@@ -44,6 +45,7 @@ PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R':
 SWEEP_ABS, SWEEP_REL = 5e-5, 1e-5
 INVERSE = 5e-4
 DIRECTION = 5e-4
+NAN_DIRECTION = 2e-2         # radians: the search, a quarter of its rays lost, at most this far off
 LENGTH_REL = 1e-2
 FLOOR_ABS, FLOOR_REL = 1e-3, 2e-3     # metres of l where a ray meets the floor, and a share of its way
 EYE_POS, EYE_AXES = 2e-5, 3e-4
@@ -100,10 +102,22 @@ void main() {
 }'''
 
 
+# geo_see with a quarter of its search's rays made NaN (as a GPU's arithmetic might at some edge): it
+# must still find the ray
+NAN_SRC = SRC.replace('uniform int mode;', '''uniform int mode;
+uint g_h = 0u;
+uint g_hash(uint v) { uint s = v * 747796405u + 2891336453u; uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }''', 1).replace(
+    '\t\t\t\tfloat val = s.x - delta;\n',
+    '\t\t\t\tif (g_hash(g_h * 16u + uint(i)) % 4u == 0u) s = vec2(uintBitsToFloat(0x7fc00000u));\n'
+    '\t\t\t\tfloat val = s.x - delta;\n', 1).replace(
+    '\tuint i = gl_GlobalInvocationID.x;', '\tuint i = gl_GlobalInvocationID.x;\n\tg_h = i;', 1)
+assert NAN_SRC.count('0x7fc00000u') == 1 and NAN_SRC.count('g_h = i;') == 1
+
+
 class Gpu:
-    def __init__(self, ctx, S):
+    def __init__(self, ctx, S, src=SRC):
         self.ctx = ctx
-        self.prog = ctx.compute_shader(SRC)
+        self.prog = ctx.compute_shader(src)
         tab = S.build_table(NB, NV, 4)
         poly = S.build_poly()
         self.tex = ctx.texture((NB, NV), 2, dtype='f4', data=np.ascontiguousarray(tab.transpose(1, 0, 2)).astype('f4').tobytes())
@@ -139,7 +153,7 @@ def check(name, ok, detail):
     return ok
 
 
-def profile_checks(name, S, gpu, rng):
+def profile_checks(name, S, gpu, gpu_nan, rng):
     fails = 0
     # sweep and length from the origin; b as float32 has it, b - rho0 and r - b as the shaders
     # carry them, exact (geo_dr, geo_sigma)
@@ -191,6 +205,11 @@ def profile_checks(name, S, gpu, rng):
     fails += not check(f'{name}: which way the eye sees a point', max(derr) <= DIRECTION and max(lerr) <= 1 and fell == 0,
                        f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit, {fell} with a ray not finite (1200 points; '
                        f'{len(searched)} searched, in {searched.mean():.1f} rays on average, {int(searched.max())} at most)')
+    o = gpu_nan.run(2, rows)
+    derr = [abs(np.arctan2(g[1], g[0] * (1 if el >= 0 else -1)) - alpha) for (el, alpha, s, phi), g in zip(cases, o)]
+    stand_in = int((o[:, 3] - 2 * np.floor(o[:, 3] / 2) > 0.75).sum())
+    fails += not check(f'{name}: the same, a quarter of the search\'s rays made NaN', max(derr) <= NAN_DIRECTION and stand_in == 0,
+                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), {stand_in} by the stand-in')
     # where each pixel's ray meets the floor
     rows, want = [], []
     while len(rows) < 1500:
@@ -314,7 +333,7 @@ for name, prof in PROFILES.items():
     S = Space(*prof)
     S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
     gpu = Gpu(ctx, S)
-    fails += profile_checks(name, S, gpu, rng)
+    fails += profile_checks(name, S, gpu, Gpu(ctx, S, NAN_SRC), rng)
     if name == 'the app':
         fails += eye_checks(S, gpu, rng)
 print(f'FAILURES: {fails}')
