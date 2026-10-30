@@ -10,7 +10,9 @@ extends SceneTree
 ## (main.set_gravity_view), e.g. toys+gravity2; with +hands also both hands' balls where hands are
 ## at every pose, with +held also a ball held in the right one in front of the chest (what the
 ## hands and grabbing add to a frame; the held ball goes in as BallWorld.add puts any: with
-## MAX_BALLS there, in the oldest's place); shader: another ray tracer's path
+## MAX_BALLS there, in the oldest's place), with +cube also a new cube (Hands.NEW_CUBE_HALF) held
+## FACE_CUBE m in front of the eyes, in the middle of the view, turned so three faces show (the
+## worst case: every pixel's ray may meet it); shader: another ray tracer's path
 ## (res://shaders/ab/1/wormhole.gdshader).
 
 var main: Main
@@ -25,6 +27,8 @@ var gravity := 0
 var toys := false
 var held := false
 var hands := false
+var cube := false
+const FACE_CUBE := 0.35         # m from the head to the held cube's centre (+cube)
 const UNIFORMS := ["wh_sph", "wh_pil", "wh_box", "wh_ball", "wh_ballCol", "wh_nBall", "wh_cube", "wh_cubeE",
 		"wh_cubeCol", "wh_nCube", "wh_bound", "wh_bIdx", "wh_cIdx", "wh_fball", "wh_pix", "grav_cyl", "grav_g", "grav_d"]
 
@@ -44,7 +48,8 @@ func _initialize() -> void:
 	main.toys.demo = false
 	toys = main.toys.enabled
 	held = scene.contains("held")
-	hands = held or scene.contains("hands")
+	cube = scene.contains("cube")
+	hands = held or cube or scene.contains("hands")
 	if scene.contains("gravity"):
 		gravity = int(scene.substr(scene.find("gravity") + 7, 1))
 	root.add_child(main)
@@ -138,6 +143,21 @@ func _hold_ball() -> void:
 		if k == 1 and held:
 			var g: Array = sp.geodesic(at[0], at[1], -at[2][2], 0.3, at[2])
 			main.toys.world.add(g[0], g[1], Vector4.ZERO, 0.25, Color(0.95, 0.95, 0.97)).held = &"right_hand"
+	if cube:
+		var w := main.toys.world
+		if w.cubes.size() > 0 and w.cubes.back().held == &"left_hand":
+			w.cubes.pop_back()
+		# along the view, then its axes turned 30 degrees about up and 25 about right
+		var g: Array = sp.geodesic(hp[0], hp[1], -hp[2][2], FACE_CUBE, hp[2])
+		var F: Array = g[2]
+		var a := deg_to_rad(30.0)
+		var b := deg_to_rad(25.0)
+		var x: Vector4 = cos(a) * F[0] + sin(a) * F[2]
+		var z: Vector4 = cos(a) * F[2] - sin(a) * F[0]
+		var y: Vector4 = cos(b) * F[1] + sin(b) * z
+		z = cos(b) * z - sin(b) * F[1]
+		w.add_cube(g[0], g[1], Vector4.ZERO, [x, y, z], Vector3.ZERO, Hands.NEW_CUBE_HALF,
+				Color(0.95, 0.7, 0.3)).held = &"left_hand"
 	main.draw_toys()
 
 
