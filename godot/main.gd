@@ -94,6 +94,16 @@ var menu_active := false        # the menu was open this frame: its buttons are 
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
 var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lines about late frames)
+# and its parts, PARTS, ms; when it started (Time.get_ticks_usec)
+const PARTS := ["input and walk", "head", "toys", "hands", "drawing", "to the shaders"]
+var parts_ms := PackedFloat32Array([0, 0, 0, 0, 0, 0])
+var started_us := 0
+# the first frames are drawn with each kind of foveation pass in turn (none, SteamVR's map, our own
+# map: Foveation.set_level), then the menu's: their pipelines compile while the app starts, not at
+# the first switch in the menu (a stall on the Frame, and SteamVR at half rate after it); Renderer
+# does the same for the gravity views
+const WARM_FOVEATION := [0, Foveation.LEVELS, Foveation.LEVELS + 2]
+var warm := 0                   # frames of it done
 var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n, frame] (the speed check's cube)
 
 
@@ -208,12 +218,16 @@ func _add_controllers() -> void:
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	started_us = t0
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
 		place(START_POS, START_FORWARD)
 	if in_xr:
 		_log_profiles()
+		if warm <= WARM_FOVEATION.size():
+			foveation.set_level(WARM_FOVEATION[warm] if warm < WARM_FOVEATION.size() else menu.foveation)
+			warm += 1
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	menu_active = menu.handle_input(dt)
@@ -261,6 +275,7 @@ func _process(delta: float) -> void:
 		overlay.visible = shown
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
+	var t1 := Time.get_ticks_usec()
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
@@ -269,16 +284,24 @@ func _process(delta: float) -> void:
 	# in the order the top of this file gives; nothing during the speed check: it times the same
 	# scene at every pose
 	var active := toys.enabled and not await_pose and not hold
+	var t2 := Time.get_ticks_usec()
 	if active:
 		toys.step(delta, hands.balls())
+	var t3 := Time.get_ticks_usec()
 	var new_ball := in_xr and _pressed("new_ball", right_hand.is_button_pressed(&"by_button")) and not menu_active
 	var new_cube := in_xr and _pressed("new_cube", left_hand.is_button_pressed(&"ax_button")
 			or left_hand.is_button_pressed(&"dpad_down")) and not menu_active
 	hands.update(delta, hp, head, active, new_ball, new_cube)
+	var t4 := Time.get_ticks_usec()
 	if toys.enabled:
 		draw_toys()
+	var t5 := Time.get_ticks_usec()
 	renderer.set_head(hp[0], hp[1], hf, head.origin)
-	scripts_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	var t6 := Time.get_ticks_usec()
+	scripts_ms = (t6 - t0) / 1000.0
+	var stamps := [t0, t1, t2, t3, t4, t5, t6]
+	for i in PARTS.size():
+		parts_ms[i] = (stamps[i + 1] - stamps[i]) / 1000.0
 
 
 func draw_toys() -> void:

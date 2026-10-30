@@ -230,7 +230,7 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
+		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
 				% [main.rate.rate, main.foveation.level, "width" if main.foveation.order == 0 else "height", tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -363,9 +363,10 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 		return
 	var vp: RID = main.rate.target.get_viewport_rid()
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
+	var mt: Vector3 = main.rate.before_ms()
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z])
 	sec.frames += 1
 	sec.refreshes += meter.refreshes - refreshes_before
 	sec.gpu += g
