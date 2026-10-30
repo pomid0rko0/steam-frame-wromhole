@@ -18,9 +18,12 @@ keep and what was learnt about it: the comment at the top of its file.
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
-- **One wish per chat,** on a branch you name yourself, a short English word no branch in origin
-  has yet, started from `main` or the branch `docs/wishlist.md` gives for the wish; not the session's
-  `claude/…` branch. The owner allows pushing to the branch you name.
+- **One wish per chat,** on a branch you name yourself, started from `main` or the branch
+  `docs/wishlist.md` gives for the wish; not the branch a cloud session makes for itself (`claude/…`,
+  `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
+  as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
+  origin already has a branch by that name, add what this one does differently, or a number
+  (`cleanup-2`), rather than a synonym.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are git tags
   the owner sets on such a commit.
 - **Docs say what is true now.** README, `docs/` and code comments describe the code as it is: no
@@ -31,9 +34,6 @@ keep and what was learnt about it: the comment at the top of its file.
   project is, how to run, install and check it, the maths, the wishes.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
-- **"Done" after a cold read:** before calling docs done, have an agent without this chat's context
-  check every statement against the code; fix what it finds and repeat until a read finds nothing.
-  A finding that turns out wrong is not fixed but named, with the evidence.
 - **Don't anchor on what is here.** Look for the best way as if starting fresh and take it even if it
   replaces what exists, up to writing the project anew. Nothing is kept for compatibility: carry
   along everything that depends on a change in the same branch and migrate what is stored. The
