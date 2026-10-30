@@ -25,6 +25,10 @@ extends Node
 ## (tools/adreno_stats.sh) are not faster by themselves, and frame times from walking around don't
 ## compare between builds (where one looks changes them): this part decides.
 ##
+## This build's segments print its frame split into passes too ("bench: passes" lines,
+## RayPass.pass_ms, GPU timestamps around its kernels): what each costs, and over the foveation
+## levels what of it does not follow the number of rays.
+##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
 ## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),
 ## which is not enough to undo SteamVR's half rate (frame_rate.gd).
@@ -90,6 +94,8 @@ var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
 var gpu_ms: Array = []          # this segment's frames
+var passes: Array = []          # this build's: each frame's RayPass.pass_ms in the segment
+var pass_frame := -1
 var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
@@ -333,6 +339,10 @@ func _segment() -> void:
 	if gpu_ms.is_empty():
 		_clock()
 	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
+	var rp: RayPass = main.tracer.pass_
+	if not variants[plan[step].y].frag and rp.pass_frame != pass_frame and rp.pass_ms.size() == RayPass.PASSES.size():
+		pass_frame = rp.pass_frame
+		passes.append(rp.pass_ms)
 	if phase_t >= warm + time:
 		_clock()
 		_end_segment()
@@ -357,6 +367,7 @@ func _begin(i: int) -> void:
 	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
+	passes.clear()
 	if i == 0 or plan[i].x != plan[i - 1].x:
 		clock_lo = 0
 		clock_hi = 0
@@ -365,6 +376,17 @@ func _begin(i: int) -> void:
 
 func _end_segment() -> void:
 	var r: Array = results[plan[step].x]
+	if not passes.is_empty():
+		# this build's frame by its passes (RayPass.pass_ms): each one's median over the segment
+		var place_now: Array = PLACES[plan[step].x]
+		var parts := []
+		for k in RayPass.PASSES.size():
+			var vals: Array = passes.map(func(p: PackedFloat64Array) -> float: return p[k])
+			vals.sort()
+			parts.append("%s %.2f" % [RayPass.PASSES[k], vals[vals.size() / 2]])
+		print("bench: passes, l %.1f m, %.0f deg right, %.0f deg up, %d (%s): %s ms; %d frames"
+				% [_l(place_now[0]), place_now[1], place_now[2], plan[step].y + 1, variants[plan[step].y].label,
+				", ".join(parts), passes.size()])
 	gpu_ms.sort()
 	r[plan[step].y].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
 	var last := step + 1 >= plan.size() or plan[step + 1].x != plan[step].x

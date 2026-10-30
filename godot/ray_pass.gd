@@ -37,6 +37,11 @@ const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#defi
 const ORDER := ["world", "world gravity", "world arrows", "world toys", "world toys gravity", "world toys arrows",
 		"table rows", "tables", "tables and paths", "toys", "toys arrows"]
 
+# GPU timestamps after each kernel (RenderingDevice.capture_timestamp), STAMPS[0] before them: a
+# frame split into its passes for the speed check (pass_ms)
+const STAMPS := ["ray: start", "ray: table rows", "ray: tables", "ray: world", "ray: toys"]
+const PASSES := ["before", "table rows", "tables", "world", "toys", "after"]
+
 var picture := Texture2DArrayRD.new()   # what the quad shows: a layer per view
 var space: WormholeSpace                # the eyes' geodesics (Tracer sets it)
 var frame := PackedByteArray()          # Tracer's part of the block
@@ -73,6 +78,11 @@ var used_sets := {}                     # their subsets by the bindings a kernel
 var image_size := Vector2i.ZERO
 var table_size := Vector2i(TABLE_HALF, TABLE_COLS)   # rows a grid, columns
 var image_views := 0
+# the last frame whose timestamps came back, in ms by PASSES: from the start of the viewport's
+# render to the kernels (Godot's own before them), each kernel, from them to the viewport's end
+# (Godot's pass: the quad, the hands, the menu, the tone mapping); empty until there is one
+var pass_ms := PackedFloat64Array()
+var pass_frame := -1
 
 
 func _init() -> void:
@@ -169,26 +179,74 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var w := gravity + (GRAVITY_DEFINES.size() if toys else 0)
 	if toys:
 		rd.buffer_update(tiles, 0, 16, PackedInt32Array([0, 1, 1, 0]).to_byte_array())
+	_read_stamps()
+	# a compute list a kernel, a timestamp after each (pass_ms)
+	rd.capture_timestamp(STAMPS[0])
 	var cl := rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(cl, rows_pipe)
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(rows_shader, 0, _used(all, [0, 1, 2, 7, 10])), 0)
 	rd.compute_list_dispatch(cl, (2 * table_size.x + 63) / 64, 1, views)
-	rd.compute_list_add_barrier(cl)
+	rd.compute_list_end()
+	rd.capture_timestamp(STAMPS[1])
+	cl = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
 			_used(all, [0, 1, 2, 6, 8, 10] if paths else [0, 1, 2, 6, 10])), 0)
 	rd.compute_list_dispatch(cl, 2 * table_size.x * table_size.y / 256, 1, views)
-	rd.compute_list_add_barrier(cl)
+	rd.compute_list_end()
+	rd.capture_timestamp(STAMPS[2])
+	cl = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[w], 0, _used(all, [0, 1, 2, 3, 4, 5])), 0)
 	rd.compute_list_dispatch(cl, _groups(size).x, _groups(size).y, views)
+	rd.compute_list_end()
+	rd.capture_timestamp(STAMPS[3])
 	if toys:
-		rd.compute_list_add_barrier(cl)
+		cl = rd.compute_list_begin()
 		var t := 1 if gravity == 2 else 0
 		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[t])
 		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[t], 0, _used(all, [0, 1, 2, 3, 4, 5, 9])), 0)
 		rd.compute_list_dispatch_indirect(cl, tiles, 0)
-	rd.compute_list_end()
+		rd.compute_list_end()
+		rd.capture_timestamp(STAMPS[4])
+
+
+## pass_ms from the timestamps RenderingDevice has handed back (a frame two before this one): the
+## viewport's begin and end (frame_rate.gd measures its render time) around this pass's.
+func _read_stamps() -> void:
+	var f := rd.get_captured_timestamps_frame()
+	if f == pass_frame:
+		return
+	var names: Array[String] = []
+	var times: Array[int] = []
+	for i in rd.get_captured_timestamps_count():
+		names.append(rd.get_captured_timestamp_name(i))
+		times.append(rd.get_captured_timestamp_gpu_time(i))
+	var s := names.find(STAMPS[0])
+	if s < 0:
+		return
+	var last := s
+	while last + 1 < names.size() and names[last + 1].begins_with("ray: "):
+		last += 1
+	var begin := -1
+	for i in range(s - 1, -1, -1):
+		if names[i].begins_with("vp_begin"):
+			begin = i
+			break
+	var end := -1
+	for i in range(last + 1, names.size()):
+		if names[i].begins_with("vp_end"):
+			end = i
+			break
+	if begin < 0 or end < 0:
+		return
+	var out := PackedFloat64Array([(times[s] - times[begin]) * 1e-6])
+	for k in range(1, STAMPS.size()):
+		var i := names.find(STAMPS[k], s)
+		out.append((times[i] - times[i - 1]) * 1e-6 if i > s and i <= last else 0.0)
+	out.append((times[end] - times[last]) * 1e-6)
+	pass_ms = out
+	pass_frame = f
 
 
 ## The kernels' uniforms (made again with the picture, or when the fillet table is another texture).
