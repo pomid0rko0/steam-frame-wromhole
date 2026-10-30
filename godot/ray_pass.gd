@@ -38,6 +38,7 @@ var head: Array = [10.0, Vector3(1.0, 0.0, 0.0), [Vector4.ZERO, Vector4.ZERO, Ve
 var gravity := 0                        # the gravity view (GRAVITY_DEFINES)
 var toys := false                       # movable objects in the kernels
 var rings: Array = []                   # Foveation.rings: none, every pixel its own ray
+var gaze_px: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]   # the rings' middle the last frame had, per view (the tests)
 var table: Texture2D                    # the fillet table (WormholeSpace.fillet_table)
 var rd: RenderingDevice
 var failed := false
@@ -134,7 +135,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	for v in 2:
 		var c := projs[v] * Vector4(at.x, at.y, at.z, 1.0)
 		var ndc := Vector2(c.x, c.y) / c.w if c.w > 1e-6 else Vector2.ZERO
-		_put_vec4(block, Vector4((ndc.x + 1.0) * 0.5 * size.x, (ndc.y + 1.0) * 0.5 * size.y, 0.0, 0.0))
+		gaze_px[v] = Vector2((ndc.x + 1.0) * 0.5 * size.x, (ndc.y + 1.0) * 0.5 * size.y)
+		_put_vec4(block, Vector4(gaze_px[v].x, gaze_px[v].y, 0.0, 0.0))
 	for k in MAX_RINGS:
 		var ring: Array = rings[k] if k < rings.size() else [0.0, 1, 1]
 		_put_vec4(block, Vector4(ring[0], ring[1], ring[2], 0.0))

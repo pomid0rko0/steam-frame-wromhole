@@ -66,10 +66,11 @@ func _process(_delta: float) -> bool:
 		U.check("the menu is closed, the line below shows the rate", not p.open and p.strip.visible
 				and p.strip_label.text.begins_with("20 Гц · "))
 		p.set_open(true)
-		U.check("opened: the menu shows, the line hides, the rate row picked", p.open and p.menu.visible
-				and not p.strip.visible and p.picked() == "rate")
+		U.check("opened: the menu shows, the line hides, the first row (the one-eye check) picked", p.open and p.menu.visible
+				and not p.strip.visible and p.picked() == "check")
 		U.check("20 Hz is not among them, 90 Hz is chosen (yellow)", _value(p, "rate") == "90 Гц" and _color(p, "rate") == p.COLOR_PENDING)
 		OS.set_environment("LD_PRELOAD", "/nonexistent/overlay.so")    # as Steam sets it
+		p.select("rate")
 		p.change(1)
 		U.check("right: 96 picked, nothing written yet", _value(p, "rate") == "96 Гц" and p.pending >= 0
 				and not r.writing and r.desired != 96.0)

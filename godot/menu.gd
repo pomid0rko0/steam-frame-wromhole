@@ -647,9 +647,9 @@ func _update_strip() -> void:
 
 ## Every row, top to bottom; _layout leaves out those not shown here.
 func _make_rows() -> Array[Row]:
-	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
-			FovRow.new(self, "fov", "фовеация"), OrderRow.new(self, "order", "плавная грубее"),
-			GazeRow.new(self, "gaze", "точка взгляда"), CheckRow.new(self, "check", "проверка одним глазом"),
+	return [CheckRow.new(self, "check", "проверка одним глазом"), RateRow.new(self, "rate", "частота"),
+			ScaleRow.new(self, "scale", "разрешение"), FovRow.new(self, "fov", "фовеация"),
+			OrderRow.new(self, "order", "плавная грубее"), GazeRow.new(self, "gaze", "точка взгляда"),
 			GravRow.new(self, "grav", "гравитация"), TurnRow.new(self, "turn", "поворот"),
 			StripRow.new(self, "strip", "строка частоты"), BenchRow.new(self, "bench", "замер скорости")]
 
