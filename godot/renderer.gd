@@ -25,7 +25,7 @@ const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
-const GRAVITY_VIEWS := ["off", "floor", "floor and arrows"]
+const GRAVITY_VIEWS := ["off", "floor", "floor and field lines"]
 const MAX_BALLS := 12           # the toys' balls and both hands'
 const MAX_CUBES := 8           # the toys' and the speed check's cube before the eyes
 # the meshes: a ball's (the unit sphere; check_scene.gd's balls take the same), a cube's faces in
@@ -39,16 +39,20 @@ const SPHERE_COLORS := [Color(0.62, 0.27, 0.22), Color(0.25, 0.45, 0.62), Color(
 		Color(0.3, 0.55, 0.35), Color(0.5, 0.3, 0.6), Color(0.65, 0.45, 0.2)]
 const PILLAR_COLOR := Color(0.55, 0.45, 0.38)
 const BOX_COLOR := Color(0.42, 0.48, 0.58)
-# the gravity view's arrows: on the vertical surface n.x = 0 (through the throat, across chart x),
-# every ARROW_STEP of l out to ARROW_REACH beyond the curved zone, rows ARROW_STEP apart in height;
-# each in the colour of its g with a dark outline, which keeps it seen on the floor of the same g
-const ARROW_STEP := 1.0
-const ARROW_REACH := 4.5
-const ARROW_LENGTH := 0.6       # m at 1 g; no longer than at ARROW_MAX_G
-const ARROW_MAX_G := 1.4
-const ARROW_SHAFT := 0.035      # half the shaft's width, m
-const ARROW_HEAD := 0.13        # half the head's width, m
-const ARROW_RIM := 0.02         # the outline's width, m
+# the gravity view's field lines: on the vertical surface n.x = 0 (through the throat, across chart
+# x), from the edge of the region shown (LINE_REACH beyond the curved zone), every LINE_STEP across
+# it, along the force down to the floor; arrows on them every ARROW_GAP along the line, each along it;
+# the colour the strength (_gravity_color); each with a dark outline, which keeps it seen on the
+# floor of the same g
+const LINE_REACH := 4.5
+const LINE_STEP := 1.0          # m between the lines' starts, across (chart y)
+const LINE_DS := 0.2            # m: the steps a line is traced and drawn in
+const LINE_MAX_STEPS := 300
+const LINE_WIDTH := 0.012       # half a line's width, m
+const ARROW_GAP := 1.0          # m along a line between its arrows
+const ARROW_LENGTH := 0.16      # m
+const ARROW_HALF := 0.075       # half an arrow's width, m
+const ARROW_RIM := 0.012        # the outline's width, m
 const ARROW_RIM_COLOR := Color(0.02, 0.02, 0.02)
 const ARROW_GLOW := 1.15        # an arrow is its g's colour this much brighter (_gravity_color)
 
@@ -339,56 +343,119 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 		st.add_vertex(xf * v[k])
 
 
-## The gravity view's arrows (docs/gravity.md, «Показ»): on the surface n.x = 0, a grid in l and in
-## height along it, each an arrow along the force there, its length and colour the strength.
-## Vertices as points of the space: n in the vertex, l in UV.x (body.gdshaderinc, ARROWS).
+## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
+## LINE_* and ARROW_*). Vertices as points of the space: n in the vertex, l in UV.x (body.gdshaderinc,
+## ARROWS); each line and arrow twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1).
 func _arrow_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var lmax := space.L + ARROW_REACH
-	var nl := int(lmax / ARROW_STEP)
-	for il in range(-nl, nl + 1):
-		var l := il * ARROW_STEP
-		var rr := space.r(l)
-		# rows along the half circle above the floor, about ARROW_STEP apart
-		var nb := maxi(1, roundi(PI * rr / ARROW_STEP))
-		for ib in nb:
-			var beta := PI * (ib + 0.5) / nb
-			var n := Vector3(0.0, cos(beta), sin(beta))
-			var F := -space.potential_grad(l, n)
-			var e_beta := Vector3(0.0, -sin(beta), cos(beta))
-			var f2 := Vector2(F.x, Vector3(F.y, F.z, F.w).dot(e_beta))    # in (along l, along beta)
-			var g := f2.length()
-			if g < 1e-4:
+	var lmax := space.L + LINE_REACH
+	var R := space.r(lmax)
+	var k := int(R / LINE_STEP)
+	for side in [1.0, -1.0]:
+		for i in range(-k, k + 1):
+			var y := i * LINE_STEP
+			if absf(y) > R - 0.5 * LINE_STEP:
 				continue
-			var dir := f2 / g
-			var len := ARROW_LENGTH * minf(g, ARROW_MAX_G)
-			var head := minf(0.3, 0.6 * len)
-			# the outline first, then the arrow over it (the shader puts it a hair nearer the eye)
-			_arrow(st, l, beta, rr, dir, len, head, ARROW_RIM, Color(ARROW_RIM_COLOR, 0.0))
-			_arrow(st, l, beta, rr, dir, len, head, 0.0, Color(_gravity_color(g), 1.0))
+			var pts := _field_line(side * lmax, acos(y / R), lmax)
+			if pts.size() < 2:
+				continue
+			_line(st, pts, true)
+			_line(st, pts, false)
 	st.index()          # shared corners once (_scene_mesh)
 	return st.commit()
 
 
-## One arrow at (l, beta) on the surface n.x = 0 (metric dl^2 + r^2 dbeta^2), along dir (in l,
-## beta), grown by grow on every side.
-static func _arrow(st: SurfaceTool, l: float, beta: float, rr: float, dir: Vector2, len: float, head: float,
-		grow: float, color: Color) -> void:
-	var side := Vector2(-dir.y, dir.x)
-	var back := -0.5 * len - grow
-	var neck := 0.5 * len - head
-	var sw := ARROW_SHAFT + grow
-	var hw := ARROW_HEAD + 2.0 * grow
-	var tip := 0.5 * len + 2.0 * grow
-	var pts := [back * dir + sw * side, neck * dir + sw * side, neck * dir - sw * side, back * dir - sw * side,
-			(neck - grow) * dir + hw * side, tip * dir, (neck - grow) * dir - hw * side]
-	for k in [0, 1, 2, 0, 2, 3, 4, 5, 6]:
-		var o: Vector2 = pts[k]
-		var b2 := beta + o.y / rr
-		st.set_color(color)
-		st.set_uv(Vector2(l + o.x, 0.0))
-		st.add_vertex(Vector3(0.0, cos(b2), sin(b2)))
+## The force at (l, beta) of the surface n.x = 0 (metric dl^2 + r^2 dbeta^2): its parts along l and
+## along beta (per metre), in g.
+func _force(l: float, beta: float) -> Vector2:
+	var F := -space.potential_grad(l, Vector3(0.0, cos(beta), sin(beta)))
+	return Vector2(F.x, Vector3(F.y, F.z, F.w).dot(Vector3(0.0, -sin(beta), cos(beta))))
+
+
+## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (beta 0 or pi)
+## or out of |l| < lmax: its points [l, beta, g].
+func _field_line(l: float, beta: float, lmax: float) -> Array:
+	var dir := func(ll: float, bb: float) -> Vector2:
+		var f := _force(ll, bb)
+		var g := f.length()
+		return Vector2(f.x, f.y / space.r(ll)) / g if g > 1e-6 else Vector2.ZERO
+	var pts := [[l, beta, _force(l, beta).length()]]
+	for i in LINE_MAX_STEPS:
+		var p := Vector2(l, beta)
+		var k1: Vector2 = dir.call(p.x, p.y)
+		if k1 == Vector2.ZERO:
+			break
+		var k2: Vector2 = dir.call(p.x + 0.5 * LINE_DS * k1.x, p.y + 0.5 * LINE_DS * k1.y)
+		var k3: Vector2 = dir.call(p.x + 0.5 * LINE_DS * k2.x, p.y + 0.5 * LINE_DS * k2.y)
+		var k4: Vector2 = dir.call(p.x + LINE_DS * k3.x, p.y + LINE_DS * k3.y)
+		var q := p + LINE_DS / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+		if q.y <= 0.0 or q.y >= PI:
+			# onto the floor: the step's part that gets there
+			var edge := 0.0 if q.y <= 0.0 else PI
+			var t := (edge - p.y) / (q.y - p.y)
+			q = p.lerp(q, t)
+			q.y = edge
+			pts.append([q.x, q.y, _force(q.x, q.y).length()])
+			break
+		if absf(q.x) > lmax:
+			break
+		l = q.x
+		beta = q.y
+		pts.append([l, beta, _force(l, beta).length()])
+	return pts
+
+
+## A line through pts ([l, beta, g]) LINE_WIDTH to each side, with an arrow every ARROW_GAP along
+## it, in the colour of g where each point is; rim: its outline instead, ARROW_RIM wider all round.
+func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
+	var grow := ARROW_RIM if rim else 0.0
+	var w := LINE_WIDTH + grow
+	# the strip: two vertices a point
+	var prev: Array = []
+	for i in pts.size():
+		var a: Array = pts[maxi(i - 1, 0)]
+		var b: Array = pts[mini(i + 1, pts.size() - 1)]
+		var p: Array = pts[i]
+		var rr := space.r(p[0])
+		var t := Vector2(b[0] - a[0], (b[1] - a[1]) * rr).normalized()
+		var side := Vector2(-t.y, t.x)
+		var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(p[2]), 1.0)
+		var pair := [Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), Vector2(p[0] - w * side.x, p[1] - w * side.y / rr)]
+		if not prev.is_empty():
+			for q: Vector2 in [prev[0], pair[0], pair[1], prev[0], pair[1], prev[1]]:
+				_vertex(st, q, c)
+		prev = pair
+	# the arrows, each along the line where it stands
+	var s := 0.0
+	var next := 0.5 * ARROW_GAP
+	for i in range(1, pts.size()):
+		var a: Array = pts[i - 1]
+		var b: Array = pts[i]
+		var rr := space.r(0.5 * (a[0] + b[0]))
+		var d := Vector2(b[0] - a[0], (b[1] - a[1]) * rr)
+		var len := d.length()
+		while len > 0.0 and next <= s + len:
+			var f := (next - s) / len
+			var at := Vector2(lerpf(a[0], b[0], f), lerpf(a[1], b[1], f))
+			var t := d / len
+			var side := Vector2(-t.y, t.x)
+			var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(lerpf(a[2], b[2], f)), 1.0)
+			var tip := (0.5 * ARROW_LENGTH + 2.0 * grow) * t
+			var back := -(0.5 * ARROW_LENGTH + grow) * t
+			for o: Vector2 in [tip, back + (ARROW_HALF + 2.0 * grow) * side, back - (ARROW_HALF + 2.0 * grow) * side]:
+				_vertex(st, Vector2(at.x + o.x, at.y + o.y / rr), c)
+			next += ARROW_GAP
+		s += len
+
+
+## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0, kept above the floor (the
+## floor hides nothing: what is below it would show through).
+static func _vertex(st: SurfaceTool, q: Vector2, c: Color) -> void:
+	var b := clampf(q.y, 0.0, PI)
+	st.set_color(c)
+	st.set_uv(Vector2(q.x, 0.0))
+	st.add_vertex(Vector3(0.0, cos(b), sin(b)))
 
 
 ## An arrow's colour at g (in g): look.gdshaderinc's look_grav_colour, brighter by ARROW_GLOW.

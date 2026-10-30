@@ -11,8 +11,8 @@ extends SceneTree
 ## left while walking forward (Q, W; KEYS): the overlay must follow the world. Run with
 ## --fixed-fps 60, so every mode walks and turns the same.
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
-## gravity, arrows: the gravity views "floor" and "floor and arrows" (Renderer.GRAVITY_VIEWS: the
-## floor coloured by gravity, also the field's arrows).
+## gravity, arrows: the gravity views "floor" and "floor and field lines" (Renderer.GRAVITY_VIEWS: the
+## floor coloured by gravity, also the field lines with their arrows).
 ## fov: foveated rendering on (the runtime's strongest in even cases, our own map in odd ones):
 ## the 3D scene in a render pass of its own, the viewport asking for a density map. Software
 ## Vulkan has none, so what this tests is that the split pass draws everything where it was.
