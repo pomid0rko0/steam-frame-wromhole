@@ -1,10 +1,10 @@
 extends SceneTree
 ## Stereo correctness against Godot itself, through the real multiview path.
-## A sphere in front of the viewer (flat universe A) is drawn either by our ray tracer
-## (mode "ray": a ball in the shader) or by Godot's rasterizer (mode "mesh": a plain
-## SphereMesh at the same play-space position). Godot's own rendering is correct stereo
+## A sphere in front of the viewer (flat universe A) is drawn either by the app's renderer
+## (mode "app": one of its balls) or by Godot's standard renderer (mode "mesh": a plain SphereMesh
+## at the same play-space position). Godot's own rendering is correct stereo
 ## by definition, so in each eye the two silhouettes must coincide.
-##   godot --path . -s res://tests/multiview_sphere.gd -- out_prefix ray|mesh
+##   godot --path . -s res://tests/multiview_sphere.gd -- out_prefix app|mesh
 
 const U := preload("res://tests/util.gd")
 const CHART := Vector3(8.0, -0.5, 1.4)      # sphere centre, chart A
@@ -39,9 +39,9 @@ func _process(_delta: float) -> bool:
 		# the viewer stands at main.START_POS facing -x (START_FORWARD, main places it so): play x ->
 		# chart +y, play +y -> chart +z, play +z -> chart +x. So chart (cx, cy, cz) is play
 		# (cy, cz, cx - START_POS.x).
-		if mode == "ray":
+		if mode == "app":
 			var p := Vector4(CHART.x, CHART.y, CHART.z, main.space.h)     # point of R^4 in sheet A
-			main.tracer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
+			main.renderer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))
 			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)

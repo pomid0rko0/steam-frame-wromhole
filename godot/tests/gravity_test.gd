@@ -5,10 +5,10 @@ extends SceneTree
 ## 1. the field matches ref/gravity.py (python3 ref/test_gravity.py prints these numbers)
 ## 2. it solves Laplace's equation, (r^2 f')' = 2 f, also on the fillet's table
 ## 3. potential_grad is the gradient of potential (so the field conserves energy)
-## 4. the ray tracer's polynomials (gravity_shader) are the field, and join the cylinder and the
-##    flat part
-## 5. G cycles the views (Tracer.GRAVITY_VIEWS) and their ray tracers; not during the speed check;
-##    with movable balls and cubes each view has a ray tracer that draws them too
+## 4. the renderer's table of gravity on the floor (gravity_table) is the field, and its end joins
+##    the closed form beyond
+## 5. G cycles the views (Renderer.GRAVITY_VIEWS): the floor's shader and the arrows; not during
+##    the speed check
 ## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
 ##    throat, the sky untouched; arrows drawn over the view with view 2
 ## With a prefix, saves the pictures it checks.
@@ -105,25 +105,22 @@ func _math_checks(sp: WormholeSpace) -> void:
 		gerr = maxf(gerr, maxf(absf(dl - G.x), absf(dt - Vector3(G.y, G.z, G.w).dot(t))))
 	U.check("potential_grad is the potential's gradient", gerr < 1e-4, "max difference %s (in g)" % _e(gerr))
 
-	# 4: the shader's polynomials, with its float32 coefficients
-	var gs := sp.gravity_shader()
-	var cg: Array = gs.g
-	var cd: Array = gs.d
-	var perr := 0.0
-	var derr := 0.0
-	for i in 200:
-		var x := (i + 0.5) / 200.0
-		var l := sp.Lc + x * (sp.L - sp.Lc)
-		var F := sp.gravity_f(l)
-		perr = maxf(perr, absf(_poly(cg, x) - F[0] / sp.r(l)))
-		derr = maxf(derr, absf(_poly(cd, x) - F[1]))
-	var c: Vector4 = gs.cyl
-	var kLc := c.y * sp.Lc
-	var rr := sp.Rout
-	var join := maxf(maxf(absf(_poly(cg, 0.0) - c.x * cosh(kLc)), absf(_poly(cd, 0.0) - c.z * sinh(kLc))),
-			maxf(absf(_poly(cg, 1.0) - (1.0 + c.w / (rr * rr * rr))), absf(_poly(cd, 1.0) - (1.0 - 2.0 * c.w / (rr * rr * rr)))))
-	U.check("the ray tracer's gravity is the field", perr < 1e-5 and derr < 2e-5 and join < 2e-5,
-			"on the fillet f / r within %s g, f' within %s; the joins with the cylinder and the flat part within %s" % [_e(perr), _e(derr), _e(join)])
+	# 4: the renderer's table, float32, linear between its nodes as the GPU filters it
+	var gt := sp.gravity_table()
+	var img: Image = gt.image
+	var ax: Vector2 = gt.axes
+	var n := img.get_width()
+	var terr := 0.0
+	for i in 400:
+		var l := (i + 0.5) / 400.0 * ax.x
+		var x := l / ax.x * (n - 1)
+		var k := mini(int(x), n - 2)
+		var g := lerpf(img.get_pixel(k, 0).r, img.get_pixel(k + 1, 0).r, x - k)
+		terr = maxf(terr, absf(g - sp.floor_gravity(l)))
+	var rr := sp.r(ax.x)
+	var join := absf(img.get_pixel(n - 1, 0).r - (1.0 + ax.y / (rr * rr * rr)))
+	U.check("the renderer's gravity on the floor is the field", terr < 2e-3 and join < 1e-5,
+			"within %s g between the nodes, at the end %s from the closed form" % [_e(terr), _e(join)])
 
 
 ## x as "1.5e-5"
@@ -138,43 +135,24 @@ func _flux(sp: WormholeSpace, l: float) -> float:
 	return sp.r(l) * sp.r(l) * sp.gravity_f(l)[1]
 
 
-## A polynomial from x^0 up, its coefficients four to a Vector4, in doubles.
-static func _poly(c: Array, x: float) -> float:
-	var v := 0.0
-	for k in range(4 * c.size() - 1, -1, -1):
-		var q: Vector4 = c[k / 4]
-		v = v * x + q[k % 4]
-	return v
-
-
 func _control_checks() -> void:
 	var seen := []
+	var r: Renderer = main.renderer
 	for i in 3:
 		U.key(KEY_G, true, true)
 		main._process(0.0)
 		U.key(KEY_G, false, true)
 		main._process(0.0)
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file()])
-	U.check("G cycles the gravity views", seen == [[1, "wormhole_gravity.gdshader"], [2, "wormhole_arrows.gdshader"], [0, "wormhole.gdshader"]],
-			str(seen))
+		seen.append([r.gravity_view, r.floor_mat.shader.resource_path.get_file(), r.arrows.visible])
+	U.check("G cycles the gravity views", seen == [[1, "floor_gravity.gdshader", false], [2, "floor_gravity.gdshader", true],
+			[0, "floor.gdshader", false]], str(seen))
 	main.hold = true
 	U.key(KEY_G, true, true)
 	main._process(0.0)
 	U.key(KEY_G, false, true)
 	main._process(0.0)
 	main.hold = false
-	U.check("G does nothing during the speed check", main.tracer.gravity_view == 0, "view %d" % main.tracer.gravity_view)
-	# movable balls (the stereo check's): each view has its ray tracer with them
-	var pos := PackedVector4Array([Vector4(8.0, 0.0, 1.0, main.space.h)])
-	var col := PackedVector4Array([Vector4(1.0, 0.0, 0.0, 0.3)])
-	main.tracer.set_objects(pos, col)
-	var seen_b := [main.tracer.material.shader.resource_path.get_file()]
-	for v in [1, 2, 0]:
-		main.set_gravity_view(v)
-		seen_b.append(main.tracer.material.shader.resource_path.get_file())
-	main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
-	U.check("gravity view and movable balls", seen_b == ["wormhole_balls.gdshader", "wormhole_balls_gravity.gdshader",
-			"wormhole_balls_arrows.gdshader", "wormhole_balls.gdshader"] and main.tracer.material.shader == Tracer.SHADERS[0], str(seen_b))
+	U.check("G does nothing during the speed check", r.gravity_view == 0, "view %d" % r.gravity_view)
 
 
 ## The colour in the middle of a picture, averaged over 5 x 5 pixels (between the floor's lines).

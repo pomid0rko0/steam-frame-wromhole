@@ -7,6 +7,5 @@ tools/.bin
 ref/out/
 __pycache__/
 *.zip
-godot/shaders/ab/
 # tasks' worktrees, runs' files, box.sh's lock (tools/box.sh)
 .wt/

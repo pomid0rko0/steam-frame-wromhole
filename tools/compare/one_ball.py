@@ -1,5 +1,5 @@
-"""Ray-traced ball vs Godot's rasterized ball, one image pair per eye (or one pair on desktop).
-Arguments: ray.png mesh.png [ray2.png mesh2.png ...]. PASS: in every pair the red silhouettes
+"""The app's ball vs Godot's standard one, one image pair per eye (or one pair on desktop).
+Arguments: app.png mesh.png [app2.png mesh2.png ...]. PASS: in every pair the red silhouettes
 overlap (IoU above MIN_IOU) and their centroids differ by less than MAX_OFFSET px."""
 import sys
 import numpy as np

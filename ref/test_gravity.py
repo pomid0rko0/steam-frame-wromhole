@@ -4,7 +4,7 @@ Exit status 1 on any failure."""
 import sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
-from wh import Wormhole, app_profile
+from geo import Space as Wormhole, app_profile
 from gravity import Gravity, solve_2d
 
 PROFILES = {                      # (rho0, h, R) in metres

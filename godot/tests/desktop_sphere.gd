@@ -1,6 +1,6 @@
 extends SceneTree
 ## Same check as multiview_sphere.gd, its ball, without multiview: an ordinary camera at the head.
-##   godot --path . --resolution 960x1080 -s res://tests/desktop_sphere.gd -- out_prefix ray|mesh
+##   godot --path . --resolution 960x1080 -s res://tests/desktop_sphere.gd -- out_prefix app|mesh
 
 const U := preload("res://tests/util.gd")
 const CHART := preload("res://tests/multiview_sphere.gd").CHART
@@ -28,9 +28,9 @@ func _process(_delta: float) -> bool:
 		main.camera.basis = Basis.IDENTITY
 		main.place(main.START_POS, main.START_FORWARD)      # chart to play: multiview_sphere.gd
 	if frames == 3:
-		if mode == "ray":
+		if mode == "app":
 			var pos := PackedVector4Array([Vector4(CHART.x, CHART.y, CHART.z, main.space.h)])
-			main.tracer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
+			main.renderer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))
 			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)

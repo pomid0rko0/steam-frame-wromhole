@@ -1,27 +1,25 @@
 extends SceneTree
 ## The in-headset stereo check scene (check_scene.gd) through the simulated headset
-## (tests/fake_hmd.gd): mode "ray" hides Godot's green overlay, "floor" shows only its floor lines,
+## (tests/fake_hmd.gd): mode "app" hides Godot's green overlay, "floor" shows only its floor lines,
 ## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
-## ray-traced white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix ray|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+## renderer's white lines, red balls and magenta cube.
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
 ## left while walking forward (Q, W; KEYS): the overlay must follow the world. Run with
 ## --fixed-fps 60, so every mode walks and turns the same.
-## plain: without the ray-traced balls and cube, i.e. with the shader the normal scene uses where
-## no toy can be seen (no toys' code); only the floor lines can be compared then. gravity, arrows:
-## the gravity views "floor" and "floor and arrows" (Tracer.GRAVITY_VIEWS: the floor coloured by
-## gravity, also the field's arrows), their own ray tracers with the balls and the cube (with
-## plain, without them).
+## plain: without the renderer's balls and cube; only the floor lines can be compared then.
+## gravity, arrows: the gravity views "floor" and "floor and arrows" (Renderer.GRAVITY_VIEWS: the
+## floor coloured by gravity, also the field's arrows).
 ## fov: foveated rendering on (the runtime's strongest in even cases, our own map in odd ones):
 ## the 3D scene in a render pass of its own, the viewport asking for a density map. Software
 ## Vulkan has none, so what this tests is that the split pass draws everything where it was.
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
-const SHOWN := {"ray": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
+const SHOWN := {"app": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
 		"both": ["Grid", "Ball", "Cube"]}
 # case 2: the head's step in the room each frame
 const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05))
@@ -64,7 +62,7 @@ func _process(_delta: float) -> bool:
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view
 		if plain:
-			main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
+			main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
 		if gravity > 0:
 			main.set_gravity_view(gravity)
 		if fov:
