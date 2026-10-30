@@ -635,20 +635,38 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     // cannot cut across an object the path passes by. Only entries count: a ray that starts inside
     // one does not see it from inside. Each search ends at the nearest hit so far. Along the march
     // psi's cosine and sine are turned by its steps (wh_rot), not taken anew.
+    // Besides the subspace: w grows with l, so a ray from the cylinder (w = l there) passes only the
+    // w from its start on in its direction, and one that stays on its side (turns round in a fillet,
+    // or goes outward from one) only that side's fillet and sheet, h - R <= |w| <= h; and one that
+    // turns comes no nearer the axis than r = b. A toy beyond reach of what the path passes is never
+    // met (no trigonometry: before each candidate's own setup)
+    vec2 wr = vec2(-wh_h, wh_h);
+    if (als <= Lc && !fromEdge) {
+        wr = d > 0.0 ? vec2(ls, wh_h) : vec2(-wh_h, ls);
+    } else if (turn || d * sideS > 0.0) {
+        wr = sideS > 0.0 ? vec2(wh_h - R, wh_h) : vec2(-wh_h, R - wh_h);
+    }
+    float bt = turn ? b : 0.0;
     int cand = 0;          // bit i: ball i is in reach; bit 16 + i: cube i
     for (int i = wh_bIdx.x; i < wh_bIdx.w; i++) {
         vec4 Cb = wh_ball[i];
         float rad = wh_ballCol[i].w;
         float c1 = dot(Cb.xyz, e1);
         float c2 = dot(Cb.xyz, e2);
-        if (dot(Cb.xyz, Cb.xyz) - c1 * c1 - c2 * c2 < rad * rad) cand |= 1 << i;
+        float cc = dot(Cb.xyz, Cb.xyz);
+        float br = max(bt - rad, 0.0);
+        if (cc - c1 * c1 - c2 * c2 < rad * rad && Cb.w + rad >= wr.x && Cb.w - rad <= wr.y && cc >= br * br)
+            cand |= 1 << i;
     }
     for (int i = wh_cIdx.x; i < wh_cIdx.w; i++) {
         vec4 Cc = wh_cube[i];
         float rad = 2.0 * wh_cubeCol[i].w;
         float c1 = dot(Cc.xyz, e1);
         float c2 = dot(Cc.xyz, e2);
-        if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) cand |= 1 << (16 + i);
+        float cc = dot(Cc.xyz, Cc.xyz);
+        float br = max(bt - rad, 0.0);
+        if (cc - c1 * c1 - c2 * c2 < rad * rad && Cc.w + rad >= wr.x && Cc.w - rad <= wr.y && cc >= br * br)
+            cand |= 1 << (16 + i);
     }
     if (cand != 0) {
         // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
