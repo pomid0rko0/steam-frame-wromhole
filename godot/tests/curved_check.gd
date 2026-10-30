@@ -3,7 +3,8 @@ extends SceneTree
 ## headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced head) stands at
 ## a place of PLACES with red balls and green cubes round the head, and each eye's picture is saved
 ## with what tools/compare/curved.py needs to trace that eye's rays itself, independently of the
-## shaders: the head as the renderer got it, each eye's pose and frustum, the bodies.
+## shaders: the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's
+## static objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
 ##   godot --path . -s res://tests/curved_check.gd -- out_prefix place
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
@@ -37,6 +38,7 @@ func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 3:
 		main.menu.visible = false
+		main.renderer.show_scene(false)
 		main.place_on_axis(place[0], place[1], 0.0)
 		main.hold = true
 	if frames == 5:
