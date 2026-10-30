@@ -152,7 +152,6 @@ func upload_space() -> void:
 	var gtex := ImageTexture.create_from_image(grav.image)
 	_sweep_tex = tex
 	_sweep_axes = tab.axes
-	_sweep_poly = tab.poly
 	for m in materials():
 		_space_params(m)
 	floor_mats[1].set_shader_parameter("g_grav", gtex)
@@ -161,7 +160,6 @@ func upload_space() -> void:
 
 var _sweep_tex: Texture2D
 var _sweep_axes := Vector4.ZERO
-var _sweep_poly := PackedVector4Array()
 
 
 func _space_params(m: ShaderMaterial) -> void:
@@ -170,7 +168,6 @@ func _space_params(m: ShaderMaterial) -> void:
 	m.set_shader_parameter("g_prof2", Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0))
 	m.set_shader_parameter("g_tabx", _sweep_axes)
 	m.set_shader_parameter("g_tab", _sweep_tex)
-	m.set_shader_parameter("g_poly", _sweep_poly)
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there (the play

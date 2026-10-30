@@ -5,7 +5,6 @@
 //   g_prof2 = (Rout, u0, rmin, th0)     u0 = sin^2(th0 / 2): where the fillet starts
 //   g_tabx  = (t0, 1 / (t1 - t0), nb, nv)   the table's axes (WormholeSpace.sweep_table)
 //   g_tab   the table G(b, v): psi in .r, length in .g
-//   g_poly[9]  G(b, 1/2) as Chebyshev series (geo_poly)
 // A point is (l, n), n a unit vector of the shared angular sphere; a tangent vector is
 // vec4(U_l, u) with u . n = 0 (WormholeSpace's top). A ray lies in the plane through the centre
 // spanned by n and its direction; b is its impact parameter, and on the way from |l| = a1 to a2
@@ -110,24 +109,6 @@ vec2 geo_G(float sigma, float v) {
 	return textureLod(g_tab, uv, 0.0).rg;
 }
 
-// the rest over the whole fillet, G(b, 1/2), without the table: Chebyshev series in t on each side
-// of b = r_min (g_poly[k] = psi's and len's coefficients below, then above; WormholeSpace.sweep_table)
-vec2 geo_poly(float sigma) {
-	float s = sigma - g_prof2.y;
-	float t = sign(s) * sqrt(abs(s));
-	bool hi = s >= 0.0;
-	float t1 = g_tabx.x + 1.0 / g_tabx.y;
-	float x = hi ? 2.0 * t / t1 - 1.0 : 1.0 - 2.0 * t / g_tabx.x;
-	vec2 b1 = vec2(0.0), b2 = vec2(0.0);
-	for (int k = 8; k >= 1; k--) {
-		vec2 c = hi ? g_poly[k].zw : g_poly[k].xy;
-		vec2 b0 = c + 2.0 * x * b1 - b2;
-		b2 = b1;
-		b1 = b0;
-	}
-	return (hi ? g_poly[0].zw : g_poly[0].xy) + x * b1 - b2;
-}
-
 // sigma = (b - rho0) / 2R from b - rho0, kept off the photon sphere's b = rho0 (h >= R), where the
 // weight's integral diverges. Which side of r_min a ray is on is sigma's sign against u0: b itself
 // can't tell b from rho0 within 2.4e-7 m, a ray's sigma knows it (geo_dr).
@@ -138,7 +119,7 @@ float geo_sigma(float gap_rho0) {
 
 // (psi, len) on the fillet from u1 to u2 (u_lo <= u1 <= u2 <= 1/2; d = u - sigma at each), lo: u1 is
 // u_lo (no table there). The closed forms: F(u_lo) W + F_u(u_lo) int (u - u_lo) dW, W the weight's
-// integral; the table the rest. whole: u2 = 1/2, the rest there from geo_poly.
+// integral; the table the rest. whole: u2 = 1/2 (the table's last row).
 vec2 geo_fillet(float b, float sigma, float u1, float d1, float u2, float d2, bool lo, bool whole) {
 	float ul = max(sigma, g_prof2.y);
 	float span = 0.5 - ul;
@@ -149,7 +130,7 @@ vec2 geo_fillet(float b, float sigma, float u1, float d1, float u2, float d2, bo
 	float s2 = sqrt(u2), e2 = sqrt(max(d2, 0.0));
 	float w = 2.0 * log((s2 + e2) / (s1 + e1));
 	vec2 out_ = f0 * w + f1 * (s2 * e2 - s1 * e1 + (0.5 * sigma - ul) * w);
-	out_ += whole ? geo_poly(sigma) : geo_G(sigma, sqrt(max(u2 - ul, 0.0) / span));
+	out_ += geo_G(sigma, whole ? 1.0 : sqrt(max(u2 - ul, 0.0) / span));
 	if (!lo) out_ -= geo_G(sigma, sqrt(max(u1 - ul, 0.0) / span));
 	return out_;
 }
@@ -573,7 +554,7 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 		float sL = sqrt(max(0.5 - sigma, 0.0));
 		float wL = 2.0 * log((0.70710678 + sL) / Dw);
 		// from the ray's origin to the curved zone's edge, and to the eye
-		vec2 SL = cylL + f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_poly(sigma);
+		vec2 SL = cylL + f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
 		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
 		vec2 se;
 		if (le >= L) {

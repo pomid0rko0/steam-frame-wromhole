@@ -17,8 +17,8 @@ closed forms; on the fillet, in u = sin^2(theta/2), the integrand is F(u) du / s
 sigma = (b - rho0) / 2R, with a smooth F. The weight integrates in closed form (W below), so
     int F dW = F(u_lo) (W(u) - W(u_lo)) + int (F - F(u_lo)) dW
 and of the rest the part linear in u - u_lo has a closed form too (F_u(u_lo) times
-int (u - u_lo) dW); what is left, G(b, u), small and smooth, comes from a table, and over the whole
-fillet, G(b, 1/2), from a polynomial in b (each side of b = r_min).
+int (u - u_lo) dW); what is left, G(b, u), small and smooth, comes from a table (over the whole
+fillet, its last row).
 """
 import os
 import re
@@ -169,26 +169,6 @@ class Space:
         self.t0, self.t1 = t0, t1
         return tab
 
-    def build_poly(self, deg=8, nodes=24, nv=64, sub=4):
-        """G(b, 1/2) as Chebyshev series in t on each side of t = 0 (WormholeSpace.sweep_table):
-        [deg + 1, 4] = (psi, len) below, (psi, len) above."""
-        t0, t1 = self.t_of_b(0.0), self.t_of_b(self.Rout)
-        xg, wg = np.polynomial.legendre.leggauss(sub)
-        out = np.zeros((deg + 1, 4))
-        for hi in (0, 1):
-            f = []
-            for j in range(nodes):
-                x = np.cos(np.pi * (j + 0.5) / nodes)
-                t = 0.5 * (x + 1) * t1 if hi else 0.5 * (1 - x) * t0
-                f.append(self._column(min(max(self.b_of_t(t), 0.0), self.Rout), nv, xg, wg)[-1])
-            f = np.array(f)
-            for k in range(deg + 1):
-                c = (f * np.cos(np.pi * k * (np.arange(nodes) + 0.5) / nodes)[:, None]).sum(0)
-                c *= (1.0 if k == 0 else 2.0) / nodes
-                out[k, 2 * hi:2 * hi + 2] = c
-        self.poly = out
-        return out
-
     def _column(self, b, nv, xg, wg):
         sig = self.sigma(b)
         ul = self.u_lo(b)
@@ -208,15 +188,6 @@ class Space:
             acc = acc + 0.5 * (vb - va) * ((fv - f0 - f1 * (uu - ul)[:, None]) * (wg * jac)[:, None]).sum(0)
             col[j] = acc
         return col
-
-    def poly_eval(self, b):
-        s = self.sigma(b) - self.u0
-        t = np.sign(s) * np.sqrt(abs(s))
-        t0, t1 = self.t_of_b(0.0), self.t_of_b(self.Rout)
-        hi = s >= 0
-        x = 2 * t / t1 - 1 if hi else 1 - 2 * t / t0
-        c = self.poly[:, 2:4] if hi else self.poly[:, 0:2]
-        return np.array([np.polynomial.chebyshev.chebval(x, c[:, k]) for k in (0, 1)])
 
     def G_table(self, b, v, hw8=True):
         """Bilinear in the table, weights rounded to 1/256 like a GPU's filtering if hw8."""

@@ -4,7 +4,6 @@ uniform vec4 g_prof;
 uniform vec4 g_prof2;
 uniform vec4 g_tabx;
 uniform sampler2D g_tab : filter_linear, repeat_disable;
-uniform vec4 g_poly[9];
 uniform float head_l;
 uniform vec3 head_n;
 uniform vec4 head_f[3];

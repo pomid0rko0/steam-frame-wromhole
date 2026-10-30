@@ -554,13 +554,10 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 ## nodes, both ends included: b by t = sign(s) sqrt(|s|), s = sigma - u0, evenly from b = 0 to
 ## b = Rout (fine where the weight is singular, at b = r_min); v = sqrt((u - u_lo) / (1/2 - u_lo))
 ## evenly from the fillet's start (or the turning point) to its end. Cumulative Gauss-Legendre,
-## SWEEP_GAUSS points per span. Over the whole fillet, G(b, 1/2) as Chebyshev series of degree
-## SWEEP_DEG in t on each side of t = 0, from SWEEP_NODES Chebyshev nodes. ref/geo.py builds both
-## the same way. {image (RGF), axes: the shader's g_tabx, poly: its g_poly}.
+## four points (_GAUSS_X) per span; the last row (v = 1) is the whole fillet's. ref/geo.py builds
+## it the same way. {image (RGF), axes: the shader's g_tabx}.
 const SWEEP_NB := 256
 const SWEEP_NV := 64
-const SWEEP_DEG := 8
-const SWEEP_NODES := 24
 const _GAUSS_X := [-0.8611363115940526, -0.33998104358485626, 0.33998104358485626, 0.8611363115940526]
 const _GAUSS_W := [0.34785484513745385, 0.6521451548625461, 0.6521451548625461, 0.34785484513745385]
 
@@ -577,26 +574,7 @@ func sweep_table() -> Dictionary:
 			data[(j * SWEEP_NB + i) * 2] = col[j].x
 			data[(j * SWEEP_NB + i) * 2 + 1] = col[j].y
 	var img := Image.create_from_data(SWEEP_NB, SWEEP_NV, false, Image.FORMAT_RGF, data.to_byte_array())
-	# the series: (psi, len) below t = 0 in .xy, above in .zw
-	var poly := PackedVector4Array()
-	poly.resize(SWEEP_DEG + 1)
-	for hi in 2:
-		var f: Array[Vector2] = []
-		for j in SWEEP_NODES:
-			var x := cos(PI * (j + 0.5) / SWEEP_NODES)
-			var t := (0.5 * (x + 1.0) * t1) if hi == 1 else (0.5 * (1.0 - x) * t0)
-			var col := _sweep_rest(_b_of_t(t, u0), u0)
-			f.append(col[SWEEP_NV - 1])
-		for k in SWEEP_DEG + 1:
-			var c := Vector2.ZERO
-			for j in SWEEP_NODES:
-				c += f[j] * cos(PI * k * (j + 0.5) / SWEEP_NODES)
-			c *= (1.0 if k == 0 else 2.0) / SWEEP_NODES
-			if hi == 1:
-				poly[k] = Vector4(poly[k].x, poly[k].y, c.x, c.y)
-			else:
-				poly[k] = Vector4(c.x, c.y, poly[k].z, poly[k].w)
-	return {"image": img, "axes": Vector4(t0, 1.0 / (t1 - t0), SWEEP_NB, SWEEP_NV), "poly": poly}
+	return {"image": img, "axes": Vector4(t0, 1.0 / (t1 - t0), SWEEP_NB, SWEEP_NV)}
 
 
 func _t_of_b(b: float, u0: float) -> float:

@@ -1,7 +1,8 @@
 """The shaders' geometry (godot/shaders/geo.gdshaderinc) on a GPU, float32, against float64:
 headless (EGL), as a compute shader, with the table and series built as WormholeSpace.sweep_table
 builds them (ref/geo.py), on three throats: the app's, h = R, a crease (h < R). Every sin and cos
-goes through the headset driver's range reduction (TURNIP below), as it does on the headset.
+goes through the headset driver's range reduction (TURNIP below), and the table is filtered with
+weights rounded to 1/256 (HW8), as on the headset.
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
   where the sweep reaches a value (the floor's hit): the sweep at the GPU's l against the value;
   which way the eye sees a point (geo_see, the bodies' vertices): rays shot by RK4 from an eye to a
@@ -32,6 +33,23 @@ float turnip_cos(float x) { return cos(fma(6.28318531, fract(fma(x, 0.159154943,
 '''
 INC = open(os.path.join(HERE, '..', 'godot', 'shaders', 'geo.gdshaderinc')).read()
 INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
+# A GPU's bilinear filter weighs its four texels by fractions it rounds to 1/256 (as ref/geo.py's
+# G_table models it); the PC's driver doesn't: here the table is filtered so.
+HW8 = '''
+vec4 hw8_tab(vec2 uv) {
+	vec2 sz = vec2(textureSize(g_tab, 0));
+	vec2 p = uv * sz - 0.5;
+	vec2 i = floor(p);
+	vec2 f = floor((p - i) * 256.0 + 0.5) / 256.0;
+	ivec2 a = clamp(ivec2(i), ivec2(0), ivec2(sz) - 1), b = clamp(ivec2(i) + 1, ivec2(0), ivec2(sz) - 1);
+	return mix(mix(texelFetch(g_tab, a, 0), texelFetch(g_tab, ivec2(b.x, a.y), 0), f.x),
+			mix(texelFetch(g_tab, ivec2(a.x, b.y), 0), texelFetch(g_tab, b, 0), f.x), f.y);
+}
+'''
+assert INC.count('textureLod(g_tab, uv, 0.0)') == 1
+INC = INC.replace('textureLod(g_tab, uv, 0.0)', 'hw8_tab(uv)')
+i = INC.index('vec2 geo_G(')
+INC = INC[:i] + HW8 + INC[i:]
 # the rays geo_see's search tries, counted
 INC = INC.replace('const int GEO_ITERS', 'int g_rays = 0;\nconst int GEO_ITERS', 1)
 assert INC.count('if (i >= GEO_ITERS + nbad) break;') == 1
@@ -53,7 +71,7 @@ CHORD = 5e-5
 
 SRC = '''#version 430
 layout(local_size_x=64) in;
-uniform vec4 g_prof; uniform vec4 g_prof2; uniform vec4 g_tabx; uniform sampler2D g_tab; uniform vec4 g_poly[9];
+uniform vec4 g_prof; uniform vec4 g_prof2; uniform vec4 g_tabx; uniform sampler2D g_tab;
 uniform float head_l; uniform vec3 head_n; uniform vec4 head_f[3]; uniform vec3 head_pos;
 uniform vec3 vb0; uniform vec3 vb1; uniform vec3 vb2;
 layout(std430, binding=0) buffer In { vec4 inp[]; };
@@ -119,7 +137,6 @@ class Gpu:
         self.ctx = ctx
         self.prog = ctx.compute_shader(src)
         tab = S.build_table(NB, NV, 4)
-        poly = S.build_poly()
         self.tex = ctx.texture((NB, NV), 2, dtype='f4', data=np.ascontiguousarray(tab.transpose(1, 0, 2)).astype('f4').tobytes())
         self.tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
         self.tex.repeat_x = self.tex.repeat_y = False
@@ -129,7 +146,6 @@ class Gpu:
         p['g_prof'] = (S.rho0, S.R, S.Lc, S.L)
         p['g_prof2'] = (S.Rout, S.u0, S.rmin, S.th0)
         p['g_tabx'] = (S.t0, 1 / (S.t1 - S.t0), NB, NV)
-        p['g_poly'].write(poly.astype('f4').tobytes())
 
     def run(self, mode, rows, out_per=1):
         rows = np.asarray(rows, 'f4').reshape(-1, 8)
