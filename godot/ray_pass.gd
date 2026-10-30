@@ -28,11 +28,12 @@ const MAX_RINGS := 5            # fr_rings
 const TABLE_HALF := 1024
 const TABLE_COLS := 256
 const TABLE_PX := 1728
+const ROW_BYTES := 192          # a row's set-up between the tables' two kernels (FrRow in std430)
 const VIEWS_AT := 1720          # bytes: fr_views
 const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#define WH_ARROWS\n"]
 # the kernels in the order _setup compiles them (tools/adreno_stats.sh names them so)
 const ORDER := ["world", "world gravity", "world arrows", "world toys", "world toys gravity", "world toys arrows",
-		"tables", "tables and paths", "toys", "toys gravity", "toys arrows"]
+		"table rows", "tables", "tables and paths", "toys", "toys gravity", "toys arrows"]
 
 var picture := Texture2DArrayRD.new()   # what the quad shows: a layer per view
 var space: WormholeSpace                # the eyes' geodesics (Tracer sets it)
@@ -53,7 +54,10 @@ var ubo: RID
 var sampler: RID
 var image: RID
 var tiles: RID                          # the toys kernel's groups (fr_tiles)
-var tab_pipe: RID                       # the tables' kernel, and with fr_tabP (shell_toys)
+var rows_pipe: RID                      # the tables' rows (fr_rowData), then their cells
+var rows_shader: RID
+var rows_buf: RID
+var tab_pipe: RID                       # the tables' cells, and with fr_tabP (shell_toys)
 var tab_shader: RID
 var tabp_pipe: RID
 var tabp_shader: RID
@@ -76,7 +80,7 @@ func _init() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and rd != null:
-		for r: RID in [ubo, sampler, image, tiles, tab_pipe, tab_shader, tabp_pipe, tabp_shader, tab_f, tab_e, tab_p] + world_pipes + world_shaders + toys_pipes + toys_shaders:
+		for r: RID in [ubo, sampler, image, tiles, rows_pipe, rows_shader, rows_buf, tab_pipe, tab_shader, tabp_pipe, tabp_shader, tab_f, tab_e, tab_p] + world_pipes + world_shaders + toys_pipes + toys_shaders:
 			if r.is_valid():
 				rd.free_rid(r)
 
@@ -164,10 +168,14 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if toys:
 		rd.buffer_update(tiles, 0, 16, PackedInt32Array([0, 1, 1, 0]).to_byte_array())
 	var cl := rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(cl, rows_pipe)
+	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(rows_shader, 0, _used(all, [0, 1, 2, 7, 10])), 0)
+	rd.compute_list_dispatch(cl, (2 * table_size.x + 63) / 64, 1, views)
+	rd.compute_list_add_barrier(cl)
 	rd.compute_list_bind_compute_pipeline(cl, tabp_pipe if paths else tab_pipe)
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(tabp_shader if paths else tab_shader, 0,
-			_used(all, [0, 1, 2, 6, 7, 8] if paths else [0, 1, 2, 6, 7])), 0)
-	rd.compute_list_dispatch(cl, 2 * table_size.x, 1, views)
+			_used(all, [0, 1, 2, 6, 8, 10] if paths else [0, 1, 2, 6, 10])), 0)
+	rd.compute_list_dispatch(cl, 2 * table_size.x * table_size.y / 256, 1, views)
 	rd.compute_list_add_barrier(cl)
 	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[w], 0, _used(all, [0, 1, 2, 3, 4, 5])), 0)
@@ -202,7 +210,11 @@ func _make_uniforms(tex: RID) -> void:
 	u_tiles.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_tiles.binding = 3
 	u_tiles.add_id(tiles)
-	uniforms.append_array([u_ubo, u_tab, u_img, u_tiles])
+	var u_rows := RDUniform.new()
+	u_rows.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_rows.binding = 10
+	u_rows.add_id(rows_buf)
+	uniforms.append_array([u_ubo, u_tab, u_img, u_tiles, u_rows])
 	for k in 3:
 		var t: RID = [tab_f, tab_e, tab_p][k]
 		var u := RDUniform.new()
@@ -301,10 +313,13 @@ func _setup() -> bool:
 				return false
 			world_shaders.append(made[0])
 			world_pipes.append(made[1])
+	var tr := _kernel("#define KERNEL_ROWS\n#define WH_NO_BALLS\n")
 	var tk := _kernel("#define KERNEL_TABLES\n#define WH_NO_BALLS\n")
 	var tp := _kernel("#define KERNEL_TABLES\n#define FR_PATHS\n#define WH_NO_BALLS\n")
-	if tk.is_empty() or tp.is_empty():
+	if tr.is_empty() or tk.is_empty() or tp.is_empty():
 		return false
+	rows_shader = tr[0]
+	rows_pipe = tr[1]
 	tab_shader = tk[0]
 	tab_pipe = tk[1]
 	tabp_shader = tp[0]
@@ -372,6 +387,9 @@ func _make_image(size: Vector2i, views: int) -> void:
 	tf.width = 2 * table_size.x
 	tf.height = 2
 	tab_e = rd.texture_create(tf, RDTextureView.new(), [])
+	if rows_buf.is_valid():
+		rd.free_rid(rows_buf)
+	rows_buf = rd.storage_buffer_create(ROW_BYTES * 2 * table_size.x * maxi(views, 2))
 	if tiles.is_valid():
 		rd.free_rid(tiles)
 	var n := _groups(size).x * _groups(size).y * views + 1

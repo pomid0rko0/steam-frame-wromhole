@@ -76,12 +76,14 @@ if not progs:
     sys.exit('no %s program statistics in the log' % kind)
 names = {}
 if kind == 'CL':
-    # the ray tracer's kernels: the big compute programs (Godot's own are under 1000 instructions),
-    # in the order ray_pass.gd compiles them
+    # the ray tracer's kernels, in the order ray_pass.gd compiles them: the compute programs from
+    # its first on (the world kernel, the first of 1500 instructions or more: Godot's own, compiled
+    # before, are under 1000)
     order = re.search(r'const ORDER := \[([^\]]*)\]', open(sys.argv[5]).read()).group(1)
     order = re.findall(r'"([^"]*)"', order)
-    ours = [p for p, v in progs.items() if v[0] >= 1500 and p.endswith('/1')]
-    ours.sort(key=lambda p: int(p.split('/')[0]))
+    ours = sorted((p for p in progs if p.endswith('/1')), key=lambda p: int(p.split('/')[0]))
+    first = next((k for k, p in enumerate(ours) if progs[p][0] >= 1500), len(ours))
+    ours = ours[first:first + len(order)]
     if len(ours) == len(order):
         names = dict(zip(ours, order))
     else:
