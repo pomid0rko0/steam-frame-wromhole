@@ -2,9 +2,11 @@ extends SceneTree
 ## A scene for tools/adreno_stats.sh --paths (not a test): the floor's shader (floor.gdshaderinc)
 ## with each of its ways through forced by replacing its branches' conditions, drawn one at a time,
 ## so that the compiler gives each way's statistics after a line "variant <name>". Each runs WAIT
-## seconds: Godot specialises a pipeline on a thread of its own, after the first draw.
+## seconds, and the scene as it starts START seconds before the first: Godot specialises a pipeline
+## on a thread of its own, after the first draw.
 ##   godot --path . --resolution 320x180 -s res://tests/floor_paths.gd
 
+const START := 4.0
 const WAIT := 1.5
 # the branches' conditions in floor.gdshaderinc, as written there
 const STRAIGHT := "if (le >= L && (ca >= 0.0 || b >= Rout)) {"
@@ -58,9 +60,7 @@ func _variant(name: String, swaps: Array) -> void:
 
 func _process(delta: float) -> bool:
 	t += delta
-	if vi == -1 and t < WAIT:
-		return false
-	if vi >= 0 and t < WAIT:
+	if t < (START if vi == -1 else WAIT):
 		return false
 	t = 0.0
 	if vi == -1:

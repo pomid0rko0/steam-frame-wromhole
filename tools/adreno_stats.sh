@@ -54,7 +54,8 @@ text = open(sys.argv[1], errors='replace').read().replace('MESA: info: ', '')
 PROG = (r'; FRAG prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full, (\d+) constlen.*\n'
         r'.*?(\d+) cat0.*?(\d+) cat4, (\d+) cat5.*\n.*?(\d+) loops\n.*?(\d+) max_waves, (\d+) double')
 if sys.argv[3].endswith('floor_paths.gd'):
-    # each variant's section: its generic program and the specialised one, the smaller
+    # each variant's section: Godot's small programs of its own, and the floor's two, the biggest:
+    # the generic one and the specialised one, the smaller of them
     parts = re.split(r'\nvariant (.*)\n', text)
     if len(parts) < 3:
         sys.exit('no variants in the log')
@@ -66,7 +67,8 @@ if sys.argv[3].endswith('floor_paths.gd'):
         if not progs:
             print(f'  {name}: no program (raise WAIT in tests/floor_paths.gd)')
             continue
-        n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl = min(progs, key=lambda p: p[0])
+        n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl = min(
+            sorted(progs, key=lambda p: -p[0])[:2], key=lambda p: p[0])
         print(f'  {name}: {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, '
               f'{cat4} cat4, {cat5} cat5')
     sys.exit(0)
