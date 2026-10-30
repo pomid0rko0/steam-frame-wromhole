@@ -27,6 +27,9 @@ const ROWS := 2048              # the tables' rows (2 FR_HALF) and columns (FR_C
 const COLS := 256
 const VIEWS_AT := 1720          # bytes: fr_views
 const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#define WH_ARROWS\n"]
+# the kernels in the order _setup compiles them (tools/adreno_stats.sh names them so)
+const ORDER := ["world", "world gravity", "world arrows", "world toys", "world toys gravity", "world toys arrows",
+		"tables", "tables and paths", "toys", "toys gravity", "toys arrows"]
 
 var picture := Texture2DArrayRD.new()   # what the quad shows: a layer per view
 var space: WormholeSpace                # the eyes' geodesics (Tracer sets it)

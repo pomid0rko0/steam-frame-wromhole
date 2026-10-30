@@ -1,5 +1,8 @@
 class_name FragTracer
 extends Node3D
+## Main's ray tracer, kept in this build for the speed check's comparison (main.set_frag, bench.gd):
+## its shaders are main's as they are there, in shaders/frag/.
+##
 ## The ray tracer: a full-screen quad under the XR camera whose shader traces every pixel along a
 ## geodesic of the wormhole space (shaders/wormhole_core.gdshaderinc), and what it needs: its
 ## uniforms, the shader for what is shown, the movable balls and cubes, and the stencil split.

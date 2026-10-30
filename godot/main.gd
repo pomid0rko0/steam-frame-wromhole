@@ -1,19 +1,20 @@
 class_name Main
 extends Node3D
 ## Real-time wormhole for VR (README.md, docs/). Every pixel is ray traced along a geodesic of
-## the wormhole space in the shader (tracer.gd); this script builds the scene and tracks where the
+## the wormhole space by compute kernels (tracer.gd, ray_pass.gd); this script builds the scene and tracks where the
 ## viewer is in that curved space: walking in the room and with the sticks (the buttons: README.md,
 ## «Управление»).
 ##
 ## Body model: the feet stay on the floor (n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,
 ## parallel-transporting the play-space axes; stick turns rotate those axes; the head sits
-## head-height above the feet along the floor normal. Each eye is derived in the shader from that
-## view's own matrices (shaders/wormhole_view.gdshaderinc).
+## head-height above the feet along the floor normal. Each eye is derived from that view's own eye
+## offset as the frame is drawn (ray_pass.gd).
 ##
-## The parts: the space's geometry (wormhole_space.gd), the ray tracer (tracer.gd), the demo's
+## The parts: the space's geometry (wormhole_space.gd), the ray tracer (tracer.gd, ray_pass.gd;
+## main's fragment one for the speed check's comparison: frag_tracer.gd), the demo's
 ## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
-## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd), the menu and the
+## and throw them (hands.gd), foveated rendering (foveation.gd), the menu and the
 ## line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd), the speed
 ## check (bench.gd) and the stereo check scene (check_scene.gd). Each
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's

@@ -1,6 +1,8 @@
-// Wormhole renderer core: plain GLSL that is also valid Godot shading language (one source for
-// both). The including file declares the uniforms (wormhole_view.gdshaderinc); what they hold:
-//   wh_sph, wh_pil, wh_box  scene.json's static objects (which universe each is in: Tracer._fits_shader)
+// Wormhole renderer core: plain GLSL that is also valid Godot shading language. The ray tracer's
+// compute kernels (trace_kernels.gdshaderinc, WH_COMPUTE) and ref/ (a fragment shader of its own)
+// include it; main's fragment ray tracer, kept for the speed check, has its own copy as main has it
+// (shaders/frag/). The including file declares the uniforms; what they hold:
+//   wh_sph, wh_pil, wh_box  scene.json's static objects (which universe each is in: FragTracer._fits_shader)
 //   wh_ball, wh_cube        movable balls' and cubes' centres as points of R^4 (xyz, w)
 //   wh_ballCol              (rgb, radius)
 //   wh_fball                each ball in a flat universe: the sphere the sheet cuts from it, in that
@@ -35,9 +37,11 @@
 //
 // The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
 // - Registers go to the heaviest point of the code, run or not: code for something not in view
-//   still costs (hence a shader per combination: tracer.gd), and a short loop with a constant bound
+//   still costs (hence a kernel per combination: ray_pass.gd), and a short loop with a constant bound
 //   is unrolled, a break or not, a long one is not (wh_curved: its it loop short, its j loop long).
-//   Registers per pixel decide how many waves run (adreno_stats.sh).
+//   Registers per pixel decide how many waves run (adreno_stats.sh), and waves of 128 only up to
+//   12 of them (Mesa's ir3_should_double_threadsize, without 16-bit math). The instruction cache
+//   holds 2032 instructions (instr_cache_size): a program past it fetches code as it runs.
 // - An if becomes selects, even around a square root: every lane pays. A loop of one pass with a
 //   bound the compiler can't see (k < 1 + min(wh_nBall, 0)) stays a branch that waves skip; the
 //   same trick stops unrolling (k < 4 + min(wh_nCube, 0)).
@@ -52,11 +56,11 @@
 // - 16-bit math (mediump) issues at twice the rate in waves of 128 (tools/adreno_cost.py); line
 //   coordinates need float32.
 //
-// A change here: ref/test_gpu.py prints errors, no verdict: compare with the same run on the code
+// A change here: tools/adreno_stats.sh for the kernels, tools/test_stereo.sh (with the toys against
+// main's ray tracer). ref/test_gpu.py prints errors, no verdict: compare with the same run on the code
 // before (WH_BALLS=0 too), and try a pose at an odd width (the middle column has vl = 0) and
-// viewpoints scanned around an object, which its poses may miss. Keep ref/wh.py's fast in step. A change that should not touch the compiled shader must
-// give the same programs (tools/same_programs.py). Then tools/adreno_cost.sh --check. Speed:
-// bench.gd.
+// viewpoints scanned around an object, which its poses may miss. Keep ref/wh.py's fast in step.
+// Speed: bench.gd.
 
 const float WH_PI = 3.14159265358979;
 const int WH_MAXB = 12;
