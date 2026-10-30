@@ -13,9 +13,9 @@
 # (the menu's and the gaze dot's: two inputs, texture samples, loops); the bodies' are smaller. The
 # vertex programs likewise: the bodies' (body.gdshaderinc). Code size is not what runs: a pixel
 # runs one way through the floor's branches.
-# --paths: instead, each way a floor pixel can take through floor.gdshaderinc (tests/floor_paths.gd
-# forces its branches one way at a time), the program Godot specialises and runs for it: what a
-# pixel on that way costs.
+# --paths: instead, each way a floor pixel's ray can take (geo_floor's branches; tests/floor_paths.gd
+# forces them one way at a time), the program Godot specialises and runs for it: what a pixel on
+# that way costs.
 #   tools/adreno_stats.sh [--full] [--paths]      (--full: ir3's own lines too)
 # KEEP_LOG=file keeps the compiler's whole log (on the Frame a file in the repository, which the host
 # sees too). Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured:

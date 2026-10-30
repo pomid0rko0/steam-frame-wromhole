@@ -152,12 +152,13 @@ vec2 geo_between(float b, float sigma, float a1, float gap1, float a2, float gap
 		out_ += geo_fillet(b, sigma, u1, d1, u2, d2, lo, whole);
 	}
 	if (a2 > L) {
-		float r1, q1;
-		if (a1 <= L) { r1 = g_prof2.x; q1 = sqrt(max((g_prof2.x - b) * (g_prof2.x + b), 0.0)); }
-		else { r1 = geo_r(a1); q1 = sqrt(max(gap1 * (r1 + b), 0.0)); }
-		float r2 = geo_r(a2);
+		// r2 - r1 as the difference of the gaps: near a turning point the radii's own difference
+		// keeps none of its digits
+		float g1 = a1 <= L ? g_prof2.x - b : gap1;
+		float r1 = b + g1, r2 = b + gap2;
+		float q1 = sqrt(max(g1 * (r1 + b), 0.0));
 		float q2 = sqrt(max(gap2 * (r2 + b), 0.0));
-		float dq = (r2 - r1) * (r2 + r1) / max(q1 + q2, 1e-20);
+		float dq = (gap2 - g1) * (r2 + r1) / max(q1 + q2, 1e-20);
 		out_ += vec2(geo_atan2(b * dq, b * b + q1 * q2), dq);
 	}
 	return out_;

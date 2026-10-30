@@ -214,8 +214,8 @@ def profile_checks(name, S, gpu, rng):
 
 def eye_places(S):
     """Where the eye stands, (l, spread): on the cylinder if there is one, and at its end; without one,
-    off l = 0, the photon sphere's point or the crease (no eye stands within a hair of either: see
-    docs/geometry.md, «Точность»); the fillet, its end, the flat universes."""
+    off l = 0, the photon sphere's point or the crease (an eye a hair from either is not checked);
+    the fillet, its end, the flat universes."""
     places = [(0.0, 0.1), (0.5, 0.1), (S.Lc - 0.1, 0.1), (S.Lc, 0.01), (-S.Lc, 0.01)] if S.Lc > 0 else [(0.3, 0.1), (-0.4, 0.1)]
     return places + [(0.5 * (S.Lc + S.L), 0.1), (S.L - 0.05, 0.1), (S.L + 0.5, 0.1), (S.L + 5, 0.1),
                      (-0.5 * (S.Lc + S.L), 0.1), (-(S.L + 1), 0.1), (25.0, 0.1)]
