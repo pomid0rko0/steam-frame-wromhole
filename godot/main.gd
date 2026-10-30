@@ -59,7 +59,7 @@ var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://s
 var toys := Toys.new(space, scene)
 var hands := Hands.new(space, toys.world)
 var xr_name := "OpenXR"         # tests: "FakeHMD" (tests/fake_hmd.gd), "Native mobile", "none" (the desktop)
-var show_check := OS.has_feature("check")   # the export preset for the one-eye check (tools/export.sh --check)
+var show_check := false         # the stereo check scene at the start (tests); the menu's row: set_check
 var xr: XRInterface
 var in_xr := false
 var xr_view: SubViewport        # XR renders here, so the desktop window gets no mirror image
@@ -164,12 +164,31 @@ func _ready() -> void:
 
 	place(START_POS, START_FORWARD)
 	if show_check:
-		toys.enabled = false            # the check's red balls take the shader's ball slots
+		show_check = false
+		set_check(true)
+	elif toys.enabled:
+		toys.spawn()
+		draw_toys()
+
+
+## The stereo check scene (the one-eye check, README.md), on or off: its red balls and magenta cube
+## take the toys' slots in the ray tracer, Godot draws its green lines over them and over the floor's
+## white ones (check_scene.gd); off, the toys back where they start.
+func set_check(on: bool) -> void:
+	if on == show_check:
+		return
+	show_check = on
+	if on:
+		toys.enabled = false
 		overlay = Node3D.new()
 		origin.add_child(overlay)
 		CheckScene.build(overlay, space, tracer)
 		_update_chart_map()
-	elif toys.enabled:
+	else:
+		overlay.queue_free()
+		overlay = null
+		tracer.upload_scene()           # the static objects it took out of sight
+		toys.enabled = true
 		toys.spawn()
 		draw_toys()
 

@@ -649,9 +649,9 @@ func _update_strip() -> void:
 func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"), OrderRow.new(self, "order", "плавная грубее"),
-			GazeRow.new(self, "gaze", "точка взгляда"), GravRow.new(self, "grav", "гравитация"),
-			TurnRow.new(self, "turn", "поворот"), StripRow.new(self, "strip", "строка частоты"),
-			BenchRow.new(self, "bench", "замер скорости")]
+			GazeRow.new(self, "gaze", "точка взгляда"), CheckRow.new(self, "check", "проверка одним глазом"),
+			GravRow.new(self, "grav", "гравитация"), TurnRow.new(self, "turn", "поворот"),
+			StripRow.new(self, "strip", "строка частоты"), BenchRow.new(self, "bench", "замер скорости")]
 
 
 ## A setting: its values 0 .. count() - 1, current() the one in effect.
@@ -867,6 +867,21 @@ class StripRow extends Row:
 
 	func text(i: int) -> String:
 		return ON_OFF[i]
+
+
+## The stereo check scene (main.set_check): the one-eye check (README.md).
+class CheckRow extends Row:
+	func current() -> int:
+		return 1 if menu.main.show_check else 0
+
+	func apply(i: int) -> void:
+		menu.main.set_check(i == 1)
+
+	func text(i: int) -> String:
+		return OFF_ON[i]
+
+	func enabled() -> bool:
+		return not menu.main.hold
 
 
 ## The speed check (bench.gd); its result goes under this row.

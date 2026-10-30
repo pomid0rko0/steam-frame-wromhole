@@ -41,7 +41,7 @@ func _ready() -> void:
 	values["wh_fillet"] = space.fillet
 	upload_fillet_table()
 	upload_gravity()
-	_upload_scene()
+	upload_scene()
 	set_objects(PackedVector4Array(), PackedVector4Array())
 	var mat := ShaderMaterial.new()
 	mat.shader = SHOW
@@ -59,12 +59,12 @@ func _ready() -> void:
 
 ## A uniform the kernels read, as last set.
 func get_param(name: StringName) -> Variant:
-	return values.get(name)
+	return values.get(String(name))
 
 
 ## Set one (the stereo check scene's static objects out of sight).
 func param(name: StringName, value: Variant) -> void:
-	values[name] = value
+	values[String(name)] = value
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there and its place
@@ -299,7 +299,7 @@ func upload_fillet_table() -> void:
 
 
 ## The static objects (scene.json, which the physics and the tests read too).
-func _upload_scene() -> void:
+func upload_scene() -> void:
 	var to_v4 := func(rows: Array) -> PackedVector4Array:
 		var out := PackedVector4Array()
 		for r in rows:

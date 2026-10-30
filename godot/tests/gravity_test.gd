@@ -8,7 +8,8 @@ extends SceneTree
 ## 4. the ray tracer's polynomials (gravity_shader) are the field, and join the cylinder and the
 ##    flat part
 ## 5. G cycles the views (Tracer.GRAVITY_VIEWS) and their kernels; not during the speed check;
-##    with movable balls and cubes each view has kernels that draw them too
+##    with movable balls and cubes each view has kernels that draw them too; the one-eye check's
+##    scene on and off
 ## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
 ##    throat, the sky untouched; arrows drawn over the view with view 2
 ## With a prefix, saves the pictures it checks.
@@ -174,6 +175,16 @@ func _control_checks() -> void:
 	main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
 	U.check("gravity view and movable balls", seen_b == [["world toys", "toys"], ["world toys gravity", "toys gravity"],
 			["world toys arrows", "toys arrows"], ["world toys", "toys"]] and main.tracer.kernels() == ["world", ""], str(seen_b))
+	# the menu's one-eye check: on, the check scene's balls and cube in the ray tracer and the static
+	# objects out of sight; off, the toys and the static objects back
+	var pillars: PackedVector4Array = main.tracer.get_param("wh_pil").duplicate()   # packed arrays go by reference
+	main.set_check(true)
+	var on_ok: bool = main.overlay != null and not main.toys.enabled and main.tracer.get_param("wh_nBall") == CheckScene.BALLS.size() \
+			and main.tracer.get_param("wh_nCube") == 1 and main.tracer.get_param("wh_pil") != pillars
+	main.set_check(false)
+	U.check("the one-eye check on, then off: its scene, then the toys and the static objects back", on_ok and main.overlay == null
+			and main.toys.enabled and main.tracer.get_param("wh_nBall") == main.toys.world.balls.size()
+			and main.tracer.get_param("wh_pil") == pillars, "on %s" % on_ok)
 
 
 ## The colour in the middle of a picture, averaged over 5 x 5 pixels (between the floor's lines).

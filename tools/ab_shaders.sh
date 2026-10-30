@@ -14,6 +14,12 @@
 #                                       noderiv  grid lines of a fixed width: no screen derivatives
 #                                       nogrid   no grid lines: none of their atan, asin or derivatives
 #                                       nosky    one colour per sky, the grid lines kept
+#                                       bigcode  the same ray tracer and some 4000 instructions more
+#                                                that never run (a branch on a uniform, one number's
+#                                                chain): what a program past the instruction cache costs
+#                                       moreregs the same with 4 values more held through the trace
+#                                                (sines of the ray, added in at 1e-9): past 12
+#                                                registers, waves of 64 instead of 128
 #   tools/ab_shaders.sh --auto <source>...   the same, and the build runs the check by itself
 #                                     (bench.gd says when: a build for measuring)
 #   tools/ab_shaders.sh --remove      a build without them
@@ -34,7 +40,7 @@ for src in "$@"; do
 	n=$((n + 1))
 	out=$DIR/$n
 	mkdir -p "$out"
-	if [[ "$src" =~ ^(empty|flat|noshade|noderiv|nogrid|nosky)$ ]]; then
+	if [[ "$src" =~ ^(empty|flat|noshade|noderiv|nogrid|nosky|bigcode|moreregs)$ ]]; then
 		tmp=$(mktemp -d)
 		cp "$ROOT"/godot/shaders/frag/wormhole.gdshader "$ROOT"/godot/shaders/frag/wormhole_view.gdshaderinc \
 			"$ROOT"/godot/shaders/frag/wormhole_core.gdshaderinc "$tmp/"
@@ -53,6 +59,26 @@ if kind == 'empty':
     i = s.index('void fragment() {')
     open(d + '/wormhole_view.gdshaderinc', 'w').write(s[:i] + 'void fragment() {\n\tALBEDO = vec3(0.10, 0.11, 0.13) + 1e-6 * v_ray.xyz;\n}\n')
     open(d + '/label', 'w').write("empty: one colour, Godot's own cost\n")
+elif kind == 'bigcode':
+    # one number through a chain of fract(a k + c) with constants of their own: nothing to fold,
+    # one register; with the waits between them some 3300 instructions
+    lines = ''.join('\t\ta = fract(a * %.4f + %.4f);\n' % (1.0 + 0.0001 * k, 0.0003 * k) for k in range(600))
+    patch('wormhole_view.gdshaderinc', """	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+}""", """	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+	if (head_l > 1e8) {
+		float a = V.x;
+""" + lines + """		ALBEDO = vec3(a);
+	}
+}""", "bigcode: the same and 4000 instructions that never run")
+elif kind == 'moreregs':
+    patch('wormhole_view.gdshaderinc', """	vec4 V = normalize(v_ray);
+	vec4 dbg;
+	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg);
+}""", """	vec4 V = normalize(v_ray);
+	vec4 h0 = sin(V * 3.1);
+	vec4 dbg;
+	ALBEDO = wh_renderE(v_l, v_n, V.x, V.yzw, v_eye, dbg) + 1e-9 * h0.xyz * h0.w;
+}""", "moreregs: the same with 4 values more held: past 12 registers")
 elif kind == 'flat':
     patch('wormhole_core.gdshaderinc', """    bool inShell = abs(l0) < wh_Lsh();
     bool shellAhead = !inShell;     // a straight ray that has left the shell never re-enters it
