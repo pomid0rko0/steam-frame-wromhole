@@ -34,10 +34,12 @@ keep and what was learnt about it: the comment at the top of its file.
   project is, how to run, install and check it, the maths, the wishes.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
-- **Don't anchor on what is here.** Look for the best way as if starting fresh and take it even if it
-  replaces what exists, up to writing the project anew. Nothing is kept for compatibility: carry
-  along everything that depends on a change in the same branch and migrate what is stored. The
-  checks still apply.
+- **No work is worth anything by itself.** Nothing is kept only because it was here before you or
+  the owner came: what is in the way goes out, and when you can't get further, try something new and
+  ignore what is here. Look for the best way as if starting fresh and take it even if it replaces
+  what exists, up to writing the project anew. Nothing is kept for compatibility: carry along
+  everything that depends on a change in the same branch and migrate what is stored. The checks
+  still apply.
 - **Make slow frames cheaper without giving anything up,** and without counting on anything
   staying as it is now.
 - **A rule in the way:** say so to the owner and propose a replacement; don't work around it
