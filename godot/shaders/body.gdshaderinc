@@ -11,7 +11,8 @@
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
-//     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR.
+//     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR; COLOR.a 1 (the arrow,
+//     over its outline of COLOR.a 0) a hair nearer the eye in depth, in the same place in the view.
 // Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point.
 #ifdef ARROWS
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
@@ -99,6 +100,9 @@ void vertex() {
 	vec4 arrive;
 	vec4 dir = geo_see(el, en, pl, pn, len, arrive);
 	v_ray = arrive;
+#ifdef ARROWS
+	len *= 1.0 - 1e-3 * COLOR.a;
+#endif
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
 }
 

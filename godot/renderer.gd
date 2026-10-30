@@ -17,8 +17,10 @@ extends Node3D
 ## A MeshInstance3D whose ShaderMaterial has no shader yet is drawn with Godot's default lit
 ## material, a huge program: a node is made only with its shader.
 
-const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader"),
-		preload("res://shaders/floor_gravity.gdshader")]
+# the floor's shaders: plain, coloured by gravity (both gravity views), each in a material of its own:
+# a ShaderMaterial keeps only the uniforms its shader has, so one material switched between them
+# would lose the gravity table
+const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
@@ -38,17 +40,23 @@ const SPHERE_COLORS := [Color(0.62, 0.27, 0.22), Color(0.25, 0.45, 0.62), Color(
 const PILLAR_COLOR := Color(0.55, 0.45, 0.38)
 const BOX_COLOR := Color(0.42, 0.48, 0.58)
 # the gravity view's arrows: on the vertical surface n.x = 0 (through the throat, across chart x),
-# every ARROW_STEP of l out to ARROW_REACH beyond the curved zone, rows ARROW_STEP apart in height
-const ARROW_STEP := 0.6
-const ARROW_REACH := 6.0
-const ARROW_LENGTH := 0.35      # m at 1 g
-const ARROW_WIDTH := 0.025      # half the shaft's width, m
+# every ARROW_STEP of l out to ARROW_REACH beyond the curved zone, rows ARROW_STEP apart in height;
+# each in the colour of its g with a dark outline, which keeps it seen on the floor of the same g
+const ARROW_STEP := 1.0
+const ARROW_REACH := 4.5
+const ARROW_LENGTH := 0.6       # m at 1 g; no longer than at ARROW_MAX_G
+const ARROW_MAX_G := 1.4
+const ARROW_SHAFT := 0.035      # half the shaft's width, m
+const ARROW_HEAD := 0.13        # half the head's width, m
+const ARROW_RIM := 0.02         # the outline's width, m
+const ARROW_RIM_COLOR := Color(0.02, 0.02, 0.02)
 
 var space: WormholeSpace
 var scene: Dictionary
 var xr: XRInterface             # null on the desktop
 var xr_view: SubViewport        # where XR renders; null on the desktop
-var floor_mat := ShaderMaterial.new()
+var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
+var floor_mat: ShaderMaterial   # the one drawn (gravity_view)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var scene_mats: Array[ShaderMaterial] = []
@@ -61,6 +69,7 @@ var floor_quad: MeshInstance3D
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var toy_count := 0              # balls and cubes drawn (set_objects)
 var ball_col := PackedVector4Array()   # the balls' (colour, radius) as set_objects got them
+var bodies: Array = []          # what set_objects drew: [kind ("ball", "cube"), centre (R^4), radius or half size]
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -68,8 +77,12 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	scene = p_scene
 	xr = p_xr
 	xr_view = p_xr_view
-	floor_mat.shader = FLOOR_SHADERS[0]
-	floor_mat.render_priority = FLOOR_PRIORITY
+	for sh in FLOOR_SHADERS:
+		var m := ShaderMaterial.new()
+		m.shader = sh
+		m.render_priority = FLOOR_PRIORITY
+		floor_mats.append(m)
+	floor_mat = floor_mats[0]
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
 	arrow_mat.shader = ARROW_SHADER
@@ -106,7 +119,8 @@ func _ready() -> void:
 
 ## Every material that reads geo_uniforms.gdshaderinc.
 func materials() -> Array[ShaderMaterial]:
-	var out: Array[ShaderMaterial] = [floor_mat, ball_mat, cube_mat, arrow_mat]
+	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]
+	out.append_array(floor_mats)
 	out.append_array(scene_mats)
 	return out
 
@@ -123,8 +137,8 @@ func upload_space() -> void:
 	_sweep_poly = tab.poly
 	for m in materials():
 		_space_params(m)
-	floor_mat.set_shader_parameter("g_grav", gtex)
-	floor_mat.set_shader_parameter("g_gravx", grav.axes)
+	floor_mats[1].set_shader_parameter("g_grav", gtex)
+	floor_mats[1].set_shader_parameter("g_gravx", grav.axes)
 
 
 var _sweep_tex: Texture2D
@@ -174,6 +188,11 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	mm.visible_instance_count = nc
 	toy_count = n + nc
 	ball_col = col.slice(0, n)
+	bodies.clear()
+	for i in n:
+		bodies.append(["ball", pos[i], col[i].w])
+	for i in nc:
+		bodies.append(["cube", cpos[i], ccol[i].w])
 
 
 static func _linear(c: Vector4) -> Color:
@@ -204,7 +223,8 @@ func _tangent_pair(C: Vector4) -> Array:
 ## How gravity is shown: GRAVITY_VIEWS (docs/gravity.md, «Показ»).
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
-	floor_mat.shader = FLOOR_SHADERS[gravity_view]
+	floor_mat = floor_mats[mini(gravity_view, 1)]
+	floor_quad.material_override = floor_mat
 	arrows.visible = gravity_view == 2
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
@@ -326,10 +346,10 @@ func _arrow_mesh() -> ArrayMesh:
 	for il in range(-nl, nl + 1):
 		var l := il * ARROW_STEP
 		var rr := space.r(l)
-		# rows along the half circle above the floor, ARROW_STEP apart
-		var nb := int(PI * rr / ARROW_STEP)
-		for ib in range(1, nb):
-			var beta := PI * ib / nb
+		# rows along the half circle above the floor, about ARROW_STEP apart
+		var nb := maxi(1, roundi(PI * rr / ARROW_STEP))
+		for ib in nb:
+			var beta := PI * (ib + 0.5) / nb
 			var n := Vector3(0.0, cos(beta), sin(beta))
 			var F := -space.potential_grad(l, n)
 			var e_beta := Vector3(0.0, -sin(beta), cos(beta))
@@ -338,19 +358,32 @@ func _arrow_mesh() -> ArrayMesh:
 			if g < 1e-4:
 				continue
 			var dir := f2 / g
-			var side := Vector2(-dir.y, dir.x)
-			var len := ARROW_LENGTH * minf(g, 3.0)
-			var col := _gravity_color(g)
-			var pts := [-0.5 * len * dir + ARROW_WIDTH * side, 0.25 * len * dir + ARROW_WIDTH * side,
-					0.25 * len * dir - ARROW_WIDTH * side, -0.5 * len * dir - ARROW_WIDTH * side,
-					0.25 * len * dir + 3.0 * ARROW_WIDTH * side, 0.5 * len * dir, 0.25 * len * dir - 3.0 * ARROW_WIDTH * side]
-			for k in [0, 1, 2, 0, 2, 3, 4, 5, 6]:
-				var o: Vector2 = pts[k]
-				var b2 := beta + o.y / rr
-				st.set_color(col)
-				st.set_uv(Vector2(l + o.x, 0.0))
-				st.add_vertex(Vector3(0.0, cos(b2), sin(b2)))
+			var len := ARROW_LENGTH * minf(g, ARROW_MAX_G)
+			var head := minf(0.3, 0.6 * len)
+			# the outline first, then the arrow over it (the shader puts it a hair nearer the eye)
+			_arrow(st, l, beta, rr, dir, len, head, ARROW_RIM, Color(ARROW_RIM_COLOR, 0.0))
+			_arrow(st, l, beta, rr, dir, len, head, 0.0, Color(_gravity_color(g), 1.0))
 	return st.commit()
+
+
+## One arrow at (l, beta) on the surface n.x = 0 (metric dl^2 + r^2 dbeta^2), along dir (in l,
+## beta), grown by grow on every side.
+static func _arrow(st: SurfaceTool, l: float, beta: float, rr: float, dir: Vector2, len: float, head: float,
+		grow: float, color: Color) -> void:
+	var side := Vector2(-dir.y, dir.x)
+	var back := -0.5 * len - grow
+	var neck := 0.5 * len - head
+	var sw := ARROW_SHAFT + grow
+	var hw := ARROW_HEAD + 2.0 * grow
+	var tip := 0.5 * len + 2.0 * grow
+	var pts := [back * dir + sw * side, neck * dir + sw * side, neck * dir - sw * side, back * dir - sw * side,
+			(neck - grow) * dir + hw * side, tip * dir, (neck - grow) * dir - hw * side]
+	for k in [0, 1, 2, 0, 2, 3, 4, 5, 6]:
+		var o: Vector2 = pts[k]
+		var b2 := beta + o.y / rr
+		st.set_color(color)
+		st.set_uv(Vector2(l + o.x, 0.0))
+		st.add_vertex(Vector3(0.0, cos(b2), sin(b2)))
 
 
 ## look.gdshaderinc's look_gravity: the colour of g, in g.

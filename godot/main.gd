@@ -358,6 +358,36 @@ func gaze_text() -> String:
 	return "none" if g == null else "%.0f deg right %.0f deg up" % [g.x, g.y]
 
 
+## What is before the eyes, for the log's lines about frames: the head's height and roll, the
+## bodies drawn and the nearest one: its distance from the head to its centre (the chord of R^4: no
+## longer than the geodesic, a few per cent shorter at most at 1 m, where the space bends tightest)
+## and its direction from where the head looks; the settings that change what a frame draws.
+func view_text() -> String:
+	var b := camera.transform.basis
+	var hf: Array = _head_pose[2]
+	var out := "head %.2f m up, right side %.0f deg up; drawn %d balls, %d cubes" % [camera.transform.origin.y,
+			rad_to_deg(asin(clampf(b.x.y, -1.0, 1.0))), renderer.ball_col.size(), renderer.toy_count - renderer.ball_col.size()]
+	if not hf.is_empty() and not renderer.bodies.is_empty():
+		var P := space.embed(_head_pose[0], _head_pose[1])
+		var N := space.normal4(_head_pose[0], _head_pose[1])
+		var near: Array = renderer.bodies[0]
+		for body: Array in renderer.bodies:
+			if (body[1] - P).length() < (near[1] - P).length():
+				near = body
+		var V: Vector4 = near[1] - P
+		var Vt := V - V.dot(N) * N
+		var to := func(v: Vector3) -> Vector4: return v.x * hf[0] + v.y * hf[1] + v.z * hf[2]
+		var x: float = Vt.dot(to.call(b.x))
+		var y: float = Vt.dot(to.call(b.y))
+		var z: float = Vt.dot(to.call(-b.z))
+		out += "; nearest: %s of %s %.2f m at %.2f m from the head to its centre, %.0f deg right %.0f deg up of the view" % [
+				near[0], "radius" if near[0] == "ball" else "half size", near[2], V.length(),
+				rad_to_deg(atan2(x, z)), rad_to_deg(atan2(y, Vector2(x, z).length()))]
+	var target: Viewport = xr_view if in_xr else get_viewport()
+	return out + "; gravity view %d, foveation %d, render scale %.2f, menu %s" % [renderer.gravity_view,
+			foveation.level, target.scaling_3d_scale, "open" if menu.open else "closed"]
+
+
 func set_gravity_view(view: int) -> void:
 	renderer.set_gravity_view(view)
 	menu.refresh()

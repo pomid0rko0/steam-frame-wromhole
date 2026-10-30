@@ -74,7 +74,13 @@ var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var variants: Array[Setup] = []   # this run's (start)
-var near := false               # the cube before the eyes is drawn (near_cube)
+# the cube before the eyes is drawn (near_cube); set, the toys go to the renderer again at once:
+# main drew them before this node's _process, and the frame a variant starts in must have its cube
+var near := false:
+	set(v):
+		near = v
+		if main and main.toys.enabled:
+			main.draw_toys()
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0

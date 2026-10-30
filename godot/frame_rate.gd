@@ -92,6 +92,7 @@ var late_lines := 0             # late frames logged this second
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_mhz := 0              # read once a second: a kernel file each frame is not free
+var compiled := 0               # pipelines Godot had compiled at the last second's line (compilations())
 
 
 func _ready() -> void:
@@ -142,15 +143,17 @@ func _process(delta: float) -> void:
 		var period := api.get_next_frame_time() - now
 		var missed_before := meter.missed()
 		meter.add(now, period, reported)
-		# a late frame gets a line: where, and the times this file's top describes
+		# a late frame gets a line: where, what is before the eyes (main.view_text), the times this
+		# file's top describes and the pipelines compiled so far
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()
-			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms (the frame before %.2f ms)"
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms (the frame before %.2f ms), pipelines compiled %d; %s"
 					% [meter.missed() - missed_before, main.foot_l, look.x, look.y,
 					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
 					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
-					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, scripts_before])
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, scripts_before,
+					compilations(), main.view_text()])
 		bench.frame_timing(now, period, reported)
 	scripts_before = main.scripts_ms
 	t += delta
@@ -336,6 +339,18 @@ func _second() -> void:
 		_log()
 
 
+## Pipelines Godot has compiled so far, of every kind (its PIPELINE_COMPILATIONS_* monitors). A
+## compilation happens the first time something is drawn in a new way (a material, the gravity view,
+## a variant of a pass) and holds that frame up: a late frame next to new ones was a compile.
+static func compilations() -> int:
+	var n := 0
+	for m in [Performance.PIPELINE_COMPILATIONS_CANVAS, Performance.PIPELINE_COMPILATIONS_MESH,
+			Performance.PIPELINE_COMPILATIONS_SURFACE, Performance.PIPELINE_COMPILATIONS_DRAW,
+			Performance.PIPELINE_COMPILATIONS_SPECIALIZATION]:
+		n += int(Performance.get_monitor(m))
+	return n
+
+
 ## The GPU time per frame so far this second, ms.
 func gpu_ms() -> float:
 	return now.gpu / now.drawn if now.drawn > 0 else 0.0
@@ -408,12 +423,14 @@ func _log() -> void:
 			"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
 	var fov: Foveation = main.foveation
 	var f: Vector4 = main.renderer.frustum(0)
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
+	var n := compilations()
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, own maps %s first, gaze %s, pipelines compiled %d in 1 s (%d in all); %s"
 			% [rate, meter.paced_rate(), s.shown, s.refreshes, s.refreshes - s.shown, s.gpu / s.drawn if s.drawn > 0 else 0.0, s.gpu_max,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
-			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
-			main.renderer.gravity_view, "open" if main.menu.open else "closed"])
+			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), "width" if fov.order == 0 else "height", main.gaze_text(),
+			n - compiled, n, main.view_text()])
+	compiled = n
 
 
 ## A second's counts.
