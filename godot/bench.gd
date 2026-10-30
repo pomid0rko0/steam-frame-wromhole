@@ -23,8 +23,9 @@ extends Node
 ## part decides.
 ## This build's ray tracer is timed each way FOVEATIONS lists (the split pass alone: what
 ## foveation's pass costs without a map) and, with the toys, over the whole view too (what the
-## stencil saves) and with marks that leave the rays' planes out, without foveation and with own
-## narrow (what the planes save: Tracer.ROUGH); the others as comparable() takes them.
+## stencil saves) and with marks that leave the rays out (main's: the proxies' pixels, inside the
+## curved region the whole view), without foveation and with own narrow (what wh_toysNear saves:
+## Tracer.ROUGH); the others as comparable() takes them.
 ##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
 ## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),

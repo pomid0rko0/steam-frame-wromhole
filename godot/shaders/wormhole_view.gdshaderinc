@@ -75,20 +75,36 @@ void wh_viewEye(vec3 eye, out float l, out vec3 n, out vec4 f0, out vec4 f1, out
 
 #ifndef WH_NO_BALLS
 // Whether the ray from the eye at n with its direction's part across w (the eye's tangent space)
-// can meet a movable ball or cube anywhere along it: its whole path, curved part and straight ones,
-// lies in R^4's subspace span(n, w, the w axis), so one whose centre is farther from it than its
-// reach (a ball's radius, a cube's half diagonal: two half sizes) is never met (wh_curved's
-// candidates, for every toy). The distance is the centre's xyz along the plane's normal. A ray
-// along n has no plane: it may meet any. The reach a little grown: rounding.
+// can meet a movable ball or cube anywhere along it (wh_curved's candidates and window in psi, for
+// every toy, the straight parts too):
+//  - its whole path lies in R^4's subspace span(n, w, the w axis): a toy whose centre is farther
+//    from it than its reach (a ball's radius, a cube's half diagonal: two half sizes) is never met;
+//  - in that plane the path's polar angle psi (from n, toward w) grows from 0, and the path ends
+//    on the floor at the latest where the plane meets it (n.z = 0 at psi = psiF, in (0, pi) with
+//    the eye above the floor): a toy is met only if its shadow on the plane, a disc around the
+//    centre's projection, reaches into psi 0 .. psiF.
+// A ray along n has no plane: it may meet any. The reach and the window a little grown: rounding.
 bool wh_toysNear(vec3 n, vec3 w) {
-	vec3 c = cross(n, w);
-	float lc = length(c);
-	if (lc < 1e-6 * length(w) + 1e-12) return true;
-	c /= lc;
-	for (int i = 0; i < wh_nBall; i++)
-		if (abs(dot(wh_ball[i].xyz, c)) < 1.001 * wh_ballCol[i].w + 1e-4) return true;
-	for (int i = 0; i < wh_nCube; i++)
-		if (abs(dot(wh_cube[i].xyz, c)) < 2.002 * wh_cubeCol[i].w + 1e-4) return true;
+	float lw = length(w);
+	if (lw < 1e-6) return true;
+	vec3 e2 = w / lw;
+	float psiF = n.z > 1e-6 ? wh_atan2(n.z, -e2.z) + 1e-3 : 4.0;
+	for (int i = 0; i < wh_nBall + wh_nCube; i++) {
+		bool isCube = i >= wh_nBall;
+		int k = isCube ? i - wh_nBall : i;
+		vec3 C = isCube ? wh_cube[k].xyz : wh_ball[k].xyz;
+		float reach = isCube ? 2.002 * wh_cubeCol[k].w + 1e-4 : 1.001 * wh_ballCol[k].w + 1e-4;
+		float c1 = dot(C, n);
+		float c2 = dot(C, e2);
+		float rho2 = c1 * c1 + c2 * c2;
+		float re2 = reach * reach - max(dot(C, C) - rho2, 0.0);
+		if (re2 <= 0.0) continue;
+		if (rho2 <= re2) return true;              // the disc holds the plane's centre: any psi
+		float psc = wh_atan2(c2, c1);
+		float dps = wh_asin(sqrt(re2 / rho2)) + 1e-3;
+		// the disc's window psc +- dps (less than pi / 2 each way), and its copy a turn up
+		if ((psc + dps >= 0.0 && psc - dps <= psiF) || psc + 2.0 * WH_PI - dps <= psiF) return true;
+	}
 	return false;
 }
 #endif

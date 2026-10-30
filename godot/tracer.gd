@@ -14,8 +14,9 @@ extends Node3D
 ## nothing, so with toys the frame is split: marks drawn first (stencil_mark.gdshader over proxies,
 ## with the head in the curved region stencil_mark_all over the whole view) set the stencil at the
 ## pixels whose rays may meet a toy, the shader with toys runs only there, the plain one of the same
-## view everywhere else (a second quad). A mark keeps only the pixels whose ray's plane passes within
-## reach of a toy (wh_toysNear): the whole ray lies in that plane. Godot geometry drawn before the ray tracers must not write
+## view everywhere else (a second quad). A mark keeps only the pixels whose ray can reach a toy
+## (wh_toysNear: the whole ray lies in one plane and ends on the floor at the latest where that
+## plane meets it). Godot geometry drawn before the ray tracers must not write
 ## the stencil. The
 ## stencil (stencil_mode in a shader) works on Mobile, with multiview and on lavapipe; opaque draws
 ## go by render_priority, lower first.

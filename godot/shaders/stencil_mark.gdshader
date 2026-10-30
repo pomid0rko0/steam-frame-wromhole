@@ -4,8 +4,8 @@ stencil_mode write, compare_always, 1;
 
 // The pixels whose rays may meet a movable ball or cube: it sets the stencil there (how and why:
 // tracer.gd, «The stencil split», set_head), drawn over the proxies, and of those pixels only the
-// ones whose ray's plane passes within reach of a toy (wh_toysNear; mark_near off: all). Its
-// colour is drawn over by one of the ray tracers.
+// ones whose ray can reach a toy (wh_toysNear; mark_near off: all). Its colour is drawn over by
+// one of the ray tracers.
 #define WH_MARK
 #define WH_MARK_PROXY
 uniform bool mark_near = true;
