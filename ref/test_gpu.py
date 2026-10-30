@@ -22,11 +22,12 @@ NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
 PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
 # radians of direction (the headset's pixel is about 1e-3: half a pixel 5e-4), metres; a ray's length
-# only orders bodies in depth, and next to the photon sphere it is ill-posed (not checked there)
+# only orders bodies in depth: a share of it (near a ray's turning point it follows the direction's
+# small error steeply; next to the photon sphere it is ill-posed: not checked there)
 SWEEP_ABS, SWEEP_REL = 5e-5, 1e-5
 INVERSE = 5e-4
 DIRECTION = 5e-4
-LENGTH_REL = 2e-3
+LENGTH_REL = 1e-2
 EYE_POS, EYE_AXES = 2e-5, 3e-4
 CHORD = 5e-5
 

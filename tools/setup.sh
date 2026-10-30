@@ -6,7 +6,7 @@
 # The steps (steps= below) don't depend on each other and run at once; each line of output starts
 # with its step's name. Then, last (adreno), the Steam Frame's Vulkan driver (Mesa's Turnip for
 # Adreno 750) is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the
-# headset's shader compiler makes of the ray tracer) and tools/fdm_check.sh (how its driver renders
+# headset's shader compiler makes of the renderer's shaders) and tools/fdm_check.sh (how its driver renders
 # a pass).
 # No package has the drm-shim (built once).
 # On the Steam Frame all of it goes into tools/box.sh's container, where the tools run

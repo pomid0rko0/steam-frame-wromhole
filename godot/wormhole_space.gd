@@ -296,8 +296,9 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	return D
 
 
-## A chart position of the flat region on one side (the charts: wormhole_core.gdshaderinc's top) to
-## a manifold point.
+## A chart position of the flat region on one side to a manifold point. Chart A is R^4's xyz in
+## sheet A; chart B is sheet B's, mirrored in x (a frame right-handed in either chart has the same
+## orientation in the space).
 func point_from_chart(side: float, x: Vector3) -> Array:
 	var rr := x.length()
 	var n := x / rr

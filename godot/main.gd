@@ -9,8 +9,8 @@ extends Node3D
 ## Body model: the feet stay on the floor (n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,
 ## parallel-transporting the play-space axes; stick turns rotate those axes; the head sits
-## head-height above the feet along the floor normal. Each eye is derived in the shader from that
-## view's own matrices (shaders/wormhole_view.gdshaderinc).
+## head-height above the feet along the floor normal. Each eye is derived in the shaders from that
+## view's own matrices (shaders/geo.gdshaderinc, geo_eye).
 ##
 ## The parts: the space's geometry (wormhole_space.gd), the renderer (renderer.gd), the demo's
 ## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab

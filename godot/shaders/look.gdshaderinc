@@ -80,8 +80,9 @@ vec3 look_ambient(float l, float up) {
 }
 
 // a body's colour: albedo lit by the sun (nl = n . sun), the sky (up = n . up) and a soft rim
-// toward the edge (nv = n . toward the eye)
+// toward the edge (nv = n . toward the eye). All of it scales the albedo, so a body keeps its hue
+// to the edge (the stereo checks find the balls by it).
 vec3 look_body(vec3 albedo, float nl, float up, float nv, float l) {
-	vec3 lit = albedo * (look_ambient(l, up) + 0.75 * LOOK_SUN * max(nl, 0.0));
-	return lit + 0.08 * pow(1.0 - clamp(nv, 0.0, 1.0), 3.0);
+	float rim = 1.0 - clamp(nv, 0.0, 1.0);
+	return albedo * (look_ambient(l, up) + 0.75 * LOOK_SUN * max(nl, 0.0) + 0.25 * rim * rim * rim);
 }
