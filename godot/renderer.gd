@@ -122,6 +122,19 @@ func _ready() -> void:
 	play.add_child(arrows)
 
 
+## The first frames also draw the gravity views' floor and lines: their pipelines compile while the
+## app starts, not at the first switch to them (a stall of a tenth of a second or more on the Frame,
+## and SteamVR at half rate after it).
+func _process(_delta: float) -> void:
+	if _warm > 0:
+		_warm -= 1
+		floor_quad.material_override = floor_mats[1] if _warm > 0 else floor_mat
+		arrows.visible = _warm > 0 or gravity_view == 2
+
+
+var _warm := 3                  # frames left drawing the gravity views (_process)
+
+
 ## Every material that reads geo_uniforms.gdshaderinc.
 func materials() -> Array[ShaderMaterial]:
 	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]

@@ -14,8 +14,8 @@ extends Node
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), with the feet held there,
 ## and the frame is timed on the GPU (the median frame of each segment), this build's renderer each
 ## way VARIANTS lists: without foveation, the split pass alone (what foveation's pass costs without
-## a map), each foveation, and with a cube right before the eyes (NEAR_CUBE: the case where a body
-## fills the view), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## a map), each foveation, and with a cube held right before the eyes (NEAR_CUBE: a body near the
+## eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
@@ -61,8 +61,10 @@ const TILT_PERIOD := 2.0        # s: its tilts (roll)
 const VARIANTS := [["plain", 0, false, false], ["passes split", 0, true, false],
 	["SteamVR low", 1, false, false], ["SteamVR high", 3, false, false],
 	["own wide", 4, false, false], ["own narrow", 5, false, false], ["a cube at the eyes", 0, false, true]]
-# the cube before the eyes: [m ahead of the head, half size]; a ball beside it
-const NEAR_CUBE := [0.32, 0.22]
+# the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
+# held, the floor and the sky all round it (one filling the view would be the cheapest frame there
+# is: its pixels only shade)
+const NEAR_CUBE := [0.4, 0.1]
 const NEAR_COLOR := Color(0.55, 0.6, 0.95)
 
 var main: Main
