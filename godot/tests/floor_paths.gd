@@ -10,6 +10,7 @@ const START := 4.0
 const WAIT := 1.5
 # the branches' conditions in floor.gdshaderinc, as written there
 const STRAIGHT := "if (le >= L && (ca >= 0.0 || b >= Rout)) {"
+const STRAIGHT_FLOOR := "if (dc.z < 0.0) {"
 const EYE_FLAT := "if (le >= L) {"
 const EYE_FILLET := "} else if (le > Lc) {"
 const HIT := "hit = phif < tot;"
@@ -37,7 +38,8 @@ func _initialize() -> void:
 	var beyond := [[BEYOND, "if (true) {"]]
 	var cyl := [[BEYOND, "if (false) {"], [CYLINDER, "} else if (true) {"]]
 	var fillet := [[BEYOND, "if (false) {"], [CYLINDER, "} else if (false) {"]]
-	_variant("eye in a flat universe, the ray straight", [[STRAIGHT, "if (true) {"]])
+	_variant("eye in a flat universe, the ray straight to the floor", [[STRAIGHT, "if (true) {"], [STRAIGHT_FLOOR, "if (true) {"]])
+	_variant("eye in a flat universe, the ray straight to the sky", [[STRAIGHT, "if (true) {"], [STRAIGHT_FLOOR, "if (false) {"]])
 	_variant("curved: the sky, the eye in a flat universe", curved + eye_flat + sky)
 	_variant("curved: the sky, the eye on the fillet", curved + eye_fillet + sky)
 	_variant("curved: the floor beyond the curved zone, the eye in a flat universe", curved + eye_flat + hit + beyond)

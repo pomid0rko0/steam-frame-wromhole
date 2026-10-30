@@ -17,9 +17,22 @@
 
 const float GEO_PI = 3.14159265358979;
 
-// asin and acos through atan: Mesa's (the headset's driver) are polynomials good to only ~1e-4 rad
-float geo_asin(float x) { return atan(x, sqrt(max((1.0 - x) * (1.0 + x), 0.0))); }
-float geo_acos(float x) { return atan(sqrt(max((1.0 - x) * (1.0 + x), 0.0)), x); }
+// atan(y, x) in [-pi, pi]: a minimax polynomial in the octant's ratio (off by 4e-8 rad, 1.2e-7 in
+// float32) and the octants. Mesa's own atan takes about three times the instructions on the
+// headset (tools/adreno_stats.sh --paths), and a floor pixel takes up to five. asin and acos go
+// through it: Mesa's are polynomials good to only ~1e-4 rad.
+float geo_atan2(float y, float x) {
+	float ax = abs(x), ay = abs(y);
+	float a = min(ax, ay) / max(max(ax, ay), 1e-30);
+	float s = a * a;
+	float r = a * (0.999999336 + s * (-0.333298608 + s * (0.199465655 + s * (-0.139086284 + s * (0.0964219381
+			+ s * (-0.0559122717 + s * (0.0218629158 + s * -0.00405455466)))))));
+	if (ay > ax) r = 0.5 * GEO_PI - r;
+	if (x < 0.0) r = GEO_PI - r;
+	return y < 0.0 ? -r : r;
+}
+float geo_asin(float x) { return geo_atan2(x, sqrt(max((1.0 - x) * (1.0 + x), 0.0))); }
+float geo_acos(float x) { return geo_atan2(sqrt(max((1.0 - x) * (1.0 + x), 0.0)), x); }
 
 float geo_r(float al) {
 	if (al >= g_prof.w) return al - g_prof.w + g_prof2.x;
@@ -140,7 +153,7 @@ vec2 geo_between(float b, float sigma, float a1, float gap1, float a2, float gap
 		float r2 = geo_r(a2);
 		float q2 = sqrt(max(gap2 * (r2 + b), 0.0));
 		float dq = (r2 - r1) * (r2 + r1) / max(q1 + q2, 1e-20);
-		out_ += vec2(atan(b * dq, b * b + q1 * q2), dq);
+		out_ += vec2(geo_atan2(b * dq, b * b + q1 * q2), dq);
 	}
 	return out_;
 }
@@ -280,7 +293,7 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 	float c = dot(en, pn);
 	vec3 cr = cross(en, pn);
 	float sd = length(cr);
-	float delta = atan(sd, c);
+	float delta = geo_atan2(sd, c);
 	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : (abs(en.z) < 0.9 ? normalize(cross(en, vec3(0.0, 0.0, 1.0))) : normalize(cross(en, vec3(1.0, 0.0, 0.0))));
 	// the family: alpha = launch angle from the outward radial direction
 	// lp >= le: alpha in [0, amax), amax = pi - asin(rmin / re) (the turned rays down to rmin)
@@ -402,7 +415,7 @@ float geo_l_of(vec4 P, out vec3 n) {
 	float Kr = g_prof2.x, Ka = g_prof.z - R * sin(g_prof2.w);
 	if (rho >= Kr) return sw * (g_prof.w + rho - Kr);
 	if (a <= Ka) return P.w;
-	return sw * (g_prof.z + R * (atan(a - Ka, Kr - rho) - g_prof2.w));
+	return sw * (g_prof.z + R * (geo_atan2(a - Ka, Kr - rho) - g_prof2.w));
 }
 
 // the vector of R^4 orthogonal to a, b and c (their 4D cross product)

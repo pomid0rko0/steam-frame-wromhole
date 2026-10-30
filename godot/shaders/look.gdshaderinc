@@ -16,10 +16,9 @@ const float LOOK_SUN_COS = 0.99863;      // cos 3 degrees: the sun's disc
 const float LOOK_HAZE = 70.0;            // m: the floor fades to the horizon's colour over this
 const float LOOK_LINE = 0.6;             // px: half the width of the floor's white lines
 
-// a box-filtered checker of unit cells at p, w its footprint (fwidth)
-float look_checker(vec2 p, vec2 w) {
-	w = max(w, vec2(1e-4));
-	vec2 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) / w;
+// a box-filtered checker of unit cells at p, iw the inverse of its footprint (1 / fwidth)
+float look_checker(vec2 p, vec2 w, vec2 iw) {
+	vec2 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) * iw;
 	return 0.5 - 0.5 * i.x * i.y;
 }
 
@@ -28,16 +27,18 @@ float look_checker(vec2 p, vec2 w) {
 // (check_grid.gdshader). Returns (|l|, sector).
 vec2 look_floor_coords(float l, vec3 n) {
 	float x = l < 0.0 ? -n.x : n.x;
-	return vec2(abs(l), atan(n.y, x) * (24.0 / (2.0 * GEO_PI)));
+	return vec2(abs(l), geo_atan2(n.y, x) * (24.0 / (2.0 * GEO_PI)));
 }
 
 // the floor's colour from its pattern coordinates c (look_floor_coords), their footprints fw (per
 // pixel) and the way's length; base: the checker's two colours
 vec3 look_floor(vec2 q, vec2 fw, vec3 lightc, vec3 darkc) {
-	float chk = look_checker(q, fw);
+	fw = max(fw, vec2(1e-4));
+	vec2 iw = 1.0 / fw;
+	float chk = look_checker(q, fw, iw);
 	vec3 col = mix(darkc, lightc, mix(0.5, chk, 1.0 - smoothstep(0.35, 0.8, max(fw.x, fw.y))));
 	// white lines a pixel wide, fading where they crowd
-	vec2 d = abs(fract(q + 0.5) - 0.5) / max(fw, vec2(1e-5));
+	vec2 d = abs(fract(q + 0.5) - 0.5) * iw;
 	vec2 cov = clamp(LOOK_LINE + 0.5 - d, 0.0, 1.0) * (1.0 - smoothstep(0.15, 0.35, fw));
 	float line = max(cov.x, cov.y);
 	return mix(col, vec3(1.0), 0.75 * line);
@@ -51,7 +52,9 @@ vec3 look_sky(vec3 d, float side) {
 	float up = clamp(d.z, 0.0, 1.0);
 	vec3 col = mix(hor, zen, pow(up, 0.6));
 	float cs = dot(d, sun);
-	col += LOOK_SUN * (0.25 * pow(max(cs, 0.0), 64.0));
+	float c2 = max(cs, 0.0);
+	c2 *= c2; c2 *= c2; c2 *= c2; c2 *= c2; c2 *= c2; c2 *= c2;     // ^64
+	col += LOOK_SUN * (0.25 * c2);
 	col = mix(col, LOOK_SUN * 1.2, smoothstep(LOOK_SUN_COS - 0.00004, LOOK_SUN_COS + 0.00004, cs));
 	return col;
 }

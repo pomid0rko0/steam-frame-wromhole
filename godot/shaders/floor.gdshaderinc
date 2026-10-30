@@ -61,7 +61,7 @@ void fragment() {
 	sa *= nrm;
 	float b = re * sa;
 	// where the floor is in the ray's plane: the angle from the eye (0, pi), the eye above it
-	float phif = atan(v_en.z, -t.z);
+	float phif = geo_atan2(v_en.z, -t.z);
 	bool hit = false;
 	float lh = 0.0;                         // the floor point's l, its n's x and y (any length), the way's length
 	vec2 nh = vec2(1.0, 0.0);
@@ -108,7 +108,7 @@ void fragment() {
 		if (le >= L) {
 			float q2 = sqrt(max(gap_e * (re + b), 0.0));
 			float dq = (re - Rout) * (re + Rout) / max(qR + q2, 1e-20);
-			se = SL + vec2(atan(b * dq, b * b + qR * q2), dq);
+			se = SL + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
 		} else if (le > Lc) {
 			float su = v_eye.y, eu = sqrt(gap_e / R2);
 			float ue = su * su;
@@ -183,9 +183,11 @@ void fragment() {
 	vec3 col;
 	if (hit) {
 		vec2 c = look_floor_coords(lh, vec3(nh, 0.0));
-		vec2 fw = fwidth(c);
-		// the sectors' seam at the chart's -x: the other branch of the angle there
-		fw.y = min(fw.y, fwidth(fract(c.y / 24.0 + 0.5) * 24.0));
+		// the footprint; across the sectors' seam at the chart's -x the angle jumps by 24: taken out
+		vec2 dx = dFdx(c), dy = dFdy(c);
+		dx.y -= 24.0 * round(dx.y / 24.0);
+		dy.y -= 24.0 * round(dy.y / 24.0);
+		vec2 fw = abs(dx) + abs(dy);
 #ifdef GRAVITY
 		float al = abs(lh);
 		float g;
@@ -195,7 +197,7 @@ void fragment() {
 		vec3 base = look_grav_colour(t);
 		col = look_grav_contours(look_floor(c, fw, base, base * 0.85), t);     // the checker as brightness
 #else
-		col = lh >= 0.0 ? look_floor(c, fw, LOOK_FLOOR_A[0], LOOK_FLOOR_A[1]) : look_floor(c, fw, LOOK_FLOOR_B[0], LOOK_FLOOR_B[1]);
+		col = look_floor(c, fw, lh >= 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], lh >= 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
 #endif
 		vec3 hor = lh >= 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B;
 		col = mix(col, hor, 1.0 - exp(-way / LOOK_HAZE));
