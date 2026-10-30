@@ -66,9 +66,9 @@ void fragment() {
 		else { float r = geo_r(al); g = 1.0 + g_gravx.y / (r * r * r); }
 		float t = look_grav_level(g);
 		vec3 base = look_grav_colour(t);
-		col = look_grav_contours(look_floor(c, fw, base, base * 0.85), t);     // the checker as brightness
+		col = look_grav_contours(look_floor(c, fw, geo_r(al), base, base * 0.85), t);     // the checker as brightness
 #else
-		col = look_floor(c, fw, lh >= 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], lh >= 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
+		col = look_floor(c, fw, geo_r(abs(lh)), lh >= 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], lh >= 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
 #endif
 		vec3 hor = lh >= 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B;
 		col = mix(col, hor, 1.0 - exp(-way / LOOK_HAZE));
