@@ -24,7 +24,8 @@ import_scripts
 # The renders are independent Godot runs: they go in parallel, JOBS at a time (default: one per
 # core; on the Frame tools/box.sh sets it), each with its own X display and its own user data
 # (Godot's shader cache), then the comparisons run in order. A render that does not exit 0 within
-# LIMIT seconds fails the suite.
+# LIMIT seconds fails the suite; one that hangs in Godot's own exit after its verdict ends with that
+# verdict (env.sh's godot_x).
 JOBS=${JOBS:-$(nproc)}
 LIMIT=600
 LOGS=$(mktemp -d)
@@ -37,8 +38,8 @@ render() {   # a Godot test script, in the background
 	mkdir -p "$LOGS/data$i"
 	local d
 	d=$(x_display 90)   # its own X display
-	( XDG_DATA_HOME=$LOGS/data$i timeout $LIMIT xvfb-run -n $d -s "-screen 0 1280x720x24" \
-		"$GODOT" --path . "$@" > "$LOGS/$i.log" 2>&1
+	( export XDG_DATA_HOME=$LOGS/data$i
+	  godot_x $d "$LOGS/$i.log" $LIMIT --path . "$@"
 	  echo "$? $*" > "$LOGS/$i.status"
 	  free_display $d ) &
 }

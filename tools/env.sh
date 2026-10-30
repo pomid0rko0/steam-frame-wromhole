@@ -65,3 +65,37 @@ x_display() {
 	echo "$d"
 }
 free_display() { rmdir "/tmp/.wormhole-X$1" 2>/dev/null || true; }
+# A Godot run of a test script on X display $1, its output into the file $2, for at most $3 s; the
+# rest are Godot's arguments. Exit status Godot's, 124 past the limit. Godot 4.7.2 can hang in its
+# own shutdown after a script has quit: the main thread waits on its worker pool, whose workers all
+# wait for work (under the stereo test's load, about one render in two). A run that has printed its
+# verdict (tests/util.gd's finish: "FAILURES: n", the line before it quits) and not ended
+# EXIT_GRACE s later is killed, ends with that verdict (0 if n = 0, else 1), and says so in its log.
+EXIT_GRACE=30
+godot_x() {
+	local d=$1 log=$2 limit=$3
+	shift 3
+	xvfb-run -n "$d" -s "-screen 0 1280x720x24" "$GODOT" "$@" > "$log" 2>&1 &
+	local pid=$! t=0 seen=-1 c n
+	while kill -0 $pid 2>/dev/null; do
+		sleep 1
+		t=$((t + 1))
+		[ $seen -lt 0 ] && grep -qE "^FAILURES: [0-9]+$" "$log" && seen=$t
+		if { [ $seen -ge 0 ] && [ $((t - seen)) -ge $EXIT_GRACE ]; } || [ $t -ge "$limit" ]; then
+			# Godot: xvfb-run's child next to its X server (xvfb-run then takes that down)
+			for c in $(pgrep -P $pid); do
+				[ "$(cat /proc/$c/comm 2>/dev/null)" = Xvfb ] || kill -KILL "$c" 2>/dev/null
+			done
+			wait $pid 2>/dev/null
+			if [ $seen -ge 0 ]; then
+				n=$(grep -oE "^FAILURES: [0-9]+$" "$log" | tail -1 | grep -oE "[0-9]+$")
+				echo "godot_x: still in Godot's exit $EXIT_GRACE s after the verdict (FAILURES: $n): killed, the verdict stands" >> "$log"
+				[ "$n" = 0 ]
+				return
+			fi
+			echo "godot_x: still running after $limit s: killed" >> "$log"
+			return 124
+		fi
+	done
+	wait $pid
+}

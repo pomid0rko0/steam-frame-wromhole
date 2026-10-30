@@ -49,5 +49,6 @@ func _process(_delta: float) -> bool:
 	if frames == 12:
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
 		print("saved ", mode, " views at head ", main.camera.transform.origin)
+		U.finish(self)
 		return true
 	return false

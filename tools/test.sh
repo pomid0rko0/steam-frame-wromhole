@@ -5,7 +5,8 @@
 # with what failed.
 #   tools/test.sh                  all of them
 #   tools/test.sh grab walking_xr  those named
-# Exit status 0 only if each one exits 0 with no script or shader error. Whole logs in
+# Exit status 0 only if each one exits 0 with no script or shader error (one that hangs in Godot's own
+# exit after its verdict ends with that verdict: env.sh's godot_x). Whole logs in
 # $OUT/<name>.log (OUT default: a new directory under .wt/.out each run, printed at the end; env.sh
 # deletes it a day later). The stereo and OpenXR tests are tools/test_stereo.sh and
 # tools/test_openxr.sh.
@@ -41,8 +42,8 @@ for t in "${names[@]}"; do
 	d=$(x_display 500)   # its own X display (xvfb-run -a races when several start at once)
 	(
 		start=$SECONDS
-		XDG_DATA_HOME=$DATA/$t timeout $LIMIT xvfb-run -n $d -s "-screen 0 1280x720x24" \
-			"$GODOT" --path . $flags -s "res://$f" > "$OUT/$t.log" 2>&1
+		export XDG_DATA_HOME=$DATA/$t
+		godot_x $d "$OUT/$t.log" $LIMIT --path . $flags -s "res://$f"
 		echo "$? $((SECONDS - start))" > "$DATA/$t.status"
 		free_display $d
 	) &

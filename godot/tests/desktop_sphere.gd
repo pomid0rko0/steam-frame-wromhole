@@ -39,5 +39,6 @@ func _process(_delta: float) -> bool:
 		var img := root.get_texture().get_image()
 		img.convert(Image.FORMAT_RGB8)
 		img.save_png(OS.get_cmdline_user_args()[0] + "_" + mode + ".png")
+		U.finish(self)
 		return true
 	return false
