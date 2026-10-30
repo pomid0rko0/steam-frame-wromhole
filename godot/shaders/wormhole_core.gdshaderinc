@@ -1004,11 +1004,11 @@ vec2 wh_pathAt(WhPath p, float psi) {
                 (inA ? p.PA.y : p.PA.y + p.PB.y - p.C0.y) + (inA ? -1.0 : 1.0) * wh_filS(p.f, m, m45));
 }
 
-// The point where the path has gone sig (0 <= sig <= tot.y) from its start: (its l, its point in
-// the ray's subspace (r cos psi, r sin psi, w), psi from the start), found from z, the fillets'
-// variable (Newton from z0 on the exact length, ds/dz = r^2 / b dpsi/dz; z0 is returned updated: the
-// next point's start, sig growing).
-vec4 wh_pathPoint(WhPath p, float sig, inout float z0, out vec3 q) {
+// The point where the path has gone sig (0 <= sig <= tot.y) from its start: (its l, psi from the
+// start, r, w), q its point in the ray's subspace (r cos psi, r sin psi, w); on a fillet from z, the
+// fillets' variable, by Newton on the exact length (ds/dz = r^2 / b dpsi/dz, positive: the length is
+// smooth in z) from the guess linear in it along the piece.
+vec4 wh_pathPoint(WhPath p, float sig, out vec3 q) {
     float rho0 = wh_rho0;
     float R = wh_fillet;
     float psi;
@@ -1021,23 +1021,24 @@ vec4 wh_pathPoint(WhPath p, float sig, inout float z0, out vec3 q) {
         r = rho0;
         l = p.d * (p.x0B + x);
         w4 = l;
-        z0 = p.zc;
     } else {
         bool inA = sig < p.PA.y;
-        // the length from the inner end it is at, and where on the piece z can be
+        // the length from the inner end it is at, and where on the piece z can be, with the lengths
+        // there
         float S = inA ? p.PA.y - sig : sig - p.PA.y - p.PB.y + p.C0.y;
         float lo = inA ? p.f.zlo : p.zc;
         float hi = inA ? p.zs : p.f.zhi;
-        float z = clamp(z0, lo, hi);
+        float Slo = inA ? 0.0 : p.C0.y;
+        float Shi = inA ? p.PA.y : p.arc;
+        float z = clamp(lo + (hi - lo) * (S - Slo) / max(Shi - Slo, 1e-12), lo, hi);
         float t; vec4 m; vec2 m45;
-        for (int it = 0; it < 4; it++) {
+        for (int it = 0; it < 5; it++) {
             wh_filMom6(p.f, z, t, m, m45);
             float rr = p.f.ra + p.f.span * t;
             float dz = rr * rr * p.f.ib * wh_poly(p.f.e, t) * (p.f.reg == 2 ? z : 1.0);
             z = clamp(z - (wh_filS(p.f, m, m45) - S) / max(dz, 1e-9), lo, hi);
         }
         wh_filMom6(p.f, z, t, m, m45);
-        z0 = z;
         float pf = dot(p.f.e, m);
         psi = inA ? p.PA.x - pf : p.PA.x + p.PB.x - p.C0.x + pf;
         r = p.f.ra + p.f.span * t;

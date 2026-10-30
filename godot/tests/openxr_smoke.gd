@@ -212,11 +212,10 @@ func _foveation(p: Menu) -> void:
 	U.check("the foveation row, right twice, A: сильная, foveation 3, its rings", main.foveation.level == 3
 			and main.tracer.pass_.rings == Foveation.rings(3, 0) and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
 			and _value(p, "fov") == "сильная")
-	U.check("foveation and the scale together, both kept", p.target.scaling_3d_scale == 0.8
-			and cfg.get_value("render", "foveation", -1) == 3 and cfg.get_value("render", "scale", 0.0) == 0.8)
+	U.check("foveation and the scale together, both kept", is_equal_approx(p.target.scaling_3d_scale, 0.8)
+			and cfg.get_value("render", "foveation", -1) == 3 and is_equal_approx(cfg.get_value("render", "scale", 0.0), 0.8))
 	p.choose_scale(1.0)
-	for k in 3:
-		p.change(1)
+	p.change(1)                     # сильная -> плавная широкая
 	p.press()
 	U.check("широкая: our wide rings, the width first", main.foveation.level == 4 and _value(p, "fov") == "плавная широкая"
 			and main.tracer.pass_.rings == Foveation.rings(4, 0) and main.tracer.pass_.rings.back() == [99.0, 4, 2])

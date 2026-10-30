@@ -62,8 +62,9 @@ float fr_warp(float d, float span) {
 
 
 #ifdef KERNEL_TABLES
-// A row per invocation: the ray at the row's angle followed along its path.
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+// A row a group, a column an invocation: the ray at the row's angle, at the column's point of its
+// path (each invocation sets the path up itself: a few hundred instructions, all of them at once).
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 layout(rgba32f, set = 0, binding = 6) uniform restrict writeonly image2DArray fr_outF;
 layout(rgba32f, set = 0, binding = 7) uniform restrict writeonly image2DArray fr_outE;
 #ifdef FR_PATHS
@@ -82,9 +83,9 @@ float fr_unwarp(float x, float span) {
 }
 
 void main() {
-    int i = int(gl_GlobalInvocationID.x);
-    int v = int(gl_GlobalInvocationID.z);
-    if (i >= 2 * FR_HALF) return;
+    int i = int(gl_WorkGroupID.x);
+    int k = int(gl_LocalInvocationID.x);
+    int v = int(gl_WorkGroupID.z);
     vec4 rows = fr_rows[v];
     bool up = i >= FR_HALF;
     float span = max(up ? rows.z - rows.y : rows.y - rows.x, 1e-7);
@@ -117,39 +118,35 @@ void main() {
     float psiEx = psiIn + p.tot.x;
     float sEx = sIn + p.tot.y;
     float side = p.sideC;
-    float chiX = acos(min(b / Rout, 1.0));      // leaving: from the closest approach, outward
-    vec2 last = vec2(l0, 0.0);
-    for (int k = 0; k < FR_COLS; k++) {
-        float psi = WH_PI * float(k) / float(FR_COLS - 1);
-        vec2 ls;
-        if (psi < psiIn) {
-            float chi = chi0 + psi;
-            ls = vec2(sg * (b / cos(chi) - Rout + L), b * (tan(chi) - tan(chi0)));
-        } else if (psi <= psiEx) {
-            ls = wh_pathAt(p, psi - psiIn) + vec2(0.0, sIn);
-        } else {
-            float chi = chiX + psi - psiEx;
-            ls = chi < 0.5 * WH_PI - 1e-3 ? vec2(side * (b / cos(chi) - Rout + L), sEx + b * (tan(chi) - tan(chiX))) : last;
-        }
-        last = ls;
-        imageStore(fr_outF, ivec3(k, i, v), vec4(ls, 0.0, 0.0));
+    // column k by angle: before the shell, in it, after it (straight, held once it no longer turns)
+    float psi = WH_PI * float(k) / float(FR_COLS - 1);
+    vec2 ls;
+    if (psi < psiIn) {
+        float chi = chi0 + psi;
+        ls = vec2(sg * (b / cos(chi) - Rout + L), b * (tan(chi) - tan(chi0)));
+    } else if (psi <= psiEx) {
+        ls = wh_pathAt(p, psi - psiIn) + vec2(0.0, sIn);
+    } else {
+        float chiX = acos(min(b / Rout, 1.0));      // leaving: from the closest approach, outward
+        float chi = min(chiX + psi - psiEx, 0.5 * WH_PI - 1e-3);
+        ls = vec2(side * (b / cos(chi) - Rout + L), sEx + b * (tan(chi) - tan(chiX)));
     }
+    imageStore(fr_outF, ivec3(k, i, v), vec4(ls, 0.0, 0.0));
     // the toys' search: the path in the shell up to where it leaves it, or has turned to pi (it
     // has met the floor by then)
     float sigEnd = p.tot.y;
     if (psiIn + p.tot.x > WH_PI) sigEnd = wh_pathAt(p, WH_PI - psiIn).y;
     sigEnd = max(sigEnd, 1e-4);
-    imageStore(fr_outE, ivec3(i, 0, v), vec4(min(psiEx, 1e4), min(sEx, 1e6), side, psiIn));
-    imageStore(fr_outE, ivec3(i, 1, v), vec4(sigEnd, sIn, 0.0, 0.0));
-#ifdef FR_PATHS
-    float z0 = p.zs;
-    for (int k = 0; k < FR_COLS; k++) {
-        float c = float(k) / float(FR_COLS - 1);
-        vec3 q;
-        vec4 pt = wh_pathPoint(p, sigEnd * c * c, z0, q);
-        float psi = psiIn + pt.y;
-        imageStore(fr_outP, ivec3(k, i, v), vec4(pt.z * cos(psi), pt.z * sin(psi), pt.w, pt.x));
+    if (k == 0) {
+        imageStore(fr_outE, ivec3(i, 0, v), vec4(min(psiEx, 1e4), min(sEx, 1e6), side, psiIn));
+        imageStore(fr_outE, ivec3(i, 1, v), vec4(sigEnd, sIn, 0.0, 0.0));
     }
+#ifdef FR_PATHS
+    float c = float(k) / float(FR_COLS - 1);
+    vec3 q;
+    vec4 pt = wh_pathPoint(p, sigEnd * c * c, q);
+    float psiP = psiIn + pt.y;
+    imageStore(fr_outP, ivec3(k, i, v), vec4(pt.z * cos(psiP), pt.z * sin(psiP), pt.w, pt.x));
 #endif
 }
 #endif
