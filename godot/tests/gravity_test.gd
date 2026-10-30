@@ -173,7 +173,7 @@ func _control_checks() -> void:
 		main.set_gravity_view(v)
 		seen_b.append(main.tracer.kernels())
 	main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
-	U.check("gravity view and movable balls", seen_b == [["world toys", "toys"], ["world toys gravity", "toys gravity"],
+	U.check("gravity view and movable balls", seen_b == [["world toys", "toys"], ["world toys gravity", "toys"],
 			["world toys arrows", "toys arrows"], ["world toys", "toys"]] and main.tracer.kernels() == ["world", ""], str(seen_b))
 	# the menu's one-eye check: on, the check scene's balls and cube in the ray tracer and the static
 	# objects out of sight; off, the toys and the static objects back

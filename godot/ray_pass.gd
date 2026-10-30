@@ -12,11 +12,13 @@ extends CompositorEffect
 ## along the geodesic of the eye's offset from it, WormholeSpace.geodesic: here once a view, not in
 ## every pixel, and as constants, which hold no registers in a kernel), the picture's size.
 ##
-## The kernels: the world kernel traces every pixel, the flat universes' toys with it, and lists
-## the groups whose rays have a movable object to search for in the shell; the toys kernel traces
-## those groups again with the search (an indirect dispatch). Each variant (the gravity view, toys
-## or none) is a kernel of its own (code costs registers even where no pixel runs it), all compiled
-## at the start: a switch then costs no hitch.
+## The kernels, each frame: the tables' (each eye's rows set up, then their cells), the world
+## kernel (every pixel, the flat universes' toys with it, without those in the shell; it lists the
+## groups whose rays have one to search for), the toys kernel (those groups only, an indirect
+## dispatch: each ray's path in the shell searched, the object drawn over the world kernel's
+## picture where the ray meets one). Each variant (the gravity view, toys or none) is a kernel of
+## its own (code costs registers even where no pixel runs it), all compiled at the start: a switch
+## then costs no hitch.
 
 const KERNELS := "res://shaders/trace_kernels.gdshaderinc"
 const CORE := "res://shaders/wormhole_core.gdshaderinc"
@@ -33,7 +35,7 @@ const VIEWS_AT := 1720          # bytes: fr_views
 const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#define WH_ARROWS\n"]
 # the kernels in the order _setup compiles them (tools/adreno_stats.sh names them so)
 const ORDER := ["world", "world gravity", "world arrows", "world toys", "world toys gravity", "world toys arrows",
-		"table rows", "tables", "tables and paths", "toys", "toys gravity", "toys arrows"]
+		"table rows", "tables", "tables and paths", "toys", "toys arrows"]
 
 var picture := Texture2DArrayRD.new()   # what the quad shows: a layer per view
 var space: WormholeSpace                # the eyes' geodesics (Tracer sets it)
@@ -48,7 +50,7 @@ var rd: RenderingDevice
 var failed := false
 var world_pipes: Array[RID] = []        # without toys by gravity view, then with them
 var world_shaders: Array[RID] = []
-var toys_pipes: Array[RID] = []         # by gravity view
+var toys_pipes: Array[RID] = []         # without the arrows, with them (the toys' colour takes no floor)
 var toys_shaders: Array[RID] = []
 var ubo: RID
 var sampler: RID
@@ -182,8 +184,9 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	rd.compute_list_dispatch(cl, _groups(size).x, _groups(size).y, views)
 	if toys:
 		rd.compute_list_add_barrier(cl)
-		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[gravity])
-		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[gravity], 0, _used(all, [0, 1, 2, 3, 4, 5, 9])), 0)
+		var t := 1 if gravity == 2 else 0
+		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[t])
+		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[t], 0, _used(all, [0, 1, 2, 3, 4, 5, 9])), 0)
 		rd.compute_list_dispatch_indirect(cl, tiles, 0)
 	rd.compute_list_end()
 
@@ -234,7 +237,7 @@ func _make_uniforms(tex: RID) -> void:
 ## [the world kernel's, the toys kernel's or ""].
 static func kernels(p_gravity: int, p_toys: bool) -> Array[String]:
 	var view: String = ["", " gravity", " arrows"][p_gravity]
-	return ["world" + (" toys" if p_toys else "") + view, ("toys" + view) if p_toys else ""]
+	return ["world" + (" toys" if p_toys else "") + view, ("toys" + (" arrows" if p_gravity == 2 else "")) if p_toys else ""]
 
 
 ## The tables' rows a grid and columns for a picture: TABLE_HALF and TABLE_COLS at TABLE_PX pixels
@@ -324,7 +327,7 @@ func _setup() -> bool:
 	tab_pipe = tk[1]
 	tabp_shader = tp[0]
 	tabp_pipe = tp[1]
-	for d: String in GRAVITY_DEFINES:
+	for d: String in [GRAVITY_DEFINES[0], GRAVITY_DEFINES[2]]:
 		var made := _kernel("#define KERNEL_TOYS\n" + d)
 		if made.is_empty():
 			return false

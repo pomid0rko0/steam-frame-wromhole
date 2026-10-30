@@ -38,9 +38,9 @@ layout(rgba16f, set = 0, binding = 2) uniform restrict image2DArray fr_out;
 
 #include_core
 
-// The per-eye tables (KERNEL_ROWS and KERNEL_TABLES make them each frame, the world kernel reads them): the curved
-// part of an eye's rays depends only on the ray's angle alpha to the eye's radial direction (+l), so
-// a table over alpha holds it for every pixel of that eye. Rows: alpha in two grids split at the
+// The per-eye tables (KERNEL_ROWS and KERNEL_TABLES make them each frame, the world and toys
+// kernels read them): the curved part of an eye's rays depends only on the ray's angle alpha to the
+// eye's radial direction (+l), so a table over alpha holds it for every pixel of that eye. Rows: alpha in two grids split at the
 // critical ray (b = rmin toward the throat: rays near it wind round the throat, and what they do
 // changes ever faster with alpha), FR_HALF rows each, dense toward it (fr_warp: part linear, part
 // logarithmic); for an eye outside the shell only the rays that reach it. fr_tabF: by the polar
@@ -181,7 +181,7 @@ void main() {
 
 #if defined(KERNEL_WORLD) || defined(KERNEL_TOYS)
 // the world kernel: whether a ray of the group has a movable object to search for in the shell;
-// the toys kernel then traces the group again with the search (fr_tiles)
+// the toys kernel then searches the group's paths for them (fr_tiles)
 shared uint sh_toys;
 #endif
 
@@ -256,61 +256,83 @@ bool fr_chord(int i, vec3 q0, vec3 q1, float g, vec3 cb, float perp2, vec3 e1, v
 // each tested against the object grown by the chord's sag (the space's curvature 1 / min(R, rho0)
 // at most), and one that meets it split in 8, the entry refined by regula falsi. At most 24 steps.
 // A ray that starts inside an object does not see it from inside.
+// One point of the path a pass, and what it is for (mode) says where to look next: a wave pays one
+// pass for whatever kind of step each of its rays is at (nested loops would make it pay for each
+// kind any of them takes, and hold the code of each).
 float fr_search(int i, float rowv, int v, float sigEnd, float send, vec3 cb, float perp2, float size, vec3 e1, vec3 e2) {
     float kmax = 1.0 / min(wh_fillet, wh_rho0);
-    float s = 0.0;
-    vec3 q = fr_path(rowv, v, s, sigEnd).xyz;
-    float d = fr_dist(i, q, cb, perp2, e1, e2);
-    if (d <= 0.0) return -1.0;
-    for (int it = 0; it < 24 + min(wh_nBall, 0); it++) {
-        if (s >= send) break;
-        if (d >= size) {
-            float sp = s;
-            float dp = d;
-            s += d;
-            q = fr_path(rowv, v, s, sigEnd).xyz;
-            d = fr_dist(i, q, cb, perp2, e1, e2);
-            if (d <= 0.0) {
-                // a step of the distance ends at most on it, by the tables' error just inside: the
-                // entry is between, refined from both ends
-                if (s >= send) break;
-                float sa = sp;
-                float da = dp;
-                float sb = s;
-                float db = d;
-                for (int r = 0; r < 3 + min(wh_nBall, 0); r++) {
-                    float sx = (sa * db - sb * da) / (db - da);
-                    float dx = fr_dist(i, fr_path(rowv, v, sx, sigEnd).xyz, cb, perp2, e1, e2);
-                    if (dx > 0.0) { sa = sx; da = dx; } else { sb = sx; db = dx; }
-                }
-                return sb;
+    // mode: 0 the start; 1 a step of the distance, from sa; 2 the j-th eighth of a chord from s0 that
+    // meets the grown object, sa the last eighth outside; 3 regula falsi between sa outside and sb
+    // inside, j refinements done; 4 the end of a chord that does not meet it
+    int mode = 0;
+    float x = 0.0;
+    float sa = 0.0;
+    float da = 0.0;
+    float sb = 0.0;
+    float db = 0.0;
+    float s0 = 0.0;
+    float step = 0.0;
+    int j = 0;
+    int it = 0;
+    for (int pass = 0; pass < 200 + min(wh_nBall, 0); pass++) {
+        vec3 q = fr_path(rowv, v, x, sigEnd).xyz;
+        float dx = fr_dist(i, q, cb, perp2, e1, e2);
+        bool next = mode == 4;      // the next step from x
+        if (mode == 0) {
+            if (dx <= 0.0) return -1.0;
+            next = true;
+        } else if (mode == 1) {
+            // a step of the distance ends at most on it, by the tables' error just inside: the entry
+            // is between, refined from both ends
+            if (dx <= 0.0) {
+                if (x >= send) return -1.0;
+                sb = x;
+                db = dx;
+                mode = 3;
+                j = 0;
+            } else {
+                next = true;
             }
-            continue;
+        } else if (mode == 2) {
+            if (dx <= 0.0) {
+                sb = x;
+                db = dx;
+                mode = 3;
+                j = 0;
+            } else {
+                sa = x;
+                da = dx;
+                j++;
+                next = j > 8;       // x is the chord's end
+                x = next ? x : s0 + step * float(j) * 0.125;
+            }
+        } else if (mode == 3) {
+            if (dx > 0.0) { sa = x; da = dx; } else { sb = x; db = dx; }
+            j++;
+            if (j == 3) return sb;
         }
-        float step = min(0.5 * size, send - s);
-        float s1 = s + step;
-        vec3 q1 = fr_path(rowv, v, s1, sigEnd).xyz;
-        if (fr_chord(i, q, q1, kmax * step * step * 0.125 + 1e-5, cb, perp2, e1, e2)) {
-            float sa = s;
-            float da = d;
-            for (int j = 1; j <= 8 + min(wh_nBall, 0); j++) {
-                float sb = s + step * float(j) * 0.125;
-                float db = fr_dist(i, fr_path(rowv, v, sb, sigEnd).xyz, cb, perp2, e1, e2);
-                if (db <= 0.0) {
-                    for (int r = 0; r < 3 + min(wh_nBall, 0); r++) {
-                        float sx = (sa * db - sb * da) / (db - da);
-                        float dx = fr_dist(i, fr_path(rowv, v, sx, sigEnd).xyz, cb, perp2, e1, e2);
-                        if (dx > 0.0) { sa = sx; da = dx; } else { sb = sx; db = dx; }
-                    }
-                    return sb;
-                }
-                sa = sb;
-                da = db;
+        if (mode == 3) {
+            x = (sa * db - sb * da) / (db - da);
+        } else if (next) {
+            if (it >= 24 || x >= send) return -1.0;
+            it++;
+            if (dx >= size) {
+                sa = x;
+                da = dx;
+                x += dx;
+                mode = 1;
+            } else {
+                step = min(0.5 * size, send - x);
+                s0 = x;
+                vec3 q1 = fr_path(rowv, v, x + step, sigEnd).xyz;
+                bool meets = fr_chord(i, q, q1, kmax * step * step * 0.125 + 1e-5, cb, perp2, e1, e2);
+                sa = x;
+                da = dx;
+                j = 1;
+                x = meets ? x + step * 0.125 : x + step;
+                mode = meets ? 2 : 4;
             }
         }
-        s = s1;
-        q = q1;
-        d = fr_dist(i, q, cb, perp2, e1, e2);
     }
     return -1.0;
 }
@@ -328,7 +350,11 @@ float fr_row(float alpha, vec4 rows) {
     return ((up ? 1.0 : 0.0) + x) * 0.5;
 }
 
-// wh_trace with the curved part from view v's tables: what the ray ends on.
+#endif
+
+#ifdef KERNEL_WORLD
+// wh_trace with the curved part from view v's tables, without the movable objects in the shell
+// (the toys kernel's): what the ray ends on.
 WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
     float side = l0 > 0.0 ? 1.0 : -1.0;
     vec3 x = vec3(0.0);
@@ -385,57 +411,6 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
                 if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) sh_toys = 1u;
             }
 #endif
-#ifdef KERNEL_TOYS
-            // the movable objects within reach of the shell, along the path, up to the floor
-            vec4 E1 = texture(fr_tabE, vec3(rowv, 0.75, float(v)));    // the search's length, the length before
-            float send = E1.x;
-            if (floorHit)
-                send = min(send, texture(fr_tabF, vec3(psiF / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).y - E1.y);
-            int hitI = -1;
-            for (int i = wh_bIdx.x; i < wh_bIdx.w + wh_cIdx.w - wh_cIdx.x; i++) {
-                bool isCube = i >= wh_bIdx.w;
-                int k = isCube ? i - wh_bIdx.w + wh_cIdx.x : i;
-                vec4 C = isCube ? wh_cube[k] : wh_ball[k];
-                float size = isCube ? wh_cubeCol[k].w : wh_ballCol[k].w;
-                float reach = isCube ? 2.0 * size : size;
-                vec3 cb = vec3(dot(C.xyz, e1), dot(C.xyz, e2), C.w);
-                float perp2 = dot(C.xyz, C.xyz) - cb.x * cb.x - cb.y * cb.y;
-                if (perp2 >= reach * reach) continue;
-                float sh = fr_search(isCube ? WH_MAXB + k : k, rowv, v, E1.x, send, cb, max(perp2, 0.0), size, e1, e2);
-                if (sh >= 0.0 && sh < send) {
-                    send = sh;
-                    hitI = isCube ? WH_MAXB + k : k;
-                }
-            }
-            if (hitI >= 0) {
-                // as wh_trace's: the normal the R^4 offset from the centre projected onto the space,
-                // a cube's the face's (its largest body-axis coordinate)
-                vec4 Q = fr_path(rowv, v, send, E1.x);
-                float hl = Q.w;
-                vec3 hn = (Q.x * e1 + Q.y * e2) * inversesqrt(Q.x * Q.x + Q.y * Q.y);
-                vec4 pr = wh_prof(hl);
-                bool isCube = hitI >= WH_MAXB;
-                int ci = hitI - WH_MAXB;
-                vec4 N4 = vec4(pr.x * hn, pr.y) - (isCube ? wh_cube[ci] : wh_ball[hitI]);
-                dist = E1.y + send;
-                if (isCube) {
-                    col = wh_cubeLook(ci, N4, dist);
-                    vec3 sd = vec3(dot(N4, wh_cubeE[5 * ci]), dot(N4, wh_cubeE[5 * ci + 1]), dot(N4, wh_cubeE[5 * ci + 2]));
-                    vec3 ad = abs(sd);
-                    int k = ad.x >= ad.y && ad.x >= ad.z ? 0 : (ad.y >= ad.z ? 1 : 2);
-                    N4 = (sd[k] >= 0.0 ? 1.0 : -1.0) * wh_cubeE[5 * ci + k];
-                } else {
-                    col = wh_ballCol[hitI].rgb;
-                }
-                float rad = dot(N4.xyz, hn);
-                side = hl >= 0.0 ? 1.0 : -1.0;
-                kind = 2;
-                nrm = normalize(wh_M(side, side * (pr.z * rad + pr.w * N4.w) * hn + N4.xyz - rad * hn));
-                // the ray ends there: the arrows' surface counts up to it (below)
-                floorHit = false;
-                E.x = wh_atan2(Q.y, Q.x);
-            }
-#endif
 #ifdef WH_ARROWS
             if (slc.z < 0.0) {
                 // n.x = 0: the first zero in the shell, unless the ray ends first (wh_curved)
@@ -447,9 +422,6 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
                     slc = vec3(ls.x, wh_atan2(nS.z, nS.y), ls.y);
                 }
             }
-#endif
-#ifdef KERNEL_TOYS
-            if (kind == 2) break;
 #endif
             if (floorHit) {
                 vec2 ls = texture(fr_tabF, vec3(psiF / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).xy;
@@ -525,7 +497,6 @@ WhEnd fr_trace(float l0, vec3 n0, float vl, vec3 w, int v) {
 // through each cell's middle, its colour over the cell; a block takes (4 / cs.x) x (4 / cs.y) of
 // the groups laid out over it, the others have nothing to do.
 layout(local_size_x = 16, local_size_y = 8, local_size_z = 1) in;
-shared vec2 sh_g[128];
 // the groups for the toys kernel: the dispatch's group count (x, 1, 1), then each group's (x, y,
 // view)
 layout(set = 0, binding = 3, std430) restrict buffer Tiles { uvec4 fr_tiles[]; };
@@ -546,22 +517,40 @@ bool fr_cells(uvec3 wg, out ivec2 cs, out ivec2 p0) {
     return all(lessThan(sub * cs, ivec2(4))) && all(lessThan(p0, fr_size.xy));
 }
 
-// The ray of the cell at p0 + cs * this invocation's place (pixels, size cs) of view v, traced and
-// shaded (the group's invocations together: the derivatives), stored over the cell.
-void fr_cell(ivec2 p0, ivec2 cs, int v) {
+// The direction at the eye of view v of the ray of the cell at px (pixels, size cs): the line from
+// the eye through the cell's middle unprojected onto the near plane (depth 0: fr_invProj maps
+// depths 0..1, near to far), turned into play space and onto the eye's axes.
+vec4 fr_ray(ivec2 px, ivec2 cs, int v) {
     ivec2 sz = fr_size.xy;
-    ivec2 px = p0 + ivec2(gl_LocalInvocationID.xy) * cs;
-    vec4 E0 = fr_eye[5 * v];
     vec4 f0 = fr_eye[5 * v + 1];
     vec4 f1 = fr_eye[5 * v + 2];
     vec4 f2 = fr_eye[5 * v + 3];
-    // this cell's ray: the line from the eye through its middle unprojected onto the near plane
-    // (depth 0: fr_invProj maps depths 0..1, near to far), turned into play space and onto the
-    // eye's axes
     vec2 ndc = (vec2(min(px, sz - 1)) + 0.5 * vec2(cs)) / vec2(sz) * 2.0 - 1.0;
     vec4 pa = fr_invProj[v] * vec4(ndc, 0.0, 1.0);
     vec3 pd = mat3(fr_cam) * (pa.xyz / pa.w - fr_eyeOff[v].xyz);
-    vec4 V = normalize(pd.x * f0 + pd.y * f1 + pd.z * f2);
+    return normalize(pd.x * f0 + pd.y * f1 + pd.z * f2);
+}
+
+// c over the cell at px (size cs) of view v; its alpha: the distance along the ray to what it
+// ended on (the toys kernel's test)
+void fr_store(ivec2 px, ivec2 cs, int v, vec4 c) {
+    for (int j = 0; j < cs.y; j++)
+        for (int i = 0; i < cs.x; i++) {
+            ivec2 q = px + ivec2(i, j);
+            if (all(lessThan(q, fr_size.xy))) imageStore(fr_out, ivec3(q, v), c);
+        }
+}
+#endif
+
+#ifdef KERNEL_WORLD
+shared vec2 sh_g[128];
+
+// The ray of the cell at p0 + cs * this invocation's place of view v, traced and shaded (the group's
+// invocations together: the derivatives), stored over the cell.
+void fr_cell(ivec2 p0, ivec2 cs, int v) {
+    ivec2 px = p0 + ivec2(gl_LocalInvocationID.xy) * cs;
+    vec4 E0 = fr_eye[5 * v];
+    vec4 V = fr_ray(px, cs, v);
     WhEnd e = fr_trace(E0.x, E0.yzw, V.x, V.yzw, v);
     vec2 g = wh_gridAt(e);
     uint li = gl_LocalInvocationIndex;
@@ -572,13 +561,8 @@ void fr_cell(ivec2 p0, ivec2 cs, int v) {
     uint ly = gl_LocalInvocationID.y;
     vec2 gdx = sh_g[(ly << 4) | (lx | 1u)] - sh_g[(ly << 4) | (lx & ~1u)];
     vec2 gdy = sh_g[((ly | 1u) << 4) | lx] - sh_g[((ly & ~1u) << 4) | lx];
-    vec4 c = vec4(wh_shadeEnd(e, g, gdx, gdy), 1.0);
-    px = p0 + ivec2(gl_LocalInvocationID.xy) * cs;
-    for (int j = 0; j < cs.y; j++)
-        for (int i = 0; i < cs.x; i++) {
-            ivec2 q = px + ivec2(i, j);
-            if (all(lessThan(q, sz))) imageStore(fr_out, ivec3(q, v), c);
-        }
+    vec4 c = vec4(wh_shadeEnd(e, g, gdx, gdy), min(e.dist, 6e4));
+    fr_store(p0 + ivec2(gl_LocalInvocationID.xy) * cs, cs, v, c);
 }
 #endif
 
@@ -603,12 +587,119 @@ void main() {
 #endif
 
 #ifdef KERNEL_TOYS
-// The groups the world kernel listed, again, with the search for the movable objects.
+// The ray from the eye of view v (l0, n0; direction vl along l, w across) along its path in the
+// shell, up to where the tables say it meets the floor or leaves the shell: the nearest movable
+// object it enters there, as wh_trace's end (kind 2), or false. False too where the world kernel's
+// ray ended before the shell (its distance, the picture's alpha at px, below the length the path
+// goes before it): an eye outside sees there something in front of the shell. What the ray meets
+// in the shell past such an object, the floor or the way out, is behind it.
+bool fr_toysEnd(float l0, vec3 n0, float vl, vec3 w, int v, ivec2 px, out WhEnd e) {
+    float side = l0 > 0.0 ? 1.0 : -1.0;
+    e.kind = 2;
+    e.fl = 0.0;
+    e.fn = vec3(1.0, 0.0, 0.0);
+    e.d = vec3(0.0, 0.0, 1.0);
+#ifdef WH_ARROWS
+    e.slc = vec3(-1.0);
+#endif
+    // the ray's plane: e1 the eye's n, e2 its direction's part across (as fr_trace)
+    vec3 we = w + 1e-7 * (abs(n0.x) < 0.9 ? vec3(0.0, n0.z, -n0.y) : vec3(-n0.z, 0.0, n0.x));
+    vec3 e2 = we * inversesqrt(dot(we, we));
+    float wn = min(dot(w, e2), 1.0);
+    vec3 e1 = n0;
+    // an eye outside: the straight part to the shell, as wh_traceFlat's test of it
+    vec3 x = vec3(0.0);
+    vec3 d = vec3(1.0, 0.0, 0.0);
+    float tIn = 0.0;
+    if (abs(l0) >= wh_Lsh()) {
+        x = wh_M(side, (abs(l0) - wh_Lsh() + wh_Rout()) * n0);
+        d = wh_M(side, side * vl * n0 + w);
+        float bq = dot(x, d);
+        float disc = bq * bq - dot(x, x) + wh_Rout() * wh_Rout();
+        tIn = -bq - sqrt(max(disc, 0.0));
+        if (disc <= 0.0 || tIn <= 0.0) return false;
+    }
+    float rowv = fr_row(wh_atan2(wn, vl), fr_rows[v]);
+    vec4 E1 = texture(fr_tabE, vec3(rowv, 0.75, float(v)));    // the search's length, the length before
+    if (imageLoad(fr_out, ivec3(px, v)).a < 0.999 * E1.y) return false;
+    vec4 E = texture(fr_tabE, vec3(rowv, 0.25, float(v)));     // psi out, s out, side, psi in
+    float psiF = wh_atan2(e1.z, -e2.z);                        // n.z = 0 there: the floor
+    float send = E1.x;
+    if (psiF < E.x)
+        send = min(send, texture(fr_tabF, vec3(psiF / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).y - E1.y);
+    int hitI = -1;
+    for (int i = wh_bIdx.x; i < wh_bIdx.w + wh_cIdx.w - wh_cIdx.x; i++) {
+        bool isCube = i >= wh_bIdx.w;
+        int k = isCube ? i - wh_bIdx.w + wh_cIdx.x : i;
+        vec4 C = isCube ? wh_cube[k] : wh_ball[k];
+        float size = isCube ? wh_cubeCol[k].w : wh_ballCol[k].w;
+        float reach = isCube ? 2.0 * size : size;
+        vec3 cb = vec3(dot(C.xyz, e1), dot(C.xyz, e2), C.w);
+        float perp2 = dot(C.xyz, C.xyz) - cb.x * cb.x - cb.y * cb.y;
+        if (perp2 >= reach * reach) continue;
+        float sh = fr_search(isCube ? WH_MAXB + k : k, rowv, v, E1.x, send, cb, max(perp2, 0.0), size, e1, e2);
+        if (sh >= 0.0 && sh < send) {
+            send = sh;
+            hitI = isCube ? WH_MAXB + k : k;
+        }
+    }
+    if (hitI < 0) return false;
+    // as wh_trace's: the normal the R^4 offset from the centre projected onto the space, a cube's
+    // the face's (its largest body-axis coordinate)
+    vec4 Q = fr_path(rowv, v, send, E1.x);
+    float hl = Q.w;
+    vec3 hn = (Q.x * e1 + Q.y * e2) * inversesqrt(Q.x * Q.x + Q.y * Q.y);
+    vec4 pr = wh_prof(hl);
+    bool isCube = hitI >= WH_MAXB;
+    int ci = hitI - WH_MAXB;
+    vec4 N4 = vec4(pr.x * hn, pr.y) - (isCube ? wh_cube[ci] : wh_ball[hitI]);
+    e.dist = E1.y + send;
+    if (isCube) {
+        e.col = wh_cubeLook(ci, N4, e.dist);
+        vec3 sd = vec3(dot(N4, wh_cubeE[5 * ci]), dot(N4, wh_cubeE[5 * ci + 1]), dot(N4, wh_cubeE[5 * ci + 2]));
+        vec3 ad = abs(sd);
+        int k = ad.x >= ad.y && ad.x >= ad.z ? 0 : (ad.y >= ad.z ? 1 : 2);
+        N4 = (sd[k] >= 0.0 ? 1.0 : -1.0) * wh_cubeE[5 * ci + k];
+    } else {
+        e.col = wh_ballCol[hitI].rgb;
+    }
+    float rad = dot(N4.xyz, hn);
+    e.side = hl >= 0.0 ? 1.0 : -1.0;
+    e.nrm = normalize(wh_M(e.side, e.side * (pr.z * rad + pr.w * N4.w) * hn + N4.xyz - rad * hn));
+#ifdef WH_ARROWS
+    // the arrows' surface up to the object: on the straight part before the shell (an eye
+    // outside), else n.x = 0 in the shell (fr_trace's)
+    float tS = -x.x / (abs(d.x) > 1e-9 ? d.x : 1e-9);
+    float sx = e1.x >= 0.0 ? 1.0 : -1.0;
+    float psiS = wh_atan2(abs(e1.x), -sx * e2.x);
+    if (tS > 0.0 && tS < tIn) {
+        vec3 q = x + tS * d;
+        float iq = inversesqrt(dot(q, q));
+        e.slc = vec3(side * (dot(q, q) * iq - wh_Rout() + wh_Lsh()), wh_atan2(q.z, q.y), tS);
+    } else if (psiS >= E.w && psiS < wh_atan2(Q.y, Q.x)) {
+        vec2 ls = texture(fr_tabF, vec3(psiS / WH_PI * float(FR_COLS - 1) / float(FR_COLS) + 0.5 / float(FR_COLS), rowv, float(v))).xy;
+        vec3 nS = cos(psiS) * e1 + sin(psiS) * e2;
+        e.slc = vec3(ls.x, wh_atan2(nS.z, nS.y), ls.y);
+    }
+#endif
+    return true;
+}
+
+// The groups the world kernel listed, again: the movable objects in the shell, each cell's over
+// what the world kernel stored there where its ray meets one (fr_toysEnd).
 void main() {
     uvec3 wg = fr_tiles[gl_WorkGroupID.x + 1u].xyz;
     ivec2 cs;
     ivec2 p0;
-    fr_cells(wg, cs, p0);
-    fr_cell(p0, cs, int(wg.z));
+    if (!fr_cells(wg, cs, p0)) return;
+    int v = int(wg.z);
+    ivec2 px = p0 + ivec2(gl_LocalInvocationID.xy) * cs;
+    if (any(greaterThanEqual(px, fr_size.xy))) return;
+    vec4 E0 = fr_eye[5 * v];
+    vec4 V = fr_ray(px, cs, v);
+    WhEnd e;
+    if (!fr_toysEnd(E0.x, E0.yzw, V.x, V.yzw, v, px, e)) return;
+    // an object's colour takes no grid (wh_shadeEnd): no derivatives
+    fr_store(px, cs, v, vec4(wh_shadeEnd(e, vec2(0.0), vec2(0.0), vec2(0.0)), min(e.dist, 6e4)));
 }
 #endif
