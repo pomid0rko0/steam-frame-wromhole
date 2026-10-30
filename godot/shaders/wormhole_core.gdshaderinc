@@ -15,8 +15,9 @@
 //   wh_pix                  a pixel's angle: the soft edges of the cubes' edge lines and of the arrows
 //   wh_tab...               the fillet polynomials by impact parameter (WormholeSpace.fillet_table)
 //   grav_*                  the gravity view's constants (WormholeSpace.gravity_shader)
-// WH_NO_BALLS leaves the balls' and cubes' code out, WH_GRAVITY colours the floor by gravity,
-// WH_ARROWS adds the field's arrows.
+// WH_NO_BALLS leaves the balls' and cubes' code out, WH_NO_SHELL_TOYS only their search in the
+// curved part (it sets wh_shellToys where it would search), WH_GRAVITY colours the floor by
+// gravity, WH_ARROWS adds the field's arrows.
 //
 // The space, its profile r(l), w(l) (Lc, L, th0, Rout) and the method: docs/geometry.md (here:
 // "curved part").
@@ -449,6 +450,10 @@ vec2 wh_filLW(WhFil f, float t, float side) {
                        wh_h - R + 2.0 * R * s * sqrt(1.0 - s * s));
 }
 
+#ifdef WH_NO_SHELL_TOYS
+bool wh_shellToys = false;      // a ray met a movable object's subspace in the shell (wh_curved)
+#endif
+
 // Ray starting inside (or on the boundary of) the shell, |ls| <= L. Returns
 //   0: leaves the shell, given in flat chart coordinates (outSide, outX, outD)
 //   1: hits the floor at (hitL, hitN)        2: enters ball ballI at (hitL, hitN)
@@ -601,6 +606,11 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         float c2 = dot(Cc.xyz, e2);
         if (dot(Cc.xyz, Cc.xyz) - c1 * c1 - c2 * c2 < rad * rad) cand |= 1 << (16 + i);
     }
+#ifdef WH_NO_SHELL_TOYS
+    // the compute world kernel: the search is the toys kernel's, for the rays that have candidates
+    // (trace_kernels.gdshaderinc)
+    wh_shellToys = wh_shellToys || cand != 0;
+#else
     if (cand != 0) {
         // where on the path the ray ends: 2 (piece - 1) + the fraction of it (piece 0 A from -2,
         // 1 B from 0, 2 C from 2; 4: the edge), as the hits are ordered. The cylinder's fraction
@@ -820,6 +830,7 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
         arc = tot.y;
         return 0;
     }
+#endif
 #endif
     // No movable object within reach (most rays), or no such objects at all: the floor's point,
     // or where it leaves the shell, straight away

@@ -60,16 +60,22 @@ void main() {
 }
 #endif
 
-#ifdef KERNEL_WORLD
+#if defined(KERNEL_WORLD) || defined(KERNEL_TOYS)
 // A pixel per invocation, 16 x 8 of them a group (one wave of 128 on the Frame's GPU), in quads of
 // 2 x 2 as a fragment shader's: the grid's screen derivatives are the quad's differences, through
 // shared memory.
 layout(local_size_x = 16, local_size_y = 8, local_size_z = 1) in;
 shared vec2 sh_g[128];
+// the world kernel: whether a ray of the group has a movable object to search for in the shell;
+// the toys kernel then traces the group again with the search (fr_tiles)
+shared uint sh_toys;
+// the groups for the toys kernel: the dispatch's group count (x, 1, 1), then each group's (x, y,
+// view)
+layout(set = 0, binding = 4, std430) restrict buffer Tiles { uvec4 fr_tiles[]; };
 
-void main() {
-    int v = int(gl_GlobalInvocationID.z);
-    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+// The ray of pixel pc of view v, traced and shaded (the group's invocations together: the
+// derivatives), stored if store.
+void fr_pixel(ivec2 px, int v, bool store) {
     ivec2 sz = fr_size.xy;
     ivec2 pc = min(px, sz - 1);
     vec4 E0 = fr_eye[5 * v];
@@ -96,6 +102,32 @@ void main() {
     vec2 gdx = sh_g[(ly << 4) | (lx | 1u)] - sh_g[(ly << 4) | (lx & ~1u)];
     vec2 gdy = sh_g[((ly | 1u) << 4) | lx] - sh_g[((ly & ~1u) << 4) | lx];
     vec3 c = wh_shadeEnd(e, g, gdx, gdy);
-    if (all(lessThan(px, sz))) imageStore(fr_out, ivec3(px, v), vec4(c, 1.0));
+    if (store && all(lessThan(px, sz))) imageStore(fr_out, ivec3(px, v), vec4(c, 1.0));
+}
+#endif
+
+#ifdef KERNEL_WORLD
+void main() {
+#ifdef WH_NO_SHELL_TOYS
+    if (gl_LocalInvocationIndex == 0u) sh_toys = 0u;
+    barrier();
+#endif
+    fr_pixel(ivec2(gl_GlobalInvocationID.xy), int(gl_GlobalInvocationID.z), true);
+#ifdef WH_NO_SHELL_TOYS
+    if (wh_shellToys && all(lessThan(ivec2(gl_GlobalInvocationID.xy), fr_size.xy))) sh_toys = 1u;
+    barrier();
+    if (gl_LocalInvocationIndex == 0u && sh_toys != 0u) {
+        uint k = atomicAdd(fr_tiles[0].x, 1u);
+        fr_tiles[k + 1u] = uvec4(gl_WorkGroupID, 0u);
+    }
+#endif
+}
+#endif
+
+#ifdef KERNEL_TOYS
+// The groups the world kernel listed, again, with the search for the movable objects.
+void main() {
+    uvec4 t = fr_tiles[gl_WorkGroupID.x + 1u];
+    fr_pixel(ivec2(t.xy * uvec2(16u, 8u) + gl_LocalInvocationID.xy), int(t.z), true);
 }
 #endif

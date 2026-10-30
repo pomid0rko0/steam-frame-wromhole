@@ -14,22 +14,27 @@ const KERNELS := "res://shaders/trace_kernels.gdshaderinc"
 const CORE := "res://shaders/wormhole_core.gdshaderinc"
 const VIEW_AT := 1808           # bytes: where the views' part of the block starts (fr_cam)
 const SIZE := 2048              # bytes: the block (Frame in trace_kernels.gdshaderinc)
-# the variants of the world kernel, by the gravity view (Tracer.GRAVITY_VIEWS): every one is
-# compiled at the start (a switch then costs no hitch)
-const WORLD_DEFINES := ["#define WH_NO_BALLS\n", "#define WH_NO_BALLS\n#define WH_GRAVITY\n",
-		"#define WH_NO_BALLS\n#define WH_GRAVITY\n#define WH_ARROWS\n"]
+# the kernels' variants by the gravity view (Tracer.GRAVITY_VIEWS); the world kernel's also without
+# toys (WH_NO_BALLS) or with those of the flat universes (WH_NO_SHELL_TOYS: the toys kernel searches
+# the curved part where it found candidates). Every one is compiled at the start (a switch then
+# costs no hitch).
+const GRAVITY_DEFINES := ["", "#define WH_GRAVITY\n", "#define WH_GRAVITY\n#define WH_ARROWS\n"]
 
 var picture := Texture2DArrayRD.new()   # what the quad shows: a layer per view
 var frame := PackedByteArray()          # Tracer's part of the block
-var variant := 0                        # the world kernel's (WORLD_DEFINES)
+var gravity := 0                        # the gravity view (GRAVITY_DEFINES)
+var toys := false                       # movable objects in the kernels
 var rings: Array = []                   # Foveation.rings: none, every pixel its own ray
 var table: Texture2D                    # the fillet table (WormholeSpace.fillet_table)
 var rd: RenderingDevice
 var failed := false
 var eyes_pipe: RID
 var eyes_shader: RID
-var world_pipes: Array[RID] = []
+var world_pipes: Array[RID] = []        # without toys by gravity view, then with them
 var world_shaders: Array[RID] = []
+var toys_pipes: Array[RID] = []         # by gravity view
+var toys_shaders: Array[RID] = []
+var tiles: RID                          # the toys kernel's groups (fr_tiles)
 var ubo: RID
 var eyes_buf: RID
 var sampler: RID
@@ -45,7 +50,7 @@ func _init() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and rd != null:
-		for r: RID in [eyes_pipe, eyes_shader, ubo, eyes_buf, sampler, image] + world_pipes + world_shaders:
+		for r: RID in [eyes_pipe, eyes_shader, ubo, eyes_buf, sampler, image, tiles] + world_pipes + world_shaders + toys_pipes + toys_shaders:
 			if r.is_valid():
 				rd.free_rid(r)
 
@@ -56,9 +61,10 @@ func set_rings(r: Array) -> void:
 
 
 ## Tracer's values for the frame (on the render thread: RenderingServer.call_on_render_thread).
-func set_frame(bytes: PackedByteArray, p_variant: int) -> void:
+func set_frame(bytes: PackedByteArray, p_gravity: int, p_toys: bool) -> void:
 	frame = bytes
-	variant = p_variant
+	gravity = p_gravity
+	toys = p_toys
 
 
 func _render_callback(_type: int, render_data: RenderData) -> void:
@@ -76,7 +82,6 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if size.x <= 0 or size.y <= 0:
 		return
 	if size != image_size or views != image_views:
-		print("ray pass: picture ", size, " x ", views, " views, target ", buffers.get_target_size())
 		_make_image(size, views)
 	var block := StreamPeerBuffer.new()
 	block.data_array = frame
@@ -114,16 +119,27 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	u_eyes.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_eyes.binding = 3
 	u_eyes.add_id(eyes_buf)
-	var all := [u_ubo, u_tab, u_img, u_eyes]
-	var world := world_pipes[variant]
+	var u_tiles := RDUniform.new()
+	u_tiles.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_tiles.binding = 4
+	u_tiles.add_id(tiles)
+	var all := [u_ubo, u_tab, u_img, u_eyes, u_tiles]
+	var w := gravity + (GRAVITY_DEFINES.size() if toys else 0)
+	if toys:
+		rd.buffer_update(tiles, 0, 16, PackedInt32Array([0, 1, 1, 0]).to_byte_array())
 	var cl := rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(cl, eyes_pipe)
 	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(eyes_shader, 0, all), 0)
 	rd.compute_list_dispatch(cl, 1, 1, 1)
 	rd.compute_list_add_barrier(cl)
-	rd.compute_list_bind_compute_pipeline(cl, world)
-	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[variant], 0, all), 0)
+	rd.compute_list_bind_compute_pipeline(cl, world_pipes[w])
+	rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(world_shaders[w], 0, all), 0)
 	rd.compute_list_dispatch(cl, (size.x + 15) / 16, (size.y + 7) / 8, views)
+	if toys:
+		rd.compute_list_add_barrier(cl)
+		rd.compute_list_bind_compute_pipeline(cl, toys_pipes[gravity])
+		rd.compute_list_bind_uniform_set(cl, UniformSetCacheRD.get_cache(toys_shaders[gravity], 0, all), 0)
+		rd.compute_list_dispatch_indirect(cl, tiles, 0)
 	rd.compute_list_end()
 
 
@@ -138,12 +154,19 @@ func _setup() -> bool:
 		return false
 	eyes_shader = made[0]
 	eyes_pipe = made[1]
-	for d: String in WORLD_DEFINES:
-		made = _kernel("#define KERNEL_WORLD\n" + d)
+	for toy in ["#define WH_NO_BALLS\n", "#define WH_NO_SHELL_TOYS\n"]:
+		for d: String in GRAVITY_DEFINES:
+			made = _kernel("#define KERNEL_WORLD\n" + toy + d)
+			if made.is_empty():
+				return false
+			world_shaders.append(made[0])
+			world_pipes.append(made[1])
+	for d: String in GRAVITY_DEFINES:
+		made = _kernel("#define KERNEL_TOYS\n" + d)
 		if made.is_empty():
 			return false
-		world_shaders.append(made[0])
-		world_pipes.append(made[1])
+		toys_shaders.append(made[0])
+		toys_pipes.append(made[1])
 	ubo = rd.uniform_buffer_create(SIZE)
 	eyes_buf = rd.storage_buffer_create(2 * 5 * 16)
 	var ss := RDSamplerState.new()
@@ -184,6 +207,11 @@ func _make_image(size: Vector2i, views: int) -> void:
 	image_size = size
 	image_views = views
 	picture.texture_rd_rid = image
+	# a group of 16 x 8 pixels each, at most all of them, after the count
+	if tiles.is_valid():
+		rd.free_rid(tiles)
+	var n := ((size.x + 15) / 16) * ((size.y + 7) / 8) * views + 1
+	tiles = rd.storage_buffer_create(16 * n, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
 
 
 static func _put_vec4(b: StreamPeerBuffer, v: Vector4) -> void:

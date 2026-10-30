@@ -51,6 +51,7 @@ func _ready() -> void:
 	quad.material_override = mat
 	quad.extra_cull_margin = 16384.0
 	quad.position = Vector3(0.0, 0.0, -1.0)
+	quad.visible = false
 	add_child(quad)
 
 
@@ -76,7 +77,10 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	if pix != pixel_angle:
 		pixel_angle = pix
 		values["wh_pix"] = pix
-	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), gravity_view))
+	RenderingServer.call_on_render_thread(pass_.set_frame.bind(_pack(), gravity_view, toy_count > 0))
+	# shown once the pass has made its picture (a material whose texture does not exist yet is not
+	# drawn: an error each frame)
+	quad.visible = pass_.picture.texture_rd_rid.is_valid()
 
 
 ## Movable balls (pos, col) and cubes (cpos, axes, ccol), laid out as wormhole_core.gdshaderinc's
