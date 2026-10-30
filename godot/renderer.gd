@@ -321,6 +321,9 @@ func _scene_mesh(side: float) -> ArrayMesh:
 		m.subdivide_height = 3
 		m.subdivide_depth = 3
 		_append(st, m, Transform3D(up, Vector3(bx[0], bx[1], bx[2])), BOX_COLOR)
+	# shared corners once: each vertex costs the GPU a geodesic (body.gdshaderinc), and without an
+	# index every triangle would have its own three
+	st.index()
 	return st.commit()
 
 
