@@ -100,6 +100,9 @@ void vertex() {
 	vec4 arrive;
 	vec4 dir = geo_see(el, en, pl, pn, len, arrive, fell);
 	v_ray = arrive;
+	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
+	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
+	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 #ifdef ARROWS
 	len *= 1.0 - 1e-3 * COLOR.a;
 #endif

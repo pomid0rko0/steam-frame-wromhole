@@ -51,6 +51,12 @@ vec2 geo_sincos(float x) {
 }
 float geo_sin(float x) { return geo_sincos(x).x; }
 float geo_cos(float x) { return geo_sincos(x).y; }
+// the GPU's own, a direction's: 4e-7 rad off on the headset at any x, a cost of one instruction
+vec2 geo_sincos_dir(float x) { return vec2(sin(x), cos(x)); }
+
+// x is a number, not NaN or infinite, by its bits: GLSL leaves comparisons with NaN to the
+// compiler (the PC's let x < 1e30 hold for NaN), and isnan may be folded away
+bool geo_finite(float x) { return (floatBitsToUint(x) & 0x7f800000u) != 0x7f800000u; }
 
 // r(|l|) - rho0, without the difference: near the cylinder's end r and rho0 share their first seven
 // digits, and what a ray does there hangs on the rest (sigma below and every test against r_min)
@@ -286,14 +292,17 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 // The geodesic along which the eye at (el, en) sees the point (pl, pn): the only one whose position
 // angle turns by the angle between en and pn (less than pi; any other crosses the floor first:
 // docs/geometry.md). Returns the launch direction as a tangent vector at the eye (.xyzw) and the
-// length (out len); arrive: the direction it comes in at the point, as a vector of R^4; fell: 1 where
-// the search came out not finite and the stand-in below took its place (ref/test_gpu.py: never).
+// length (out len); arrive: the direction it comes in at the point, as a vector of R^4; fell: 1/2
+// where a ray of the search came out not finite (passed over), 1 where none was finite and the
+// stand-in below took the search's place (ref/test_gpu.py: never either).
 // Taken at once: where the eye and the point are in the same flat universe and the segment between
 // them stays out of the curved zone, the segment (most of a scene seen not through the throat);
 // where both are in the throat's cylinder, the straight line on it unrolled. Else the ray is found
 // among those that reach |l| = |pl| (below): GEO_ITERS rays, the first the one between the two
-// families, then false position with halving (Illinois) in the family that holds the point.
+// families, then false position with halving (Illinois) in the family that holds the point, until
+// a ray turns to within GEO_TOL of the point's angle (how many it takes: ref/test_gpu.py).
 const int GEO_ITERS = 12;
+const float GEO_TOL = 1e-5;
 
 vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive, out float fell) {
 	float side = el < 0.0 ? -1.0 : 1.0;
@@ -337,8 +346,8 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 		// space there is the product of l and a sphere of radius rho0 and that is the geodesic (the
 		// family below can't take a point at about the eye's l there: its rays circle the cylinder,
 		// their sweep grows without bound as they turn tangent, and the length comes out of a
-		// division by their dl/ds). Elsewhere it stands should the search come out not finite,
-		// which a GPU's arithmetic must never make a hole of; fell says so.
+		// division by their dl/ds). Elsewhere it stands should no ray of the search come out
+		// finite, which a GPU's arithmetic must never make a hole of; fell says so.
 		float dl0 = lp - le, arc0 = re * delta;
 		len = sqrt(dl0 * dl0 + arc0 * arc0);
 		float cl0 = dl0 / max(len, 1e-20), sl0 = arc0 / max(len, 1e-20);
@@ -383,51 +392,63 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 			float dsa = 0.0, dca = 1.0;       // the found ray's launch direction: (along the outward radial, across)
 			bool tlast = false;               // the found ray turned
 			float b = 0.0, gp = 0.0;          // its impact and r - b at the point
+			vec2 scA = geo_sincos(cA), sc1 = geo_sincos(c1);
 			for (int i = 0; i < GEO_ITERS; i++) {
-				// the ray: sin and cos of its launch angle, b - rho0
-				float sa, ca, bmr;
+				// the ray: sin and cos of its launch angle's complement, base + 2 g h (the first
+				// crossings: cA + eps, the turned: c1 - e), from those of the base and of h (half
+				// the step) by the sums; b - rho0 from the product
 				bool turned = fam == 1;
-				if (fam == 1) {
-					float e = cT * exp(-x);
-					vec2 sc = geo_sincos(c1 - e);
-					sa = sc.y;
-					ca = sc.x;
-					bmr = dr0 + 2.0 * re * geo_sin(c1 - 0.5 * e) * geo_sin(0.5 * e);
-				} else {
-					float ex = exp(-abs(x));
-					float eps = fam < 0 ? 0.0 : A1 * (x > 0.0 ? ex : 1.0) / (1.0 + ex);
-					vec2 sc = geo_sincos(cA + eps);
-					sa = sc.y;
-					ca = sc.x;
-					bmr = dA - 2.0 * re * geo_sin(cA + 0.5 * eps) * geo_sin(0.5 * eps);
-				}
-				b = re * sa;
+				float ex = exp(-abs(x));
+				float g = turned ? -1.0 : 1.0;
+				float h = 0.5 * (turned ? cT * exp(-x) : (fam < 0 ? 0.0 : A1 * (x > 0.0 ? ex : 1.0) / (1.0 + ex)));
+				vec2 sb = turned ? sc1 : scA;
+				vec2 sh = geo_sincos(h);
+				float sm = sb.x * sh.y + g * sb.y * sh.x;     // sin(base + g h)
+				float cm = sb.y * sh.y - g * sb.x * sh.x;     // cos(base + g h)
+				float ca = sm * sh.y + g * cm * sh.x;
+				float sa = cm * sh.y - g * sm * sh.x;
+				float bmr = (turned ? dr0 : dA) - g * 2.0 * re * sm * sh.x;
+				float bp = re * sa;
 				float sigma = geo_sigma(bmr);
 				float gap_e = re * ca * ca / (1.0 + sa);     // re - b
 				float gap_p = (drp - dre) + gap_e;           // rp - b
 				vec2 s;
 				if (outw && !turned) {
-					s = geo_between(b, sigma, le, gap_e, alp, gap_p, false);
+					s = geo_between(bp, sigma, le, gap_e, alp, gap_p, false);
 				} else if (!outw && !turned && lp >= 0.0) {
-					s = geo_between(b, sigma, alp, gap_p, le, gap_e, false);
+					s = geo_between(bp, sigma, alp, gap_p, le, gap_e, false);
 				} else {
-					s = geo_from_origin(b, sigma, le, gap_e) + geo_from_origin(b, sigma, alp, gap_p);
+					s = geo_from_origin(bp, sigma, le, gap_e) + geo_from_origin(bp, sigma, alp, gap_p);
 				}
-				res = s;
-				dca = (outw && !turned) ? ca : -ca;
-				dsa = sa;
-				tlast = turned;
-				gp = gap_p;
+				float val = s.x - delta;
+				if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
+				// A ray whose numbers came out not finite tells nothing: the bracket stays, the next
+				// ray is a quarter of the way from it to the bracket's far end, and the ray kept is
+				// the last finite one.
+				bool ok = geo_finite(s.x + s.y + val + ca + sa);
+				if (!ok) fell = 0.5;
+				if (ok) {
+					res = s;
+					dca = (outw && !turned) ? ca : -ca;
+					dsa = sa;
+					tlast = turned;
+					gp = gap_p;
+					b = bp;
+				}
 				if (fam < 0) {
 					// the ray between: the point among the first crossings if this one has turned
-					// past it
+					// past it (or is not finite: then they are searched as if no ray turned)
 					psit = s.x;
 					gt = log(max(delta, 1e-30) / max(psit - delta, 1e-30));
-					fam = s.x > delta ? 0 : 1;
+					fam = ok && s.x <= delta ? 1 : 0;
+					two = ok;
 					if (fam == 1) { lo = 0.0; flo = s.x - delta; have_lo = true; x = 0.5 * WMAX; }
+				} else if (!ok) {
+					x += 0.25 * ((x > 0.5 * (lo + hi) ? lo : hi) - x);
 				} else {
-					float val = s.x - delta;
-					if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
+					// this ray turns to within GEO_TOL of the point's angle (a relative share of it
+					// among the first crossings): it is the one
+					if (abs(val) <= GEO_TOL) break;
 					// Illinois: the end kept twice in a row has its value halved. Until a ray each
 					// side of the point is known, halve the bracket: neither end's value is
 					// bounded.
@@ -444,9 +465,9 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 			float dls = side * dl;                    // dl/ds in the true l
 			vec3 tau = -sd * en + c * t;              // toward growing angle at pn
 			vec4 arr = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
-			// the search's ray where it is finite (NaN fails every comparison)
+			// the search's ray if any was finite
 			float lens = res.y;
-			if (lens > 0.0 && lens < 1e7 && abs(dca) <= 1.5 && abs(dsa) <= 1.5 && abs(arr.w) <= 2.0) {
+			if (geo_finite(lens + dca + dsa + arr.x + arr.y + arr.z + arr.w) && lens > 0.0 && lens < 1e7) {
 				len = lens;
 				arrive = arr;
 				dir = vec4(side * dca, dsa * t);
@@ -510,7 +531,7 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 		// divide by the ray's dl/ds, nothing for a ray round the cylinder)
 		hit = true;
 		lh = side * lf;
-		vec2 scf = geo_sincos(phif);
+		vec2 scf = geo_sincos_dir(phif);
 		nh = (scf.y * en + scf.x * t).xy;
 		way = re * phif * isa;
 	} else {
@@ -571,11 +592,11 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 		// t is done with before the fillet's inversion (it costs registers there): where it ends, the
 		// sky's direction, and the floor point's
 		hit = phif < tot;
-		vec2 sct = geo_sincos(tot);
+		vec2 sct = geo_sincos_dir(tot);
 		if (!hit) {
 			skyd = sct.y * en + sct.x * t;
 		} else {
-			vec2 scf = geo_sincos(phif);
+			vec2 scf = geo_sincos_dir(phif);
 			nh = (scf.y * en + scf.x * t).xy;
 			vec2 at;                        // (|l|, length from the origin)
 			if (target >= SL.x) {
@@ -583,7 +604,7 @@ bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, o
 				float a = target - SL.x + 0.5 * GEO_PI - ab;
 				hit = a < 0.5 * GEO_PI;
 				if (!hit) skyd = sct.y * en + sct.x * t;
-				float r = b / geo_cos(a);
+				float r = b / max(geo_sincos_dir(a).y, 1e-6);         // at the horizon: haze
 				at = vec2(L + r - Rout, SL.y + sqrt(max((r - b) * (r + b), 0.0)) - qR);
 			} else if (pass && target <= cylL.x) {
 				at = vec2(target / max(cyl.x, 1e-20), 0.0);

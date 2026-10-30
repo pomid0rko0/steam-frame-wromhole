@@ -5,8 +5,8 @@ goes through the headset driver's range reduction (TURNIP below), as it does on 
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
   where the sweep reaches a value (the floor's hit): the sweep at the GPU's l against the value;
   which way the eye sees a point (geo_see, the bodies' vertices): rays shot by RK4 from an eye to a
-    point, the GPU given the point must find that ray (angle) and its length, without falling back
-    to its stand-in; half of them launched within a hair to a third of a radian of the tangent, eyes
+    point, the GPU given the point must find that ray (angle) and its length, no ray of its search
+    coming out not finite; half of them launched within a hair to a third of a radian of the tangent, eyes
     also at the cylinder's end;
   the floor (geo_floor, each pixel's ray): where it meets the floor, or that it does not, against
     the same sweeps in float64 (ref/geo.py's floor_hit), half the rays near the tangent;
@@ -32,6 +32,9 @@ float turnip_cos(float x) { return cos(fma(6.28318531, fract(fma(x, 0.159154943,
 '''
 INC = open(os.path.join(HERE, '..', 'godot', 'shaders', 'geo.gdshaderinc')).read()
 INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
+# the rays geo_see's search tries, counted
+INC = INC.replace('const int GEO_ITERS', 'int g_rays = 0;\nconst int GEO_ITERS', 1)
+INC = INC.replace('for (int i = 0; i < GEO_ITERS; i++) {', 'for (int i = 0; i < GEO_ITERS; i++) {\n\t\t\t\tg_rays = i + 1;', 1)
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
 PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
@@ -64,8 +67,9 @@ void main() {
 		outp[i] = vec4(geo_l_at(a.x, geo_sigma(a.z), a.y), 0.0, 0.0, 0.0);
 	} else if (mode == 2) {     // a = (eye l, n), c = (point l, n): (direction's radial, tangential, len, fell)
 		float len, fell; vec4 arr;
+		g_rays = 0;
 		vec4 d = geo_see(a.x, a.yzw, c.x, c.yzw, len, arr, fell);
-		outp[i] = vec4(d.x, length(d.yzw), len, fell);
+		outp[i] = vec4(d.x, length(d.yzw), len, fell + 2.0 * float(g_rays));
 	} else if (mode == 3) {     // a = the eye's place in the room: (l, n), then ex, ey, ez
 		mat4 iv = mat4(vec4(vb0, 0.0), vec4(vb1, 0.0), vec4(vb2, 0.0), vec4(a.xyz, 1.0));
 		float el; vec3 en; vec4 ex, ey, ez;
@@ -181,9 +185,12 @@ def profile_checks(name, S, gpu, rng):
     for (el, alpha, s, phi), g in zip(cases, o):
         derr.append(abs(np.arctan2(g[1], g[0] * (1 if el >= 0 else -1)) - alpha))
         lerr.append(abs(g[2] - s) / (1e-3 + LENGTH_REL * s))
-    fell = int((o[:, 3] > 0.5).sum())
+    rays = np.floor(o[:, 3] / 2)
+    fell = int((o[:, 3] - 2 * rays > 0.0).sum())
+    searched = rays[rays > 0]
     fails += not check(f'{name}: which way the eye sees a point', max(derr) <= DIRECTION and max(lerr) <= 1 and fell == 0,
-                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit, {fell} fell back (1200 points)')
+                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit, {fell} with a ray not finite (1200 points; '
+                       f'{len(searched)} searched, in {searched.mean():.1f} rays on average, {int(searched.max())} at most)')
     # where each pixel's ray meets the floor
     rows, want = [], []
     while len(rows) < 1500:

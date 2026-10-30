@@ -14,9 +14,7 @@ const vec3 LOOK_SUN_A = vec3(0.4472, -0.5367, 0.7155);
 const vec3 LOOK_SUN_B = vec3(-0.5345, 0.2673, 0.8018);
 const float LOOK_SUN_COS = 0.99863;      // cos 3 degrees: the sun's disc
 const float LOOK_HAZE = 70.0;            // m: the floor fades to the horizon's colour over this
-const float LOOK_LINE = 0.6;             // px: half the width of the floor's white lines, at most
-const float LOOK_LINE_W = 0.012;         // m: their width on the floor, at most (farther off, where a
-                                         // pixel spans more than that, they are thinner than a pixel)
+const float LOOK_LINE = 0.6;             // px: half the width of the floor's white lines
 
 // a box-filtered checker of unit cells at p, iw the inverse of its footprint (1 / fwidth)
 float look_checker(vec2 p, vec2 w, vec2 iw) {
@@ -32,20 +30,18 @@ vec2 look_floor_coords(float l, vec3 n) {
 	return vec2(abs(l), geo_atan2(n.y, x) * (24.0 / (2.0 * GEO_PI)));
 }
 
-// the floor's colour from its pattern coordinates c (look_floor_coords), their footprints fw (per
-// pixel) and the floor's radius r there (geo_r: a sector's width is 2 pi r / 24); base: the
-// checker's two colours
-vec3 look_floor(vec2 q, vec2 fw, float r, vec3 lightc, vec3 darkc) {
+// the floor's colour from its pattern coordinates c (look_floor_coords) and their footprints fw (per
+// pixel); base: the checker's two colours
+vec3 look_floor(vec2 q, vec2 fw, vec3 lightc, vec3 darkc) {
 	fw = max(fw, vec2(1e-4));
 	vec2 iw = 1.0 / fw;
 	float chk = look_checker(q, fw, iw);
 	vec3 col = mix(darkc, lightc, mix(0.5, chk, 1.0 - smoothstep(0.35, 0.8, max(fw.x, fw.y))));
-	// white lines a pixel wide, or LOOK_LINE_W on the floor where that is less: then thinner than a
-	// pixel, their share of it is what they cover (a box filter); fading where they crowd
-	vec2 d = abs(fract(q + 0.5) - 0.5) * iw;                                  // px to the line
-	vec2 h = min(vec2(LOOK_LINE), 0.5 * LOOK_LINE_W * vec2(1.0, 24.0 / (2.0 * GEO_PI * r)) * iw);   // half-width, px
-	vec2 cov = clamp(min(h + 0.5 - d, 2.0 * h), 0.0, 1.0) * (1.0 - smoothstep(0.15, 0.35, fw));
-	float line = max(cov.x, cov.y);
+	// white lines a pixel wide, both kinds fading where either crowds: far off and at a grazing angle
+	// the rings crowd first, and the radial lines left alone there stood out (check_grid.gdshader
+	// stops where either crowds too)
+	vec2 cov = clamp(LOOK_LINE + 0.5 - abs(fract(q + 0.5) - 0.5) * iw, 0.0, 1.0);
+	float line = max(cov.x, cov.y) * (1.0 - smoothstep(0.15, 0.35, max(fw.x, fw.y)));
 	return mix(col, vec3(1.0), 0.75 * line);
 }
 
