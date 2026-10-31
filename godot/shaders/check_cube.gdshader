@@ -1,6 +1,6 @@
 shader_type spatial;
 // Stereo check, drawn by Godot's standard renderer: green lines along the edges of a cube that
-// the ray tracer draws as a solid magenta one, with dark edges, at the same place.
+// the renderer draws as a solid magenta one, with dark edges, at the same place.
 render_mode unshaded, cull_back, depth_test_disabled, depth_draw_never, fog_disabled, shadows_disabled;
 
 uniform float half;            // the cube's half size (the mesh is 2 half wide)

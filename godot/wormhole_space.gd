@@ -300,7 +300,7 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	return D
 
 
-## A chart position of the flat region on one side (the charts: wormhole_core.gdshaderinc's top) to
+## A chart position of the flat region on one side (the charts: shaders/space.gdshaderinc's top) to
 ## a manifold point.
 func point_from_chart(side: float, x: Vector3) -> Array:
 	var rr := x.length()
@@ -470,7 +470,7 @@ func floor_gravity(l: float) -> float:
 	return gravity_f(l)[0] / r(l)
 
 
-## The ray tracer's gravity views (WH_GRAVITY in wormhole_core.gdshaderinc) without a table: the
+## The gravity views (shaders/look.gdshaderinc, lk_grav) without a table: the
 ## closed forms' constants, and on the fillet f / r and f' as polynomials of degree GRAV_DEG in
 ## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (tests/gravity_test.gd
 ## checks them). {cyl: (a / rho0, k, a k, beta), g, d: [Vector4...]}: the shader's grav_cyl,

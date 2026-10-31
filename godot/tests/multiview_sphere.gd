@@ -1,6 +1,6 @@
 extends SceneTree
 ## Stereo correctness against Godot itself, through the real multiview path.
-## A sphere in front of the viewer (flat universe A) is drawn either by our ray tracer
+## A sphere in front of the viewer (flat universe A) is drawn either by our renderer
 ## (mode "ray": a ball in the shader) or by Godot's rasterizer (mode "mesh": a plain
 ## SphereMesh at the same play-space position). Godot's own rendering is correct stereo
 ## by definition, so in each eye the two silhouettes must coincide.

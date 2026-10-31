@@ -16,7 +16,7 @@ extends RefCounted
 ## map taken away (vrs_mode), not the runtime's level 0. Without the runtime's map (Monado,
 ## Godot's "Native mobile") levels 1..3 are Godot's own, round each eye's centre.
 ##
-## The ray tracer stays exact under it: each pixel's ray is interpolated from the screen's
+## The picture stays exact under it: the floor and sky's ray of each pixel is interpolated from the screen's
 ## corners (shaders/wormhole_view.gdshaderinc), and a coarse pixel gets the ray through its
 ## centre, as Godot's own geometry does. Nothing in it reads the pixel's screen position.
 ##

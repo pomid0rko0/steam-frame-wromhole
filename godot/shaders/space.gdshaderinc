@@ -18,7 +18,21 @@
 // points of a ray a sweep is a difference of such values, never of large ones (the cylinder's sweep
 // grows without bound as b -> rho0, so a ray's legs are summed only where it runs).
 //
-// Godot's shading language reserves E, PI and TAU; constants reach the GPU with 14 decimals.
+// Godot's shading language reserves E, PI and TAU; constants reach the GPU with 14 decimals. Some
+// GPUs' asin is imprecise (llvmpipe's by 1e-4): atan instead.
+//
+// The compiler (Mesa's ir3 for the Frame's Adreno 750; tools/adreno_stats.sh shows what it makes):
+// - Registers go to the heaviest point of the code, run or not, and decide how many waves run; a
+//   short loop with a constant bound is unrolled, a long one is not.
+// - An if becomes selects, even around a square root: every lane pays. A branch on what is the same
+//   for a whole view (the eye in a flat region or not) costs nothing more.
+// - Loop-invariant code is not hoisted, equal expressions are merged.
+// - A screen derivative and a texture fetch are texture-unit (cat5) instructions, slower than ALU
+//   ones: the floor and sky fetch 1 to 3 texels a pixel (sp_rayFull, sp_tabAt).
+// - 16-bit math (mediump) issues at twice the rate in waves of 128; positions and sweeps here need
+//   float32.
+//
+// A change here: ref/test_space_gpu.py (the thresholds at its top), then tools/test_stereo.sh.
 
 const float SP_PI = 3.14159265358979;
 const float SP_S1 = 0.70710678118655;       // s at a fillet's outer end

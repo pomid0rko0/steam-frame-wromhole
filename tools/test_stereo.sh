@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stereo correctness through Godot's real multiview path (the one OpenXR uses), no headset:
-# in each eye, what our ray tracer draws must coincide with what Godot's standard renderer
+# in each eye, what our renderer draws must coincide with what Godot's standard renderer
 # draws at the same place. Run it on every headset build's source (CLAUDE.md, the hard rule).
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images:
 #                                    default a new one under .wt/.out each run, printed at the end;
@@ -49,7 +49,7 @@ verdict() {   # name, comparison command...
 
 for m in ray mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
 for m in ray mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
-# balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES) drawn by the ray tracer
+# balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES) drawn by the renderer
 # against Godot's own
 for c in 0 1; do
 	for m in ray mesh; do
@@ -61,12 +61,12 @@ done
 for c in 0 1 2 3; do
 	for m in ray floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
-# the same floor lines with the plain shader: the normal scene's where no toy can be seen
+# the same floor lines without the balls and the cube
 for c in 0 1 2 3; do
 	for m in ray floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
 # the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
-# ray tracers of their own, with the balls and the cube, and without them (plain)
+# with the balls and the cube, and without them (plain)
 for v in gravity arrows; do
 	for c in 0 1 2 3; do
 		for m in ray floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
@@ -90,7 +90,7 @@ for f in "$LOGS"/*.status; do
 	[ "$code" = 0 ] || { echo "render exit status $code: $args"; tail -3 "${f%.status}.log"; failed=1; }
 done
 
-verdict "desktop: ray-traced ball vs Godot ball" python3 "$CMP/one_ball.py" "$OUT/dsk_ray.png" "$OUT/dsk_mesh.png"
+verdict "desktop: the renderer's ball vs Godot ball" python3 "$CMP/one_ball.py" "$OUT/dsk_ray.png" "$OUT/dsk_mesh.png"
 verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_ball.py" \
 	"$OUT/sph_ray_left.png" "$OUT/sph_mesh_left.png" "$OUT/sph_ray_right.png" "$OUT/sph_mesh_right.png"
 for c in 0 1; do

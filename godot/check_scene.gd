@@ -3,7 +3,7 @@ extends RefCounted
 ## The stereo check: Godot's standard renderer draws green lines on top of what the renderer
 ## draws (what, and how to read it: README.md, the one-eye check). Godot's geometry is placed in
 ## chart A coordinates under main's overlay, which main._update_chart_map places (when: its
-## comment): if the ray-traced world drifted against the room, green would part from it.
+## comment): if the wormhole's world drifted against the room, green would part from it.
 
 # the balls in chart A, in front of main.START_POS; shaders/check_grid.gdshader's balls[]
 # holds as many (build asserts it)

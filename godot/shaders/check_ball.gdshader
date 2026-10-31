@@ -1,6 +1,6 @@
 shader_type spatial;
 // Stereo check, drawn by Godot's standard renderer: a green latitude/longitude grid on the
-// surface of a ball that the ray tracer draws as a solid red ball at the same place.
+// surface of a ball that the renderer draws as a solid red ball at the same place.
 render_mode unshaded, cull_back, depth_test_disabled, depth_draw_never, fog_disabled, shadows_disabled;
 
 void fragment() {

@@ -754,7 +754,7 @@ class RateRow extends Row:
 		return false
 
 
-## The 3D render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly). It
+## The 3D render scale: fewer pixels to shade, a softer picture (Godot upscales bilinearly). It
 ## and foveation don't go together (foveation.gd says why): one is chosen, the other goes back.
 class ScaleRow extends Row:
 	func shown() -> bool:
