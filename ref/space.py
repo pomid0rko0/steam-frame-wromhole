@@ -336,6 +336,29 @@ class Space:
         ww = w @ w
         return np.r_[vl, w / r, dr / r * ww, -(dr / r) * vl * w - (ww / r) * n]
 
+    def brute_frame(self, l, n, V, dist, frame, h=1e-3):
+        """brute() also transporting the tangent vectors of frame: (l, n, V, frame)."""
+        def rate(y):
+            l, n, vl, v = y[0], y[1:4], y[4], y[5:8]
+            r, dr = self.r(l), self.dr(l)
+            k = dr / r
+            out = [self.rhs(y[:8])]
+            for j in range(len(frame)):
+                U = y[8 + 4 * j: 12 + 4 * j]
+                out.append(np.r_[k * (v @ U[1:]), -k * U[0] * v - (U[1:] @ v) / r * n])
+            return np.concatenate(out)
+        y = np.concatenate([np.r_[l, n, V[0], V[1:]]] + [np.asarray(f, float) for f in frame])
+        steps = max(int(np.ceil(dist / h)), 1)
+        hh = dist / steps
+        for _ in range(steps):
+            k1 = rate(y)
+            k2 = rate(y + hh / 2 * k1)
+            k3 = rate(y + hh / 2 * k2)
+            k4 = rate(y + hh * k3)
+            y = y + hh / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+            y[1:4] /= np.linalg.norm(y[1:4])
+        return y[0], y[1:4], np.r_[y[4], y[5:8]], [y[8 + 4 * j: 12 + 4 * j] for j in range(len(frame))]
+
     def brute(self, l, n, V, dist, h=1e-3):
         """Follow the geodesic from (l, n) with unit direction V for length dist by RK4 steps on
         the geodesic equations (docs/geometry.md): (l, n, V) at its end."""

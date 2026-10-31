@@ -11,7 +11,7 @@ extends SceneTree
 ## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
 ## below 100% turns it off again; our own density map comes from a texture, and the order of its
 ## steps switches (the width or the height first); the gaze dot shows and hides; the gravity row
-## switches the gravity view (the floor, the arrows, off: A steps round) and its ray tracers;
+## switches the gravity view (the floor, the arrows, off: A steps round) and its shaders;
 ## frames made too slow for the display turn the head and the line below red; and the speed
 ## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
 ## offer: it stays at 20), closing the menu, the line below saying how it goes and what came out,
@@ -172,8 +172,7 @@ func _process(_delta: float) -> bool:
 		U.check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
-		U.check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
-				and main.renderer.material.shader == b.own_shader and b.own_shader == Renderer.SHADERS_TOYS[0])
+		U.check("speed check: back where it stood, no cube left", absf(pose[0] - b.saved_pose[0]) < 1e-3 and b.cube == null)
 		U.check("speed check: the rate set back", r.desired == bench_stored)
 		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
@@ -260,10 +259,10 @@ func _gravity(p: Menu) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.renderer.gravity_view, main.renderer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_NAMES[v]])
-	# the demo's balls and cubes are there: the ray tracers with them
-	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
-			[0, "wormhole_balls.gdshader", true]]
+		seen.append([main.renderer.gravity_view, main.renderer.sky.shader.resource_path.get_file(), main.renderer.arrows.visible,
+				_value(p, "grav") == p.GRAVITY_NAMES[v]])
+	var want := [[1, "sky_floor_gravity.gdshader", false, true], [2, "sky_floor_gravity.gdshader", true, true],
+			[0, "sky_floor.gdshader", false, true]]
 	U.check("the gravity row: each view, then off", seen == want)
 	if seen != want:
 		print("  ", seen)

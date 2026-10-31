@@ -55,6 +55,7 @@ var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also
 var toy_count := 0              # balls and cubes drawn (set_objects)
 var head_point := Vector4.ZERO  # the head in R^4 (set_head): each body's detail
 var head_l := 0.0
+var head_n := Vector3.RIGHT
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -207,6 +208,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	g.global_shader_parameter_set(&"head_pos", head_pos)
 	head_point = space.embed(l, n)
 	head_l = l
+	head_n = n
 	for m in balls:
 		if m.visible:
 			m.mesh = ball_meshes[_detail(m.material_override as ShaderMaterial)]
@@ -269,6 +271,17 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		mat.set_shader_parameter(&"color", Vector3(ccol[i].x, ccol[i].y, ccol[i].z))
 		if m.mesh == null:
 			m.mesh = cube_meshes[_detail(mat)]
+
+
+## The balls drawn now: colour and radius each (tests).
+func drawn_balls() -> PackedVector4Array:
+	var out := PackedVector4Array()
+	for m in balls:
+		if m.visible:
+			var mat := m.material_override as ShaderMaterial
+			var c: Vector3 = mat.get_shader_parameter(&"color")
+			out.append(Vector4(c.x, c.y, c.z, mat.get_shader_parameter(&"size")))
+	return out
 
 
 ## The static objects shown or not (the stereo check scene takes them away).

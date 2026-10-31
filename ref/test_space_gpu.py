@@ -1,6 +1,7 @@
 """godot/shaders/space.gdshaderinc on a GPU (EGL; in a cloud session llvmpipe) in float32 against
-ref/space.py's float64: sp_trace, a pixel's ray to the floor or the sky, and sp_toward, the
-direction from an eye to a point (the bodies' vertices). Random eyes everywhere in the space,
+ref/space.py's float64: sp_trace, a pixel's ray to the floor or the sky; sp_toward, the direction
+from an eye to a point (the bodies' vertices); sp_walk, an eye from the head with the play-space
+axes carried along. Random eyes everywhere in the space,
 random directions and points, near and far, on the app's throat (WH_PROFILE="rho0,h,R" for
 another). Prints the errors and fails past the limits below (angles in radians, seen from the eye).
 
@@ -20,10 +21,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'space.gdshaderinc')).read()
 PROF = tuple(float(v) for v in os.environ['WH_PROFILE'].split(',')) if 'WH_PROFILE' in os.environ else app_profile()
 S = Space(*PROF)
-N = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
+N = int(sys.argv[1]) if len(sys.argv) > 1 else 4000
 # the limits: a floor point or a sky direction as seen from the eye; a vertex's direction
 LIM_TRACE = 2e-4
 LIM_TOWARD = 1e-4
+LIM_WALK = 5e-6     # m, and radians for the axes: float32 at l of 10 m is 1e-6
 
 HEAD = """#version 430
 layout(local_size_x = 64) in;
@@ -45,6 +47,24 @@ void main() {
     outp[2u * i + 1u] = vec4(d, 0.0);
 }
 """
+WALK = HEAD + CORE + """
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(count)) return;
+    vec4 a = inp[5u * i];
+    vec4 V = inp[5u * i + 1u];
+    float l = a.x;
+    vec3 n = a.yzw;
+    vec4 f0 = inp[5u * i + 2u];
+    vec4 f1 = inp[5u * i + 3u];
+    vec4 f2 = inp[5u * i + 4u];
+    sp_walk(l, n, V, V.x == 0.0 ? 0.0 : 1.0, f0, f1, f2);
+    outp[5u * i] = vec4(l, n);
+    outp[5u * i + 2u] = f0;
+    outp[5u * i + 3u] = f1;
+    outp[5u * i + 4u] = f2;
+}
+"""
 TOWARD = HEAD + CORE + """
 void main() {
     uint i = gl_GlobalInvocationID.x;
@@ -59,12 +79,12 @@ void main() {
 """
 
 
-def run(ctx, src, rows, texs):
+def run(ctx, src, rows, texs, per=2):
     prog = ctx.compute_shader(src)
     for k, v in (('sp_rho0', S.rho0), ('sp_R', S.R), ('sp_Lc', S.Lc), ('sp_L', S.L), ('sp_Rout', S.Rout)):
         if k in prog:
             prog[k].value = v
-    prog['count'].value = len(rows) // 2
+    prog['count'].value = len(rows) // per
     texs[0].use(0)
     texs[1].use(1)
     for k, u in (('sp_tab', 0), ('sp_ptab', 1)):
@@ -74,7 +94,7 @@ def run(ctx, src, rows, texs):
     bo = ctx.buffer(reserve=len(rows) * 16)
     bi.bind_to_storage_buffer(0)
     bo.bind_to_storage_buffer(1)
-    prog.run((len(rows) // 2 + 63) // 64)
+    prog.run((len(rows) // per + 63) // 64)
     return np.frombuffer(bo.read(), np.float32).reshape(-1, 4).astype(float)
 
 
@@ -184,6 +204,37 @@ def main():
         ok = False
         w = np.argsort(errs)[-3:]
         print('  FAIL: worst', [(cases[i][0], cases[i][2], errs[i]) for i in w])
+    # ---- sp_walk: the eye from the head, up to 6 cm (the shader's walk is meant for that), the
+    # direction scaled to the length (the kernel walks length 1 along it)
+    rows, cases = [], []
+    for k in range(N // 3):
+        l = eye_l(rng, k)
+        n = rand_n(rng, 0.02)
+        V = rng.normal(size=4)
+        V[1:] -= (V[1:] @ n) * n
+        V /= np.linalg.norm(V)
+        F = []
+        for j in range(3):
+            U = rng.normal(size=4)
+            U[1:] -= (U[1:] @ n) * n
+            for G in F:
+                U -= (U @ G) * G
+            F.append(U / np.linalg.norm(U))
+        d = rng.uniform(0.01, 0.06)
+        rows += [[l, *n], list(V * d), *[list(f) for f in F]]
+        cases.append((l, n, V, d, F))
+    out = run(ctx, WALK, rows, texs, per=5)
+    werr = []
+    for c, (l, n, V, d, F) in enumerate(cases):
+        lr, nr, _, Fr = S.brute_frame(l, n, V, d, F, h=1e-3)
+        g = out[5 * c]
+        e = abs(g[0] - lr) + np.linalg.norm(g[1:] - nr) * S.r(lr)
+        e = max(e, max(np.linalg.norm(out[5 * c + 2 + j] - Fr[j]) for j in range(3)))
+        werr.append(e)
+    werr = np.array(werr)
+    print('sp_walk: %d eyes; place and axes error median %.1e, max %.1e' % (len(werr), np.median(werr), werr.max()))
+    if werr.max() > LIM_WALK:
+        ok = False
     print('PASS' if ok else 'FAIL')
     return 0 if ok else 1
 
