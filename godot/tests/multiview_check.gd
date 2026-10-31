@@ -66,7 +66,7 @@ func _process(_delta: float) -> bool:
 		if gravity > 0:
 			main.set_gravity_view(gravity)
 		if fov:
-			# SteamVR's level in even cases, our own map in odd ones
+			# SteamVR's level in even cases, our own (floor_fov.gd) in odd ones
 			main.foveation.set_level(Foveation.LEVELS if case % 2 == 0 else 4)
 		CheckScene.show_only(main.overlay, SHOWN[mode])
 		if mode == "domain":

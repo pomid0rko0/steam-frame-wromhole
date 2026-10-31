@@ -7,16 +7,18 @@
 //
 // Per pixel: where its ray ends, on the floor or in the sky (geo_floor, geo.gdshaderinc), then the
 // colour there. Each eye (geo_eye) is worked out per corner in vertex() and handed on flat.
+// fov_on (our own foveation, floor_fov.gd): the colours were worked out already, into fov_tex, a
+// texel per pixel where the eye looks and coarser away from it (shaders/floor_fov.gdshaderinc);
+// each pixel takes its place there by the same warp, with the numbers fov_warp holds for its eye.
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
 #include "res://shaders/geo_uniforms.gdshaderinc"
-#include "res://shaders/geo.gdshaderinc"
-#include "res://shaders/look.gdshaderinc"
-
 #ifdef GRAVITY
 uniform sampler2D g_grav : filter_linear, repeat_disable;  // floor gravity in g at |l| in [0, g_gravx.x]
 uniform vec2 g_gravx;                                       // (that end, beta: f = r + beta / r^2 beyond)
 #endif
+#include "res://shaders/geo.gdshaderinc"
+#include "res://shaders/look.gdshaderinc"
 
 varying flat float v_el;
 varying flat vec3 v_eye;      // the eye's r, the root of its u on the fillet, r - rho0 (geo_r, geo_u, geo_dr)
@@ -25,11 +27,16 @@ varying flat vec4 v_ex;
 varying flat vec4 v_ey;
 varying flat vec4 v_ez;
 varying vec3 v_ray;
+varying vec2 v_clip;
+uniform bool fov_on = false;
+uniform sampler2DArray fov_tex : filter_linear, repeat_disable;
+uniform sampler2D fov_warp : filter_nearest, repeat_disable;   // per eye (row): (gaze x, y, k, n), (A0, A1 along x, then y)
 
 void vertex() {
 	// a quad over the whole view at the far plane (reversed depth: 0), so that any body's depth wins;
 	// each corner's ray from the eye (geo_eye: in multiview not from the camera's origin)
 	POSITION = vec4(VERTEX.xy, 0.0, 1.0);
+	v_clip = VERTEX.xy;
 	vec4 p = inverse(PROJECTION_MATRIX) * vec4(VERTEX.xy, 0.5, 1.0);
 	v_ray = p.xyz / p.w - EYE_OFFSET;
 	float el;
@@ -45,36 +52,26 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 d = normalize(v_ray);
-	vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
-	float lh, way, skys;
-	vec2 nh;
-	vec3 skyd;
-	bool hit = geo_floor(v_el, v_eye, v_en, D, lh, nh, way, skyd, skys);
-	vec3 col;
-	if (hit) {
-		vec2 c = look_floor_coords(lh, vec3(nh, 0.0));
-		// the footprint; across the sectors' seam at the chart's -x the angle jumps by 24: taken out
-		vec2 dx = dFdx(c), dy = dFdy(c);
-		dx.y -= 24.0 * round(dx.y / 24.0);
-		dy.y -= 24.0 * round(dy.y / 24.0);
-		vec2 fw = abs(dx) + abs(dy);
-#ifdef GRAVITY
-		float al = abs(lh);
-		float g;
-		if (al < g_gravx.x) g = textureLod(g_grav, vec2(al / g_gravx.x, 0.5), 0.0).r;
-		else { float r = geo_r(al); g = 1.0 + g_gravx.y / (r * r * r); }
-		float t = look_grav_level(g);
-		vec3 base = look_grav_colour(t);
-		col = look_grav_contours(look_floor(c, fw, base, base * 0.85), t);     // the checker as brightness
-#else
-		col = look_floor(c, fw, lh >= 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], lh >= 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
-#endif
-		vec3 hor = lh >= 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B;
-		col = mix(col, hor, 1.0 - exp(-way / LOOK_HAZE));
+	if (fov_on) {
+		int v = int(VIEW_INDEX);
+		vec4 wg = texelFetch(fov_warp, ivec2(0, v), 0), wa = texelFetch(fov_warp, ivec2(1, v), 0);
+		vec2 t = (asinh(wg.z * (v_clip - wg.xy)) / wg.z - wa.xz) / (wa.yw - wa.xz);
+		ALBEDO = textureLod(fov_tex, vec3(t, float(v)), 0.0).rgb;
 	} else {
-		if (skys < 0.0) skyd.x = -skyd.x;
-		col = look_sky(normalize(skyd), skys);
+		vec3 d = normalize(v_ray);
+		vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
+		float lh, way, skys;
+		vec2 nh;
+		vec3 skyd;
+		bool hit = geo_floor(v_el, v_eye, v_en, D, lh, nh, way, skyd, skys);
+		vec3 col;
+		if (hit) {
+			vec3 a = look_ground_at(lh, nh);
+			col = look_ground(a, dFdx(a), dFdy(a), 1.0, lh, way);
+		} else {
+			if (skys < 0.0) skyd.x = -skyd.x;
+			col = look_sky(normalize(skyd), skys);
+		}
+		ALBEDO = col;
 	}
-	ALBEDO = col;
 }

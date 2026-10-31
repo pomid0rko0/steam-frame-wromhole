@@ -202,9 +202,8 @@ func start() -> void:
 	var names := []
 	for i in variants.size():
 		names.append("%d = %s" % [i + 1, variants[i].label])
-	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first; gravity view %s"
-			% [", ".join(names), PLACES.size(), time, "width" if main.foveation.order == 0 else "height",
-			Renderer.GRAVITY_VIEWS[main.renderer.gravity_view]])
+	print("bench: start, %s; %d places, %.1f s timed per segment; gravity view %s"
+			% [", ".join(names), PLACES.size(), time, Renderer.GRAVITY_VIEWS[main.renderer.gravity_view]])
 	var tour_s := 0.0
 	for s in tour:
 		tour_s += s.secs + (TOUR_RECOVER * tour_scale if s.recover else 0.0)
@@ -230,8 +229,8 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
-				% [main.rate.rate, main.foveation.level, "width" if main.foveation.order == 0 else "height", tour.size()])
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
+				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
 

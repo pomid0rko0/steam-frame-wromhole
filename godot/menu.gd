@@ -16,12 +16,9 @@ const SCALES := [1.0, 0.9, 0.8, 0.7]
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
-# until one is chosen: SteamVR's strong map, the cheapest frame of all in the headset's speed check
-# (bench.gd); our own maps the width first
-const DEFAULT_FOVEATION := 3
-const DEFAULT_ORDER := 0
+# until one is chosen: our own, wide (floor_fov.gd): smooth, no coarse tiles
+const DEFAULT_FOVEATION := 4
 const SETTINGS := "user://settings.cfg"
-const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
@@ -130,7 +127,6 @@ func _ready() -> void:
 	strip_on = bool(cfg.get_value("ui", "strip", true))
 	if xr:
 		set_render_scale(float(cfg.get_value("render", "scale", 1.0)))
-		main.foveation.set_order(int(cfg.get_value("render", "own_order", DEFAULT_ORDER)))
 		_set_foveation(int(cfg.get_value("render", "foveation", DEFAULT_FOVEATION)))
 		if foveation > 0:
 			set_render_scale(1.0)
@@ -531,17 +527,6 @@ func choose_foveation(level: int) -> void:
 	_set_text(_compose())
 
 
-## Which way our own maps coarsen first; kept for the next start.
-func choose_order(order: int) -> void:
-	if xr == null:
-		return
-	main.foveation.set_order(order)
-	_save()
-	print("refresh: own maps coarsen the %s first, foveation %d (%s)"
-			% ["width" if main.foveation.order == 0 else "height", foveation, FOV_LOG[foveation]])
-	refresh()
-
-
 func show_gaze(on: bool) -> void:
 	if main.gaze_dot == null:
 		return
@@ -566,7 +551,8 @@ func _save() -> void:
 	if xr:
 		cfg.set_value("render", "scale", render_scale)
 		cfg.set_value("render", "foveation", foveation)
-		cfg.set_value("render", "own_order", main.foveation.order)
+		if cfg.has_section_key("render", "own_order"):
+			cfg.erase_section_key("render", "own_order")       # our own maps' order: no more
 	cfg.save(SETTINGS)
 
 
@@ -660,7 +646,7 @@ func _update_strip() -> void:
 ## Every row, top to bottom; _layout leaves out those not shown here.
 func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
-			FovRow.new(self, "fov", "фовеация"), OrderRow.new(self, "order", "плавная грубее"),
+			FovRow.new(self, "fov", "фовеация"),
 			GazeRow.new(self, "gaze", "точка взгляда"), GravRow.new(self, "grav", "гравитация"),
 			TurnRow.new(self, "turn", "поворот"), StripRow.new(self, "strip", "строка частоты"),
 			BenchRow.new(self, "bench", "замер скорости")]
@@ -802,24 +788,6 @@ class FovRow extends Row:
 
 	func name_text() -> String:
 		return title + " · " + menu.foveation_source()
-
-	func enabled() -> bool:
-		return not menu.main.hold
-
-
-## Which way our own maps coarsen first: the width or the height, to compare by eye.
-class OrderRow extends Row:
-	func shown() -> bool:
-		return menu.xr != null
-
-	func current() -> int:
-		return menu.main.foveation.order
-
-	func apply(i: int) -> void:
-		menu.choose_order(i)
-
-	func text(i: int) -> String:
-		return ORDERS[i]
 
 	func enabled() -> bool:
 		return not menu.main.hold

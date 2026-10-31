@@ -140,7 +140,6 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = NEAR
 	camera.compositor = Compositor.new()
-	camera.compositor.compositor_effects = [foveation.split_pass]
 	origin.add_child(camera)
 	if in_xr:
 		_add_controllers()
@@ -148,6 +147,8 @@ func _ready() -> void:
 		camera.position = Vector3(0.0, DESKTOP_HEAD_HEIGHT, 0.0)
 	renderer = Renderer.new(space, scene, xr, xr_view)
 	camera.add_child(renderer)
+	foveation.floor_fov = renderer.floor_fov
+	camera.compositor.compositor_effects = [foveation.split_pass, renderer.floor_fov]
 
 	rate = FrameRate.new()
 	rate.main = self
@@ -265,6 +266,10 @@ func _process(delta: float) -> void:
 		_update_chart_map()
 	if gaze_dot and gaze_dot.visible:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
+	if gaze and gaze.get_has_tracking_data():
+		renderer.floor_fov.set_gaze(gaze.transform.origin - gaze.transform.basis.z * 10.0, true)
+	else:
+		renderer.floor_fov.set_gaze(Vector3.ZERO, false)
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part of sheet A
 		var shown := foot_l > space.L

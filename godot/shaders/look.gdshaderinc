@@ -31,16 +31,22 @@ vec2 look_floor_coords(float l, vec3 n) {
 }
 
 // the floor's colour from its pattern coordinates c (look_floor_coords) and their footprints fw (per
-// pixel); base: the checker's two colours
-vec3 look_floor(vec2 q, vec2 fw, vec3 lightc, vec3 darkc) {
+// pixel), the pixel px of the picture's pixels across (1 but in floor_fov's coarser texels); base:
+// the checker's two colours
+vec3 look_floor(vec2 q, vec2 fw, float px, vec3 lightc, vec3 darkc) {
 	fw = max(fw, vec2(1e-4));
 	vec2 iw = 1.0 / fw;
-	float chk = look_checker(q, fw, iw);
+	// in a coarser pixel the cells' edges filtered wider: a pixel's box alone leaves steps once the
+	// coarse pixels are spread over the picture's
+	vec2 fc = fw * (1.0 + 0.5 * smoothstep(1.0, 2.0, px));
+	float chk = look_checker(q, fc, 1.0 / fc);
 	vec3 col = mix(darkc, lightc, mix(0.5, chk, 1.0 - smoothstep(0.35, 0.8, max(fw.x, fw.y))));
-	// white lines a pixel wide, both kinds fading where either crowds: far off and at a grazing angle
-	// the rings crowd first, and the radial lines left alone there stood out (check_grid.gdshader
-	// stops where either crowds too)
-	vec2 cov = clamp(LOOK_LINE + 0.5 - abs(fract(q + 0.5) - 0.5) * iw, 0.0, 1.0);
+	// white lines a picture's pixel wide (in a coarser pixel thinner than it: then they cover their
+	// share of it), both kinds fading where either crowds: far off and at a grazing angle the rings
+	// crowd first, and the radial lines left alone there stood out (check_grid.gdshader stops where
+	// either crowds too)
+	float h = LOOK_LINE / px;
+	vec2 cov = clamp(min(h + 0.5 - abs(fract(q + 0.5) - 0.5) * iw, 2.0 * h), 0.0, 1.0);
 	float line = max(cov.x, cov.y) * (1.0 - smoothstep(0.15, 0.35, max(fw.x, fw.y)));
 	return mix(col, vec3(1.0), 0.75 * line);
 }
@@ -80,13 +86,15 @@ vec3 look_grav_colour(float t) {
 	}
 	return c;
 }
-// the contours over a floor colour col at level t (look_grav_level), as wide in pixels anywhere,
-// fading where they crowd
-vec3 look_grav_contours(vec3 col, float t) {
-	float fw = max(fwidth(t), 1e-5);
+// the contours over a floor colour col at level t (look_grav_level), its footprint fw (per pixel,
+// px of the picture's pixels across: look_floor), as wide in the picture's pixels anywhere, fading
+// where they crowd
+vec3 look_grav_contours(vec3 col, float t, float fw, float px) {
+	fw = max(fw, 1e-5);
 	float d = abs(fract(t + 0.5) - 0.5) / fw;
-	float thin = clamp(LOOK_LINE + 0.5 - d, 0.0, 1.0) * (1.0 - smoothstep(0.15, 0.35, fw));
-	float one = clamp(2.0 * LOOK_LINE + 0.5 - abs(t - 10.0) / fw, 0.0, 1.0);
+	float h = LOOK_LINE / px;
+	float thin = clamp(min(h + 0.5 - d, 2.0 * h), 0.0, 1.0) * (1.0 - smoothstep(0.15, 0.35, fw));
+	float one = clamp(min(2.0 * h + 0.5 - abs(t - 10.0) / fw, 4.0 * h), 0.0, 1.0);
 	return col * (1.0 - 0.4 * thin) * (1.0 - 0.85 * one);
 }
 
@@ -111,4 +119,37 @@ vec3 look_ambient(float l, float up) {
 vec3 look_body(vec3 albedo, float nl, float up, float nv, float l) {
 	float rim = 1.0 - clamp(nv, 0.0, 1.0);
 	return albedo * (look_ambient(l, up) + 0.75 * LOOK_SUN * max(nl, 0.0) + 0.25 * rim * rim * rim);
+}
+
+// The floor at l = lh, n's x and y nh (look_floor_coords), and with GRAVITY the gravity's level
+// there (look_grav_level): (|l|, sector, level). With GRAVITY the includer declares g_grav (the
+// floor's gravity in g at |l| up to g_gravx.x) and g_gravx (that end, beta: 1 + beta / r^3 beyond).
+vec3 look_ground_at(float lh, vec2 nh) {
+	vec2 c = look_floor_coords(lh, vec3(nh, 0.0));
+#ifdef GRAVITY
+	float al = abs(lh);
+	float g;
+	if (al < g_gravx.x) g = textureLod(g_grav, vec2(al / g_gravx.x, 0.5), 0.0).r;
+	else { float r = geo_r(al); g = 1.0 + g_gravx.y / (r * r * r); }
+	return vec3(c, look_grav_level(g));
+#else
+	return vec3(c, 0.0);
+#endif
+}
+
+// The floor's colour at a = look_ground_at(lh, ...), way metres away, from its differences to the
+// next pixel along x and along y (dx, dy: what dFdx and dFdy give); the pixel px of the picture's
+// pixels across (look_floor)
+vec3 look_ground(vec3 a, vec3 dx, vec3 dy, float px, float lh, float way) {
+	// across the sectors' seam at the chart's -x the angle jumps by 24: taken out
+	dx.y -= 24.0 * round(dx.y / 24.0);
+	dy.y -= 24.0 * round(dy.y / 24.0);
+	vec3 fw = abs(dx) + abs(dy);
+#ifdef GRAVITY
+	vec3 base = look_grav_colour(a.z);
+	vec3 col = look_grav_contours(look_floor(a.xy, fw.xy, px, base, base * 0.85), a.z, fw.z, px);   // the checker as brightness
+#else
+	vec3 col = look_floor(a.xy, fw.xy, px, lh >= 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], lh >= 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
+#endif
+	return mix(col, lh >= 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B, 1.0 - exp(-way / LOOK_HAZE));
 }

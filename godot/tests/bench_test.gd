@@ -49,7 +49,7 @@ func _process(_d: float) -> bool:
 			if b.near != v.near or (b.near and main.renderer.cubes.multimesh.visible_instance_count != main.toys.world.cubes.size() + 1):
 				check("the segment's cube before the eyes", false, b.plan[b.step].y)
 				started = false
-			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != (v.foveation > 0 or v.split):
+			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != ((v.foveation > 0 and v.foveation <= Foveation.LEVELS) or v.split):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.split_pass.enabled])
 				started = false
 		if not b.running:
