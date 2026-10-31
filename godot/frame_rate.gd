@@ -448,14 +448,13 @@ func _log() -> void:
 	var look: Vector2 = main.look_angles()
 	var where := "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 			"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
-	var fov: Foveation = main.foveation
 	var f: Vector4 = main.renderer.frustum(0)
 	var n := compilations()
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, own maps %s first, gaze %s, pipelines compiled %d in 1 s (%d in all); %s"
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, gaze %s, pipelines compiled %d in 1 s (%d in all); %s"
 			% [rate, meter.paced_rate(), s.shown, s.refreshes, s.refreshes - s.shown, s.gpu / s.drawn if s.drawn > 0 else 0.0, s.gpu_max,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
-			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), "width" if fov.order == 0 else "height", main.gaze_text(),
+			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), main.gaze_text(),
 			n - compiled, n, main.view_text()])
 	compiled = n
 
