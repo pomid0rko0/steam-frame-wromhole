@@ -35,7 +35,7 @@ func _process(_d: float) -> bool:
 		check("the menu has the speed check's row", has_row)
 		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
-		shader_before = main.tracer.material.shader
+		shader_before = main.renderer.material.shader
 		b.warm = 0.1
 		b.time = 0.2
 		b.start()
@@ -50,10 +50,10 @@ func _process(_d: float) -> bool:
 				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, b._l(place[0])])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
-			if main.tracer.material.shader != v.shader:
+			if main.renderer.material.shader != v.shader:
 				check("the segment's shader", false, b.plan[b.step].y)
 				started = false
-			if main.tracer.toy_mode != v.toy_mode:
+			if main.renderer.toy_mode != v.toy_mode:
 				check("the segment's stencil split", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != (v.foveation > 0 or v.split):
@@ -69,11 +69,11 @@ func _process(_d: float) -> bool:
 			# the others of this kind, this build each way of FOVEATIONS, and with toys one more: over
 			# the whole view
 			check("the others of this kind in it, this build each way", b.variants.size() == b.comparable().size()
-					+ b.FOVEATIONS.size() + (1 if main.tracer.toy_count > 0 else 0))
+					+ b.FOVEATIONS.size() + (1 if main.renderer.toy_count > 0 else 0))
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("this build's shader back", main.tracer.material.shader == shader_before and main.tracer.toy_mode == Tracer.SPLIT)
+			check("this build's shader back", main.renderer.material.shader == shader_before and main.renderer.toy_mode == Renderer.SPLIT)
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)

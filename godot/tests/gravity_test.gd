@@ -7,7 +7,7 @@ extends SceneTree
 ## 3. potential_grad is the gradient of potential (so the field conserves energy)
 ## 4. the ray tracer's polynomials (gravity_shader) are the field, and join the cylinder and the
 ##    flat part
-## 5. G cycles the views (Tracer.GRAVITY_VIEWS) and their ray tracers; not during the speed check;
+## 5. G cycles the views (Renderer.GRAVITY_VIEWS) and their ray tracers; not during the speed check;
 ##    with movable balls and cubes each view has a ray tracer that draws them too
 ## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
 ##    throat, the sky untouched; arrows drawn over the view with view 2
@@ -154,7 +154,7 @@ func _control_checks() -> void:
 		main._process(0.0)
 		U.key(KEY_G, false, true)
 		main._process(0.0)
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file()])
+		seen.append([main.renderer.gravity_view, main.renderer.material.shader.resource_path.get_file()])
 	U.check("G cycles the gravity views", seen == [[1, "wormhole_gravity.gdshader"], [2, "wormhole_arrows.gdshader"], [0, "wormhole.gdshader"]],
 			str(seen))
 	main.hold = true
@@ -163,18 +163,18 @@ func _control_checks() -> void:
 	U.key(KEY_G, false, true)
 	main._process(0.0)
 	main.hold = false
-	U.check("G does nothing during the speed check", main.tracer.gravity_view == 0, "view %d" % main.tracer.gravity_view)
+	U.check("G does nothing during the speed check", main.renderer.gravity_view == 0, "view %d" % main.renderer.gravity_view)
 	# movable balls (the stereo check's): each view has its ray tracer with them
 	var pos := PackedVector4Array([Vector4(8.0, 0.0, 1.0, main.space.h)])
 	var col := PackedVector4Array([Vector4(1.0, 0.0, 0.0, 0.3)])
-	main.tracer.set_objects(pos, col)
-	var seen_b := [main.tracer.material.shader.resource_path.get_file()]
+	main.renderer.set_objects(pos, col)
+	var seen_b := [main.renderer.material.shader.resource_path.get_file()]
 	for v in [1, 2, 0]:
 		main.set_gravity_view(v)
-		seen_b.append(main.tracer.material.shader.resource_path.get_file())
-	main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
+		seen_b.append(main.renderer.material.shader.resource_path.get_file())
+	main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
 	U.check("gravity view and movable balls", seen_b == ["wormhole_balls.gdshader", "wormhole_balls_gravity.gdshader",
-			"wormhole_balls_arrows.gdshader", "wormhole_balls.gdshader"] and main.tracer.material.shader == Tracer.SHADERS[0], str(seen_b))
+			"wormhole_balls_arrows.gdshader", "wormhole_balls.gdshader"] and main.renderer.material.shader == Renderer.SHADERS[0], str(seen_b))
 
 
 ## The colour in the middle of a picture, averaged over 5 x 5 pixels (between the floor's lines).

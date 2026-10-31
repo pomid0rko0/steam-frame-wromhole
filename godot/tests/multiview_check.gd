@@ -12,7 +12,7 @@ extends SceneTree
 ## --fixed-fps 60, so every mode walks and turns the same.
 ## plain: without the ray-traced balls and cube, i.e. with the shader the normal scene uses where
 ## no toy can be seen (no toys' code); only the floor lines can be compared then. gravity, arrows:
-## the gravity views "floor" and "floor and arrows" (Tracer.GRAVITY_VIEWS: the floor coloured by
+## the gravity views "floor" and "floor and arrows" (Renderer.GRAVITY_VIEWS: the floor coloured by
 ## gravity, also the field's arrows), their own ray tracers with the balls and the cube (with
 ## plain, without them).
 ## fov: foveated rendering on (the runtime's strongest in even cases, our own map in odd ones):
@@ -64,7 +64,7 @@ func _process(_delta: float) -> bool:
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view
 		if plain:
-			main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
+			main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
 		if gravity > 0:
 			main.set_gravity_view(gravity)
 		if fov:

@@ -78,9 +78,9 @@ func _process(_delta: float) -> bool:
 				col.append(Vector4(1.0, 0.0, 0.0, RADIUS))
 		if mode == "ray":
 			if cubes:
-				main.tracer.set_objects(PackedVector4Array(), PackedVector4Array(), pos, axes, col)
+				main.renderer.set_objects(PackedVector4Array(), PackedVector4Array(), pos, axes, col)
 			else:
-				main.tracer.set_objects(pos, col)
+				main.renderer.set_objects(pos, col)
 	if frames == 14:
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
 		print("saved ", mode, " head ", main.camera.transform.origin, " feet l ", main.foot_l)

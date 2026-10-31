@@ -21,7 +21,7 @@ const DEFAULT_FOVEATION := 5
 const DEFAULT_ORDER := 0
 const SETTINGS := "user://settings.cfg"
 const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
-const GRAVITY_NAMES := ["выкл", "пол", "пол и стрелки"]   # Tracer.GRAVITY_VIEWS' names, one each
+const GRAVITY_NAMES := ["выкл", "пол", "пол и стрелки"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
@@ -101,7 +101,7 @@ var value_half := 0.0
 
 
 func _ready() -> void:
-	assert(GRAVITY_NAMES.size() == Tracer.GRAVITY_VIEWS.size(), "a name for each gravity view")
+	assert(GRAVITY_NAMES.size() == Renderer.GRAVITY_VIEWS.size(), "a name for each gravity view")
 	menu = Node3D.new()
 	menu.transform = Transform3D(Basis(Vector3.RIGHT, -atan2(MENU_DROP, MENU_DIST)), Vector3(0.0, -MENU_DROP, -MENU_DIST))
 	add_child(menu)
@@ -842,10 +842,10 @@ class GazeRow extends Row:
 ## How gravity is shown (docs/gravity.md).
 class GravRow extends Row:
 	func count() -> int:
-		return Tracer.GRAVITY_VIEWS.size()
+		return Renderer.GRAVITY_VIEWS.size()
 
 	func current() -> int:
-		return menu.main.tracer.gravity_view
+		return menu.main.renderer.gravity_view
 
 	func apply(i: int) -> void:
 		menu.main.set_gravity_view(i)
@@ -889,7 +889,7 @@ class BenchRow extends Row:
 	func text(_i: int) -> String:
 		if menu.main.bench.running:
 			return "идёт"
-		return "сравнить с другими" if menu.main.bench.has_ab() else "замерить"
+		return "замерить"
 
 	func enabled() -> bool:
 		return not menu.main.bench.running and not menu.main.hold

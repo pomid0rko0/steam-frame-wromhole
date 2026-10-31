@@ -28,7 +28,7 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
-		main.tracer.material.shader = load(shader_path)
+		main.renderer.material.shader = load(shader_path)
 	if frames == 2:
 		main.menu.visible = false        # the scene alone
 		if scene == "near":
@@ -42,7 +42,7 @@ func _process(_delta: float) -> bool:
 				pos.append(Vector4(c.x, c.y, c.z, main.space.h))
 				var k := CheckScene.BALL_COLOR
 				col.append(Vector4(k.r, k.g, k.b, CheckScene.BALL_RADIUS))
-			main.tracer.set_objects(pos, col)
+			main.renderer.set_objects(pos, col)
 	if frames == 210:           # the specialised pipelines are compiled in the background by then
 		return true
 	return false

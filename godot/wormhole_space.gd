@@ -12,7 +12,7 @@ const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet 
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
 const GRAV_SUB := 2      # RK4 steps between nodes
 # the degree of the shader's polynomials on the fillet (gravity_shader): their GRAV_DEG + 1
-# coefficients go four to a vec4 of its grav_g[] and grav_d[] (Tracer._fits_shader checks they fit)
+# coefficients go four to a vec4 of its grav_g[] and grav_d[] (Renderer._fits_shader checks they fit)
 const GRAV_DEG := 7
 
 var rho0: float
@@ -35,9 +35,9 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float) -> vo
 
 
 ## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
-## the shape: the shader's wh_rho0, wh_h, wh_fillet (Tracer.param, set once in Tracer._ready),
-## Tracer.upload_fillet_table (slow in GDScript: not per frame), Tracer.upload_gravity,
-## Tracer.set_objects (its sorting and proxies use h and Rout), the stereo check scene
+## the shape: the shader's wh_rho0, wh_h, wh_fillet (Renderer.param, set once in Renderer._ready),
+## Renderer.upload_fillet_table (slow in GDScript: not per frame), Renderer.upload_gravity,
+## Renderer.set_objects (its sorting and proxies use h and Rout), the stereo check scene
 ## (check_scene.gd: its grid's rout and lsh, its balls' and cube's R^4 centres from h), and what
 ## stands in chart coordinates outside Rout: godot/scene.json's objects, the toys' places (toys.gd),
 ## CheckScene.BALLS and CUBE, main.START_POS, and bench.gd's PLACES and TOUR_L (metres of l chosen
@@ -582,79 +582,110 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	return x
 
 
-# ---------------------------------------------------------------- the fillet table
-## The ray tracer's fillet polynomials (wormhole_core.gdshaderinc, "curved part") by the ray's
-## impact parameter b: the shader samples them from this table instead of working them out per ray.
-## Four rows of TABLE_N knots, one per span of b with one regime of the moments (rows 0, 1: rays
-## that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots evenly spaced over the
-## row. In rows of regimes 1 and 2 a factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which
-## goes to zero like a square root at the shell's edge, is taken out (the shader puts it back): what
-## is left is smooth enough for linear interpolation.
-const TABLE_N := 256           # the shader's WH_TABN (Tracer._fits_shader checks it)
-# the polynomial's nodes in tau: the squares of the 4-point Gauss-Legendre nodes on [0, 1], and the
-# inverse of their Vandermonde matrix, which takes F at them to the coefficients (numpy:
-# x = leggauss(4)[0]; _TAU = ((x + 1) / 2)^2; _A = inv(vander(_TAU, 4, increasing=True)))
-const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]
-const _A := [
-	[1.0635954209629264, -0.06994895315294707, 0.0072202981818859785, -0.0008667659918653305],
-	[-13.363790651033874, 14.746483787306632, -1.5723807203730116, 0.1896875841002548],
-	[35.770406476784, -49.259940350673936, 15.558746458518186, -2.0692125846282434],
-	[-25.12406687051129, 37.32760503465092, -15.881390739642725, 3.6778525755030924]]
+## The fillet's tables the shaders read (shaders/space.gdshaderinc, sp_tabAt): E(b, z) and F(b, z),
+## the parts of a ray's sweep and path length over z (from the fillet's outer end, in the fillet's
+## variable y) that are not linear in z. ref/tables.py builds the same in Python (ref/test_space_gpu.py
+## checks the shader with it); tests/space_test.gd compares the two. Columns: b by the square root
+## of its distance from rho0 on [0, rho0] and on [rho0, Rout]; knots z = TABLE_ZCAP v^2, v uniform;
+## texel (i, j) of each: the knots j and j + 1 of column i, value and slope times the knot spacing.
+## h >= fillet only (a cylinder between the fillets, maybe of length 0): docs/geometry.md.
+const TABLE_NB := 256          # space.gdshaderinc's SP_NB, SP_NZ, SP_ZCAP
+const TABLE_NZ := 64
+const TABLE_ZCAP := 6.0
+# Gauss-Legendre on [0, 1], 6 nodes: each knot interval's integral
+const _GL_X := [0.033765242898423975, 0.16939530676686776, 0.3806904069584015, 0.6193095930415985,
+		0.8306046932331322, 0.966234757101576]
+const _GL_W := [0.08566224618958517, 0.18038078652406933, 0.23395696728634552, 0.23395696728634552,
+		0.18038078652406933, 0.08566224618958517]
 
 
-## {image: the table (TABLE_N x 4, RGBA float), lo: each row's first b, inv: (TABLE_N - 1) / its
-## span of b, reg: its regime}: the shader's wh_tab, wh_tabLo, wh_tabInv, wh_tabReg.
-func fillet_table() -> Dictionary:
-	var s0 := sin(0.5 * th0)
-	var rmin := rho0 + 2.0 * fillet * s0 * s0
-	var sp := maxf(Rout - rmin, 1e-6 * fillet)       # the span of passing rays
-	var al_pass := (rmin - rho0) / sp
-	var b1 := clampf(rmin - sp, 0.0, rmin)           # passing: ga = (rmin - b) / sp >= 1 below
-	var b3 := clampf(0.5 * (Rout + rho0), rmin, Rout)   # turning: al = (b - rho0) / (Rout - b) >= 1 above
-	var lo := [0.0, b1, rmin, b3]
-	var hi := [b1, rmin, b3, Rout]
-	var reg := [2 if al_pass >= 1.0 else 1, 1 if al_pass >= 1.0 else 0, 0, 1]
-	var data := PackedFloat32Array()
-	data.resize(TABLE_N * 4 * 4)
-	var inv := Vector4.ZERO
-	for row in 4:
-		var span_b: float = hi[row] - lo[row]
-		inv[row] = (TABLE_N - 1) / span_b if span_b > 0.0 else 0.0
-		for i in TABLE_N:
-			var b: float = lo[row] + span_b * i / (TABLE_N - 1)
-			var e := _fillet_coef(b, row >= 2, reg[row], rmin)
-			for c in 4:
-				data[(row * TABLE_N + i) * 4 + c] = e[c]
-	var img := Image.create_from_data(TABLE_N, 4, false, Image.FORMAT_RGBAF, data.to_byte_array())
-	return {"image": img, "lo": Vector4(lo[0], lo[1], lo[2], lo[3]), "inv": inv,
-			"reg": Vector4(reg[0], reg[1], reg[2], reg[3])}
+## [sp_tab, sp_ptab] as images (TABLE_NB x (TABLE_NZ - 1), RGBA float). Slow in GDScript: once.
+func shader_tables() -> Array[Image]:
+	var s1 := sqrt(0.5)
+	var tab := PackedFloat32Array()
+	var ptab := PackedFloat32Array()
+	tab.resize(TABLE_NB * (TABLE_NZ - 1) * 4)
+	ptab.resize(TABLE_NB * (TABLE_NZ - 1) * 4)
+	var E := PackedFloat64Array()
+	var F := PackedFloat64Array()
+	var dE := PackedFloat64Array()
+	var dF := PackedFloat64Array()
+	for a in [E, F, dE, dF]:
+		a.resize(TABLE_NZ)
+	for i in TABLE_NB:
+		var u := float(i) / (TABLE_NB - 1)
+		var b := rho0 * (1.0 - (1.0 - 2.0 * u) ** 2) if u <= 0.5 else rho0 + (Rout - rho0) * (2.0 * u - 1.0) ** 2
+		var sig := (b - rho0) / (2.0 * fillet)
+		var k := sqrt(maxf(0.5 - sig, 0.0))
+		var a0 := b * sqrt(2.0 * fillet / (rho0 + b)) / rho0
+		var p0 := rho0 * sqrt(2.0 * fillet / (rho0 + b))
+		var ok := true
+		for j in TABLE_NZ:
+			var v := float(j) / (TABLE_NZ - 1)
+			var z := TABLE_ZCAP * v * v
+			E[j] = 0.0
+			F[j] = 0.0
+			if j > 0:
+				E[j] = E[j - 1]
+				F[j] = F[j - 1]
+			dE[j] = 0.0
+			dF[j] = 0.0
+			if not ok:
+				continue
+			if j > 0:
+				var zp := TABLE_ZCAP * pow(float(j - 1) / (TABLE_NZ - 1), 2.0)
+				var se := 0.0
+				var sf := 0.0
+				for g in 6:
+					var q := _table_integrands(zp + (z - zp) * _GL_X[g], b, sig, k, a0, p0)
+					if q.z >= 0.95:
+						ok = false
+						break
+					se += _GL_W[g] * q.x
+					sf += _GL_W[g] * q.y
+				if not ok:
+					continue
+				E[j] += (z - zp) * se
+				F[j] += (z - zp) * sf
+			var q2 := _table_integrands(z, b, sig, k, a0, p0)
+			var dz := 2.0 * TABLE_ZCAP * v / (TABLE_NZ - 1)
+			dE[j] = q2.x * dz
+			dF[j] = q2.y * dz
+		for j in TABLE_NZ - 1:
+			var o := (j * TABLE_NB + i) * 4
+			tab[o] = E[j]
+			tab[o + 1] = dE[j]
+			tab[o + 2] = E[j + 1]
+			tab[o + 3] = dE[j + 1]
+			ptab[o] = F[j]
+			ptab[o + 1] = dF[j]
+			ptab[o + 2] = F[j + 1]
+			ptab[o + 3] = dF[j + 1]
+	return [Image.create_from_data(TABLE_NB, TABLE_NZ - 1, false, Image.FORMAT_RGBAF, tab.to_byte_array()),
+			Image.create_from_data(TABLE_NB, TABLE_NZ - 1, false, Image.FORMAT_RGBAF, ptab.to_byte_array())]
 
 
-## The shader's f.e for impact parameter b in the given regime, times sqrt(mx) (and sqrt(mn) in
-## regime 2): wh_fil, in float64.
-func _fillet_coef(b: float, turn: bool, reg: int, rmin: float) -> Vector4:
-	var ra := b if turn else rmin
-	var span := maxf(Rout - ra, 1e-6 * fillet)
-	var al := (ra - rho0) / span
-	var ga := 0.0 if turn else (rmin - b) / span
-	var mn := minf(al, ga)
-	var mx := maxf(al, ga)
-	var F := []
-	for k in 4:
-		var rk: float = ra + span * _TAU[k]
-		var u := (rk - rho0) / (2.0 * fillet)
-		var q := (1.0 - u) * (rk + b)
-		if reg >= 1:
-			q *= _TAU[k] + mx
-		if reg == 2:
-			q *= _TAU[k] + mn
-		F.append(b * sqrt(2.0 * fillet) / sqrt(q * rk * rk))
-	var scale := 1.0
-	if reg >= 1:
-		scale *= sqrt(mx)
-	if reg == 2:
-		scale *= sqrt(mn)
-	var e := Vector4.ZERO
-	for j in 4:
-		e[j] = scale * (_A[j][0] * F[0] + _A[j][1] * F[1] + _A[j][2] * F[2] + _A[j][3] * F[3])
-	return e
+## At z: (the sweep's and the path's integrands less their values at s = 0, |s|)
+func _table_integrands(z: float, b: float, sig: float, k: float, a0: float, p0: float) -> Vector3:
+	var s1 := sqrt(0.5)
+	var e := exp(z)
+	var s := 0.5 * (sig * e / (s1 + k) + (s1 + k) / e)
+	if absf(s) >= 0.95:
+		return Vector3(0.0, 0.0, absf(s))
+	var r := rho0 + 2.0 * fillet * s * s
+	var c := sqrt(2.0 * fillet / ((r + b) * (1.0 - s * s)))
+	return Vector3(b * c / r - a0, c * r - p0, absf(s))
+
+
+## The point (l, n) at a point P of R^4 on the space (the inverse of embed)
+func point_from_r4(P: Vector4) -> Array:
+	var x := Vector3(P.x, P.y, P.z)
+	var rho := x.length()
+	var n := x / rho
+	var aw := absf(P.w)
+	var sw := 1.0 if P.w >= 0.0 else -1.0
+	if aw <= Lc and rho <= rho0 + 0.5 * fillet:
+		return [P.w, n]
+	if rho >= Rout:
+		return [sw * (rho - Rout + L), n]
+	return [sw * (Lc + fillet * atan2(aw - Lc, Rout - rho)), n]

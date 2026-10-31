@@ -30,3 +30,95 @@ openxr/foveation_with_subsampled_images=false
 openxr/extensions/eye_gaze_interaction=true
 openxr/startup_alert=false
 shaders/enabled=true
+
+[shader_globals]
+
+sp_rho0={
+"type": "float",
+"value": 0.0
+}
+
+sp_R={
+"type": "float",
+"value": 0.0
+}
+
+sp_Lc={
+"type": "float",
+"value": 0.0
+}
+
+sp_L={
+"type": "float",
+"value": 0.0
+}
+
+sp_Rout={
+"type": "float",
+"value": 0.0
+}
+
+head_l={
+"type": "float",
+"value": 0.0
+}
+
+sp_tab={
+"type": "sampler2D",
+"value": ""
+}
+
+sp_ptab={
+"type": "sampler2D",
+"value": ""
+}
+
+head_n={
+"type": "vec3",
+"value": Vector3(1, 0, 0)
+}
+
+head_f0={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+head_f1={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+head_f2={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+head_pos={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+
+grav_cyl={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+grav_g0={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+grav_g1={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+grav_d0={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+
+grav_d1={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}

@@ -30,7 +30,7 @@ func _process(_delta: float) -> bool:
 	if frames == 3:
 		if mode == "ray":
 			var pos := PackedVector4Array([Vector4(CHART.x, CHART.y, CHART.z, main.space.h)])
-			main.tracer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
+			main.renderer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))
 			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)

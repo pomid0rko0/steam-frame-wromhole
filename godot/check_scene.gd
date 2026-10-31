@@ -1,6 +1,6 @@
 class_name CheckScene
 extends RefCounted
-## The stereo check: Godot's standard renderer draws green lines on top of what the ray tracer
+## The stereo check: Godot's standard renderer draws green lines on top of what the renderer
 ## draws (what, and how to read it: README.md, the one-eye check). Godot's geometry is placed in
 ## chart A coordinates under main's overlay, which main._update_chart_map places (when: its
 ## comment): if the ray-traced world drifted against the room, green would part from it.
@@ -18,9 +18,9 @@ const CUBE_COLOR := Color(0.85, 0.1, 0.9)
 
 
 ## Godot's green lines under overlay (nodes Grid, Ball1.., Cube), the red balls and the cube to the
-## ray tracer, and the scene's static objects taken away: Godot's floor lines would be drawn over
+## renderer, and the scene's static objects taken away: Godot's floor lines would be drawn over
 ## them where the floor is hidden.
-static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void:
+static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> void:
 	var floor_mat := ShaderMaterial.new()
 	floor_mat.shader = load("res://shaders/check_grid.gdshader")
 	assert(floor_mat.shader.code.contains("balls[%d]" % BALLS.size()), "check_grid.gdshader's balls[] holds BALLS")
@@ -53,15 +53,15 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
 		s.height = 2.0 * BALL_RADIUS
-		s.radial_segments = Tracer.PROXY_SEGMENTS       # its faces inside the sphere as the proxies' are
-		s.rings = Tracer.PROXY_RINGS
+		s.radial_segments = 64
+		s.rings = 32
 		var m := MeshInstance3D.new()
 		m.name = "Ball%d" % pos.size()
 		m.mesh = s
 		m.material_override = ball_mat
 		m.position = c
 		overlay.add_child(m)
-	# the cube: Godot draws its edges green, the ray tracer its 4D box (axes over the half size)
+	# the cube: Godot draws its edges green, the renderer its 4D box (axes over the half size)
 	var box := MeshInstance3D.new()
 	box.name = "Cube"
 	box.mesh = BoxMesh.new()
@@ -76,15 +76,9 @@ static func build(overlay: Node3D, space: WormholeSpace, tracer: Tracer) -> void
 			Vector4(-sin(CUBE_YAW), cos(CUBE_YAW), 0.0, 0.0), Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0)])
 	for k in 4:
 		axes[k] /= CUBE_HALF
-	tracer.set_objects(pos, col, PackedVector4Array([Vector4(CUBE.x, CUBE.y, CUBE.z, space.h)]), axes,
+	renderer.set_objects(pos, col, PackedVector4Array([Vector4(CUBE.x, CUBE.y, CUBE.z, space.h)]), axes,
 			PackedVector4Array([Vector4(CUBE_COLOR.r, CUBE_COLOR.g, CUBE_COLOR.b, CUBE_HALF)]))
-	# each of the scene's static objects (as many as the tracer has) out of sight
-	for p: StringName in [&"wh_sph", &"wh_pil", &"wh_box"]:
-		var rows: PackedVector4Array = tracer.material.get_shader_parameter(p)
-		for i in rows.size():
-			# a pillar of no height; a sphere or box below the floor
-			rows[i] = Vector4(0.0, 0.0, 0.001, -1.0) if p == &"wh_pil" else Vector4(0.0, 0.0, -100.0, 0.5)
-		tracer.param(p, rows)
+	renderer.show_statics(false)
 
 
 ## The pictures of the stereo test draw only parts of it (tests/multiview_check.gd): the overlay's

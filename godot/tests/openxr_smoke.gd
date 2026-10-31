@@ -173,7 +173,7 @@ func _process(_delta: float) -> bool:
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
 		U.check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
-				and main.tracer.material.shader == b.own_shader and b.own_shader == Tracer.SHADERS_TOYS[0])
+				and main.renderer.material.shader == b.own_shader and b.own_shader == Renderer.SHADERS_TOYS[0])
 		U.check("speed check: the rate set back", r.desired == bench_stored)
 		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
@@ -260,7 +260,7 @@ func _gravity(p: Menu) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_NAMES[v]])
+		seen.append([main.renderer.gravity_view, main.renderer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_NAMES[v]])
 	# the demo's balls and cubes are there: the ray tracers with them
 	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
 			[0, "wormhole_balls.gdshader", true]]

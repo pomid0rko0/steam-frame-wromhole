@@ -55,9 +55,9 @@ func _initialize() -> void:
 func _process(_d: float) -> bool:
 	frames += 1
 	if frames == 1 and shader_path != "":
-		main.tracer.material.shader = load(shader_path)
-		if not main.tracer.material.shader.code.contains("stencil_mode"):
-			main.tracer.toy_mode = Tracer.BARE    # another source's: no stencil test, the whole view
+		main.renderer.material.shader = load(shader_path)
+		if not main.renderer.material.shader.code.contains("stencil_mode"):
+			main.renderer.toy_mode = Renderer.BARE    # another source's: no stencil test, the whole view
 	if frames == 2:
 		if toys:
 			# thrown, dropped, at rest, then held still
@@ -91,7 +91,7 @@ func _process(_d: float) -> bool:
 		var img := root.get_texture().get_image()
 		var png := out.get_basename() + "_%d.png" % i
 		img.save_png(png)
-		var m: ShaderMaterial = main.tracer.material
+		var m: ShaderMaterial = main.renderer.material
 		var hf: PackedVector4Array = m.get_shader_parameter("head_f")
 		var cam: Transform3D = main.camera.global_transform
 		var proj: Projection = main.camera.get_camera_projection()
@@ -107,7 +107,7 @@ func _process(_d: float) -> bool:
 			"size": [img.get_width(), img.get_height()],
 			"shader": m.shader.resource_path,
 			"uniforms": _uniforms(m),
-			# the stencil's proxies (Tracer.proxy_spheres), chart spheres of the head's universe, or
+			# the stencil's proxies (Renderer.proxy_spheres), chart spheres of the head's universe, or
 			# none (the whole view marked, or no toys)
 			"proxies": _proxies(),
 		})
@@ -143,14 +143,14 @@ func _hold_ball() -> void:
 
 func _proxies() -> Array:
 	var out := []
-	if main.tracer.toy_count > 0:
-		for s in main.tracer.proxy_spheres(m_head_l()):
+	if main.renderer.toy_count > 0:
+		for s in main.renderer.proxy_spheres(m_head_l()):
 			out.append(_v4(s))
 	return out
 
 
 func m_head_l() -> float:
-	return main.tracer.material.get_shader_parameter("head_l")
+	return main.renderer.material.get_shader_parameter("head_l")
 
 
 ## The material's values of the uniforms the cost model needs, as numbers and lists.

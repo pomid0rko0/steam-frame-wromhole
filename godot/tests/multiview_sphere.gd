@@ -41,7 +41,7 @@ func _process(_delta: float) -> bool:
 		# (cy, cz, cx - START_POS.x).
 		if mode == "ray":
 			var p := Vector4(CHART.x, CHART.y, CHART.z, main.space.h)     # point of R^4 in sheet A
-			main.tracer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
+			main.renderer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))
 			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)
