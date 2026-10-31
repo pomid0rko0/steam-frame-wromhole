@@ -11,13 +11,14 @@ extends Node3D
 ## only after SETTLE (or with A, another row, closing): stepping through the rates must not switch
 ## the headset at every step, nor the foveations rebuild the buffers.
 
-const SCALES := [1.0, 0.9, 0.8, 0.7]
+const SCALES := [1.0, 0.9, 0.8, 0.7]   # shares of the full size (full_eye) each eye's picture can be
+const FRAME_EYE := 2160         # the Steam Frame's screen, pixels a side per eye (README.md, «Требования»)
 # names of Foveation.set_level's levels
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
-# until one is chosen: our own, wide (floor_fov.gd): smooth, no coarse tiles
-const DEFAULT_FOVEATION := 4
+# until one is chosen: our own, narrow (floor_fov.gd): smooth, no coarse tiles
+const DEFAULT_FOVEATION := 5
 const SETTINGS := "user://settings.cfg"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
@@ -56,14 +57,17 @@ const COLOR_WAIT := Color(0.05, 0.06, 0.09, 0.9)
 
 var main: Main                  # the settings the rows change
 var rate: FrameRate
-var target: Viewport            # the viewport the scene is rendered into (its render scale)
 var xr: OpenXRInterface         # null without OpenXR (the desktop, the tests' fake headsets)
 var head: Node3D                # the XR camera, a sibling in the play space
 var yaw := 0.0                  # the menu's bearing from the head
 var turning := false
 var placed := false
-var render_scale := 1.0         # 3D render scale of the XR viewport chosen (the speed check sets 100% meanwhile)
+var render_scale := 1.0         # the eye's size chosen, a share of full_eye (the speed check sets 100% meanwhile)
 var foveation := 0              # the foveation level chosen (the speed check sets others meanwhile)
+var scale_chosen := false       # chosen in the menu, now or before (kept): else the default
+var foveation_chosen := false
+var runtime_eye := Vector2.ZERO # each eye's picture as the runtime recommends it (SteamVR: its resolution setting for the app)
+var full_eye := 0               # pixels a side at 100%: the Frame's screen under SteamVR, else the runtime's own
 var text := ""                  # the head's lines
 var open := false               # the menu is shown
 var strip_on := true            # the line below is shown while the menu is closed
@@ -122,17 +126,21 @@ func _ready() -> void:
 	strip_label = _text(strip, "", FONT_STRIP, HORIZONTAL_ALIGNMENT_CENTER, VERTICAL_ALIGNMENT_CENTER)
 	strip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	strip_label.width = STRIP_WRAP / PIXEL
-	var cfg := ConfigFile.new()
-	cfg.load(SETTINGS)
+	var cfg := _load()
 	strip_on = bool(cfg.get_value("ui", "strip", true))
 	if xr:
-		set_render_scale(float(cfg.get_value("render", "scale", 1.0)))
+		runtime_eye = xr.get_render_target_size() / xr.render_target_size_multiplier
+		var runtime := str(xr.get_system_info().get("XRRuntimeName", ""))
+		full_eye = FRAME_EYE if runtime.begins_with("SteamVR") else int(runtime_eye.x)
+		scale_chosen = cfg.has_section_key("render", "eye")
+		foveation_chosen = cfg.has_section_key("render", "foveation")
+		set_render_scale(float(cfg.get_value("render", "eye", 1.0)))
 		_set_foveation(int(cfg.get_value("render", "foveation", DEFAULT_FOVEATION)))
-		if foveation > 0:
-			set_render_scale(1.0)
-		print("refresh: foveation %d at the start; runtime density map (XR_FB_foveation) %s, eye gaze (XR_EXT_eye_gaze_interaction) %s, eye-tracked foveation asked %s, render scale %.2f"
+		var eye := eye_size(render_scale)
+		print("refresh: foveation %d at the start; runtime density map (XR_FB_foveation) %s, eye gaze (XR_EXT_eye_gaze_interaction) %s, eye-tracked foveation asked %s; eye %dx%d (%.0f%%), %s recommends %dx%d"
 				% [foveation, xr.is_foveation_supported(), xr.is_eye_gaze_interaction_supported(),
-				ProjectSettings.get_setting("xr/openxr/foveation_eye_tracked", false), render_scale])
+				ProjectSettings.get_setting("xr/openxr/foveation_eye_tracked", false), eye.x, eye.y,
+				render_scale * 100.0, runtime, int(runtime_eye.x), int(runtime_eye.y)])
 	rate.changed.connect(_on_rate)
 	_set_text("...")
 	_show()
@@ -503,27 +511,26 @@ func _follow(delta: float, snap := false) -> void:
 
 # ---------------------------------------------------------------- the settings
 
-## A render scale choice; kept for the next start. Below 100% the foveation goes off.
+## A choice of the eye's size; kept for the next start.
 func choose_scale(v: float) -> void:
 	if xr == null:
 		return
 	set_render_scale(v)
-	if render_scale < 1.0 and foveation > 0:
-		_set_foveation(0)
+	scale_chosen = true
 	_save()
-	print("refresh: render scale %.2f, foveation %d" % [render_scale, foveation])
+	var eye := eye_size(render_scale)
+	print("refresh: eye %dx%d (%.0f%%), foveation %d" % [eye.x, eye.y, render_scale * 100.0, foveation])
 	_set_text(_compose())
 
 
-## A foveation choice; kept for the next start. On, the render scale goes back to 100%.
+## A foveation choice; kept for the next start.
 func choose_foveation(level: int) -> void:
 	if xr == null:
 		return
 	_set_foveation(level)
-	if foveation > 0 and render_scale < 1.0:
-		set_render_scale(1.0)
+	foveation_chosen = true
 	_save()
-	print("refresh: foveation %d (%s), render scale %.2f" % [foveation, FOV_LOG[foveation], render_scale])
+	print("refresh: foveation %d (%s), eye at %.0f%%" % [foveation, FOV_LOG[foveation], render_scale * 100.0])
 	_set_text(_compose())
 
 
@@ -544,16 +551,36 @@ func set_strip(on: bool) -> void:
 	refresh()
 
 
+## The settings kept: a setting is written once chosen, so one never chosen follows the default.
 func _save() -> void:
-	var cfg := ConfigFile.new()
-	cfg.load(SETTINGS)
+	var cfg := _load()
 	cfg.set_value("ui", "strip", strip_on)
 	if xr:
-		cfg.set_value("render", "scale", render_scale)
-		cfg.set_value("render", "foveation", foveation)
-		if cfg.has_section_key("render", "own_order"):
-			cfg.erase_section_key("render", "own_order")       # our own maps' order: no more
+		_keep(cfg, "eye", render_scale, scale_chosen)
+		_keep(cfg, "foveation", foveation, foveation_chosen)
 	cfg.save(SETTINGS)
+
+
+static func _keep(cfg: ConfigFile, key: String, value: Variant, chosen: bool) -> void:
+	if chosen:
+		cfg.set_value("render", key, value)
+	elif cfg.has_section_key("render", key):
+		cfg.erase_section_key("render", key)
+
+
+## The settings file, as written now. One with render/scale is from before the eye's size was the
+## app's own: its scale was a share of the runtime's size, and its foveation was written with any
+## other setting, chosen or not: both go, and our own maps' order, long gone.
+static func _load() -> ConfigFile:
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS)
+	if cfg.has_section_key("render", "scale"):
+		for k in ["scale", "foveation"]:
+			if cfg.has_section_key("render", k):
+				cfg.erase_section_key("render", k)
+	if cfg.has_section_key("render", "own_order"):
+		cfg.erase_section_key("render", "own_order")
+	return cfg
 
 
 func _set_foveation(level: int) -> void:
@@ -574,11 +601,32 @@ func foveation_source() -> String:
 	return "по взгляду" if asked else "по центру"
 
 
-## The XR viewport's render scale.
+## The eye's size chosen (SCALES' share of full_eye).
 func set_render_scale(s: float) -> void:
 	render_scale = s if SCALES.has(s) else 1.0
-	target.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-	target.scaling_3d_scale = render_scale
+	set_eye(render_scale)
+
+
+## Each eye's picture at share s of full_eye, not kept (the speed check's 100%). The images the
+## runtime takes are made that size (OpenXR's render target multiplier on what it recommends; Godot
+## makes them again when the size changes), not a 3D render scale inside them: no upscale of
+## Godot's own before the runtime fits the picture to the lens, and the density map's offsets,
+## which Godot gives in their pixels, fall where one looks (foveation.gd).
+func set_eye(s: float) -> void:
+	if xr == null or runtime_eye.x <= 0.0:
+		return
+	xr.render_target_size_multiplier = _multiplier(s)
+	main.foveation.resize()
+
+
+## Each eye's picture in pixels at share s of full_eye.
+func eye_size(s: float) -> Vector2i:
+	return Vector2i(runtime_eye * _multiplier(s))     # Godot's own way: truncated
+
+
+## A quarter pixel over the size wanted: Godot truncates the multiplied size to whole pixels.
+func _multiplier(s: float) -> float:
+	return (roundf(full_eye * s) + 0.25) / runtime_eye.x
 
 
 # ---------------------------------------------------------------- the text
@@ -741,8 +789,7 @@ class RateRow extends Row:
 		return false
 
 
-## The 3D render scale: fewer pixels to ray trace, a softer picture (Godot upscales bilinearly). It
-## and foveation don't go together (foveation.gd says why): one is chosen, the other goes back.
+## Each eye's picture, as a share of the full size (set_eye): fewer pixels, a softer picture.
 class ScaleRow extends Row:
 	func shown() -> bool:
 		return menu.xr != null
@@ -756,9 +803,9 @@ class ScaleRow extends Row:
 	func apply(i: int) -> void:
 		menu.choose_scale(SCALES[i])
 
-	## With the pixels of each eye's picture at that scale.
+	## With the pixels of each eye's picture at that share.
 	func text(i: int) -> String:
-		var px := Vector2i((menu.xr.get_render_target_size() * SCALES[i]).round())
+		var px := menu.eye_size(SCALES[i])
 		var pct := roundi(SCALES[i] * 100.0)
 		return "%d%% (%d×%d)" % [pct, px.x, px.y] if px.x > 0 else "%d%%" % pct
 

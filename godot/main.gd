@@ -160,7 +160,6 @@ func _ready() -> void:
 	menu = Menu.new()
 	menu.main = self
 	menu.rate = rate
-	menu.target = target
 	menu.xr = xr as OpenXRInterface
 	menu.head = camera
 	bench.menu = menu
@@ -412,8 +411,9 @@ func view_text() -> String:
 				near[0], "radius" if near[0] == "ball" else "half size", near[2], V.length(),
 				rad_to_deg(atan2(x, z)), rad_to_deg(atan2(y, Vector2(x, z).length()))]
 	var target: Viewport = xr_view if in_xr else get_viewport()
-	return out + "; gravity view %d, foveation %d, render scale %.2f, menu %s" % [renderer.gravity_view,
-			foveation.level, target.scaling_3d_scale, "open" if menu.open else "closed"]
+	var px := Vector2i(target.get_visible_rect().size)
+	return out + "; gravity view %d, foveation %d, picture %dx%d, menu %s" % [renderer.gravity_view,
+			foveation.level, px.x, px.y, "open" if menu.open else "closed"]
 
 
 func set_gravity_view(view: int) -> void:

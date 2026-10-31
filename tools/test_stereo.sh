@@ -8,8 +8,6 @@
 #                                    default a new one under .wt/.out each run, printed at the end;
 #                                    JOBS=n renders at once)
 # Exit status 0 only if every check passes.
-# Below 100% render scale the bilinear upscale shifts where tools/compare's one-colour threshold
-# falls: test such a scale with SCALING_3D_MODE_NEAREST.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
@@ -80,8 +78,8 @@ for v in gravity arrows; do
 	done
 done
 # foveated rendering on (Foveation.set_level): SteamVR's level in even cases (the 3D scene in a
-# render pass of its own), our own in odd ones (floor_fov.gd: the floor coarser away from the
-# picture's middle, the bodies as ever)
+# render pass of its own), our own in odd ones, narrow in case 1 and wide in case 3 (floor_fov.gd:
+# the floor coarser away from the picture's middle, the bodies as ever)
 for c in 0 1 2 3; do
 	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
 done

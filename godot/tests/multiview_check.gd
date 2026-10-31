@@ -13,9 +13,9 @@ extends SceneTree
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
 ## gravity, arrows: the gravity views "floor" and "floor and field lines" (Renderer.GRAVITY_VIEWS: the
 ## floor coloured by gravity, also the field lines with their arrows).
-## fov: foveated rendering on (the runtime's strongest in even cases, our own map in odd ones):
-## the 3D scene in a render pass of its own, the viewport asking for a density map. Software
-## Vulkan has none, so what this tests is that the split pass draws everything where it was.
+## fov: foveated rendering on (the runtime's strongest in even cases: the 3D scene in a render pass
+## of its own, the viewport asking for a density map; software Vulkan has none, so what this tests
+## is that the split pass draws everything where it was; our own in odd ones: narrow in 1, wide in 3).
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
@@ -70,8 +70,9 @@ func _process(_delta: float) -> bool:
 			main.overlay.get_node("Grid").material_override.set_shader_parameter("solid", true)
 	if frames == 6 and fov:
 		# after main's first frames, which set each kind of foveation in turn and then the menu's:
-		# SteamVR's level in even cases, our own (floor_fov.gd) in odd ones
-		main.foveation.set_level(Foveation.LEVELS if case % 2 == 0 else 4)
+		# SteamVR's level in even cases, our own (floor_fov.gd) in odd ones: narrow, the menu's
+		# default, in case 1, wide in case 3
+		main.foveation.set_level(Foveation.LEVELS if case % 2 == 0 else (Menu.DEFAULT_FOVEATION if case == 1 else 4))
 		print("foveation ", main.foveation.level)
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = HEAD_STEP * hmd.head
