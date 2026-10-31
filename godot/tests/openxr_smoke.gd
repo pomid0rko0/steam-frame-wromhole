@@ -134,20 +134,22 @@ func _process(_delta: float) -> bool:
 				"%s, viewport %s" % [_eye(), main.xr_view.size])
 		p.select("scale")
 		p.change(1)
-		U.check("the resolution row, right: 90% picked, not yet in effect", _eye() == Vector2i(128, 128)
-				and _value(p, "scale") == "90% (115×115)" and _color(p, "scale") == p.COLOR_PENDING)
+		U.check("the resolution row, right: 110% picked, not yet in effect", _eye() == Vector2i(128, 128)
+				and _value(p, "scale") == "110% (141×141)" and _color(p, "scale") == p.COLOR_PENDING)
 		p.move(1)       # another row: what was picked takes effect
 		var cfg := ConfigFile.new()
 		cfg.load("user://settings.cfg")
-		U.check("on to the next row: the images OpenXR takes 115×115, kept, the foveation as it was",
-				_eye() == Vector2i(115, 115) and cfg.get_value("render", "eye", 0.0) == 0.9 and p.picked() == "fov"
-				and main.foveation.level == p.DEFAULT_FOVEATION and main.renderer.floor_fov._size == 115,
+		U.check("on to the next row: the images OpenXR takes 141×141, kept, the foveation as it was",
+				_eye() == Vector2i(141, 141) and cfg.get_value("render", "eye", 0.0) == 1.1 and p.picked() == "fov"
+				and main.foveation.level == p.DEFAULT_FOVEATION and main.renderer.floor_fov._size == 141,
 				"%s, floor_fov made for %d" % [_eye(), main.renderer.floor_fov._size])
 		U.check("the old settings gone from the file, the foveation not written till chosen",
 				not cfg.has_section_key("render", "scale") and not cfg.has_section_key("render", "foveation"))
-		U.check("the row shows it", _value(p, "scale") == "90% (115×115)" and _color(p, "scale") == p.COLOR_TEXT)
+		U.check("the row shows it", _value(p, "scale") == "110% (141×141)" and _color(p, "scale") == p.COLOR_TEXT)
 	if j == 2:
-		U.check("the XR viewport follows: 115×115", main.xr_view.size == Vector2i(115, 115), str(main.xr_view.size))
+		U.check("the XR viewport follows: 141×141", main.xr_view.size == Vector2i(141, 141), str(main.xr_view.size))
+		main.menu.choose_scale(0.7)
+		U.check("the least: 70%, 90×90", _eye() == Vector2i(90, 90) and _value(main.menu, "scale") == "70% (90×90)")
 		main.menu.choose_scale(1.0)
 		U.check("back to 100%", _eye() == Vector2i(128, 128))
 		_foveation(main.menu)

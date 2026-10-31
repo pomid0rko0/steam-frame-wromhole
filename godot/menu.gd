@@ -11,7 +11,8 @@ extends Node3D
 ## only after SETTLE (or with A, another row, closing): stepping through the rates must not switch
 ## the headset at every step, nor the foveations rebuild the buffers.
 
-const SCALES := [1.0, 0.9, 0.8, 0.7]   # shares of the full size (full_eye) each eye's picture can be
+# shares of the full size (full_eye) each eye's picture can be, left to right in the menu
+const SCALES := [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
 const FRAME_EYE := 2160         # the Steam Frame's screen, pixels a side per eye (README.md, «Требования»)
 # names of Foveation.set_level's levels
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
@@ -789,7 +790,10 @@ class RateRow extends Row:
 		return false
 
 
-## Each eye's picture, as a share of the full size (set_eye): fewer pixels, a softer picture.
+## Each eye's picture, as a share of the full size (set_eye). Below 100% fewer pixels to draw, a
+## softer picture. Above, more to draw for a sharper middle: SteamVR stretches the picture's middle
+## as it fits it to the lens, and a bigger picture has a pixel of its own for each of the screen's
+## there.
 class ScaleRow extends Row:
 	func shown() -> bool:
 		return menu.xr != null
@@ -798,7 +802,8 @@ class ScaleRow extends Row:
 		return SCALES.size()
 
 	func current() -> int:
-		return maxi(SCALES.find(menu.render_scale), 0)
+		var i := SCALES.find(menu.render_scale)
+		return i if i >= 0 else SCALES.find(1.0)
 
 	func apply(i: int) -> void:
 		menu.choose_scale(SCALES[i])
