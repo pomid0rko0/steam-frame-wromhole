@@ -6,13 +6,15 @@ extends SceneTree
 ## sets this app's rate in SteamVR's settings, and as the display stays at 20 Hz the head asks for
 ## a restart (a display that follows is answered too); choices made while vrcmd runs end with the
 ## last one written; the scale row sets the render scale and keeps it; foveation starts with our
-## own, wide; the foveation row turns foveated rendering on at its level (SteamVR's: the XR
+## own, narrow; the foveation row turns foveated rendering on at its level (SteamVR's: the XR
 ## viewport's density map, the 3D pass split, Godot's own map under Monado, which has no
 ## XR_FB_foveation; our own: no density map, no split, the floor from floor_fov.gd's texture), keeps
 ## it, and takes the render scale back to 100%, and a scale below 100% turns it off again; the gaze
 ## dot shows and hides; the gravity row
 ## switches the gravity view (the floor, the arrows, off: A steps round);
-## frames made too slow for the display turn the head and the line below red; and the speed
+## frames made too slow for the display turn the head and the line below red, and the log's account
+## of where a frame's time went (frame_phases.gd) adds up to the frame and puts the slowness in the
+## scripts, asleep; and the speed
 ## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
 ## offer: it stays at 20), closing the menu, the line below saying how it goes and what came out,
 ## and puts the rate, the foveation and the viewer back.
@@ -24,6 +26,7 @@ const U := preload("res://tests/util.gd")
 const APP_ID := "4242"
 
 var main: Main
+var slow := Slow.new()          # makes the frames too slow: in the scripts, as a node's
 var frames := 0
 var fake: String
 var bench_stored := 0.0
@@ -40,6 +43,7 @@ func _initialize() -> void:
 	# keep up are judged. The throw and the drop themselves: physics_test.gd.
 	main.toys.demo = false
 	root.add_child(main)
+	root.add_child(slow)
 
 
 func _process(_delta: float) -> bool:
@@ -117,8 +121,9 @@ func _process(_delta: float) -> bool:
 			U.check("the menu heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		U.check("frames judged, green", green, "after %d frames, seconds %s" % [frames - 232, r.seconds])
 		# after the green check: each step of the render scale rebuilds the buffers, a missed frame or two
-		U.check("foveation at first: our own, wide", main.foveation.level == p.DEFAULT_FOVEATION
-				and _value(p, "fov") == "плавная широкая" and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+		_phases(r)
+		U.check("foveation at first: our own, narrow", main.foveation.level == p.DEFAULT_FOVEATION
+				and _value(p, "fov") == "плавная узкая" and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
 				and not main.foveation.split_pass.enabled and main.renderer.floor_fov.enabled)
 		U.check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _value(p, "scale") == "100% (128×128)")
 		p.select("scale")
@@ -134,8 +139,15 @@ func _process(_delta: float) -> bool:
 		p.choose_scale(1.0)
 		U.check("back to 100%", p.target.scaling_3d_scale == 1.0)
 		_foveation(p)
-	if j > 0 and j <= 60:
-		OS.delay_msec(70)           # longer than a 50 ms refresh: every frame misses one
+	# longer than a 50 ms refresh: every frame misses one
+	slow.ms = SLOW_MS if j > 0 and j <= 60 else 0
+	if j == 30:
+		var f := r.phases.last_frame()
+		var n := FramePhases.PHASES.size()
+		U.check("a slow frame: the scripts' stretch holds the delay, asleep", f[1] >= SLOW_MS - 1 and f[1] < SLOW_MS + 30
+				and f[n + 2] >= SLOW_MS - 10, str(f))
+		U.check("... as the line about the late frame says", r._before_text().contains("scripts %.2f" % f[1])
+				and r._before_text().contains("asleep"), r._before_text())
 	if j == 60:
 		print("slow frames: ", p.text.replace("\n", " | "), "  seconds ", r.seconds)
 		U.check("too slow: judged, red", FrameRate.keeps_up(r.seconds) == false and p.plate_mat.albedo_color == p.COLOR_BAD
@@ -176,6 +188,28 @@ func _process(_delta: float) -> bool:
 		U.finish(self)
 		return true
 	return false
+
+
+## Where the last frame's time went (frame_phases.gd), the frames keeping up at Monado's 20 Hz:
+## every stretch measured, together a refresh; the kernel's account of it there.
+func _phases(r: FrameRate) -> void:
+	var ph := r.phases
+	var f := ph.last_frame() if ph else PackedFloat32Array()
+	var n := FramePhases.PHASES.size()
+	U.check("phases: measured, a value for each stretch and the kernel's four", ph != null and ph.on
+			and f.size() == n + 4, str(f))
+	if f.size() != n + 4:
+		return
+	var sum := 0.0
+	var each := true
+	for i in n:
+		sum += f[i]
+		each = each and f[i] >= 0.0
+	U.check("phases: the stretches add up to a refresh", each and absf(sum - 1000.0 / r.rate) < 0.25 * 1000.0 / r.rate,
+			"%.2f ms of %.2f: %s" % [sum, 1000.0 / r.rate, f])
+	U.check("phases: schedstat read: the thread ran, and slept till the refresh", f[n] > 0.0 and f[n + 1] >= 0.0
+			and f[n + 2] > 0.0 and f[n + 3] >= 1, str(f))
+	print("phases: ", r._before_text())
 
 
 ## The foveation rows (off by now: the scale was 90% a moment ago): off; the right hand presses
@@ -280,3 +314,16 @@ func _fake_steamvr() -> void:
 	DirAccess.remove_absolute(fake + "/value")
 	OS.set_environment("HOME", fake)
 	OS.set_environment("SteamAppId", APP_ID)
+
+
+const SLOW_MS := 70
+
+
+## Holds every frame up by ms in its _process: in the scripts' stretch (frame_phases.gd), where a
+## SceneTree script's own _process would not be.
+class Slow extends Node:
+	var ms := 0
+
+	func _process(_delta: float) -> void:
+		if ms > 0:
+			OS.delay_msec(ms)

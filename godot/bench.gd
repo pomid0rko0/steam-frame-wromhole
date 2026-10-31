@@ -229,8 +229,8 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
-				% [main.rate.rate, main.foveation.level, tour.size()])
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, main's script ms in the frame before, and that frame's ms on the main thread by stretch (%s), then ms running, waiting for a core, asleep and the times scheduled in (frame_phases.gd)"
+				% [main.rate.rate, main.foveation.level, tour.size(), ", ".join(FramePhases.PHASES)])
 		tour_t = 0.0
 		_tour_step(0)
 
@@ -362,10 +362,13 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 		return
 	var vp: RID = main.rate.target.get_viewport_rid()
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
-	var mt: Vector3 = main.rate.before_ms()
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
+	var ph := main.rate.phases.last_frame() if main.rate.phases else PackedFloat32Array()
+	var parts := []
+	for v in ph:
+		parts.append("%.2f" % v)
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %s" % [tour_t, pose[0], pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z])
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.rate.before_script_ms(), " ".join(parts)])
 	sec.frames += 1
 	sec.refreshes += meter.refreshes - refreshes_before
 	sec.gpu += g

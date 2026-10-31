@@ -15,11 +15,12 @@ extends Node
 ## Until a rate is stored for the app SteamVR runs it at 72 Hz (the log's "refresh:" lines). It has
 ## no XR_EXT_performance_settings.
 ##
-## Half rate. One late frame sends SteamVR to every second refresh for 6-14 s (the log's "refresh:"
-## lines): it fills in the frames between on the same GPU, so our frame at the same pose costs more,
-## and it can stay there until the frame gets cheaper or the rate is switched there and back. The
-## Steam overlay and SteamVR's camera view do the same. The app could end it at once only by
-## switching the rate there and back; it doesn't (docs/wishlist.md); cheaper frames make it rarer.
+## Half rate. A late frame sends SteamVR to every second refresh for a second to 18 s (the log's
+## "refresh:" lines): it fills in the frames between on the same GPU, so our frame at the same pose
+## costs more, and it can stay there until the frame gets cheaper or the rate is switched there and
+## back. The Steam overlay and SteamVR's camera view do the same. The app could end it at once only
+## by switching the rate there and back; it doesn't (docs/wishlist.md); cheaper frames make it
+## rarer.
 ##
 ## The log has the GPU's clock because a GPU that lowers it makes the same frame take longer; on
 ## the Frame the readings (one a second) showed its top clock while frames were too slow. The GPU
@@ -30,9 +31,8 @@ extends Node
 ## stretch of Godot's main loop over about the last second, from the scripts' processing through
 ## the rendering's sync and draw, updated once a second. main's script (Main.scripts_ms,
 ## main._process alone) is given for this frame (main is processed before this node, its child), and
-## the frame before's way on the main thread: from main's start to the end of its drawing
-## (RenderingServer.frame_post_draw), main's script in it by part (Main.PARTS), and the wait from
-## there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
+## the frame before's way on the main thread by stretch, running, waiting for a core or asleep
+## (frame_phases.gd), its scripts with main's script by part (Main.PARTS).
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
@@ -86,8 +86,8 @@ var desired := 0.0              # the rate last chosen; written after the one be
 var requested := 0.0            # a rate the display has not followed yet
 var request_from := 0.0
 var request_age := 0.0
-var drawn_us := 0               # when the last frame's drawing ended on the main thread
-var before: Array = []          # the frame before: [main's start (us), its script ms, its parts ms]
+var phases: FramePhases         # where the frame before's time went (OpenXR only)
+var before: Array = []          # the frame before: [main's script ms, its parts ms]
 var note := ""                  # what came of the last choice
 var note_failed := false
 var note_left := 0
@@ -100,9 +100,11 @@ var compiled := 0               # pipelines Godot had compiled at the last secon
 
 func _ready() -> void:
 	RenderingServer.viewport_set_measure_render_time(target.get_viewport_rid(), true)
-	RenderingServer.frame_post_draw.connect(_on_drawn)
 	if xr:
 		api = OpenXRAPIExtension.new()
+		if not api.is_running():
+			phases = FramePhases.new()
+			phases.start(api)
 		# a method, not a lambda (main.gd, _ready)
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
@@ -159,7 +161,7 @@ func _process(delta: float) -> void:
 					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, _before_text(),
 					compilations(), main.view_text()])
 		bench.frame_timing(now, period, reported)
-	before = [main.started_us, main.scripts_ms, main.parts_ms.duplicate()]
+	before = [main.scripts_ms, main.parts_ms.duplicate()]
 	t += delta
 	now.drawn += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
@@ -343,27 +345,20 @@ func _second() -> void:
 		_log()
 
 
-func _on_drawn() -> void:
-	drawn_us = Time.get_ticks_usec()
-
-
-## The frame before on the main thread (this file's top): ms from main's start to drawn, main's
-## script in it, and the wait till the next frame's start.
-func before_ms() -> Vector3:
-	if before.is_empty():
-		return Vector3.ZERO
-	return Vector3((drawn_us - before[0]) / 1000.0, before[1], (main.started_us - drawn_us) / 1000.0)
-
-
-## The same with main's script by part, for the line about a late frame.
+## The frame before by stretch (frame_phases.gd), main's script in its scripts by part.
 func _before_text() -> String:
-	if before.is_empty():
-		return "the frame before: none"
-	var parts := []
-	for i in Main.PARTS.size():
-		parts.append("%s %.2f" % [Main.PARTS[i], before[2][i]])
-	return "the frame before: %.2f ms from main's start to drawn (main's script %.2f: %s), then %.2f ms till the next" % [
-			(drawn_us - before[0]) / 1000.0, before[1], ", ".join(parts), (main.started_us - drawn_us) / 1000.0]
+	var mains := ""
+	if not before.is_empty():
+		var parts := []
+		for i in Main.PARTS.size():
+			parts.append("%s %.2f" % [Main.PARTS[i], before[1][i]])
+		mains = "main's %.2f: %s" % [before[0], ", ".join(parts)]
+	return phases.text(mains) if phases else "the frame before: not measured"
+
+
+## main's script in the frame before, ms (0 before there is one).
+func before_script_ms() -> float:
+	return before[0] if not before.is_empty() else 0.0
 
 
 ## Pipelines Godot has compiled so far, of every kind (its PIPELINE_COMPILATIONS_* monitors). A

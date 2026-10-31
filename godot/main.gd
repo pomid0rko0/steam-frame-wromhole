@@ -15,11 +15,12 @@ extends Node3D
 ## The parts: the space's geometry (wormhole_space.gd), the renderer (renderer.gd), the demo's
 ## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
 ## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
-## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd),
-## the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
-## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
-## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
-## hold, and last the toys and the head to the renderer: a toy let go now starts from the hand.
+## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd)
+## and where a frame's time goes (frame_phases.gd), the speed check (bench.gd) and the stereo check
+## scene (check_scene.gd). Each frame (_process): the menu takes its buttons, then the turn, the
+## reset and the gravity view's button, the walk, the free toys (pushed by the hands where they
+## were), the hands and what they hold, and last the toys and the head to the renderer: a toy let
+## go now starts from the hand.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -148,13 +149,17 @@ func _ready() -> void:
 	renderer = Renderer.new(space, scene, xr, xr_view)
 	camera.add_child(renderer)
 	foveation.floor_fov = renderer.floor_fov
-	camera.compositor.compositor_effects = [foveation.split_pass, renderer.floor_fov]
 
 	rate = FrameRate.new()
 	rate.main = self
 	rate.target = target
 	rate.xr = xr as OpenXRInterface
 	add_child(rate)
+	# where a frame's time goes: its mark first, before the floor's own work (frame_phases.gd)
+	var effects: Array[CompositorEffect] = [foveation.split_pass, renderer.floor_fov]
+	if rate.phases:
+		effects.push_front(rate.phases.picture)
+	camera.compositor.compositor_effects = effects
 	bench = Bench.new()
 	bench.main = self
 	menu = Menu.new()
