@@ -1,7 +1,7 @@
 extends SceneTree
 ## Stereo correctness through Godot's real multiview path with a simulated headset (util.gd's,
 ## case 1: canted eyes, asymmetric frusta, a tilted and displaced head). Balls, or
-## turned cubes (the toys' kinds; PLACES), in front of the head are drawn either by our ray tracer
+## turned cubes (the toys' kinds; PLACES), in front of the head are drawn either by our renderer
 ## (mode "ray": placed by walking from the feet along their play-space offset, a cube's axes carried
 ## along) or by Godot's standard renderer (mode "mesh"). In each eye the silhouettes must coincide.
 ##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix ray|mesh case balls|cubes
@@ -78,9 +78,9 @@ func _process(_delta: float) -> bool:
 				col.append(Vector4(1.0, 0.0, 0.0, RADIUS))
 		if mode == "ray":
 			if cubes:
-				main.tracer.set_objects(PackedVector4Array(), PackedVector4Array(), pos, axes, col)
+				main.renderer.set_objects(PackedVector4Array(), PackedVector4Array(), pos, axes, col)
 			else:
-				main.tracer.set_objects(pos, col)
+				main.renderer.set_objects(pos, col)
 	if frames == 14:
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
 		print("saved ", mode, " head ", main.camera.transform.origin, " feet l ", main.foot_l)

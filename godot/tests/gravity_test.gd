@@ -5,10 +5,10 @@ extends SceneTree
 ## 1. the field matches ref/gravity.py (python3 ref/test_gravity.py prints these numbers)
 ## 2. it solves Laplace's equation, (r^2 f')' = 2 f, also on the fillet's table
 ## 3. potential_grad is the gradient of potential (so the field conserves energy)
-## 4. the ray tracer's polynomials (gravity_shader) are the field, and join the cylinder and the
-##    flat part
-## 5. G cycles the views (Tracer.GRAVITY_VIEWS) and their ray tracers; not during the speed check;
-##    with movable balls and cubes each view has a ray tracer that draws them too
+## 4. the shaders' polynomials (gravity_shader) are the field, and join the cylinder and the flat
+##    part
+## 5. G cycles the views (Renderer.GRAVITY_VIEWS): the floor's shader and the arrows; not during the
+##    speed check
 ## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
 ##    throat, the sky untouched; arrows drawn over the view with view 2
 ## With a prefix, saves the pictures it checks.
@@ -122,7 +122,7 @@ func _math_checks(sp: WormholeSpace) -> void:
 	var rr := sp.Rout
 	var join := maxf(maxf(absf(_poly(cg, 0.0) - c.x * cosh(kLc)), absf(_poly(cd, 0.0) - c.z * sinh(kLc))),
 			maxf(absf(_poly(cg, 1.0) - (1.0 + c.w / (rr * rr * rr))), absf(_poly(cd, 1.0) - (1.0 - 2.0 * c.w / (rr * rr * rr)))))
-	U.check("the ray tracer's gravity is the field", perr < 1e-5 and derr < 2e-5 and join < 2e-5,
+	U.check("the shaders' gravity is the field", perr < 1e-5 and derr < 2e-5 and join < 2e-5,
 			"on the fillet f / r within %s g, f' within %s; the joins with the cylinder and the flat part within %s" % [_e(perr), _e(derr), _e(join)])
 
 
@@ -154,27 +154,16 @@ func _control_checks() -> void:
 		main._process(0.0)
 		U.key(KEY_G, false, true)
 		main._process(0.0)
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file()])
-	U.check("G cycles the gravity views", seen == [[1, "wormhole_gravity.gdshader"], [2, "wormhole_arrows.gdshader"], [0, "wormhole.gdshader"]],
-			str(seen))
+		seen.append([main.renderer.gravity_view, main.renderer.sky.shader.resource_path.get_file(), main.renderer.arrows.visible])
+	U.check("G cycles the gravity views", seen == [[1, "sky_floor_gravity.gdshader", false], [2, "sky_floor_gravity.gdshader", true],
+			[0, "sky_floor.gdshader", false]], str(seen))
 	main.hold = true
 	U.key(KEY_G, true, true)
 	main._process(0.0)
 	U.key(KEY_G, false, true)
 	main._process(0.0)
 	main.hold = false
-	U.check("G does nothing during the speed check", main.tracer.gravity_view == 0, "view %d" % main.tracer.gravity_view)
-	# movable balls (the stereo check's): each view has its ray tracer with them
-	var pos := PackedVector4Array([Vector4(8.0, 0.0, 1.0, main.space.h)])
-	var col := PackedVector4Array([Vector4(1.0, 0.0, 0.0, 0.3)])
-	main.tracer.set_objects(pos, col)
-	var seen_b := [main.tracer.material.shader.resource_path.get_file()]
-	for v in [1, 2, 0]:
-		main.set_gravity_view(v)
-		seen_b.append(main.tracer.material.shader.resource_path.get_file())
-	main.tracer.set_objects(PackedVector4Array(), PackedVector4Array())
-	U.check("gravity view and movable balls", seen_b == ["wormhole_balls.gdshader", "wormhole_balls_gravity.gdshader",
-			"wormhole_balls_arrows.gdshader", "wormhole_balls.gdshader"] and main.tracer.material.shader == Tracer.SHADERS[0], str(seen_b))
+	U.check("G does nothing during the speed check", main.renderer.gravity_view == 0, "view %d" % main.renderer.gravity_view)
 
 
 ## The colour in the middle of a picture, averaged over 5 x 5 pixels (between the floor's lines).

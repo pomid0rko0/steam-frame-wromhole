@@ -1,11 +1,11 @@
-"""Does Godot's green overlay sit on the ray-traced floor lines and balls, in each eye?
-Floor: share of ray-traced white line pixels (inside the area where green may be drawn,
+"""Does Godot's green overlay sit on the the renderer's floor lines and balls, in each eye?
+Floor: share of the renderer's white line pixels (inside the area where green may be drawn,
 away from its edges) that green does NOT cover. With green wider than the white lines, this is
 ~0 when aligned; shifting green by 2 px shows how fast it grows.
-Balls: share of green ball-grid pixels outside the ray-traced red silhouette, and the
+Balls: share of green ball-grid pixels outside the the renderer's red silhouette, and the
 difference of their outlines (bounding boxes). The cube (when its pictures are there): the same
-for Godot's green edges and the ray-traced magenta cube. With
---floor-only (the scene without ray-traced balls) only the floor is compared."""
+for Godot's green edges and the the renderer's magenta cube. With
+--floor-only (the scene without the renderer's balls) only the floor is compared."""
 import os, sys, numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -34,7 +34,7 @@ for eye in ('left', 'right'):
         ok &= wl.sum() > 1000 and u0 < 0.01
         continue
     def objects(sil, mode):
-        """Green of a mode against a ray-traced silhouette: (share outside it, regions, the largest
+        """Green of a mode against the renderer's silhouette: (share outside it, regions, the largest
         difference of their outlines in px)."""
         B = green(img(mode, eye))
         out = (B & ~ndimage.binary_dilation(sil, iterations=1)).sum() / max(B.sum(), 1)

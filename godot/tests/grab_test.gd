@@ -5,10 +5,9 @@ extends SceneTree
 ## --fixed-fps 60 under a display (xvfb-run: it looks at the left eye's picture); exit status 1
 ## on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/grab_test.gd
-## 1. each hand is a ball on the curved space, where the controller's grip is; the shader gets
-##    them, the stencil's proxies cover them, and the left eye sees the hand's ball where it is;
-##    a small ball just in front of the eye, toward the corner of a wide frustum, is drawn with
-##    the stencil as over the whole view (the near plane lies farther along a corner ray)
+## 1. each hand is a ball on the curved space, where the controller's grip is; the renderer draws
+##    them, and the left eye sees the hand's ball where it is; a small ball just beyond the near
+##    plane, toward the corner of a wide frustum, is drawn where it is
 ## 2. near a ball the hand turns green; the grip takes the ball, which follows the hand
 ## 3. let go while the hand moves, the ball flies off with the hand's velocity: along a line,
 ##    and along an arc (no lag: the direction right)
@@ -104,14 +103,12 @@ func _clear() -> void:
 	main.toys.world.cubes.clear()
 
 
-## The hands' colours the shader got (the balls of the hands' radius).
+## The hands' colours the renderer got (the balls of the hands' radius).
 func _hand_colors() -> Array:
 	var out := []
-	var col: PackedVector4Array = main.tracer.material.get_shader_parameter("wh_ballCol")
-	var n: int = main.tracer.material.get_shader_parameter("wh_nBall")
-	for k in n:
-		if absf(col[k].w - Hands.RADIUS) < 1e-6:
-			out.append(Color(col[k].x, col[k].y, col[k].z))
+	for c in main.renderer.drawn_balls():
+		if absf(c.w - Hands.RADIUS) < 1e-6:
+			out.append(Color(c.x, c.y, c.z))
 	return out
 
 
@@ -158,16 +155,14 @@ func _hands() -> void:
 		ok = cr.distance_to(_chart(pr)) < 1e-4 and cl.distance_to(_chart(pl)) < 1e-4
 		detail = "right at %s (%s), left at %s (%s)" % [cr, _chart(pr), cl, _chart(pl)]
 	U.check("each hand where its grip is, on the curved space", ok, detail)
-	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
-	var proxies: int = main.tracer.proxy_spheres(main.foot_l).size()
-	U.check("the shader draws both hands, the stencil's proxies cover them", nb == 2 and proxies == 3,
-			"shader balls %d (2), proxies %d (the shell and 2 hands)" % [nb, proxies])
+	var nb: int = main.renderer.drawn_balls().size()
+	U.check("the renderer draws both hands", nb == 2, "balls drawn %d (2)" % nb)
 	# the left eye's picture with the right hand and without it
 	var with_hand := _left_eye()
 	_pose(right, pr, Basis.IDENTITY, false)
 	await _step(3)
-	U.check("a hand that loses its tracking is not drawn", main.tracer.material.get_shader_parameter("wh_nBall") == 1,
-			"shader balls %d" % main.tracer.material.get_shader_parameter("wh_nBall"))
+	U.check("a hand that loses its tracking is not drawn", main.renderer.drawn_balls().size() == 1,
+			"balls drawn %d" % main.renderer.drawn_balls().size())
 	var without := _left_eye()
 	var sum := Vector2.ZERO
 	var count := 0
@@ -197,10 +192,10 @@ func _hands() -> void:
 
 
 # 1
-## A frustum wider than this test's (tangents 1.8, 61 degrees, its corner 69 degrees off the axis)
-## and a ball of radius 5 mm 3 cm in front of the left eye toward its corner: along the ray through
-## the ball the near plane lies 12.5 cm from the eye, beyond the 11.7 cm the ball's proxy would reach
-## with the fixed margin.
+## A frustum wider than this test's (tangents 1.8, 61 degrees) and a ball of radius 5 mm 6 cm in
+## front of the left eye, well off the axis toward a corner (tangents 1.08): the near plane lies
+## Main.NEAR along the axis, 1.8 times that along the ray to it, 3.6 cm. Its picture is a disc of
+## about 6 pixels' radius, whole inside the picture.
 func _near_eye() -> void:
 	_clear()
 	var pr := Vector3(0.3, 0.8, 0.3)          # the hands low and behind: out of view
@@ -210,28 +205,26 @@ func _near_eye() -> void:
 	var wide := Vector4(-1.8, 1.8, -1.8, 1.8)
 	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, wide)
 	var eye := HEAD - Vector3(0.5 * IPD, 0.0, 0.0)
-	var dir := Vector3(0.9 * wide.x, 0.9 * wide.w, -1.0).normalized()   # toward the upper left corner
+	var dir := Vector3(0.6 * wide.x, 0.6 * wide.w, -1.0).normalized()   # toward the upper left corner
 	var r := 0.005
-	var ball := _ball_at(_chart(eye + dir * 0.03), r)
+	var ball := _ball_at(_chart(eye + dir * 0.06), r)
+	ball.color = Color(1.0, 0.0, 0.0)
 	ball.held = &"test"                      # kinematic: it stays where it is put
 	await _step(3)
-	var split := _left_eye()
-	main.tracer.toy_mode = Tracer.WHOLE
-	await _step(3)
-	var whole := _left_eye()
-	main.tracer.toy_mode = Tracer.SPLIT
-	var differ := 0
+	var img := _left_eye()
+	var sum := Vector2.ZERO
 	var red := 0
 	for y in SIZE:
 		for x in SIZE:
-			var a := split.get_pixel(x, y)
-			var b := whole.get_pixel(x, y)
-			if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > 0.1:
-				differ += 1
+			var b := img.get_pixel(x, y)
 			if b.r > 0.5 and b.g < 0.35:
 				red += 1
-	U.check("a small ball just in front of the eye, toward a wide frustum's corner: drawn with the stencil as over the whole view",
-			red > 0 and differ == 0, "%d pixels differ; the ball covers %d" % [differ, red])
+				sum += Vector2(x + 0.5, y + 0.5)
+	# where the eye sees it: its direction through the frustum (each side spans tangents -1.8..1.8)
+	var want := Vector2((dir.x / -dir.z / wide.y + 1.0) * 0.5 * SIZE, (1.0 - dir.y / -dir.z / wide.w) * 0.5 * SIZE)
+	var got := sum / maxf(red, 1)
+	U.check("a small ball just beyond the near plane, toward a wide frustum's corner, is drawn where it is",
+			red > 20 and got.distance_to(want) < 1.5, "%d red pixels about %s, expected about %s" % [red, got, want])
 	_clear()
 	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, FRUSTUM)
 	_pose(right, Vector3(0.15, 1.45, -0.4))   # where _hands left them
@@ -463,9 +456,9 @@ func _grip_and_tracking() -> void:
 	await _step(1)
 	var at := _at(ball)
 	await _step(10)
-	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
+	var nb: int = main.renderer.drawn_balls().size()
 	U.check("a hand that loses its tracking leaves its ball where it was", ball.held == &"right_hand"
-			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, shader balls %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
+			and _at(ball).distance_to(at) < 1e-6 and nb == 2, "moved %.6f m, balls drawn %d (the ball and the left hand)" % [_at(ball).distance_to(at), nb])
 	# at rest there: a ball set on it is not flung with the velocity the hand last had
 	var other := _ball_at(at + Vector3(0.0, 0.0, 0.39), 0.2)
 	await _step(3)
@@ -493,10 +486,10 @@ func _hold_and_reset() -> void:
 	await _step(2)
 	right.set_input(&"by_button", false)
 	left.set_input(&"ax_button", false)
-	var nb: int = main.tracer.material.get_shader_parameter("wh_nBall")
+	var nb: int = main.renderer.drawn_balls().size()
 	U.check("during the speed check: no hands drawn, no grab, B and X make nothing",
 			nb == 1 and ball.held == &"" and main.toys.world.balls.size() == 1 and main.toys.world.cubes.is_empty(),
-			"shader balls %d, held by '%s', %d balls, %d cubes" % [nb, ball.held, main.toys.world.balls.size(), main.toys.world.cubes.size()])
+			"balls drawn %d, held by '%s', %d balls, %d cubes" % [nb, ball.held, main.toys.world.balls.size(), main.toys.world.cubes.size()])
 	main.hold = false
 	# the menu open: B, X and the D-pad down are its, and A; B closes it and makes no ball
 	_pose(left, _play(Vector3(9.5, -0.6, 0.45)))
@@ -564,8 +557,8 @@ func _throat() -> void:
 		return
 	# hand and head: the geodesic between them is as long as the hand is from the head in the room
 	var h := _hand(1)
-	var head_l: float = main.tracer.material.get_shader_parameter("head_l")
-	var head_n: Vector3 = main.tracer.material.get_shader_parameter("head_n")
+	var head_l: float = main.renderer.head_l
+	var head_n: Vector3 = main.renderer.head_n
 	var gap := sp.toward(head_l, head_n, h.ball.l, h.ball.n).length()
 	U.check("in the throat the hand is the room's distance from the head along the space", absf(gap - (p - HEAD).length()) < 1e-3,
 			"%.4f m (%.4f)" % [gap, (p - HEAD).length()])

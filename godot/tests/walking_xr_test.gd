@@ -153,9 +153,9 @@ func _process(_delta: float) -> bool:
 			left.set_input(&"primary", Vector2.ZERO)
 		327:
 			U.check("the stick right on the gravity row: the floor chosen, not yet in effect", main.menu.picked() == "grav"
-					and main.tracer.gravity_view == 0 and main.menu.pending == 1, "row %s, view %d, pending %d" % [main.menu.picked(), main.tracer.gravity_view, main.menu.pending])
+					and main.renderer.gravity_view == 0 and main.menu.pending == 1, "row %s, view %d, pending %d" % [main.menu.picked(), main.renderer.gravity_view, main.menu.pending])
 		360:
-			U.check("... in effect half a second later", main.tracer.gravity_view == 1 and main.menu.pending == -1, "view %d, pending %d" % [main.tracer.gravity_view, main.menu.pending])
+			U.check("... in effect half a second later", main.renderer.gravity_view == 1 and main.menu.pending == -1, "view %d, pending %d" % [main.renderer.gravity_view, main.menu.pending])
 			right.set_input(&"by_button", true)
 		362:
 			right.set_input(&"by_button", false)
@@ -190,8 +190,8 @@ func _process(_delta: float) -> bool:
 		412:
 			right.set_input(&"ax_button", false)
 		414:
-			U.check("the D-pad left, then A: gravity off at once, the menu stays", main.tracer.gravity_view == 0 and main.menu.open
-					and main.menu.pending == -1, "view %d, open %s" % [main.tracer.gravity_view, main.menu.open])
+			U.check("the D-pad left, then A: gravity off at once, the menu stays", main.renderer.gravity_view == 0 and main.menu.open
+					and main.menu.pending == -1, "view %d, open %s" % [main.renderer.gravity_view, main.menu.open])
 			right.set_input(&"menu_button", true)
 		416:
 			right.set_input(&"menu_button", false)
@@ -201,7 +201,7 @@ func _process(_delta: float) -> bool:
 			left.set_input([&"dpad_up", &"dpad_left", &"dpad_right"][(frames - 420) / 2], true)
 		421, 423, 425:
 			left.set_input([&"dpad_up", &"dpad_left", &"dpad_right"][(frames - 421) / 2], false)
-			grav_frame.append(main.tracer.gravity_view)
+			grav_frame.append(main.renderer.gravity_view)
 		426:
 			U.check("menu closed, the D-pad up, left, right show gravity: the floor, the arrows, off", grav_frame == [1, 2, 0], "views %s" % [grav_frame])
 			left.profile = U.GENERIC
@@ -224,7 +224,7 @@ func _process(_delta: float) -> bool:
 			left.set_input(&"by_button", true)
 		461, 463, 465:
 			left.set_input(&"by_button", false)
-			gravity_seen.append(main.tracer.gravity_view)
+			gravity_seen.append(main.renderer.gravity_view)
 		466:
 			U.check("left Y shows gravity: the floor, the arrows, off", gravity_seen == [1, 2, 0], "views %s" % [gravity_seen])
 			U.finish(self, hmd, [left, right])

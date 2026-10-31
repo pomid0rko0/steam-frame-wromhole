@@ -1,5 +1,5 @@
 shader_type spatial;
-// Stereo check, drawn by Godot's standard renderer: green lines exactly where the ray-traced
+// Stereo check, drawn by Godot's standard renderer: green lines exactly where the wormhole's
 // floor of universe A has its white lines. The mesh lives in chart
 // coordinates (its node maps chart -> play space). If each eye's ray math is right, the green
 // lines cover the white ones; if not, the viewer sees two grids.

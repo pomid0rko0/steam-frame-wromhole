@@ -1,6 +1,6 @@
 extends SceneTree
 ## Stereo correctness against Godot itself, through the real multiview path.
-## A sphere in front of the viewer (flat universe A) is drawn either by our ray tracer
+## A sphere in front of the viewer (flat universe A) is drawn either by our renderer
 ## (mode "ray": a ball in the shader) or by Godot's rasterizer (mode "mesh": a plain
 ## SphereMesh at the same play-space position). Godot's own rendering is correct stereo
 ## by definition, so in each eye the two silhouettes must coincide.
@@ -41,7 +41,7 @@ func _process(_delta: float) -> bool:
 		# (cy, cz, cx - START_POS.x).
 		if mode == "ray":
 			var p := Vector4(CHART.x, CHART.y, CHART.z, main.space.h)     # point of R^4 in sheet A
-			main.tracer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
+			main.renderer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))
 			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)

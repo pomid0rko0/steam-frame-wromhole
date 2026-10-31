@@ -2,7 +2,7 @@ extends RefCounted
 ## What the test scripts share. A test's checks print "PASS <name>  <detail>" or "FAIL <name>
 ## <detail>", and it ends with "FAILURES: n" and exit status 1 on any (tools/test.sh shows the FAIL
 ## lines). Also: keys, the simulated headset and controllers, both eyes' pictures, Godot's own red
-## geometry for the stereo tests to compare the ray tracer with.
+## geometry for the stereo tests to compare the renderer with.
 ## In a test script main._ready has not run during _initialize (set main's fields there) and has
 ## by the first _process; each frame the test's _process runs before main's.
 
@@ -162,7 +162,7 @@ static func save_eyes(main: Main, prefix: String, mode: String) -> void:
 		img.save_png(prefix + "_" + mode + ("_left.png" if i == 0 else "_right.png"))
 
 
-## Godot's own geometry in flat red, drawn over the ray tracer (after its opaque quad), for the
+## Godot's own geometry in flat red, drawn over the renderer's picture (after its opaque things), for the
 ## stereo tests to compare silhouettes.
 static func red(mesh: Mesh) -> MeshInstance3D:
 	var m := MeshInstance3D.new()

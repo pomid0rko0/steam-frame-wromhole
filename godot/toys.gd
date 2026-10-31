@@ -116,8 +116,8 @@ func cube_in_throat(l: float, phi: float, half: float, color: Color) -> BallWorl
 
 
 ## The balls and cubes, and the hands' balls (hands: [centre, colour with the radius]), to the ray
-## tracer (Tracer.set_objects).
-func draw(tracer: Tracer, hands: Array) -> void:
+## renderer (Renderer.set_objects).
+func draw(renderer: Renderer, hands: Array) -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
 	for b in world.balls:
@@ -135,4 +135,4 @@ func draw(tracer: Tracer, hands: Array) -> void:
 		for k in 4:
 			axes.append(box[1 + k] / c.half)
 		ccol.append(Vector4(c.color.r, c.color.g, c.color.b, c.half))
-	tracer.set_objects(pos, col, cpos, axes, ccol)
+	renderer.set_objects(pos, col, cpos, axes, ccol)
