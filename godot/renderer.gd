@@ -76,6 +76,8 @@ var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also
 var toy_count := 0              # balls and cubes drawn (set_objects)
 var ball_col := PackedVector4Array()   # the balls' (colour, radius) as set_objects got them
 var bodies: Array = []          # what set_objects drew: [kind ("ball", "cube"), centre (R^4), radius or half size]
+var scene_shown := true         # the scene's static objects (show_scene)
+var bodies_shown := true        # every body (show_bodies)
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -253,8 +255,18 @@ func set_gravity_view(view: int) -> void:
 
 ## The scene's static objects shown or not (the stereo check scene takes them away).
 func show_scene(on: bool) -> void:
+	scene_shown = on
+	show_bodies(bodies_shown)
+
+
+## Every body shown or not: the toys, the hands' balls and the scene's objects (if shown); the speed
+## check times the frame without them.
+func show_bodies(on: bool) -> void:
+	bodies_shown = on
+	balls.visible = on
+	cubes.visible = on
 	for s in statics:
-		s.visible = on
+		s.visible = on and scene_shown
 
 
 ## Eye v's frustum by the runtime's projection: the tangents of its sides' angles off the view

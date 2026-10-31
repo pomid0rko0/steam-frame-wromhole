@@ -1,7 +1,8 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
-## way of VARIANTS (the cube before the eyes drawn in its own), logs a line per place, and gives
-## back the foveation, the cube and where the viewer stood. The menu has its row.
+## way of VARIANTS (the cube before the eyes drawn in its own, the parts of the frame left out in
+## theirs), logs a line per place, and gives back the foveation, the cube, every part and where the
+## viewer stood. The menu has its row.
 ##   godot --path . -s res://tests/bench_test.gd
 
 const U := preload("res://tests/util.gd")
@@ -52,6 +53,9 @@ func _process(_d: float) -> bool:
 			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != ((v.foveation > 0 and v.foveation <= Foveation.LEVELS) or v.split):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.split_pass.enabled])
 				started = false
+			if _parts() != [(v.drop & Bench.NO_FLOOR) == 0, (v.drop & (Bench.KEEP_TEXTURE | Bench.NO_FLOOR)) == 0, (v.drop & Bench.NO_BODIES) == 0]:
+				check("the segment's parts of the frame", false, "%s for %d" % [_parts(), v.drop])
+				started = false
 		if not b.running:
 			check("finished", true, "%d frames" % frames)
 			var all_timed := true
@@ -65,6 +69,7 @@ func _process(_d: float) -> bool:
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("no cube before the eyes after it", not b.near and main.renderer.cubes.multimesh.visible_instance_count == main.toys.world.cubes.size())
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
+			check("every part of the frame drawn again", _parts() == [true, true, true], _parts())
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)
 			return true
@@ -73,3 +78,10 @@ func _process(_d: float) -> bool:
 		U.finish(self)
 		return true
 	return false
+
+
+## What the frame draws: [the floor's quad, its texture worked out, the bodies (all three meshes)].
+func _parts() -> Array:
+	var r: Renderer = main.renderer
+	return [r.floor_quad.visible, not r.floor_fov.frozen, r.balls.visible and r.cubes.visible and r.statics.all(
+			func(s: MeshInstance3D) -> bool: return s.visible)]

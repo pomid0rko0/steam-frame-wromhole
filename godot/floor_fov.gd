@@ -20,6 +20,7 @@ const STRENGTH := {4: 2.0, 5: 4.0}
 const GAZE_REACH := 0.9             # the warp's middle kept this far inside the picture (clip space)
 
 var level := 0                      # 0: off
+var frozen := false                 # the texture is not worked out again (the speed check times the rest)
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
 var floor_mats: Array[ShaderMaterial] = []   # the floor's materials, which sample the texture
 var fov_tex := Texture2DArrayRD.new()
@@ -185,7 +186,7 @@ func _uniform_set(kind: String) -> RID:
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or not _tex.is_valid() or not _tab.is_valid():
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or frozen or not _tex.is_valid() or not _tab.is_valid():
 		return
 	if not _pipes.has("floor"):
 		return
