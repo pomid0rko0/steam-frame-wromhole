@@ -10,8 +10,9 @@
 //                           then the normal) over the half size, then dot(centre, axis) for the four; a
 //                           point P is inside when |dot(P, axis) - dot(centre, axis)| < 1 for all four
 //   wh_cubeCol              (rgb, half size)
-//   wh_bound                bounding spheres of the balls in A, in B, of the cubes in A, in B (centre,
-//                           radius; < 0: none): a flat universe's ray that misses one tests none of them
+//   wh_bound                boxes round the balls in A, in B, the cubes in A, in B, in that universe's
+//                           chart, along its axes: (low corner, 1; 0: none), (high corner, -) each; a
+//                           flat universe's ray that misses one tests none of them
 //   wh_pix                  a pixel's angle: the soft edges of the cubes' edge lines and of the arrows
 //   wh_tab...               the fillet polynomials by impact parameter (WormholeSpace.fillet_table)
 //   grav_*                  the gravity view's constants (WormholeSpace.gravity_shader)
@@ -576,8 +577,10 @@ int wh_curved(float ls, vec3 ns, float vl, vec3 w, vec2 eye,
     //    bounds the samples (a ray looking sideways in the throat winds round it slowly in l, and
     //    with r and w alone a ball in the throat would be within reach for metres of its path); on a
     //    fillet psi grows along the piece too, and the window's ends are solved for z.
-    // There the path is sampled at steps of WH_STEP of the object's radius or half size (at most
-    // WH_SAMPLES of them a piece, longer steps past that); between two samples
+    // There the path is sampled in as many steps as WH_STEP of the object's radius or half size goes
+    // into the piece's length times the window's share of it (of z on a fillet), rounded up, at most
+    // WH_SAMPLES: evenly along the cylinder, evenly in z along a fillet (there a step covers more
+    // length where the path covers more per z). Between two samples
     // the ray is taken as the chord in R^4: where the chord enters the object, the path's point at
     // that fraction (one more sample) is the hit, if it lies in the object or within the chord's
     // sag of it (step^2 / 8 min(R, rho0), plus 0.1 mm). So a ray that only
@@ -920,7 +923,7 @@ void wh_enter(float side, vec3 x, vec3 d, out float l, out vec3 n, out float vl,
 // ---------------------------------------------------------------- flat scene
 // Each static object is tested in turn and writes its normal and colour when it is the nearest so
 // far; world B's boxes are skipped by rays that go up above all of them. The movable balls and
-// cubes: only those of this universe, after their bounding spheres (wh_bound).
+// cubes: only those of this universe, after the boxes round them (wh_bound).
 struct WhHit {
     float t;
     int kind;      // 0 none, 1 floor, 2 object, 3 shell, 4 ball, 5 cube
@@ -1005,17 +1008,18 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     float sheet = side * wh_h;
     float bt = h.t;
     int bi = -1;
-    // the bounding spheres of this universe's balls and cubes: a ray that misses one, or meets
-    // it beyond what it already hit, tests none of them. The ray meets a sphere ahead (bq < 0)
-    // from outside (cq > 0) at -bq - sqrt(bq^2 - cq), before t when -bq - t < sqrt(bq^2 - cq):
-    // no square root for those it misses
-    vec4 bb = wh_bound[side > 0.0 ? 0 : 1];
-    vec3 ob = x - wh_M(side, bb.xyz);
-    float bqb = dot(ob, d);
-    float cqb = dot(ob, ob) - bb.w * bb.w;
-    float dsb = bqb * bqb - cqb;
-    float eb = -bqb - bt;
-    bool nearB = bb.w > 0.0 && (cqb <= 0.0 || (bqb < 0.0 && dsb >= 0.0 && (eb < 0.0 || eb * eb < dsb)));
+    // the boxes round this universe's balls and cubes: a ray that misses one, or meets it beyond
+    // what it already hit, tests none of them. Toys lie on the floor, so most of the view (the sky,
+    // the floor beyond them) misses a box that a sphere round them, as wide as it is high, would not
+    vec3 inv = 1.0 / d;
+    int g = side > 0.0 ? 0 : 2;          // the balls' box; the cubes' 4 on
+    vec3 tl = (wh_bound[g].xyz - x) * inv;
+    vec3 th = (wh_bound[g + 1].xyz - x) * inv;
+    vec3 tn = min(tl, th);
+    vec3 tf = max(tl, th);
+    float tin = max(max(tn.x, tn.y), tn.z);
+    float tout = min(min(tf.x, tf.y), tf.z);
+    bool nearB = wh_bound[g].w > 0.0 && tin <= tout && tout > 0.0 && tin < bt;
     // this universe's balls only (Tracer.set_objects sorts them: A's first, B's last), each as the
     // sphere its sheet cuts from it in this chart (wh_fball: centre, radius squared)
     for (int i = side > 0.0 ? 0 : wh_bIdx.z; i < (nearB ? (side > 0.0 ? wh_bIdx.y : wh_nBall) : 0); i++) {
@@ -1046,13 +1050,13 @@ WhHit wh_traceFlat(float side, vec3 x, vec3 d, bool withShell) {
     vec3 mx = wh_M(side, x);
     int bf = 0;                    // the nearest cube's entry face: axis k + 1, negative for -axis
     bi = -1;
-    bb = wh_bound[side > 0.0 ? 2 : 3];
-    ob = x - wh_M(side, bb.xyz);
-    bqb = dot(ob, d);
-    cqb = dot(ob, ob) - bb.w * bb.w;
-    dsb = bqb * bqb - cqb;
-    eb = -bqb - bt;
-    bool nearC = bb.w > 0.0 && (cqb <= 0.0 || (bqb < 0.0 && dsb >= 0.0 && (eb < 0.0 || eb * eb < dsb)));
+    tl = (wh_bound[g + 4].xyz - x) * inv;
+    th = (wh_bound[g + 5].xyz - x) * inv;
+    tn = min(tl, th);
+    tf = max(tl, th);
+    tin = max(max(tn.x, tn.y), tn.z);
+    tout = min(min(tf.x, tf.y), tf.z);
+    bool nearC = wh_bound[g + 4].w > 0.0 && tin <= tout && tout > 0.0 && tin < bt;
     for (int i = side > 0.0 ? 0 : wh_cIdx.z; i < (nearC ? (side > 0.0 ? wh_cIdx.y : wh_nCube) : 0); i++) {
         vec4 X = vec4(mx, sheet) - wh_cube[i];
         // first the box's bounding sphere in R^4 (radius: half diagonal, 2 half sizes)

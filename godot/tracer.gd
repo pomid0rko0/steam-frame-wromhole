@@ -288,31 +288,23 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		for i in range(lo, hi):
 			var C: Vector4 = cp[i]
 			toy_spheres[k].append(Vector4(C.x if k == 0 else -C.x, C.y, C.z, 2.0 * cc[i].w))
-	# the bounding spheres per flat universe: balls a sheet w = side h cuts, cubes the same (half
-	# diagonal 2 half); in the order balls A, balls B, cubes A, cubes B
+	# the boxes per flat universe, in its chart: round the spheres its sheet w = side h cuts from the
+	# balls (fb), round the cubes' (centre, half diagonal: 2 half sizes) that reach it; in the order
+	# balls A, balls B, cubes A, cubes B
 	var bounds := PackedVector4Array()
 	for group in 2:
 		for side in [1.0, -1.0]:
 			var lo := Vector3(INF, INF, INF)
 			var hi := -lo
-			var pts := []
-			var count := n if group == 0 else nc
-			for i in count:
-				var C: Vector4 = pos[i] if group == 0 else cpos[i]
-				var rr: float = col[i].w if group == 0 else 2.0 * ccol[i].w
-				if absf(C.w - side * space.h) < rr:
-					var c3 := Vector3(C.x, C.y, C.z)
-					lo = lo.min(c3)
-					hi = hi.max(c3)
-					pts.append([c3, rr])
-			if pts.is_empty():
-				bounds.append(Vector4(0.0, 0.0, 0.0, -1.0))
-				continue
-			var mid := 0.5 * (lo + hi)
-			var rad := 0.0
-			for q in pts:
-				rad = maxf(rad, mid.distance_to(q[0]) + q[1])
-			bounds.append(Vector4(mid.x, mid.y, mid.z, rad))
+			for i in (n if group == 0 else nc):
+				var C: Vector4 = p[i] if group == 0 else cp[i]
+				var rr: float = sqrt(maxf(fb[i].w, 0.0)) if group == 0 else 2.0 * cc[i].w
+				if (fb[i].w > 0.0 if group == 0 else absf(C.w - side * space.h) < rr) and signf(C.w) == side:
+					var c3 := Vector3(fb[i].x, fb[i].y, fb[i].z) if group == 0 else Vector3(side * C.x, C.y, C.z)
+					lo = lo.min(c3 - Vector3(rr, rr, rr))
+					hi = hi.max(c3 + Vector3(rr, rr, rr))
+			bounds.append(Vector4(lo.x, lo.y, lo.z, 1.0) if lo.x <= hi.x else Vector4.ZERO)
+			bounds.append(Vector4(hi.x, hi.y, hi.z, 0.0) if lo.x <= hi.x else Vector4.ZERO)
 	material.set_shader_parameter("wh_bound", bounds)
 
 
@@ -380,7 +372,7 @@ func _fits_shader() -> bool:
 	var coefs := WormholeSpace.GRAV_DEG + 1
 	var want := ["WH_TABN = %d.0;" % WormholeSpace.TABLE_N, "WH_MAXB = %d;" % MAX_BALLS]
 	var arrays := {"grav_g": coefs / 4, "grav_d": coefs / 4, "wh_ball": MAX_BALLS, "wh_ballCol": MAX_BALLS,
-			"wh_fball": MAX_BALLS, "wh_cube": MAX_CUBES, "wh_cubeE": 5 * MAX_CUBES, "wh_cubeCol": MAX_CUBES,
+			"wh_fball": MAX_BALLS, "wh_cube": MAX_CUBES, "wh_cubeE": 5 * MAX_CUBES, "wh_cubeCol": MAX_CUBES, "wh_bound": 8,
 			"wh_sph": scene["spheres_A"].size() + scene["spheres_B"].size(),
 			"wh_pil": scene["pillars_A"].size(), "wh_box": scene["boxes_B"].size()}
 	for u: String in arrays:

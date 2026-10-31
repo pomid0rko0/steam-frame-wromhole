@@ -47,7 +47,7 @@ uniform vec4 wh_cube[6];
 uniform vec4 wh_cubeE[30];
 uniform vec4 wh_cubeCol[6];
 uniform int wh_nCube = 0;
-uniform vec4 wh_bound[4];
+uniform vec4 wh_bound[8];
 uniform ivec4 wh_bIdx;
 uniform ivec4 wh_cIdx;
 uniform vec4 wh_fball[12];
