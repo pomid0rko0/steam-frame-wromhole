@@ -65,12 +65,14 @@ func _process(_delta: float) -> bool:
 			main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
 		if gravity > 0:
 			main.set_gravity_view(gravity)
-		if fov:
-			# SteamVR's level in even cases, our own (floor_fov.gd) in odd ones
-			main.foveation.set_level(Foveation.LEVELS if case % 2 == 0 else 4)
 		CheckScene.show_only(main.overlay, SHOWN[mode])
 		if mode == "domain":
 			main.overlay.get_node("Grid").material_override.set_shader_parameter("solid", true)
+	if frames == 6 and fov:
+		# after main's first frames, which set each kind of foveation in turn and then the menu's:
+		# SteamVR's level in even cases, our own (floor_fov.gd) in odd ones
+		main.foveation.set_level(Foveation.LEVELS if case % 2 == 0 else 4)
+		print("foveation ", main.foveation.level)
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = HEAD_STEP * hmd.head
 	if case == 3:
