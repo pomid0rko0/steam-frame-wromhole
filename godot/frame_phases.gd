@@ -30,7 +30,7 @@ extends OpenXRExtensionWrapper
 ##
 ## OpenXR takes a frame info extension only while its session is not running (start, from
 ## FrameRate._ready, before the first frame) and keeps a pointer to it till it shuts down: never
-## freed.
+## freed. stop, as the scene goes, lets go of all it holds.
 
 const PHASES := ["SteamVR's wait", "scripts", "to the picture", "drawing and the GPU", "handing over", "between"]
 const SCHEDSTAT := "/proc/thread-self/schedstat"
@@ -64,7 +64,21 @@ func start(api: OpenXRAPIExtension) -> void:
 	print("phases: measured; %s %s" % [SCHEDSTAT, "read" if _stat else "missing: no running, waiting, asleep"])
 
 
+## The scene goes: let go of the signals, the mark and the file; OpenXR still calls in, to no effect.
+func stop() -> void:
+	if not on:
+		return
+	on = false
+	picture = null
+	_stat = null
+	(Engine.get_main_loop() as SceneTree).process_frame.disconnect(_scripts)
+	RenderingServer.frame_pre_draw.disconnect(_drawing)
+	RenderingServer.frame_post_draw.disconnect(_drawn)
+
+
 func _set_frame_wait_info_and_get_next_pointer(_next_pointer: int) -> int:
+	if not on:
+		return 0
 	var at := PHASES.size() * VALUES
 	if _cur[0] > 0:
 		for i in at:
@@ -77,7 +91,8 @@ func _set_frame_wait_info_and_get_next_pointer(_next_pointer: int) -> int:
 
 
 func _set_frame_end_info_and_get_next_pointer(_next_pointer: int) -> int:
-	_point(_cur, 4)
+	if on:
+		_point(_cur, 4)
 	return 0
 
 

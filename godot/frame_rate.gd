@@ -111,10 +111,10 @@ func _ready() -> void:
 		find_app_setting()
 
 
-## phases outlives the scene (frame_phases.gd): its mark goes with the camera's compositor.
+## phases outlives the scene (frame_phases.gd): it lets go of what it holds.
 func _exit_tree() -> void:
 	if phases:
-		phases.picture = null
+		phases.stop()
 
 
 ## The rate choices: SteamVR's per-app ones on the Frame, else what the runtime offers.
