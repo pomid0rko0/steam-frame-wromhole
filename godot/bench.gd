@@ -14,8 +14,10 @@ extends Node
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), with the feet held there,
 ## and the frame is timed on the GPU (the median frame of each segment), this build's renderer each
 ## way VARIANTS lists: without foveation, the split pass alone (what foveation's pass costs without
-## a map), each foveation, and with a cube held right before the eyes (NEAR_CUBE: a body near the
-## eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## a map), each foveation, with a cube held right before the eyes (NEAR_CUBE: a body near the
+## eyes with the world round it), and with our own narrow foveation less parts of the frame (DROPS:
+## the floor's texture kept as it was, no bodies, no floor, neither): what each part costs at each
+## place, the frame's own (clearing, the tone mapping) what is left; in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
@@ -56,11 +58,19 @@ const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
+# the parts of the frame a variant leaves out (DROPS): the floor's texture is not worked out again
+# (floor_fov.gd: frozen), no bodies (Renderer.show_bodies), no floor (its quad nor its texture)
+const KEEP_TEXTURE := 1
+const NO_BODIES := 2
+const NO_FLOOR := 4
 # the comparison's variants: [label, foveation level (Foveation.set_level), split, the cube before
-# the eyes]; the first is the reference the others are compared with
-const VARIANTS := [["plain", 0, false, false], ["passes split", 0, true, false],
-	["SteamVR low", 1, false, false], ["SteamVR high", 3, false, false],
-	["own wide", 4, false, false], ["own narrow", 5, false, false], ["a cube at the eyes", 0, false, true]]
+# the eyes, the parts left out]; the first is the reference the others are compared with
+const VARIANTS := [["plain", 0, false, false, 0], ["passes split", 0, true, false, 0],
+	["SteamVR low", 1, false, false, 0], ["SteamVR high", 3, false, false, 0],
+	["own wide", 4, false, false, 0], ["own narrow", 5, false, false, 0], ["a cube at the eyes", 0, false, true, 0],
+	["own narrow, the floor's texture kept", 5, false, false, KEEP_TEXTURE],
+	["own narrow, no bodies", 5, false, false, NO_BODIES], ["own narrow, no floor", 5, false, false, NO_FLOOR],
+	["own narrow, neither", 5, false, false, NO_FLOOR | NO_BODIES]]
 # the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
@@ -173,7 +183,7 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
+		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4]))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -266,12 +276,21 @@ func _prepare() -> void:
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's foveation and cube.
+## A variant's foveation, cube and parts.
 func _use(v: Setup) -> void:
 	near = v.near
 	var fov: Foveation = main.foveation
 	if fov.level != v.foveation or fov.split_pass.enabled != (v.foveation > 0 or v.split):
 		fov.set_level(v.foveation, v.split)
+	_parts(v.drop)
+
+
+## The parts of the frame drawn: all but drop's (KEEP_TEXTURE...).
+func _parts(drop: int) -> void:
+	var r: Renderer = main.renderer
+	r.show_bodies((drop & NO_BODIES) == 0)
+	r.floor_quad.visible = (drop & NO_FLOOR) == 0
+	r.floor_fov.frozen = (drop & (KEEP_TEXTURE | NO_FLOOR)) != 0
 
 
 func _segment() -> void:
@@ -337,11 +356,15 @@ func _compared() -> void:
 	var pcts := []
 	for v in range(1, variants.size()):
 		summary.append("%s %.3f" % [variants[v].label, _ratio(v, 0)])
-		if variants[v].foveation > 0:
+		if variants[v].foveation > 0 and variants[v].drop == 0:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
 	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс" % [_worst(0), _worst(variants.size() - 1)]]
+	var cube := 0
+	for v in variants.size():
+		if variants[v].near:
+			cube = v
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс" % [_worst(0), _worst(cube)]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -509,10 +532,11 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
-## As it runs: the foveation chosen in the menu, no cube.
+## As it runs: the foveation chosen in the menu, no cube, every part drawn.
 func _restore() -> void:
 	near = false
 	main.foveation.set_level(menu.foveation)
+	_parts(0)
 
 
 ## Variant v's slowest place, ms.
@@ -538,12 +562,14 @@ class Setup:
 	var foveation: int              # Foveation.set_level's level
 	var split: bool                 # the split pass without a density map
 	var near: bool                  # the cube before the eyes
+	var drop: int                   # the parts of the frame left out (KEEP_TEXTURE...)
 
-	func _init(p_label: String, p_foveation: int, p_split: bool, p_near: bool) -> void:
+	func _init(p_label: String, p_foveation: int, p_split: bool, p_near: bool, p_drop := 0) -> void:
 		label = p_label
 		foveation = p_foveation
 		split = p_split
 		near = p_near
+		drop = p_drop
 
 
 ## A step of the tour: l and yaw (degrees to the right) from x to y over secs, pitch with a nod of
