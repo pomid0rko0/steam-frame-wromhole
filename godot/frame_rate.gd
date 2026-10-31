@@ -111,6 +111,12 @@ func _ready() -> void:
 		find_app_setting()
 
 
+## phases outlives the scene (frame_phases.gd): its mark goes with the camera's compositor.
+func _exit_tree() -> void:
+	if phases:
+		phases.picture = null
+
+
 ## The rate choices: SteamVR's per-app ones on the Frame, else what the runtime offers.
 func options() -> Array:
 	if steam_key != "":

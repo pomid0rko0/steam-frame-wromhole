@@ -190,8 +190,8 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-## Where the last frame's time went (frame_phases.gd), the frames keeping up at Monado's 20 Hz:
-## every stretch measured, together a refresh; the kernel's account of it there.
+## Where the last frame's time went (frame_phases.gd): every stretch measured, together a whole
+## number of Monado's refreshes (from one xrWaitFrame to the next); the kernel's account of it.
 func _phases(r: FrameRate) -> void:
 	var ph := r.phases
 	var f := ph.last_frame() if ph else PackedFloat32Array()
@@ -205,8 +205,10 @@ func _phases(r: FrameRate) -> void:
 	for i in n:
 		sum += f[i]
 		each = each and f[i] >= 0.0
-	U.check("phases: the stretches add up to a refresh", each and absf(sum - 1000.0 / r.rate) < 0.25 * 1000.0 / r.rate,
-			"%.2f ms of %.2f: %s" % [sum, 1000.0 / r.rate, f])
+	var period := 1000.0 / r.rate
+	var k := maxf(roundf(sum / period), 1.0)
+	U.check("phases: the stretches add up to whole refreshes", each and absf(sum - k * period) < 0.25 * period,
+			"%.2f ms, refreshes of %.2f: %s" % [sum, period, f])
 	U.check("phases: schedstat read: the thread ran, and slept till the refresh", f[n] > 0.0 and f[n + 1] >= 0.0
 			and f[n + 2] > 0.0 and f[n + 3] >= 1, str(f))
 	print("phases: ", r._before_text())
