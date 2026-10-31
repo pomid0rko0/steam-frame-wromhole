@@ -14,9 +14,9 @@ extends Node3D
 ##
 ## The parts: the space's geometry (wormhole_space.gd), the renderer (renderer.gd), the demo's
 ## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
-## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd), the menu and the
-## line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd), the speed
-## check (bench.gd) and the stereo check scene (check_scene.gd). Each
+## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
+## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd),
+## the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
 ## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
 ## hold, and last the toys and the head to the renderer: a toy let go now starts from the hand.
