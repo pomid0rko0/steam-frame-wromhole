@@ -15,6 +15,7 @@ global uniform float sp_L;
 global uniform float sp_Rout;
 global uniform sampler2D sp_tab;
 global uniform sampler2D sp_ptab;
+global uniform sampler2D sp_ytab;
 // the head (Renderer.set_head): its point (head_l, head_n), the play-space axes transported to it
 // (head_f0..2, as (U_l, u)), its place in the play space
 global uniform float head_l;

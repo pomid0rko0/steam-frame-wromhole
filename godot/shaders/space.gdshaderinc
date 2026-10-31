@@ -3,7 +3,7 @@
 //   sp_rho0, sp_R, sp_Lc, sp_L, sp_Rout   the profile (docs/geometry.md): throat radius, fillet
 //                                         radius, the cylinder's half length, the curved zone's
 //                                         edge in l, its radius in the charts
-//   sp_tab, sp_ptab                       the fillet's tables (Space.fillet_tables in space.gd)
+//   sp_tab, sp_ptab, sp_ytab              the fillet's tables (WormholeSpace.shader_tables)
 //
 // A point is (l, n), n a unit 3-vector; a tangent vector (V_l, v), v orthogonal to n, as a vec4
 // (V_l, v). The charts: side A (l >= L) x = r n, side B x = M r n, M = diag(-1, 1, 1). The floor is
@@ -26,7 +26,7 @@ const float SP_ZCAP = 6.0;                  // the tables' last z (beyond it E a
 const float SP_NB = 256.0;                  // the tables' columns (b) and z knots (Space.TABLE_*)
 const float SP_NZ = 64.0;
 #ifndef SP_ZIT
-#define SP_ZIT 6
+#define SP_ZIT 1
 #endif
 
 vec3 sp_M(float side, vec3 v) { return side > 0.0 ? v : vec3(-v.x, v.y, v.z); }
@@ -51,6 +51,14 @@ float sp_dr(float l) {
 // The fillet's s at |l| = al (Lc <= al <= L)
 float sp_s(float al) { return sin((al - sp_Lc) / (2.0 * sp_R)); }
 
+// The point of R^4 at (l, n)
+vec4 sp_embed(float l, vec3 n) {
+    float al = abs(l);
+    float sw = l >= 0.0 ? 1.0 : -1.0;
+    float w = al <= sp_Lc ? l : (al <= sp_L ? sw * (sp_Lc + sp_R * sin((al - sp_Lc) / sp_R)) : sw * (sp_Lc + sp_R));
+    return vec4(sp_r(al) * n, w);
+}
+
 // What a ray of impact parameter b needs on a fillet: x b, y A0 (the sweep per z at s = 0), z k,
 // w sig; and the table's column coordinate.
 struct SpRay {
@@ -62,6 +70,7 @@ struct SpRay {
     float u;        // the tables' column, fractional
     float Y;        // z at the inner end
     float PsiY;     // the sweep over the whole fillet
+    float PthY;     // its path length
 };
 
 // bmr: b - rho0, which near rho0 the caller often knows more precisely than that difference
@@ -73,12 +82,14 @@ SpRay sp_ray(float b, float bmr) {
     q.P0 = sp_rho0 * sq;
     q.sig = bmr / (2.0 * sp_R);
     q.k = sqrt(max(0.5 - q.sig, 0.0));
-    // columns: b in [0, rho0] and [rho0, Rout], each by the square root of its distance from rho0
-    float u = bmr <= 0.0 ? 0.5 - 0.5 * sqrt(min(-bmr / sp_rho0, 1.0))
-                         : 0.5 + 0.5 * sqrt(min(bmr / (sp_Rout - sp_rho0), 1.0));
+    // columns (WormholeSpace.shader_tables): b = rho0 (1 - (1 - 2u)^2) up to rho0, then rho0 +
+    // (Rout - rho0) sin^2(pi (2u - 1) / 2) (atan: asin is imprecise on some GPUs)
+    float x = clamp(bmr / (sp_Rout - sp_rho0), 0.0, 1.0);
+    float u = bmr <= 0.0 ? 0.5 - 0.5 * sqrt(min(-bmr / sp_rho0, 1.0)) : 0.5 + atan(sqrt(x), sqrt(1.0 - x)) / SP_PI;
     q.u = u * (SP_NB - 1.0);
     q.Y = log((SP_S1 + q.k) / sqrt(max(abs(q.sig), 1e-12)));
     q.PsiY = 0.0;
+    q.PthY = 0.0;
     return q;
 }
 
@@ -101,9 +112,17 @@ float sp_tabAt(sampler2D tab, SpRay q, float z) {
 float sp_Psi(SpRay q, float z) { return q.A0 * z + sp_tabAt(sp_tab, q, z); }
 float sp_Pth(SpRay q, float z) { return q.P0 * z + sp_tabAt(sp_ptab, q, z); }
 
+// The whole fillet's sweep and path: A0 Y + E(b, Y) and P0 Y + F(b, Y), E and F from sp_ytab (one
+// texel: the column's and the next one's, Hermite between them)
 SpRay sp_rayFull(float b, float bmr) {
     SpRay q = sp_ray(b, bmr);
-    q.PsiY = sp_Psi(q, q.Y);
+    float i = min(floor(q.u), SP_NB - 2.0);
+    float g = q.u - i;
+    float g2 = g * g;
+    float g3 = g2 * g;
+    vec4 h = vec4(2.0 * g3 - 3.0 * g2 + 1.0, g3 - 2.0 * g2 + g, 3.0 * g2 - 2.0 * g3, g3 - g2);
+    q.PsiY = q.A0 * q.Y + dot(texelFetch(sp_ytab, ivec2(int(i), 0), 0), h);
+    q.PthY = q.P0 * q.Y + dot(texelFetch(sp_ytab, ivec2(int(i), 1), 0), h);
     return q;
 }
 
@@ -192,6 +211,7 @@ int sp_trace(float l0, vec3 n0, vec4 V, out float side, out vec3 d, out float fl
     } else {
         b = sp_r(al) * st;
     }
+    float ls = side * al;      // l where the curved part starts
     // the floor: where n(phi).z = 0 first
     float phf = atan(n0.z, -t.z);
     phf = phf < 0.0 ? phf + 2.0 * SP_PI : phf;
@@ -260,10 +280,8 @@ int sp_trace(float l0, vec3 n0, vec4 V, out float side, out vec3 d, out float fl
         d.z = 0.0;
         d = normalize(d);
         side = fl >= 0.0 ? 1.0 : -1.0;
-        // the path: in R^4 the chord from the start, a little short of the arc
-        vec4 Es = vec4(sp_r(al) * ns, 0.0);
-        vec4 Ef = vec4(sp_r(abs(fl)) * d, 0.0);
-        dist += length(Es.xyz - Ef.xyz) + abs(abs(fl) - al);
+        // the path, for the fog: the chord in R^4 from the start, a little short of the arc
+        dist += length(sp_embed(ls, ns) - sp_embed(fl, d));
         return 1;
     }
     // out of the curved zone: a straight line in the chart of exitSide
@@ -273,8 +291,8 @@ int sp_trace(float l0, vec3 n0, vec4 V, out float side, out vec3 d, out float fl
     float sb = b / sp_Rout;
     vec3 X = sp_M(side, sp_Rout * nx);
     vec3 D = sp_M(side, sqrt(max(1.0 - sb * sb, 0.0)) * nx + sb * tx);
-    dist += (inward ? q.P0 * q.Y + sp_tabAt(sp_ptab, q, q.Y) - sp_Pth(q, z0) : 0.0) + pathC
-            + (q.P0 * (inward || al <= sp_Lc ? q.Y : z0) + sp_tabAt(sp_ptab, q, inward || al <= sp_Lc ? q.Y : z0));
+    // the path in the curved zone, for the fog: the chord in R^4, but the cylinder's run whole
+    dist += length(sp_embed(ls, ns) - vec4(sp_Rout * nx, side * (sp_Lc + sp_R))) + pathC;
     if (D.z < 0.0) {
         float tf = -X.z / D.z;
         vec3 p = X + tf * D;
@@ -307,12 +325,12 @@ vec2 sp_out(SpRay q, float a, float tau2) {
     if (a <= sp_L) {
         float s = sp_s(a);
         float z = sp_z(q, s, tau2 >= 0.0 ? tau2 / (2.0 * sp_R) : s * s - q.sig);
-        return tot + vec2(q.PsiY - sp_Psi(q, z), sp_Pth(q, q.Y) - sp_Pth(q, z));
+        return tot + vec2(q.PsiY - sp_Psi(q, z), q.PthY - sp_Pth(q, z));
     }
     float r = sp_r(a);
     float rb2 = (r - b) * (r + b);
     float ro2 = (sp_Rout - b) * (sp_Rout + b);
-    return tot + vec2(q.PsiY + sp_flatPhi(b, rb2) - sp_flatPhi(b, ro2), sp_Pth(q, q.Y) + sqrt(rb2) - sqrt(max(ro2, 0.0)));
+    return tot + vec2(q.PsiY + sp_flatPhi(b, rb2) - sp_flatPhi(b, ro2), q.PthY + sqrt(rb2) - sqrt(max(ro2, 0.0)));
 }
 
 // Between |l| = an and af (an <= af) along a ray going straight out, no turning point between;
@@ -500,29 +518,25 @@ void sp_rate(float l, vec3 n, vec4 V, out float dl, out vec3 dn, out vec4 dV, ve
 }
 
 // Follow the geodesic from (l, n) with unit direction V for length len (a few cm: an eye from the
-// head) by two RK4 steps, transporting f0, f1, f2.
+// head) by one RK4 step, transporting f0, f1, f2 (ref/test_space_gpu.py: 6 cm within float32's).
 void sp_walk(inout float l, inout vec3 n, vec4 V, float len, inout vec4 f0, inout vec4 f1, inout vec4 f2) {
-    float h = 0.5 * len;
-    for (int i = 0; i < 2; i++) {
-        float k1l; vec3 k1n; vec4 k1V; vec4 k1a; vec4 k1b; vec4 k1c;
-        sp_rate(l, n, V, k1l, k1n, k1V, f0, k1a, f1, k1b, f2, k1c);
-        float k2l; vec3 k2n; vec4 k2V; vec4 k2a; vec4 k2b; vec4 k2c;
-        sp_rate(l + 0.5 * h * k1l, n + 0.5 * h * k1n, V + 0.5 * h * k1V, k2l, k2n, k2V,
-                f0 + 0.5 * h * k1a, k2a, f1 + 0.5 * h * k1b, k2b, f2 + 0.5 * h * k1c, k2c);
-        float k3l; vec3 k3n; vec4 k3V; vec4 k3a; vec4 k3b; vec4 k3c;
-        sp_rate(l + 0.5 * h * k2l, n + 0.5 * h * k2n, V + 0.5 * h * k2V, k3l, k3n, k3V,
-                f0 + 0.5 * h * k2a, k3a, f1 + 0.5 * h * k2b, k3b, f2 + 0.5 * h * k2c, k3c);
-        float k4l; vec3 k4n; vec4 k4V; vec4 k4a; vec4 k4b; vec4 k4c;
-        sp_rate(l + h * k3l, n + h * k3n, V + h * k3V, k4l, k4n, k4V, f0 + h * k3a, k4a, f1 + h * k3b, k4b, f2 + h * k3c, k4c);
-        float w = h / 6.0;
-        l += w * (k1l + 2.0 * k2l + 2.0 * k3l + k4l);
-        n = normalize(n + w * (k1n + 2.0 * k2n + 2.0 * k3n + k4n));
-        V += w * (k1V + 2.0 * k2V + 2.0 * k3V + k4V);
-        f0 += w * (k1a + 2.0 * k2a + 2.0 * k3a + k4a);
-        f1 += w * (k1b + 2.0 * k2b + 2.0 * k3b + k4b);
-        f2 += w * (k1c + 2.0 * k2c + 2.0 * k3c + k4c);
-        V.yzw -= dot(V.yzw, n) * n;
-    }
+    float h = len;
+    float k1l; vec3 k1n; vec4 k1V; vec4 k1a; vec4 k1b; vec4 k1c;
+    sp_rate(l, n, V, k1l, k1n, k1V, f0, k1a, f1, k1b, f2, k1c);
+    float k2l; vec3 k2n; vec4 k2V; vec4 k2a; vec4 k2b; vec4 k2c;
+    sp_rate(l + 0.5 * h * k1l, n + 0.5 * h * k1n, V + 0.5 * h * k1V, k2l, k2n, k2V,
+            f0 + 0.5 * h * k1a, k2a, f1 + 0.5 * h * k1b, k2b, f2 + 0.5 * h * k1c, k2c);
+    float k3l; vec3 k3n; vec4 k3V; vec4 k3a; vec4 k3b; vec4 k3c;
+    sp_rate(l + 0.5 * h * k2l, n + 0.5 * h * k2n, V + 0.5 * h * k2V, k3l, k3n, k3V,
+            f0 + 0.5 * h * k2a, k3a, f1 + 0.5 * h * k2b, k3b, f2 + 0.5 * h * k2c, k3c);
+    float k4l; vec3 k4n; vec4 k4V; vec4 k4a; vec4 k4b; vec4 k4c;
+    sp_rate(l + h * k3l, n + h * k3n, V + h * k3V, k4l, k4n, k4V, f0 + h * k3a, k4a, f1 + h * k3b, k4b, f2 + h * k3c, k4c);
+    float w = h / 6.0;
+    l += w * (k1l + 2.0 * k2l + 2.0 * k3l + k4l);
+    n = normalize(n + w * (k1n + 2.0 * k2n + 2.0 * k3n + k4n));
+    f0 += w * (k1a + 2.0 * k2a + 2.0 * k3a + k4a);
+    f1 += w * (k1b + 2.0 * k2b + 2.0 * k3b + k4b);
+    f2 += w * (k1c + 2.0 * k2c + 2.0 * k3c + k4c);
     f0.yzw -= dot(f0.yzw, n) * n;
     f1.yzw -= dot(f1.yzw, n) * n;
     f2.yzw -= dot(f2.yzw, n) * n;
@@ -562,13 +576,6 @@ float sp_lOf(vec4 P, out vec3 n) {
     return sw * (sp_Lc + sp_R * atan(aw - sp_Lc, sp_Rout - rho));
 }
 
-// The point of R^4 at (l, n)
-vec4 sp_embed(float l, vec3 n) {
-    float al = abs(l);
-    float sw = l >= 0.0 ? 1.0 : -1.0;
-    float w = al <= sp_Lc ? l : (al <= sp_L ? sw * (sp_Lc + sp_R * sin((al - sp_Lc) / sp_R)) : sw * (sp_Lc + sp_R));
-    return vec4(sp_r(al) * n, w);
-}
 
 // A tangent vector of R^4 at (l, n) as (U_l, u)
 vec4 sp_project(float l, vec3 n, vec4 D) {

@@ -31,7 +31,7 @@ const MAX_CUBES := 6
 const BACK_PRIORITY := 100      # the floor and sky after every body
 # a ball's mesh: radial segments (rings half as many) by detail level; a cube's face: segments a side
 const BALL_SEGMENTS := [16, 32, 64, 128]
-const CUBE_SEGMENTS := [1, 4, 16, 32]
+const CUBE_SEGMENTS := [1, 4, 8, 16]
 const STATIC_COLORS := {"spheres_A": [Color(0.80, 0.15, 0.10), Color(0.95, 0.75, 0.15), Color(0.75, 0.75, 0.78)],
 		"spheres_B": [Color(0.75, 0.15, 0.70), Color(0.15, 0.75, 0.30), Color(0.20, 0.35, 0.85)],
 		"pillars_A": [Color(0.85, 0.80, 0.70)], "boxes_B": [Color(0.90, 0.90, 0.95)]}
@@ -48,6 +48,7 @@ var back: MeshInstance3D        # the floor and the sky
 var balls: Array[MeshInstance3D] = []
 var cubes: Array[MeshInstance3D] = []
 var statics: Array[MeshInstance3D] = []
+var static_meshes: Array = []   # per static object: its mesh at each level of detail
 var arrows: MeshInstance3D
 var ball_meshes: Array[Mesh] = []
 var cube_meshes: Array[Mesh] = []
@@ -77,6 +78,7 @@ func _ready() -> void:
 	var tabs := space.shader_tables()
 	g.global_shader_parameter_set(&"sp_tab", ImageTexture.create_from_image(tabs[0]))
 	g.global_shader_parameter_set(&"sp_ptab", ImageTexture.create_from_image(tabs[1]))
+	g.global_shader_parameter_set(&"sp_ytab", ImageTexture.create_from_image(tabs[2]))
 	print("renderer: the fillet's tables in %d ms" % (Time.get_ticks_msec() - t0))
 	upload_gravity()
 	sky.shader = SKY[0]
@@ -127,7 +129,7 @@ func _body(parent: Node, kind: int) -> MeshInstance3D:
 
 
 ## scene.json's objects: chart meshes of their universes (kind 2: the mesh's vertices are chart
-## positions about its centre).
+## positions about its centre), each at every level of detail (set_head picks one).
 func _add_statics(parent: Node) -> void:
 	for key: String in ["spheres_A", "spheres_B", "pillars_A", "boxes_B"]:
 		var rows: Array = scene[key]
@@ -136,36 +138,51 @@ func _add_statics(parent: Node) -> void:
 			var m := _body(parent, 2)
 			var mat := m.material_override as ShaderMaterial
 			var centre := Vector3(o[0], o[1], o[2])
-			if key.begins_with("spheres"):
-				var s := SphereMesh.new()
-				s.radius = o[3]
-				s.height = 2.0 * o[3]
-				s.radial_segments = 128 if o[3] >= 2.0 else 96
-				s.rings = s.radial_segments / 2
-				m.mesh = s
-			elif key.begins_with("pillars"):
-				var c := CylinderMesh.new()
-				c.top_radius = o[2]
-				c.bottom_radius = o[2]
-				c.height = o[3]
-				c.radial_segments = 64
-				c.rings = 24
-				m.mesh = c
+			var size: float = o[3]
+			var levels := []
+			for lvl in BALL_SEGMENTS.size():
+				var n: int = BALL_SEGMENTS[lvl]
+				if key.begins_with("spheres"):
+					var sm := SphereMesh.new()
+					sm.radius = size
+					sm.height = 2.0 * size
+					sm.radial_segments = n
+					sm.rings = n / 2
+					levels.append(sm)
+				elif key.begins_with("pillars"):
+					var c := CylinderMesh.new()
+					c.top_radius = o[2]
+					c.bottom_radius = o[2]
+					c.height = o[3]
+					c.radial_segments = n
+					c.rings = n / 4          # along its height: the eye's geodesics bend it near the throat
+					levels.append(c)
+				else:
+					var b := BoxMesh.new()
+					var k: int = CUBE_SEGMENTS[lvl]
+					b.size = Vector3.ONE * 2.0 * size
+					b.subdivide_width = k - 1
+					b.subdivide_height = k - 1
+					b.subdivide_depth = k - 1
+					levels.append(b)
+			m.set_meta(&"radius", o[2] if key.begins_with("pillars") else size)
+			if key.begins_with("pillars"):
 				centre = Vector3(o[0], o[1], 0.5 * o[3])
-			else:
-				var b := BoxMesh.new()
-				b.size = Vector3.ONE * 2.0 * o[3]
-				b.subdivide_width = 11
-				b.subdivide_height = 11
-				b.subdivide_depth = 11
-				m.mesh = b
+				size = maxf(o[2], 0.5 * o[3])
 			var cols: Array = STATIC_COLORS[key]
 			var col: Color = cols[mini(i, cols.size() - 1)]
+			var side := 1.0 if key.ends_with("A") else -1.0
 			mat.set_shader_parameter(&"centre", Vector4(centre.x, centre.y, centre.z, 0.0))
-			mat.set_shader_parameter(&"side", 1.0 if key.ends_with("A") else -1.0)
+			mat.set_shader_parameter(&"side", side)
+			mat.set_shader_parameter(&"size", size)
 			mat.set_shader_parameter(&"color", Vector3(col.r, col.g, col.b))
+			# its centre in R^4, for its detail
+			var p := space.point_from_chart(side, centre)
+			m.set_meta(&"r4", space.embed(p[0], p[1]))
+			m.mesh = levels[1]
 			m.visible = true
 			statics.append(m)
+			static_meshes.append(levels)
 
 
 ## The surface n.x = 0 through the throat, above the floor, as a grid in (l, a): VERTEX.xy.
@@ -214,21 +231,51 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 			m.mesh = ball_meshes[_detail(m.material_override as ShaderMaterial)]
 	for m in cubes:
 		if m.visible:
-			m.mesh = cube_meshes[_detail(m.material_override as ShaderMaterial)]
+			var mat := m.material_override as ShaderMaterial
+			var c: Vector4 = mat.get_shader_parameter(&"centre")
+			var size: float = 1.8 * mat.get_shader_parameter(&"size")
+			m.mesh = cube_meshes[_detail_at(c, size) if not _straight(c, size) else 0]
+	for i in statics.size():
+		var m := statics[i]
+		if m.visible:
+			var mat := m.material_override as ShaderMaterial
+			m.mesh = static_meshes[i][_detail_at(m.get_meta(&"r4"), m.get_meta(&"radius"), mat.get_shader_parameter(&"size"))]
 
 
-## A body's level of detail, 0..3: by its size over its distance from the head; a level finer
-## where it or the head is near the curved zone (the eye's geodesics bend there, and through the
-## throat a body is seen enlarged). A ball of n segments sags pi^2 / 2n^2 of its radius between
-## them: level 3 (128) keeps that under a third of a pixel (about 1 mrad) for a ball one radius away.
+## A body's level of detail, 0..3: a ball of n segments sags pi^2 / 2n^2 of its radius between
+## them, under half a pixel (about 1 mrad here) with n about 100 sqrt(radius / distance), the levels'
+## 16, 32, 64, 128; the distance: in R^4 on the head's side, through the throat (its radii from the
+## centre and the cylinder) on the other. The eye's geodesics bend little over a far body's
+## extent, so the curved space adds a level only where they bend most: a body in or near the
+## curved zone. A cube's or box's face seen
+## straight in a flat universe (sp_toward's own straight case: the head and the body on one side,
+## the line between them clear of the curved zone) is drawn exactly by one quad.
 func _detail(mat: ShaderMaterial) -> int:
-	var c: Vector4 = mat.get_shader_parameter(&"centre")
-	var size: float = mat.get_shader_parameter(&"size")
-	var d := maxf((c - head_point).length() - size, 0.05)
-	var ratio := size / d
-	var lvl := 0 if ratio < 0.02 else (1 if ratio < 0.08 else (2 if ratio < 0.3 else 3))
-	var near := absf(head_l) < space.L + 2.0 or (Vector3(c.x, c.y, c.z).length() < space.Rout + 2.0 and absf(c.w) < space.h + 0.5)
-	return mini(lvl + (1 if near else 0), 3)
+	return _detail_at(mat.get_shader_parameter(&"centre"), mat.get_shader_parameter(&"size"))
+
+
+## The same for a body at the point c of R^4: size its radius (or half size), reach how far it
+## reaches from c.
+func _detail_at(c: Vector4, size: float, reach := -1.0) -> int:
+	reach = size if reach < 0.0 else reach
+	var rc := Vector3(c.x, c.y, c.z).length()
+	var far := (c - head_point).length()
+	if c.w * head_point.w < 0.0:
+		far = maxf(far, rc + Vector3(head_point.x, head_point.y, head_point.z).length() + 2.0 * space.Lc)
+	var ratio := size / maxf(far - reach, 0.05)
+	var lvl := 0 if ratio < 0.025 else (1 if ratio < 0.1 else (2 if ratio < 0.4 else 3))
+	return mini(lvl + 1, 3) if rc < space.Rout + reach + 1.0 else lvl
+
+
+## Whether the head sees the body at c (size its reach) along straight lines of a flat universe.
+func _straight(c: Vector4, size: float) -> bool:
+	var hp := head_point
+	if absf(head_l) < space.L or hp.w * c.w <= 0.0 or absf(absf(c.w) - space.h) > 1e-3:
+		return false
+	var a := Vector3(hp.x, hp.y, hp.z)
+	var dv := Vector3(c.x, c.y, c.z) - a
+	var t := clampf(-a.dot(dv) / maxf(dv.length_squared(), 1e-12), 0.0, 1.0)
+	return (a + t * dv).length() > space.Rout + size
 
 
 ## Movable balls (pos: centres as points of R^4, col: colour and radius) and cubes (cpos: centres,

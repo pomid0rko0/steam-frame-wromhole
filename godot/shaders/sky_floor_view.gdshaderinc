@@ -3,7 +3,8 @@
 // pixel a body covers. Each pixel's ray: the line from the eye through it, interpolated from the
 // corners (each pixel's exactly: unnormalised, it is affine in the screen position; a foveated
 // coarse pixel gets the ray through its centre). sp_trace follows it to the floor or the sky.
-// (the including shader's render_mode: unshaded, cull_disabled, depth_draw_never, skip_vertex_transform)
+// (the including shader's render_mode: unshaded, cull_disabled, skip_vertex_transform: opaque, so that it is
+// drawn with the opaque things, by its render_priority; its depth is the far plane's)
 
 #include "res://shaders/eye.gdshaderinc"
 #include "res://shaders/look.gdshaderinc"

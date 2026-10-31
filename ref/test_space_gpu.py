@@ -11,6 +11,9 @@ import os
 import sys
 
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
+import subprocess
+import tempfile
+
 import moderngl
 import numpy as np
 
@@ -25,12 +28,12 @@ N = int(sys.argv[1]) if len(sys.argv) > 1 else 4000
 # the limits: a floor point or a sky direction as seen from the eye; a vertex's direction
 LIM_TRACE = 2e-4
 LIM_TOWARD = 1e-4
-LIM_WALK = 5e-6     # m, and radians for the axes: float32 at l of 10 m is 1e-6
+LIM_WALK = 1e-5     # m, and radians for the axes: one RK4 step over the profile's kinks; seen from 5 cm, 2e-4 rad
 
 HEAD = """#version 430
 layout(local_size_x = 64) in;
 uniform float sp_rho0; uniform float sp_R; uniform float sp_Lc; uniform float sp_L; uniform float sp_Rout;
-uniform sampler2D sp_tab; uniform sampler2D sp_ptab;
+uniform sampler2D sp_tab; uniform sampler2D sp_ptab; uniform sampler2D sp_ytab;
 layout(std430, binding = 0) buffer In { vec4 inp[]; };
 layout(std430, binding = 1) buffer Out { vec4 outp[]; };
 uniform int count;
@@ -87,7 +90,8 @@ def run(ctx, src, rows, texs, per=2):
     prog['count'].value = len(rows) // per
     texs[0].use(0)
     texs[1].use(1)
-    for k, u in (('sp_tab', 0), ('sp_ptab', 1)):
+    texs[2].use(2)
+    for k, u in (('sp_tab', 0), ('sp_ptab', 1), ('sp_ytab', 2)):
         if k in prog:
             prog[k].value = u
     bi = ctx.buffer(np.asarray(rows, np.float32).tobytes())
@@ -112,16 +116,41 @@ def eye_l(rng, k):
             -rng.uniform(S.Lc, S.L), -rng.uniform(S.L, S.L + 12), S.L + rng.uniform(-0.05, 0.05)][k % 6]
 
 
+def app_tables():
+    """The tables as the app builds them (godot/tests/dump_tables.gd), or None without Godot."""
+    godot = os.path.join(HERE, '..', 'tools', '.bin', 'godot')
+    if not os.path.exists(godot):
+        return None
+    with tempfile.TemporaryDirectory() as d:
+        subprocess.run([godot, '--headless', '--path', os.path.join(HERE, '..', 'godot'), '-s', 'res://tests/dump_tables.gd',
+                        '--', os.path.join(d, 't'), *map(str, PROF)], check=True, capture_output=True, timeout=300)
+        shapes = {'tab': (tables.NZ - 1, tables.NB, 4), 'ptab': (tables.NZ - 1, tables.NB, 4), 'ytab': (2, tables.NB, 4)}
+        return [np.fromfile(os.path.join(d, 't_%s.f32' % k), np.float32).reshape(shapes[k]) for k in ('tab', 'ptab', 'ytab')]
+
+
 def main():
     ctx = moderngl.create_standalone_context(require=430, backend='egl')
     tab, ptab = tables.build(S)
+    ytab = tables.build_y(S)
+    ok = True
+    app = app_tables()
+    if app is None:
+        print('no Godot (tools/setup.sh): the GPU runs ref/tables.py\'s tables')
+    else:
+        diff = max(np.max(np.abs(a.astype(float) - b)) for a, b in zip(app, (tab, ptab, ytab)))
+        print('the app\'s tables (WormholeSpace.shader_tables) against ref/tables.py: largest difference %.1e' % diff)
+        if diff > 1e-6:
+            ok = False
+        tab, ptab, ytab = app
     texs = []
     for t in (tab, ptab):
         tx = ctx.texture((tables.NB, tables.NZ - 1), 4, t.tobytes(), dtype='f4')
         tx.filter = (moderngl.NEAREST, moderngl.NEAREST)
         texs.append(tx)
+    ty = ctx.texture((tables.NB, 2), 4, ytab.tobytes(), dtype='f4')
+    ty.filter = (moderngl.NEAREST, moderngl.NEAREST)
+    texs.append(ty)
     rng = np.random.default_rng(7)
-    ok = True
 
     # ---- sp_trace
     rows, cases = [], []

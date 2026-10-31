@@ -73,6 +73,11 @@ sp_ptab={
 "value": ""
 }
 
+sp_ytab={
+"type": "sampler2D",
+"value": ""
+}
+
 head_n={
 "type": "vec3",
 "value": Vector3(1, 0, 0)

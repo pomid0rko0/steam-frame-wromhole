@@ -585,9 +585,13 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 ## The fillet's tables the shaders read (shaders/space.gdshaderinc, sp_tabAt): E(b, z) and F(b, z),
 ## the parts of a ray's sweep and path length over z (from the fillet's outer end, in the fillet's
 ## variable y) that are not linear in z. ref/tables.py builds the same in Python (ref/test_space_gpu.py
-## checks the shader with it); tests/space_test.gd compares the two. Columns: b by the square root
-## of its distance from rho0 on [0, rho0] and on [rho0, Rout]; knots z = TABLE_ZCAP v^2, v uniform;
-## texel (i, j) of each: the knots j and j + 1 of column i, value and slope times the knot spacing.
+## checks the shader with it); tests/space_test.gd compares the two. Columns (u = i / (TABLE_NB - 1)):
+## b = rho0 (1 - (1 - 2u)^2) up to rho0, then rho0 + (Rout - rho0) sin^2(pi (2u - 1) / 2): dense
+## near rho0, where the fillet's sweep varies fastest, and near Rout, where it goes to 0 as the
+## square root of Rout - b; knots z = TABLE_ZCAP v^2, v uniform; texel (i, j) of each: the knots j
+## and j + 1 of column i, value and slope times the knot spacing. The third, sp_ytab: E and F over
+## the whole fillet, at z = min(Y, TABLE_ZCAP) (Y its inner end), row 0 and 1, texel i: column i's
+## and i + 1's, value and slope per column.
 ## h >= fillet only (a cylinder between the fillets, maybe of length 0): docs/geometry.md.
 const TABLE_NB := 256          # space.gdshaderinc's SP_NB, SP_NZ, SP_ZCAP
 const TABLE_NZ := 64
@@ -599,7 +603,8 @@ const _GL_W := [0.08566224618958517, 0.18038078652406933, 0.23395696728634552, 0
 		0.18038078652406933, 0.08566224618958517]
 
 
-## [sp_tab, sp_ptab] as images (TABLE_NB x (TABLE_NZ - 1), RGBA float). Slow in GDScript: once.
+## [sp_tab, sp_ptab, sp_ytab] as images (TABLE_NB x (TABLE_NZ - 1), the last TABLE_NB x 2, RGBA
+## float). Slow in GDScript: once.
 func shader_tables() -> Array[Image]:
 	var s1 := sqrt(0.5)
 	var tab := PackedFloat32Array()
@@ -613,8 +618,7 @@ func shader_tables() -> Array[Image]:
 	for a in [E, F, dE, dF]:
 		a.resize(TABLE_NZ)
 	for i in TABLE_NB:
-		var u := float(i) / (TABLE_NB - 1)
-		var b := rho0 * (1.0 - (1.0 - 2.0 * u) ** 2) if u <= 0.5 else rho0 + (Rout - rho0) * (2.0 * u - 1.0) ** 2
+		var b := _table_b(float(i))
 		var sig := (b - rho0) / (2.0 * fillet)
 		var k := sqrt(maxf(0.5 - sig, 0.0))
 		var a0 := b * sqrt(2.0 * fillet / (rho0 + b)) / rho0
@@ -638,19 +642,19 @@ func shader_tables() -> Array[Image]:
 				var sf := 0.0
 				for g in 6:
 					var q := _table_integrands(zp + (z - zp) * _GL_X[g], b, sig, k, a0, p0)
-					if q.z >= 0.95:
+					if q[2] >= 0.95:
 						ok = false
 						break
-					se += _GL_W[g] * q.x
-					sf += _GL_W[g] * q.y
+					se += _GL_W[g] * q[0]
+					sf += _GL_W[g] * q[1]
 				if not ok:
 					continue
 				E[j] += (z - zp) * se
 				F[j] += (z - zp) * sf
 			var q2 := _table_integrands(z, b, sig, k, a0, p0)
 			var dz := 2.0 * TABLE_ZCAP * v / (TABLE_NZ - 1)
-			dE[j] = q2.x * dz
-			dF[j] = q2.y * dz
+			dE[j] = q2[0] * dz
+			dF[j] = q2[1] * dz
 		for j in TABLE_NZ - 1:
 			var o := (j * TABLE_NB + i) * 4
 			tab[o] = E[j]
@@ -661,20 +665,68 @@ func shader_tables() -> Array[Image]:
 			ptab[o + 1] = dF[j]
 			ptab[o + 2] = F[j + 1]
 			ptab[o + 3] = dF[j + 1]
+	var ytab := PackedFloat32Array()
+	ytab.resize(TABLE_NB * 2 * 4)
+	var vals := []
+	var ders := []
+	for i in TABLE_NB:
+		vals.append(_table_whole(_table_b(float(i))))
+		var lo := maxf(i - 0.01, 0.0)
+		var hi := minf(i + 0.01, TABLE_NB - 1.0)
+		var a := _table_whole(_table_b(hi))
+		var c := _table_whole(_table_b(lo))
+		ders.append(PackedFloat64Array([(a[0] - c[0]) / (hi - lo), (a[1] - c[1]) / (hi - lo)]))
+	for i in TABLE_NB:
+		var j := mini(i + 1, TABLE_NB - 1)
+		for row in 2:
+			var o := (row * TABLE_NB + i) * 4
+			ytab[o] = vals[i][row]
+			ytab[o + 1] = ders[i][row]
+			ytab[o + 2] = vals[j][row]
+			ytab[o + 3] = ders[j][row]
 	return [Image.create_from_data(TABLE_NB, TABLE_NZ - 1, false, Image.FORMAT_RGBAF, tab.to_byte_array()),
-			Image.create_from_data(TABLE_NB, TABLE_NZ - 1, false, Image.FORMAT_RGBAF, ptab.to_byte_array())]
+			Image.create_from_data(TABLE_NB, TABLE_NZ - 1, false, Image.FORMAT_RGBAF, ptab.to_byte_array()),
+			Image.create_from_data(TABLE_NB, 2, false, Image.FORMAT_RGBAF, ytab.to_byte_array())]
 
 
-## At z: (the sweep's and the path's integrands less their values at s = 0, |s|)
-func _table_integrands(z: float, b: float, sig: float, k: float, a0: float, p0: float) -> Vector3:
+## The impact parameter of the tables' column i (fractional)
+func _table_b(i: float) -> float:
+	var u := i / (TABLE_NB - 1)
+	return rho0 * (1.0 - (1.0 - 2.0 * u) ** 2) if u <= 0.5 else rho0 + (Rout - rho0) * sin(0.5 * PI * (2.0 * u - 1.0)) ** 2
+
+
+## E and F over the whole fillet for impact b (sp_ytab), by Gauss-Legendre in pieces of at most 0.25
+func _table_whole(b: float) -> PackedFloat64Array:
+	var s1 := sqrt(0.5)
+	var sig := (b - rho0) / (2.0 * fillet)
+	var k := sqrt(maxf(0.5 - sig, 0.0))
+	var zY := minf(log((s1 + k) / sqrt(maxf(absf(sig), 1e-12))), TABLE_ZCAP)
+	var a0 := b * sqrt(2.0 * fillet / (rho0 + b)) / rho0
+	var p0 := rho0 * sqrt(2.0 * fillet / (rho0 + b))
+	var n := maxi(ceili(zY / 0.25), 1)
+	var e := 0.0
+	var f := 0.0
+	for m in n:
+		var za := zY * m / n
+		var zb := zY * (m + 1) / n
+		for g in 6:
+			var q := _table_integrands(za + (zb - za) * _GL_X[g], b, sig, k, a0, p0)
+			e += (zb - za) * _GL_W[g] * q[0]
+			f += (zb - za) * _GL_W[g] * q[1]
+	return PackedFloat64Array([e, f])
+
+
+## At z: [the sweep's and the path's integrands less their values at s = 0, |s|] (doubles: a
+## Vector3 is single precision)
+func _table_integrands(z: float, b: float, sig: float, k: float, a0: float, p0: float) -> PackedFloat64Array:
 	var s1 := sqrt(0.5)
 	var e := exp(z)
 	var s := 0.5 * (sig * e / (s1 + k) + (s1 + k) / e)
 	if absf(s) >= 0.95:
-		return Vector3(0.0, 0.0, absf(s))
+		return PackedFloat64Array([0.0, 0.0, absf(s)])
 	var r := rho0 + 2.0 * fillet * s * s
 	var c := sqrt(2.0 * fillet / ((r + b) * (1.0 - s * s)))
-	return Vector3(b * c / r - a0, c * r - p0, absf(s))
+	return PackedFloat64Array([b * c / r - a0, c * r - p0, absf(s)])
 
 
 ## The point (l, n) at a point P of R^4 on the space (the inverse of embed)
