@@ -192,9 +192,10 @@ func _hands() -> void:
 
 
 # 1
-## A frustum wider than this test's (tangents 1.8, 61 degrees, its corner 69 degrees off the axis)
-## and a ball of radius 5 mm 6 cm in front of the left eye toward its corner: the near plane lies
-## Main.NEAR along the axis, 2.5 times that along the corner ray, 5 cm.
+## A frustum wider than this test's (tangents 1.8, 61 degrees) and a ball of radius 5 mm 6 cm in
+## front of the left eye, well off the axis toward a corner (tangents 1.08): the near plane lies
+## Main.NEAR along the axis, 1.8 times that along the ray to it, 3.6 cm. Its picture is a disc of
+## about 6 pixels' radius, whole inside the picture.
 func _near_eye() -> void:
 	_clear()
 	var pr := Vector3(0.3, 0.8, 0.3)          # the hands low and behind: out of view
@@ -204,7 +205,7 @@ func _near_eye() -> void:
 	var wide := Vector4(-1.8, 1.8, -1.8, 1.8)
 	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, wide)
 	var eye := HEAD - Vector3(0.5 * IPD, 0.0, 0.0)
-	var dir := Vector3(0.9 * wide.x, 0.9 * wide.w, -1.0).normalized()   # toward the upper left corner
+	var dir := Vector3(0.6 * wide.x, 0.6 * wide.w, -1.0).normalized()   # toward the upper left corner
 	var r := 0.005
 	var ball := _ball_at(_chart(eye + dir * 0.06), r)
 	ball.color = Color(1.0, 0.0, 0.0)
@@ -223,7 +224,7 @@ func _near_eye() -> void:
 	var want := Vector2((dir.x / -dir.z / wide.y + 1.0) * 0.5 * SIZE, (1.0 - dir.y / -dir.z / wide.w) * 0.5 * SIZE)
 	var got := sum / maxf(red, 1)
 	U.check("a small ball just beyond the near plane, toward a wide frustum's corner, is drawn where it is",
-			red > 0 and got.distance_to(want) < 3.0, "%d red pixels about %s, expected about %s" % [red, got, want])
+			red > 20 and got.distance_to(want) < 1.5, "%d red pixels about %s, expected about %s" % [red, got, want])
 	_clear()
 	hmd.setup(Transform3D(Basis.IDENTITY, HEAD), IPD, 0.0, FRUSTUM)
 	_pose(right, Vector3(0.15, 1.45, -0.4))   # where _hands left them
