@@ -16,8 +16,8 @@ const SCALES := [1.0, 0.9, 0.8, 0.7]
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
-# until one is chosen: our own, wide (floor_fov.gd): smooth, no coarse tiles
-const DEFAULT_FOVEATION := 4
+# until one is chosen: our own, narrow (floor_fov.gd): smooth, no coarse tiles
+const DEFAULT_FOVEATION := 5
 const SETTINGS := "user://settings.cfg"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)

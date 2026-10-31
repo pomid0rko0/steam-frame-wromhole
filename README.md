@@ -56,6 +56,8 @@ tools/setup.sh      # на Linux с apt, от root: Godot, шаблоны экс
 tools/export.sh     # сборка: на шлеме — сразу на место (если её нет в библиотеке Steam, скажет, как добавить), иначе — godot/build/wormhole_vr_<ветка>_steam_frame.zip
 ```
 
+Разрешение глаза задаёт SteamVR: Settings → Video → Per-Application Video Settings → это приложение → Resolution Per Eye. Пока там ничего не выбрано, Valve даёт приложению 1728 × 1728, экран — 2160 × 2160 (требования выше); новое разрешение приложение берёт при запуске.
+
 Zip ставят в шлем с компьютера на Windows по SSH (шлем и компьютер в одной сети Wi-Fi): вписать имя пользователя и адрес шлема в начало `tools/deploy_frame.ps1` и перетащить zip на `tools/deploy_frame.bat`. Сборка ложится в `~/wormhole-vr/wormhole_vr.arm64`, в первый раз скрипт добавляет её в библиотеку Steam. Логи со шлема — `tools/frame_logs.bat`, скриншоты — `tools/frame_screens.bat`, оба кладут файл в «Загрузки».
 
 ## Проверки
