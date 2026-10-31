@@ -8,10 +8,11 @@
 #          without tiles (split_pass.gd)
 #   split  the 3D scene in a pass of its own: in tiles
 #   on     foveation: in tiles, and with one attachment more than split (the density map)
-#   own    the same with our own density map (Foveation.OWN_MAPS)
+#   own    our own foveation (floor_fov.gd): no density map, and the pass as "off" has it (its
+#          compute pass before the bodies splits nothing)
 # Each eye at tools/env.sh's HEADSET_EYE; the tiles' size is printed too (a density is per tile).
-#   tools/fdm_check.sh           (exit 0 if "split", "on" and "own" render the XR pass in tiles, and "on"
-#                                 and "own" with one attachment more than "split": the density map)
+#   tools/fdm_check.sh           (exit 0 if "split" and "on" render the XR pass in tiles, "on" with one
+#                                 attachment more than "split": the density map; and "own" as "off")
 # Needs the driver from tools/setup.sh (tools/.bin/mesa-fd).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -65,10 +66,11 @@ for m, p in res.items():
 ok = bool(res['on']) and bool(res['split']) and bool(res['own'])
 split = set(res['split'])
 ok &= all(p[1] for p in split)
-for m in ('on', 'own'):
-    on = set(res[m])
-    ok &= all(p[1] for p in on) and {p[0] for p in on} == {p[0] + 1 for p in split}
-print('PASS: with foveation on (either map) the driver renders the XR pass in tiles, with the density map' if ok else 'FAIL')
+on = set(res['on'])
+ok &= all(p[1] for p in on) and {p[0] for p in on} == {p[0] + 1 for p in split}
+ok &= set(res['own']) == set(res['off'])
+print('PASS: with SteamVR\'s foveation the driver renders the XR pass in tiles, with the density map; '
+      'our own leaves the pass as it is without foveation' if ok else 'FAIL')
 if res['off'] and all(p[1] for p in res['off']):
     print('note: "off" renders in tiles too: this Godot has the fix godot/split_pass.gd works around')
 sys.exit(0 if ok else 1)

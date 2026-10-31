@@ -1,7 +1,7 @@
 extends SceneTree
 ## The XR view through the simulated headset (fake_hmd.gd, two eyes in one multiview pass) with
-## foveation off, with the 3D pass split alone, on (the runtime's map), or own (our map,
-## Foveation.OWN_MAPS): tools/fdm_check.sh runs it on the Steam
+## foveation off, with the 3D pass split alone, on (the runtime's map), or own (our own,
+## floor_fov.gd): tools/fdm_check.sh runs it on the Steam
 ## Frame's GPU driver (Turnip, no GPU) and reads from the driver's trace how it rendered the pass.
 ## The simulated headset hands Godot a density map of its own making (XRVRS, the one Godot makes
 ## where the runtime has none), so the viewport has a density map to attach. The eyes' size in

@@ -29,8 +29,10 @@ extends Node
 ## leaves frame_queue_size at its default). "process" (Performance.TIME_PROCESS) is the longest
 ## stretch of Godot's main loop over about the last second, from the scripts' processing through
 ## the rendering's sync and draw, updated once a second. main's script (Main.scripts_ms,
-## main._process alone) is given for this frame (main is processed before this node, its child) and
-## for the frame before.
+## main._process alone) is given for this frame (main is processed before this node, its child), and
+## the frame before's way on the main thread: from main's start to the end of its drawing
+## (RenderingServer.frame_post_draw), main's script in it by part (Main.PARTS), and the wait from
+## there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
@@ -84,7 +86,8 @@ var desired := 0.0              # the rate last chosen; written after the one be
 var requested := 0.0            # a rate the display has not followed yet
 var request_from := 0.0
 var request_age := 0.0
-var scripts_before := 0.0       # main's script last frame, ms
+var drawn_us := 0               # when the last frame's drawing ended on the main thread
+var before: Array = []          # the frame before: [main's start (us), its script ms, its parts ms]
 var note := ""                  # what came of the last choice
 var note_failed := false
 var note_left := 0
@@ -92,10 +95,12 @@ var late_lines := 0             # late frames logged this second
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_mhz := 0              # read once a second: a kernel file each frame is not free
+var compiled := 0               # pipelines Godot had compiled at the last second's line (compilations())
 
 
 func _ready() -> void:
 	RenderingServer.viewport_set_measure_render_time(target.get_viewport_rid(), true)
+	RenderingServer.frame_post_draw.connect(_on_drawn)
 	if xr:
 		api = OpenXRAPIExtension.new()
 		# a method, not a lambda (main.gd, _ready)
@@ -142,17 +147,19 @@ func _process(delta: float) -> void:
 		var period := api.get_next_frame_time() - now
 		var missed_before := meter.missed()
 		meter.add(now, period, reported)
-		# a late frame gets a line: where, and the times this file's top describes
+		# a late frame gets a line: where, what is before the eyes (main.view_text), the times this
+		# file's top describes and the pipelines compiled so far
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()
-			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms (the frame before %.2f ms)"
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms; %s; pipelines compiled %d; %s"
 					% [meter.missed() - missed_before, main.foot_l, look.x, look.y,
 					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
 					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
-					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, scripts_before])
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, _before_text(),
+					compilations(), main.view_text()])
 		bench.frame_timing(now, period, reported)
-	scripts_before = main.scripts_ms
+	before = [main.started_us, main.scripts_ms, main.parts_ms.duplicate()]
 	t += delta
 	now.drawn += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
@@ -336,6 +343,41 @@ func _second() -> void:
 		_log()
 
 
+func _on_drawn() -> void:
+	drawn_us = Time.get_ticks_usec()
+
+
+## The frame before on the main thread (this file's top): ms from main's start to drawn, main's
+## script in it, and the wait till the next frame's start.
+func before_ms() -> Vector3:
+	if before.is_empty():
+		return Vector3.ZERO
+	return Vector3((drawn_us - before[0]) / 1000.0, before[1], (main.started_us - drawn_us) / 1000.0)
+
+
+## The same with main's script by part, for the line about a late frame.
+func _before_text() -> String:
+	if before.is_empty():
+		return "the frame before: none"
+	var parts := []
+	for i in Main.PARTS.size():
+		parts.append("%s %.2f" % [Main.PARTS[i], before[2][i]])
+	return "the frame before: %.2f ms from main's start to drawn (main's script %.2f: %s), then %.2f ms till the next" % [
+			(drawn_us - before[0]) / 1000.0, before[1], ", ".join(parts), (main.started_us - drawn_us) / 1000.0]
+
+
+## Pipelines Godot has compiled so far, of every kind (its PIPELINE_COMPILATIONS_* monitors). A
+## compilation happens the first time something is drawn in a new way (a material, the gravity view,
+## a variant of a pass) and holds that frame up: a late frame next to new ones was a compile.
+static func compilations() -> int:
+	var n := 0
+	for m in [Performance.PIPELINE_COMPILATIONS_CANVAS, Performance.PIPELINE_COMPILATIONS_MESH,
+			Performance.PIPELINE_COMPILATIONS_SURFACE, Performance.PIPELINE_COMPILATIONS_DRAW,
+			Performance.PIPELINE_COMPILATIONS_SPECIALIZATION]:
+		n += int(Performance.get_monitor(m))
+	return n
+
+
 ## The GPU time per frame so far this second, ms.
 func gpu_ms() -> float:
 	return now.gpu / now.drawn if now.drawn > 0 else 0.0
@@ -406,14 +448,15 @@ func _log() -> void:
 	var look: Vector2 = main.look_angles()
 	var where := "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,
 			"world A" if l >= edge else ("world B" if l <= -edge else "in the curved zone"), look.x, look.y]
-	var fov: Foveation = main.foveation
-	var f: Vector4 = main.tracer.frustum(0)
-	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, foveation %d (own maps %s first), gaze %s, gravity view %d, menu %s"
+	var f: Vector4 = main.renderer.frustum(0)
+	var n := compilations()
+	print("refresh: " + where + "display %.2f Hz, paced %.2f Hz, %d frames of %d refreshes (%d missed) in 1 s, gpu %.2f ms avg %.2f max of %.2f, gpu clock %d MHz, runtime says %.1f of %s, stored %.0f, eye %dx%d at scale %.2f, its frustum %.1f..%.1f deg up, keeps up %s, gaze %s, pipelines compiled %d in 1 s (%d in all); %s"
 			% [rate, meter.paced_rate(), s.shown, s.refreshes, s.refreshes - s.shown, s.gpu / s.drawn if s.drawn > 0 else 0.0, s.gpu_max,
 			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), target.scaling_3d_scale,
-			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), fov.level, "width" if fov.order == 0 else "height", main.gaze_text(),
-			main.tracer.gravity_view, "open" if main.menu.open else "closed"])
+			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), main.gaze_text(),
+			n - compiled, n, main.view_text()])
+	compiled = n
 
 
 ## A second's counts.

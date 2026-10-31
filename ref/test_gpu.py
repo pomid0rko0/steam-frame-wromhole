@@ -1,425 +1,356 @@
-"""Render the GLSL core headless (EGL/llvmpipe) and compare its per-pixel
-geometry against an independent float64 reference that integrates every
-curved ray with brute-force RK4 (no symmetry reduction)."""
-import sys, os, re
+"""The shaders' geometry (godot/shaders/geo.gdshaderinc) on a GPU, float32, against float64:
+headless (EGL), as a compute shader, with the table and series built as WormholeSpace.sweep_table
+builds them (ref/geo.py), on three throats: the app's, h = R, a crease (h < R). Every sin and cos
+goes through the headset driver's range reduction (TURNIP below), and the table is filtered with
+weights rounded to 1/256 (HW8), as on the headset.
+  sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
+  where the sweep reaches a value (the floor's hit): the sweep at the GPU's l against the value;
+  which way the eye sees a point (geo_see, the bodies' vertices): rays shot by RK4 from an eye to a
+    point, the GPU given the point must find that ray (angle) and its length, no ray of its search
+    coming out not finite; half of them launched within a hair to a third of a radian of the tangent, eyes
+    also at the cylinder's end;
+  the floor (geo_floor, each pixel's ray): where it meets the floor, or that it does not, against
+    the same sweeps in float64 (ref/geo.py's floor_hit), half the rays near the tangent;
+  the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
+  a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
+Exit status 1 on any failure.
+   python3 ref/test_gpu.py"""
+import os
+import re
+import sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
-from PIL import Image
-from wh import Wormhole, app_profile, app_max_cubes, app_scene_sizes
+from geo import Space, shoot, app_profile, floor_hit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE = open(os.path.join(HERE, '..', 'godot', 'shaders', 'wormhole_core.gdshaderinc')).read()
-TAN = 1.0      # the cameras' tangent of the half field of view, every side
-# rho0, h, fillet in metres: WH_PROFILE="rho0,h,fillet" if set, else the app's throat
-PROF = tuple(float(v) for v in os.environ['WH_PROFILE'].split(',')) if 'WH_PROFILE' in os.environ else app_profile()
-W = Wormhole(*PROF)
-import json
-SCENE = json.load(open(os.path.join(HERE, '..', 'godot', 'scene.json')))
-MAXB = int(re.search(r'const int WH_MAXB = (\d+);', CORE).group(1))    # the shader's ball slots
-
-
-def test_balls():
-    """Balls placed in every kind of region: flat A, straddling the shell edge, fillet, throat, flat B.
-    Centre as a point of R^4 (r n, w(l)) and radius."""
-    def at(l, n):
-        n = np.asarray(n, float); n /= np.linalg.norm(n)
-        return np.r_[W.r(np.array(l)) * n, W.w(np.array(l))]
-    return [
-        (at(W.L + 4.6, [1.0, -0.15, 0.06]), 0.35, (0.9, 0.2, 0.2)),            # flat A, in front of the camera
-        (at(W.L - 0.1, [1.0, 0.25, 0.08]), 0.40, (0.2, 0.8, 0.3)),             # straddles the shell edge
-        (at(0.5 * (W.Lc + W.L), [1.0, -0.35, 0.12]), 0.30, (0.2, 0.4, 0.95)),  # in the fillet
-        (at(0.3 * W.Lc if W.Lc > 0 else 0.0, [1.0, 0.3, 0.15]), 0.30, (0.95, 0.85, 0.2)),  # in the throat
-        (at(-(W.L + 3.0), [1.0, 0.3, 0.05]), 0.35, (0.8, 0.3, 0.9)),           # flat B
-    ]
-
-
-BALLS = test_balls() if os.environ.get('WH_BALLS', '1') == '1' else []
-MAXC = app_max_cubes()       # the shader's cube slots
-N_SPH, N_PIL, N_BOX = app_scene_sizes()
-
-
-def test_cubes():
-    """Cubes (4D boxes cut by the space) in every kind of region, turned against the floor.
-    Centre as a point of R^4, four orthonormal axes of R^4 (three tangent at the centre, then the
-    normal of the space) and the half size. The tangent frame comes from finite differences of
-    the embedding, independent of the shader's formulas."""
-    def cube(l, n, half, yaw, tilt, col):
-        n = np.asarray(n, float); n /= np.linalg.norm(n)
-        el = (W.embed(np.array(l + 1e-6), n) - W.embed(np.array(l - 1e-6), n)); el /= np.linalg.norm(el)
-        tz = np.array([0, 0, 1.0]) - n * n[2]; tz /= np.linalg.norm(tz)
-        ty = np.cross(tz, n)
-        T = np.array([el, np.r_[ty, 0.0], np.r_[tz, 0.0]])          # tangent basis in R^4
-        cy, sy, ct, st = np.cos(yaw), np.sin(yaw), np.cos(tilt), np.sin(tilt)
-        Rm = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]]) @ np.array([[1, 0, 0], [0, ct, -st], [0, st, ct]])
-        ax = (Rm.T @ T)                                               # three body axes (rows)
-        nrm = np.linalg.svd(ax)[2][-1]                                # orthogonal to all three
-        return (W.embed(np.array(l), n), np.vstack([ax, nrm]), half, col)
-    return [
-        cube(W.L + 3.0, [1.0, 0.35, 0.1], 0.35, 0.4, 0.3, (0.9, 0.9, 0.3)),          # flat A
-        cube(W.L - 0.05, [1.0, -0.3, 0.1], 0.40, -0.3, 0.2, (0.3, 0.8, 0.9)),        # straddles the shell edge
-        cube(0.5 * (W.Lc + W.L), [1.0, 0.4, 0.15], 0.30, 0.7, -0.4, (0.95, 0.5, 0.2)),  # in the fillet
-        cube(0.4 * W.Lc if W.Lc > 0 else 0.0, [1.0, -0.3, 0.1], 0.30, 0.2, 0.5, (0.4, 0.95, 0.4)),  # in the throat
-        cube(-(W.L + 3.5), [1.0, -0.35, 0.08], 0.35, -0.5, 0.25, (0.9, 0.4, 0.6)),   # flat B
-    ]
-
-
-# the cubes come with the movable balls (the shader with balls draws both)
-CUBES = test_cubes() if BALLS and os.environ.get('WH_CUBES', '1') == '1' else []
-
-
-def region_order(objs, reach):
-    """Tracer.region_order, in float64 (its comment says what it returns)."""
-    groups = [[], [], [], [], []]
-    for o in objs:
-        C, r = np.asarray(o[0]), reach(o)
-        in_a, in_b, in_s = abs(C[3] - PROF[1]) < r, abs(C[3] + PROF[1]) < r, np.linalg.norm(C[:3]) - r < W.Rout
-        groups[(1 if in_s else 0) if in_a else ((3 if in_s else 4) if in_b else 2)].append(o)
-    ends = np.cumsum([len(g) for g in groups])
-    return sum(groups, []), tuple(int(e) for e in ends[:4])
-
-
-# the shader gets them sorted, as from Tracer.set_objects; the reference uses the same order
-BALLS, BIDX = region_order(BALLS, lambda o: o[1])
-CUBES, CIDX = region_order(CUBES, lambda o: 2.0 * o[2])
-FRAG = """#version 400
-""" + ("" if BALLS else "#define WH_NO_BALLS\n") + """
-uniform sampler2D wh_tab;     // the fillet polynomials (WormholeSpace.fillet_table)
-uniform vec4 wh_tabLo;
-uniform vec4 wh_tabInv;
-uniform vec4 wh_tabReg;
-uniform float wh_rho0;
-uniform float wh_h;
-uniform float wh_fillet;
-uniform vec4 wh_sph[""" + str(N_SPH) + """];
-uniform vec4 wh_pil[""" + str(N_PIL) + """];
-uniform vec4 wh_box[""" + str(N_BOX) + """];
-uniform vec4 wh_ball[""" + str(MAXB) + """];
-uniform vec4 wh_ballCol[""" + str(MAXB) + """];
-uniform int wh_nBall;
-uniform vec4 wh_cube[""" + str(MAXC) + """];
-uniform vec4 wh_cubeE[""" + str(5 * MAXC) + """];
-uniform vec4 wh_cubeCol[""" + str(MAXC) + """];
-uniform int wh_nCube;
-uniform vec4 wh_bound[4];
-uniform ivec4 wh_bIdx;
-uniform ivec4 wh_cIdx;
-uniform vec4 wh_fball[""" + str(MAXB) + """];
-uniform float wh_pix;
-uniform float uL0;
-uniform vec3 uN0;
-uniform vec4 uF;
-uniform vec4 uRt;
-uniform vec4 uUp;
-uniform vec4 uTan;   // tan of left, right, down, up half-angles
-uniform int uDebug;
-uniform vec2 uSize;
-out vec4 frag;
-""" + CORE + """
-void main() {
-    vec2 uv = gl_FragCoord.xy / uSize;
-    vec3 dl = normalize(vec3(mix(-uTan.x, uTan.y, uv.x), mix(-uTan.z, uTan.w, uv.y), 1.0));
-    vec4 V = dl.x * uRt + dl.y * uUp + dl.z * uF;
-    vec4 dbg;
-    vec3 col = wh_render(uL0, uN0, V.x, V.yzw, dbg);
-    frag = uDebug == 1 ? dbg : vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+# The headset's driver (Turnip, Mesa's ir3) takes every sin and cos through 2 pi fract(x / 2 pi + 1/2)
+# - pi (ir3_nir_trig.py), which puts x on a grid of 4e-7 rad: a small angle keeps none of its digits.
+# The PC's drivers don't: here every sin and cos of the shaders does the same.
+TURNIP = '''
+float turnip_sin(float x) { return sin(fma(6.28318531, fract(fma(x, 0.159154943, 0.5)), -3.14159265)); }
+float turnip_cos(float x) { return cos(fma(6.28318531, fract(fma(x, 0.159154943, 0.5)), -3.14159265)); }
+'''
+INC = open(os.path.join(HERE, '..', 'godot', 'shaders', 'geo.gdshaderinc')).read()
+INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
+# A GPU's bilinear filter weighs its four texels by fractions it rounds to 1/256 (as ref/geo.py's
+# G_table models it); the PC's driver doesn't: here the table is filtered so.
+HW8 = '''
+vec4 hw8_tab(vec2 uv) {
+	vec2 sz = vec2(textureSize(g_tab, 0));
+	vec2 p = uv * sz - 0.5;
+	vec2 i = floor(p);
+	vec2 f = floor((p - i) * 256.0 + 0.5) / 256.0;
+	ivec2 a = clamp(ivec2(i), ivec2(0), ivec2(sz) - 1), b = clamp(ivec2(i) + 1, ivec2(0), ivec2(sz) - 1);
+	return mix(mix(texelFetch(g_tab, a, 0), texelFetch(g_tab, ivec2(b.x, a.y), 0), f.x),
+			mix(texelFetch(g_tab, ivec2(a.x, b.y), 0), texelFetch(g_tab, b, 0), f.x), f.y);
 }
-"""
-VERT = """#version 400
-in vec2 p; out vec2 vUV;
-void main() { vUV = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }
-"""
+'''
+assert INC.count('textureLod(g_tab, uv, 0.0)') == 1
+INC = INC.replace('textureLod(g_tab, uv, 0.0)', 'hw8_tab(uv)')
+i = INC.index('vec2 geo_G(')
+INC = INC[:i] + HW8 + INC[i:]
+# the rays geo_see's search tries, counted
+INC = INC.replace('const int GEO_ITERS', 'int g_rays = 0;\nconst int GEO_ITERS', 1)
+assert INC.count('if (i >= GEO_ITERS + nbad) break;') == 1
+INC = INC.replace('if (i >= GEO_ITERS + nbad) break;', 'if (i >= GEO_ITERS + nbad) break;\n\t\t\t\tg_rays = i + 1;')
+NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
+PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
+# the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
+# radians of direction (the headset's pixel is about 1e-3: half a pixel 5e-4), metres; a ray's length
+# only orders bodies in depth: a share of it (near a ray's turning point it follows the direction's
+# small error steeply; next to the photon sphere it is ill-posed: not checked there)
+SWEEP_ABS, SWEEP_REL = 5e-5, 1e-5
+INVERSE = 5e-4
+DIRECTION = 5e-4
+NAN_DIRECTION = 2e-2         # radians: the search, a quarter of its rays lost, at most this far off
+LENGTH_REL = 1e-2
+FLOOR_ABS, FLOOR_REL = 1e-3, 2e-3     # metres of l where a ray meets the floor, and a share of its way
+EYE_POS, EYE_AXES = 2e-5, 3e-4
+CHORD = 5e-5
+
+SRC = '''#version 430
+layout(local_size_x=64) in;
+uniform vec4 g_prof; uniform vec4 g_prof2; uniform vec4 g_tabx; uniform sampler2D g_tab;
+uniform float head_l; uniform vec3 head_n; uniform vec4 head_f[3]; uniform vec3 head_pos;
+uniform vec3 vb0; uniform vec3 vb1; uniform vec3 vb2;
+layout(std430, binding=0) buffer In { vec4 inp[]; };
+layout(std430, binding=1) buffer Out { vec4 outp[]; };
+uniform int mode;
+''' + INC + '''
+void main() {
+	uint i = gl_GlobalInvocationID.x;
+	vec4 a = inp[2 * i], c = inp[2 * i + 1];
+	if (mode == 0) {            // a = (b, |l|, b - rho0, r - b): (psi, len) from the origin
+		outp[i] = vec4(geo_from_origin(a.x, geo_sigma(a.z), a.y, a.w), 0.0, 0.0);
+	} else if (mode == 1) {     // a = (b, psi, b - rho0): |l|
+		outp[i] = vec4(geo_l_at(a.x, geo_sigma(a.z), a.y), 0.0, 0.0, 0.0);
+	} else if (mode == 2) {     // a = (eye l, n), c = (point l, n): (direction's radial, tangential, len, fell)
+		float len, fell; vec4 arr;
+		g_rays = 0;
+		vec4 d = geo_see(a.x, a.yzw, c.x, c.yzw, len, arr, fell);
+		outp[i] = vec4(d.x, length(d.yzw), len, fell + 2.0 * float(g_rays));
+	} else if (mode == 3) {     // a = the eye's place in the room: (l, n), then ex, ey, ez
+		mat4 iv = mat4(vec4(vb0, 0.0), vec4(vb1, 0.0), vec4(vb2, 0.0), vec4(a.xyz, 1.0));
+		float el; vec3 en; vec4 ex, ey, ez;
+		geo_eye(iv, vec3(0.0), el, en, ex, ey, ez);
+		outp[4 * i] = vec4(el, en); outp[4 * i + 1] = ex; outp[4 * i + 2] = ey; outp[4 * i + 3] = ez;
+	} else if (mode == 5) {     // a = (eye l, n), c = a ray (tangent vector there): (hit, l, way, 0)
+		float al = abs(a.x), lh, way, skys;
+		vec2 nh;
+		vec3 skyd;
+		bool hit = geo_floor(a.x, vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al)), a.yzw, c, lh, nh, way, skyd, skys);
+		outp[i] = vec4(hit ? 1.0 : 0.0, lh, way, 0.0);
+	} else {                    // a = a ball's centre, c = (direction in its tangent frame, radius): (chord, sdf)
+		vec4 N = geo_normal(a);
+		vec4 e1 = vec4(0.0, 0.0, 0.0, 1.0) - N.w * N;
+		if (length(e1) < 0.5) e1 = vec4(0.0, 1.0, 0.0, 0.0) - N.y * N;
+		e1 = normalize(e1);
+		vec4 e2 = vec4(0.0, 1.0, 0.0, 0.0) - N.y * N; e2 -= dot(e2, e1) * e1;
+		if (length(e2) < 0.5) { e2 = vec4(1.0, 0.0, 0.0, 0.0) - N.x * N; e2 -= dot(e2, e1) * e1; }
+		e2 = normalize(e2);
+		vec4 x = c.w * (c.x * e1 + c.y * e2 + c.z * -geo_cross4(e1, e2, N));
+		vec4 P = geo_onto(a + x, N);
+		for (int k = 0; k < 2; k++) {      // as body.gdshaderinc
+			float cc = dot(P - a, N);
+			P = geo_onto(a + x * (sqrt(max(c.w * c.w - cc * cc, 0.0)) / c.w), N);
+		}
+		outp[i] = vec4(length(P - a), geo_sdf(length(P.xyz), P.w).x, 0.0, 0.0);
+	}
+}'''
 
 
-def frame_from_chart(side, x, fwd, up):
-    """Eye in a flat region given in chart coordinates -> manifold state + frame."""
-    M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
-    r = np.linalg.norm(x)
-    n = M * x / r
-    l0 = side * (r - W.Rout + W.L)
-    rt = np.cross(fwd, up)
-
-    def vec(d):
-        md = M * d
-        rad = md @ n
-        return np.r_[side * rad, md - rad * n]
-    return l0, n, vec(fwd), vec(rt), vec(up)
+# geo_see with a quarter of its search's rays made NaN (as a GPU's arithmetic might at some edge): it
+# must still find the ray
+NAN_SRC = SRC.replace('uniform int mode;', '''uniform int mode;
+uint g_h = 0u;
+uint g_hash(uint v) { uint s = v * 747796405u + 2891336453u; uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }''', 1).replace(
+    '\t\t\t\tfloat val = s.x - delta;\n',
+    '\t\t\t\tif (g_hash(g_h * 16u + uint(i)) % 4u == 0u) s = vec2(uintBitsToFloat(0x7fc00000u));\n'
+    '\t\t\t\tfloat val = s.x - delta;\n', 1).replace(
+    '\tuint i = gl_GlobalInvocationID.x;', '\tuint i = gl_GlobalInvocationID.x;\n\tg_h = i;', 1)
+assert NAN_SRC.count('0x7fc00000u') == 1 and NAN_SRC.count('g_h = i;') == 1
 
 
-def render(ctx, state, size, tan, debug):
-    l0, n0, F, Rt, Up = state
-    prog = ctx.program(vertex_shader=VERT, fragment_shader=FRAG)
-    vbo = ctx.buffer(np.array([-1, -1, 1, -1, -1, 1, 1, 1], 'f4').tobytes())
-    vao = ctx.vertex_array(prog, [(vbo, '2f', 'p')])
-    balls = [tuple(c) for c, _, _ in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
-    bcol = [tuple(col) + (rad,) for _, rad, col in BALLS] + [(0.0, 0.0, 0.0, 0.0)] * (MAXB - len(BALLS))
-    # per cube: the four axes over the half size, then dot(centre, axis) for the four (Tracer.set_objects)
-    cpos = [tuple(c) for c, _, _, _ in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
-    cax = []
-    for c, ax, half, _ in CUBES:
-        cax += [tuple(a / half) for a in ax] + [tuple(float(np.dot(c, a / half)) for a in ax)]
-    cax += [(0.0, 0.0, 0.0, 0.0)] * (5 * MAXC - len(cax))
-    ccol = [tuple(col) + (half,) for _, _, half, col in CUBES] + [(0.0, 0.0, 0.0, 0.0)] * (MAXC - len(CUBES))
-    # each ball's sphere in the sheet that cuts it, in that chart (Tracer.set_objects)
-    fball = []
-    for c, rad, _ in BALLS:
-        side = 1.0 if c[3] > 0 else -1.0
-        r2 = rad * rad - (c[3] - side * PROF[1]) ** 2
-        fball.append((side * c[0], c[1], c[2], r2) if r2 > 0 else (0.0, 0.0, 0.0, -1.0))
-    fball += [(0.0, 0.0, 0.0, -1.0)] * (MAXB - len(fball))
-    # the bounding spheres of each universe's balls and of its cubes, as Tracer.set_objects makes them
-    bound = []
-    for objs in ([(np.asarray(c), rad) for c, rad, _ in BALLS], [(np.asarray(c), 2.0 * half) for c, _, half, _ in CUBES]):
-        for side in (1.0, -1.0):
-            pts = [(c[:3], rr) for c, rr in objs if abs(c[3] - side * PROF[1]) < rr]
-            if not pts:
-                bound.append((0.0, 0.0, 0.0, -1.0))
-                continue
-            P = np.array([p for p, _ in pts])
-            mid = 0.5 * (P.min(0) + P.max(0))
-            bound.append(tuple(mid) + (max(np.linalg.norm(p - mid) + rr for p, rr in pts),))
-    for k, v in dict(wh_sph=[tuple(x) for x in SCENE['spheres_A'] + SCENE['spheres_B']],
-                     wh_pil=[tuple(x) for x in SCENE['pillars_A']], wh_box=[tuple(x) for x in SCENE['boxes_B']],
-                     wh_ball=balls, wh_ballCol=bcol, wh_nBall=len(BALLS),
-                     wh_cube=cpos, wh_cubeE=cax, wh_cubeCol=ccol, wh_nCube=len(CUBES), wh_bound=bound, wh_pix=0.002,
-                     wh_bIdx=BIDX, wh_cIdx=CIDX, wh_fball=fball,
-                     wh_rho0=PROF[0], wh_h=PROF[1], wh_fillet=PROF[2], uL0=l0, uN0=tuple(n0), uF=tuple(F), uRt=tuple(Rt),
-                     uUp=tuple(Up), uTan=tuple(tan), uDebug=int(debug), uSize=(size, size)).items():
-        if k in prog:      # the balls' and cubes' uniforms are gone from the shader without balls
-            prog[k].value = v
-    tab, lo, inv, reg = W.fillet_table()
-    t = ctx.texture((tab.shape[1], 4), 4, tab.tobytes(), dtype='f4')
-    t.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    t.repeat_x = t.repeat_y = False
-    t.use(0)
-    for k, v in dict(wh_tab=0, wh_tabLo=tuple(lo), wh_tabInv=tuple(inv), wh_tabReg=tuple(reg)).items():
-        if k in prog:
-            prog[k].value = v
-    tex = ctx.texture((size, size), 4, dtype='f4' if debug else 'f1')
-    fbo = ctx.framebuffer([tex])
-    fbo.use(); fbo.clear()
-    vao.render(moderngl.TRIANGLE_STRIP)
-    data = np.frombuffer(fbo.read(components=4, dtype='f4' if debug else 'f1'),
-                         dtype='f4' if debug else 'u1').reshape(size, size, 4)
-    return data if debug else data[::-1]
+class Gpu:
+    def __init__(self, ctx, S, src=SRC):
+        self.ctx = ctx
+        self.prog = ctx.compute_shader(src)
+        tab = S.build_table(NB, NV, 4)
+        self.tex = ctx.texture((NB, NV), 2, dtype='f4', data=np.ascontiguousarray(tab.transpose(1, 0, 2)).astype('f4').tobytes())
+        self.tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.tex.repeat_x = self.tex.repeat_y = False
+        self.tex.use(0)
+        p = self.prog
+        p['g_tab'] = 0
+        p['g_prof'] = (S.rho0, S.R, S.Lc, S.L)
+        p['g_prof2'] = (S.Rout, S.u0, S.rmin, S.th0)
+        p['g_tabx'] = (S.t0, 1 / (S.t1 - S.t0), NB, NV)
+
+    def run(self, mode, rows, out_per=1):
+        rows = np.asarray(rows, 'f4').reshape(-1, 8)
+        n = len(rows)
+        rows = np.vstack([rows, np.zeros(((-n) % 64, 8), 'f4')])
+        bi = self.ctx.buffer(rows.tobytes())
+        bo = self.ctx.buffer(reserve=len(rows) * 16 * out_per)
+        bi.bind_to_storage_buffer(0)
+        bo.bind_to_storage_buffer(1)
+        self.prog['mode'] = mode
+        self.prog.run(len(rows) // 64)
+        return np.frombuffer(bo.read(), 'f4').reshape(-1, 4)[:n * out_per]
 
 
-# ---------------------------------------------------------------- reference
-SPH = {1: SCENE['spheres_A'], -1: SCENE['spheres_B']}
-PIL = SCENE['pillars_A']
-BOX = SCENE['boxes_B']
+def unit(v):
+    return v / np.linalg.norm(v)
 
 
-def flat_hit(side, x, d, shell):
-    """Returns (t, kind): kind 0 sky, 1 floor, 2 object, 3 shell, 10 + j ball j, 10 + len(BALLS) + j cube j."""
-    best, kind = 1e9, 0
-    if d[2] < 0:
-        t = -x[2] / d[2]
-        if t > 0: best, kind = t, 1
-    for s in SPH[side]:
-        oc = x - np.array(s[:3]); bq = oc @ d; disc = bq * bq - (oc @ oc - s[3] ** 2)
-        if disc >= 0:
-            t = -bq - np.sqrt(disc)
-            if 1e-4 < t < best: best, kind = t, 2
-    if side > 0:
-        for p in PIL:
-            oc = x[:2] - p[:2]; A = d[:2] @ d[:2]
-            if A < 1e-9: continue
-            B = oc @ d[:2]; disc = B * B - A * (oc @ oc - p[2] ** 2)
-            if disc >= 0:
-                t = (-B - np.sqrt(disc)) / A; zz = x[2] + t * d[2]
-                if 1e-4 < t < best and 0 < zz < p[3]: best, kind = t, 2
-            if d[2] < 0:
-                tt = (p[3] - x[2]) / d[2]; q = x[:2] + tt * d[:2] - p[:2]
-                if 1e-4 < tt < best and q @ q < p[2] ** 2: best, kind = tt, 2
-    else:
-        for bx in BOX:
-            c = np.array(bx[:3]); hs = bx[3]
-            with np.errstate(divide='ignore', invalid='ignore'):
-                t0 = (c - hs - x) / d; t1 = (c + hs - x) / d
-            tin = np.max(np.minimum(t0, t1)); tout = np.min(np.maximum(t0, t1))
-            if tin <= tout and 1e-4 < tin < best: best, kind = tin, 2
-    M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
-    for j, (c, rad, _) in enumerate(BALLS):
-        r2 = rad * rad - (c[3] - side * W.h) ** 2
-        if r2 <= 0: continue
-        oc = x - M * c[:3]; bq = oc @ d; cq = oc @ oc - r2; disc = bq * bq - cq
-        if cq > 0 and disc >= 0:
-            t = -bq - np.sqrt(disc)
-            if 0 < t < best: best, kind = t, 10 + j
-    for j, (c, ax, half, _) in enumerate(CUBES):
-        X = np.r_[M * x, side * W.h] - c
-        D = np.r_[M * d, 0.0]
-        lo, hi = -np.inf, np.inf
-        for a in ax:
-            A, B = X @ a, D @ a
-            if abs(B) < 1e-15:
-                if abs(A) >= half: lo = np.inf
-                continue
-            t0, t1 = sorted(((-half - A) / B, (half - A) / B))
-            lo, hi = max(lo, t0), min(hi, t1)
-        if lo <= hi and 0 < lo < best:
-            best, kind = lo, 10 + len(BALLS) + j
-    if shell:
-        bq = x @ d; disc = bq * bq - (x @ x - W.Rout ** 2)
-        if disc > 0:
-            t = -bq - np.sqrt(disc)
-            if 0 < t < best: best, kind = t, 3
-    return best, kind
+def check(name, ok, detail):
+    print(('PASS ' if ok else 'FAIL ') + name + '  ' + detail)
+    return ok
 
 
-def geom_flat(side, x, d, t, kind):
-    if kind >= 10:
-        M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
-        j = kind - 10
-        return (100 + j if j < len(BALLS) else 200 + j - len(BALLS), *(M * (x + t * d)))
-    code = 2 * kind + (1 if side > 0 else 0)
-    if kind == 0:
-        dn = d / np.linalg.norm(d)
-        return (code, *dn)
-    p = x + t * d
-    if kind == 1:
-        M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
-        npnt = M * p / np.linalg.norm(p)
-        return (code, side * (np.linalg.norm(p) - W.Rout + W.L), npnt[0], npnt[1])
-    return (code, *p)
+def profile_checks(name, S, gpu, gpu_nan, rng):
+    fails = 0
+    # sweep and length from the origin; b as float32 has it, b - rho0 and r - b as the shaders
+    # carry them, exact (geo_dr, geo_sigma)
+    rows, ref = [], []
+    while len(rows) < 1500:
+        b = float(np.float32(rng.uniform(0, S.Rout * 1.3)))
+        lo = 0.0 if b < S.rmin else S.l_turn(b)
+        l = lo + rng.uniform(0, 1) ** 2 * 12
+        e = S.sweep(b, l)
+        if not np.all(np.isfinite(e)) or e[0] > 2 * np.pi:      # past half a turn the floor stops any ray
+            continue
+        rows.append([b, l, b - S.rho0, float(S.r(l)) - b, 0, 0, 0, 0]); ref.append(e)
+    o = gpu.run(0, rows)[:, :2]; ref = np.array(ref)
+    err = np.abs(o[:, 0] - ref[:, 0]) / (SWEEP_ABS + SWEEP_REL * np.abs(ref[:, 0]))
+    lerr = np.abs(o[:, 1] - ref[:, 1]) / (1e-3 + LENGTH_REL * ref[:, 1])
+    fails += not check(f'{name}: sweep from the origin', err.max() <= 1, f'worst {err.max():.2f} of the limit, length {lerr.max():.2f} (1500 rays)')
+    # where the sweep reaches a value
+    rows, want = [], []
+    while len(rows) < 1000:
+        b = float(np.float32(rng.uniform(0, S.Rout * 1.2))); psi = rng.uniform(0, 2.5)
+        L = S.l_at(b, psi)
+        if not np.isfinite(L):
+            continue
+        rows.append([b, psi, b - S.rho0, 0, 0, 0, 0, 0]); want.append(psi)
+    o = gpu.run(1, rows)[:, 0]
+    err = [abs(S.sweep(r[0], max(l, S.l_turn(r[0]) if r[0] >= S.rmin else l))[0] - w) for r, l, w in zip(rows, o, want)]
+    fails += not check(f'{name}: where the sweep reaches a value', max(err) <= INVERSE, f'sweep at the GPU l off by {max(err):.1e} rad at most (1000 rays)')
+    # which way the eye sees a point
+    rows, cases = [], []
+    places = eye_places(S)
+    while len(rows) < 1200:
+        el = eye_at(places, rng)
+        alpha = launch(rng, len(rows) % 2)
+        s = rng.choice([rng.uniform(0.05, 0.6), rng.uniform(0.6, 4), rng.uniform(4, 30)])
+        sol = shoot(S, el, alpha, smax=s)
+        lp, vl, phi = sol.y[:, -1]
+        if phi > 0.93 * np.pi:
+            continue
+        en = unit(rng.normal(size=3)); t = rng.normal(size=3); t = unit(t - np.dot(t, en) * en)
+        rows.append([el, *en, lp, *(np.cos(phi) * en + np.sin(phi) * t)]); cases.append((el, alpha, s, phi))
+    o = gpu.run(2, rows)
+    derr, lerr = [], []
+    for (el, alpha, s, phi), g in zip(cases, o):
+        derr.append(abs(np.arctan2(g[1], g[0] * (1 if el >= 0 else -1)) - alpha))
+        lerr.append(abs(g[2] - s) / (1e-3 + LENGTH_REL * s))
+    rays = np.floor(o[:, 3] / 2)
+    fell = int((o[:, 3] - 2 * rays > 0.0).sum())
+    searched = rays[rays > 0]
+    fails += not check(f'{name}: which way the eye sees a point', max(derr) <= DIRECTION and max(lerr) <= 1 and fell == 0,
+                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), length {max(lerr):.2f} of the limit, {fell} with a ray not finite (1200 points; '
+                       f'{len(searched)} searched, in {searched.mean():.1f} rays on average, {int(searched.max())} at most)')
+    o = gpu_nan.run(2, rows)
+    derr = [abs(np.arctan2(g[1], g[0] * (1 if el >= 0 else -1)) - alpha) for (el, alpha, s, phi), g in zip(cases, o)]
+    stand_in = int((o[:, 3] - 2 * np.floor(o[:, 3] / 2) > 0.75).sum())
+    fails += not check(f'{name}: the same, a quarter of the search\'s rays made NaN', max(derr) <= NAN_DIRECTION and stand_in == 0,
+                       f'direction off by {max(derr):.1e} rad at most (median {np.median(derr):.0e}), {stand_in} by the stand-in')
+    # where each pixel's ray meets the floor
+    rows, want = [], []
+    while len(rows) < 1500:
+        el = eye_at(places, rng)
+        r = float(S.r(abs(el)))
+        h = rng.uniform(0.3, 2.0) / r                      # the eye 0.3 to 2 m over the floor
+        en = np.array([np.cos(h), 0.0, np.sin(h)])
+        beta = rng.uniform(0, np.pi)                       # the ray's plane: from straight down to level
+        t = np.cos(beta) * np.array([np.sin(h), 0.0, -np.cos(h)]) + np.sin(beta) * np.array([0.0, 1.0, 0.0])
+        phif = np.arctan2(en[2], -t[2])
+        alpha = launch(rng, len(rows) % 2)
+        ref = floor_hit(S, el, alpha, phif)
+        rows.append([el, *en, (1 if el >= 0 else -1) * np.cos(alpha), *(np.sin(alpha) * t)]); want.append((ref, phif))
+    o = gpu.run(5, rows)
+    perr, wrong = [], 0
+    for g, (ref, phif) in zip(o, want):
+        if (ref[0] is not None) != (g[0] > 0.5):
+            # floor or sky: may differ only where the ray goes off at the horizon
+            wrong += not ((ref[0] is None and abs(ref[1] - phif) < 1e-4) or (ref[0] is not None and abs(ref[0]) > 1e3))
+        elif ref[0] is not None:
+            perr.append(abs(g[1] - ref[0]) / (FLOOR_ABS + FLOOR_REL * ref[1]))
+    fails += not check(f'{name}: where a ray meets the floor', wrong == 0 and max(perr) <= 1,
+                       f'{wrong} floor for sky or back, l off by {max(perr):.2f} of the limit at most (1500 rays)')
+    # a ball's surface
+    rows = []
+    for k in range(400):
+        l = rng.uniform(-S.L - 2, S.L + 2)
+        if S.Lc == 0 and abs(l) < 0.5:     # a ball across the crease of h < R: not this method's
+            continue
+        n = unit(rng.normal(size=3)); n[2] = abs(n[2])
+        C = np.r_[float(S.r(l)) * n, float(S.w(l))]
+        m = unit(rng.normal(size=3))
+        rows.append([*C, *m, rng.uniform(0.05, 0.4)])
+    o = gpu.run(4, rows)
+    rad = np.array(rows)[:, 7]
+    cerr = np.abs(o[:, 0] - rad).max(); serr = np.abs(o[:, 1]).max()
+    fails += not check(f'{name}: a ball\'s vertices', cerr <= CHORD and serr <= CHORD, f'chord off by {cerr:.1e} m, off the space by {serr:.1e} m (400 vertices)')
+    return fails
 
 
-def reference(state, size, tan):
-    l0, n0, F, Rt, Up = state
-    out = np.zeros((size, size, 4))
-    pend = []    # rays needing the curved integration: (iy, ix, l, n, vl, w)
-    for iy in range(size):
-        for ix in range(size):
-            u, v = (ix + 0.5) / size, (iy + 0.5) / size
-            dl = np.array([-tan[0] + u * (tan[0] + tan[1]), -tan[2] + v * (tan[2] + tan[3]), 1.0])
-            dl /= np.linalg.norm(dl)
-            V = dl[0] * Rt + dl[1] * Up + dl[2] * F
-            vl, w = V[0], V[1:]
-            if abs(l0) < W.L:
-                pend.append((iy, ix, l0, n0, vl, w)); continue
-            side = 1.0 if l0 > 0 else -1.0
-            M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
-            x = M * (abs(l0) - W.L + W.Rout) * n0
-            d = M * (side * vl * n0 + w)
-            t, kind = flat_hit(side, x, d, True)
-            if kind != 3:
-                out[iy, ix] = geom_flat(side, x, d, t, kind); continue
-            p = x + t * d
-            nn = M * p / np.linalg.norm(p); md = M * d; rad = md @ nn
-            pend.append((iy, ix, side * W.L, nn, side * rad, md - rad * nn))
-    if pend:
-        res = W.brute(np.array([p[2] for p in pend]), np.array([p[3] for p in pend]),
-                      np.array([p[4] for p in pend]), np.array([p[5] for p in pend]), h=W.rho0 * float(os.environ.get('WH_REFSTEP', '1e-3')),
-                      balls=[(c, rad) for c, rad, _ in BALLS], cubes=[(c, ax, half) for c, ax, half, _ in CUBES])
-        for k, (iy, ix, *_ ) in enumerate(pend):
-            kind = res['kind'][k]
-            if kind >= 10:
-                j = kind - 10
-                code = 100 + j if j < len(BALLS) else 200 + j - len(BALLS)
-                out[iy, ix] = (code, *(W.r(res['l'][k]) * res['n'][k]))
-                continue
-            if kind == 2:
-                n = res['n'][k]
-                out[iy, ix] = (3 if res['l'][k] > 0 else 2, res['l'][k], n[0], n[1])
-                continue
-            if kind == 0:
-                out[iy, ix] = (-9, 0, 0, 0); continue    # did not finish (trapped)
-            side = float(kind)
-            M = np.array([1.0, 1, 1]) if side > 0 else np.array([-1.0, 1, 1])
-            n, vl, w = res['n'][k], res['vl'][k], res['w'][k]
-            x = M * W.Rout * n
-            d = M * (side * vl * n + w)
-            t, fk = flat_hit(side, x, d, False)
-            out[iy, ix] = geom_flat(side, x, d, t, fk)
-    return out
+def eye_places(S):
+    """Where the eye stands, (l, spread): on the cylinder if there is one, and at its end; without one,
+    off l = 0, the photon sphere's point or the crease (an eye a hair from either is not checked);
+    the fillet, its end, the flat universes."""
+    places = [(0.0, 0.1), (0.5, 0.1), (S.Lc - 0.1, 0.1), (S.Lc, 0.01), (-S.Lc, 0.01)] if S.Lc > 0 else [(0.3, 0.1), (-0.4, 0.1)]
+    return places + [(0.5 * (S.Lc + S.L), 0.1), (S.L - 0.05, 0.1), (S.L + 0.5, 0.1), (S.L + 5, 0.1),
+                     (-0.5 * (S.Lc + S.L), 0.1), (-(S.L + 1), 0.1), (25.0, 0.1)]
 
 
-def compare(gpu, ref, name):
-    """Sky: angular error of the final direction. Floor, balls and cubes: hit-position error in units of
-    the pixel footprint (distance to the neighbouring pixels' hits in the reference), converted to
-    an equivalent viewing angle. Errors well below a pixel are invisible."""
-    n = gpu.shape[0]
-    px_deg = np.degrees(2.0 * np.arctan(TAN)) / n
-    valid = ref[..., 0] >= 0
-    k_ok = (gpu[..., 0] == ref[..., 0]) & valid
-    code = ref[..., 0]
-    sky = k_ok & (code < 2)
-    flo = k_ok & ((code == 2) | (code == 3))
-    bal = k_ok & (code >= 100) & (code < 200)
-    cub = k_ok & (code >= 200)
-    g3 = gpu[..., 1:].astype(np.float64); g3 /= np.linalg.norm(g3, axis=-1, keepdims=True) + 1e-300
-    e_sky = np.degrees(np.arctan2(np.linalg.norm(np.cross(g3, ref[..., 1:]), axis=-1), np.sum(g3 * ref[..., 1:], -1)))[sky]
-
-    def emb(a):   # floor point as (l, r n_xy); ball hit as its R^4 xyz. Metres.
-        fl = np.concatenate([a[..., 1:2], W.r(a[..., 1:2]) * a[..., 2:4]], -1)
-        return np.where((a[..., :1] >= 100), a[..., 1:4], fl)
-    E = emb(ref.astype(np.float64)); G = emb(gpu.astype(np.float64))
-    err = np.linalg.norm(G - E, axis=-1)
-    foot = np.full(err.shape, np.inf)
-    for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-        sh = np.roll(E, (dy, dx), (0, 1)); same = np.roll(code, (dy, dx), (0, 1)) == code
-        d = np.linalg.norm(sh - E, axis=-1)
-        foot = np.minimum(foot, np.where(same, d, np.inf))
-    ok = np.isfinite(foot) & (foot > 0)
-
-    def ang(mask):
-        e = (err / np.where(ok, foot, 1.0))[mask & ok] * px_deg
-        return (np.percentile(e, 99), e.max(), e.size) if e.size else (0.0, 0.0, 0)
-    f99, fmax, _ = ang(flo)
-    b99, bmax, bn = ang(bal)
-    c99, cmax, cn = ang(cub)
-    nb_ref = int(((code >= 100) & (code < 200)).sum())
-    nc_ref = int((code >= 200).sum())
-    print(f"[{name}] class mismatch {(1 - k_ok[valid].mean()) * 100:.2f}% | sky max {e_sky.max() if e_sky.size else 0:.4f} deg"
-          f" | floor p99 {f99:.4f} max {fmax:.4f} deg | balls {nb_ref} px, p99 {b99:.4f} max {bmax:.4f} deg"
-          f" | cubes {nc_ref} px, p99 {c99:.4f} max {cmax:.4f} deg")
-    return k_ok
+def eye_at(places, rng):
+    c, w = places[rng.integers(len(places))]
+    return c + rng.uniform(-w, w)
 
 
-if __name__ == '__main__':
-    ctx = moderngl.create_standalone_context(backend='egl')
-    tan = (TAN,) * 4
-    cams = {
-        'outside_A': frame_from_chart(1, np.array([12.0, 1.0, 1.6]), np.array([-1.0, 0, 0]), np.array([0, 0, 1.0])),
-        'outside_B_look_back': frame_from_chart(-1, np.array([-11.0, 2.0, 1.6]), np.array([1.0, 0, 0]), np.array([0, 0, 1.0])),
-    }
-    # cameras inside the shell (middle of the throat, and in a fillet), looking along the floor toward side B
-    def inside(l0, tilt):
-        n0 = np.array([1.0, 0.0, tilt]); n0 /= np.linalg.norm(n0)
-        tz = np.array([0, 0, 1.0]) - n0 * n0[2]; tz /= np.linalg.norm(tz)
-        ty = np.cross(tz, n0)   # (e_l, ty, tz) right-handed
-        F = np.r_[-0.9, 0.2 * ty]; F /= np.linalg.norm(F)
-        Up = np.r_[0.0, tz]
-        to3 = lambda V: np.array([V[0], V[1:] @ ty, V[1:] @ tz])   # basis {e_l, ty, tz}
-        from3 = lambda c: np.r_[c[0], c[1] * ty + c[2] * tz]
-        return (l0, n0, F, from3(np.cross(to3(F), to3(Up))), Up)
-    cams['in_throat_middle'] = inside(0.1 * max(W.Lc, W.L), 0.5)
-    cams['in_fillet'] = inside(0.5 * (W.Lc + W.L), 0.35)
+def launch(rng, near_tangent):
+    """A launch angle from the outward radial direction: any, or within 1e-6 to 0.3 rad of the tangent."""
+    if near_tangent:
+        return 0.5 * np.pi + rng.choice([-1, 1]) * 10 ** rng.uniform(-6, -0.5)
+    return rng.uniform(0, np.pi)
 
-    def facing(l0, n0, fwd):
-        """Camera at (l0, n0) looking along fwd = (e_l, ty, tz) components, tz up the floor normal."""
-        n0 = np.asarray(n0, float); n0 /= np.linalg.norm(n0)
-        tz = np.array([0, 0, 1.0]) - n0 * n0[2]; tz /= np.linalg.norm(tz)
-        ty = np.cross(tz, n0)
-        from3 = lambda c: np.r_[c[0], c[1] * ty + c[2] * tz]
-        F = np.asarray(fwd, float) / np.linalg.norm(fwd)
-        up = np.array([0, 0, 1.0]) - F * F[2]; up /= np.linalg.norm(up)
-        return (l0, n0, from3(F), from3(np.cross(F, up)), from3(up))
-    # close to the cubes (and balls) of the throat and of the fillet, so that they cover many pixels
-    if CUBES:
-        if W.Lc > 0:
-            cams['at_throat_cube'] = facing(0.4 * W.Lc + 1.4, [1.0, -0.3, 0.3], [-1.0, 0.0, -0.25])
-        cams['at_fillet_cube'] = facing(W.L - 0.05, [1.0, 0.4, 0.35], [-1.0, 0.0, -0.3])
-    if os.environ.get('WH_CAMS'):             # e.g. WH_CAMS=at_throat_cube,at_fillet_cube
-        cams = {k: v for k, v in cams.items() if k in os.environ['WH_CAMS'].split(',')}
-    tag = '_'.join(f'{v:g}' for v in PROF)
 
-    os.makedirs(os.path.join(HERE, 'out'), exist_ok=True)
-    for name, st in cams.items():
-        img = render(ctx, st, 900, tan, False)
-        Image.fromarray(img[..., :3]).save(os.path.join(HERE, 'out', f'{tag}_{name}.png'))
-        n = int(sys.argv[1]) if len(sys.argv) > 1 else 96
-        g = render(ctx, st, n, tan, True)
-        ref = reference(st, n, tan)
-        compare(g, ref, name)
+def eye_checks(S, gpu, rng):
+    """The eye from the head: 300 heads (places, frames, offsets up to 6 cm) against RK4."""
+    worst_p = worst_a = 0.0
+    for k in range(300):
+        l = rng.choice([0.0, S.Lc + 0.3, S.L - 0.2, S.L + 2.0, -(S.Lc + 0.5)]) + rng.uniform(-0.2, 0.2)
+        n = unit(rng.normal(size=3)); n[2] = abs(n[2]) + 0.2; n = unit(n)
+        # an orthonormal frame of tangent vectors (U_l, u)
+        A = []
+        for v in rng.normal(size=(3, 4)):
+            v[1:] -= np.dot(v[1:], n) * n
+            for a in A:
+                v -= np.dot(v, a) * a
+            A.append(unit(v))
+        head_pos = rng.uniform(-1, 1, 3)
+        off = unit(rng.normal(size=3)) * rng.uniform(0, 0.06)
+        basis = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+        p = gpu.prog
+        p['head_l'] = l; p['head_n'] = tuple(n); p['head_pos'] = tuple(head_pos)
+        p['head_f'].write(np.array(A, 'f4').tobytes())
+        p['vb0'] = tuple(basis[:, 0]); p['vb1'] = tuple(basis[:, 1]); p['vb2'] = tuple(basis[:, 2])
+        o = gpu.run(3, [[*(head_pos + off), 0, 0, 0, 0, 0]], out_per=4)
+        # RK4 along the offset, the frame carried
+        T = off[0] * A[0] + off[1] * A[1] + off[2] * A[2]
+        dist = np.linalg.norm(T)
+        el, en, F = rk4_eye(S, l, n, T, dist, A)
+        axes = [basis[0, k2] * F[0] + basis[1, k2] * F[1] + basis[2, k2] * F[2] for k2 in range(3)]
+        worst_p = max(worst_p, abs(o[0, 0] - el), np.abs(o[0, 1:] - en).max() * float(S.r(el)))
+        worst_a = max(worst_a, max(np.abs(o[1 + k2] - axes[k2]).max() for k2 in range(3)))
+    return not check('the eye from the head', worst_p <= EYE_POS + 1e-6 and worst_a <= EYE_AXES,
+                     f'place off by {worst_p:.1e} m, axes by {worst_a:.1e} at most (300 heads, offsets to 6 cm)')
+
+
+def rk4_eye(S, l, n, T, dist, A):
+    if dist == 0:
+        return l, n, A
+
+    def f(y):
+        l, n, vl, v = y[0], y[1:4], y[4], y[5:8]
+        r = float(S.r(l)); k = float(S.dr(l)) / r
+        vv = v @ v
+        out = [vl, *(v / r), k * vv, *(-k * vl * v - vv / r * n)]
+        for j in range(3):
+            Ul, u = y[8 + 4 * j], y[9 + 4 * j:12 + 4 * j]
+            uv = u @ v
+            out += [k * uv, *(-k * Ul * v - uv / r * n)]
+        return np.array(out)
+    y = np.r_[l, n, T[0] / dist, T[1:] / dist, np.concatenate(A)]
+    steps = 200
+    hs = dist / steps
+    for _ in range(steps):
+        k1 = f(y); k2 = f(y + hs / 2 * k1); k3 = f(y + hs / 2 * k2); k4 = f(y + hs * k3)
+        y = y + hs / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    return y[0], unit(y[1:4]), [y[8 + 4 * j:12 + 4 * j] for j in range(3)]
+
+
+ctx = moderngl.create_standalone_context(backend='egl', require=430)
+rng = np.random.default_rng(1)
+fails = 0
+for name, prof in PROFILES.items():
+    S = Space(*prof)
+    S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
+    gpu = Gpu(ctx, S)
+    fails += profile_checks(name, S, gpu, Gpu(ctx, S, NAN_SRC), rng)
+    if name == 'the app':
+        fails += eye_checks(S, gpu, rng)
+print(f'FAILURES: {fails}')
+sys.exit(1 if fails else 0)

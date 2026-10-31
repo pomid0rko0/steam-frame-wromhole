@@ -16,12 +16,10 @@ const SCALES := [1.0, 0.9, 0.8, 0.7]
 const FOVEATIONS := ["выкл", "SteamVR слабая", "SteamVR средняя", "SteamVR сильная", "плавная широкая", "плавная узкая"]
 const FOV_LOG := ["off", "SteamVR low", "SteamVR medium", "SteamVR high", "own wide", "own narrow"]
 const FOV_CHOICES := [0, 1, 3, 4, 5]     # the levels the menu offers
-# until one is chosen: our narrow map, the width first (its border is not seen in the headset)
-const DEFAULT_FOVEATION := 5
-const DEFAULT_ORDER := 0
+# until one is chosen: our own, wide (floor_fov.gd): smooth, no coarse tiles
+const DEFAULT_FOVEATION := 4
 const SETTINGS := "user://settings.cfg"
-const ORDERS := ["по горизонтали", "по вертикали"]     # Foveation.order 0 and 1
-const GRAVITY_NAMES := ["выкл", "пол", "пол и стрелки"]   # Tracer.GRAVITY_VIEWS' names, one each
+const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
@@ -101,7 +99,7 @@ var value_half := 0.0
 
 
 func _ready() -> void:
-	assert(GRAVITY_NAMES.size() == Tracer.GRAVITY_VIEWS.size(), "a name for each gravity view")
+	assert(GRAVITY_NAMES.size() == Renderer.GRAVITY_VIEWS.size(), "a name for each gravity view")
 	menu = Node3D.new()
 	menu.transform = Transform3D(Basis(Vector3.RIGHT, -atan2(MENU_DROP, MENU_DIST)), Vector3(0.0, -MENU_DROP, -MENU_DIST))
 	add_child(menu)
@@ -129,7 +127,6 @@ func _ready() -> void:
 	strip_on = bool(cfg.get_value("ui", "strip", true))
 	if xr:
 		set_render_scale(float(cfg.get_value("render", "scale", 1.0)))
-		main.foveation.set_order(int(cfg.get_value("render", "own_order", DEFAULT_ORDER)))
 		_set_foveation(int(cfg.get_value("render", "foveation", DEFAULT_FOVEATION)))
 		if foveation > 0:
 			set_render_scale(1.0)
@@ -530,17 +527,6 @@ func choose_foveation(level: int) -> void:
 	_set_text(_compose())
 
 
-## Which way our own maps coarsen first; kept for the next start.
-func choose_order(order: int) -> void:
-	if xr == null:
-		return
-	main.foveation.set_order(order)
-	_save()
-	print("refresh: own maps coarsen the %s first, foveation %d (%s)"
-			% ["width" if main.foveation.order == 0 else "height", foveation, FOV_LOG[foveation]])
-	refresh()
-
-
 func show_gaze(on: bool) -> void:
 	if main.gaze_dot == null:
 		return
@@ -565,7 +551,8 @@ func _save() -> void:
 	if xr:
 		cfg.set_value("render", "scale", render_scale)
 		cfg.set_value("render", "foveation", foveation)
-		cfg.set_value("render", "own_order", main.foveation.order)
+		if cfg.has_section_key("render", "own_order"):
+			cfg.erase_section_key("render", "own_order")       # our own maps' order: no more
 	cfg.save(SETTINGS)
 
 
@@ -659,7 +646,7 @@ func _update_strip() -> void:
 ## Every row, top to bottom; _layout leaves out those not shown here.
 func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
-			FovRow.new(self, "fov", "фовеация"), OrderRow.new(self, "order", "плавная грубее"),
+			FovRow.new(self, "fov", "фовеация"),
 			GazeRow.new(self, "gaze", "точка взгляда"), GravRow.new(self, "grav", "гравитация"),
 			TurnRow.new(self, "turn", "поворот"), StripRow.new(self, "strip", "строка частоты"),
 			BenchRow.new(self, "bench", "замер скорости")]
@@ -806,24 +793,6 @@ class FovRow extends Row:
 		return not menu.main.hold
 
 
-## Which way our own maps coarsen first: the width or the height, to compare by eye.
-class OrderRow extends Row:
-	func shown() -> bool:
-		return menu.xr != null
-
-	func current() -> int:
-		return menu.main.foveation.order
-
-	func apply(i: int) -> void:
-		menu.choose_order(i)
-
-	func text(i: int) -> String:
-		return ORDERS[i]
-
-	func enabled() -> bool:
-		return not menu.main.hold
-
-
 ## The dot where SteamVR's eye tracking says the eyes look.
 class GazeRow extends Row:
 	func shown() -> bool:
@@ -842,10 +811,10 @@ class GazeRow extends Row:
 ## How gravity is shown (docs/gravity.md).
 class GravRow extends Row:
 	func count() -> int:
-		return Tracer.GRAVITY_VIEWS.size()
+		return Renderer.GRAVITY_VIEWS.size()
 
 	func current() -> int:
-		return menu.main.tracer.gravity_view
+		return menu.main.renderer.gravity_view
 
 	func apply(i: int) -> void:
 		menu.main.set_gravity_view(i)
@@ -889,7 +858,7 @@ class BenchRow extends Row:
 	func text(_i: int) -> String:
 		if menu.main.bench.running:
 			return "идёт"
-		return "сравнить с другими" if menu.main.bench.has_ab() else "замерить"
+		return "замерить"
 
 	func enabled() -> bool:
 		return not menu.main.bench.running and not menu.main.hold

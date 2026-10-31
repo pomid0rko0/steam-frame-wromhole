@@ -1,11 +1,11 @@
-"""Does Godot's green overlay sit on the ray-traced floor lines and balls, in each eye?
-Floor: share of ray-traced white line pixels (inside the area where green may be drawn,
+"""Does Godot's green overlay sit on the app's floor lines and balls, in each eye?
+Floor: share of the app's white line pixels (inside the area where green may be drawn,
 away from its edges) that green does NOT cover. With green wider than the white lines, this is
 ~0 when aligned; shifting green by 2 px shows how fast it grows.
-Balls: share of green ball-grid pixels outside the ray-traced red silhouette, and the
+Balls: share of green ball-grid pixels outside the app's red silhouette, and the
 difference of their outlines (bounding boxes). The cube (when its pictures are there): the same
-for Godot's green edges and the ray-traced magenta cube. With
---floor-only (the scene without ray-traced balls) only the floor is compared."""
+for Godot's green edges and the app's magenta cube. With
+--floor-only (the scene without the app's balls) only the floor is compared."""
 import os, sys, numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -15,7 +15,7 @@ def img(m, eye): return np.asarray(Image.open(f'{pre}_{m}_{eye}.png').convert('R
 def green(a): return (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 80
 ok = True
 for eye in ('left', 'right'):
-    R = img('ray', eye)
+    R = img('app', eye)
     # the balls' red: green and blue both under 0.45 of red (between the shaded balls and the
     # gravity view's red and orange floor)
     gb = np.maximum(R[..., 1], R[..., 2])
@@ -34,7 +34,7 @@ for eye in ('left', 'right'):
         ok &= wl.sum() > 1000 and u0 < 0.01
         continue
     def objects(sil, mode):
-        """Green of a mode against a ray-traced silhouette: (share outside it, regions, the largest
+        """Green of a mode against an app's silhouette: (share outside it, regions, the largest
         difference of their outlines in px)."""
         B = green(img(mode, eye))
         out = (B & ~ndimage.binary_dilation(sil, iterations=1)).sum() / max(B.sum(), 1)

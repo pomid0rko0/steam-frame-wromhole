@@ -11,9 +11,6 @@ extends RefCounted
 const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet radii (it takes none elsewhere)
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
 const GRAV_SUB := 2      # RK4 steps between nodes
-# the degree of the shader's polynomials on the fillet (gravity_shader): their GRAV_DEG + 1
-# coefficients go four to a vec4 of its grav_g[] and grav_d[] (Tracer._fits_shader checks they fit)
-const GRAV_DEG := 7
 
 var rho0: float
 var h: float
@@ -35,9 +32,8 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float) -> vo
 
 
 ## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
-## the shape: the shader's wh_rho0, wh_h, wh_fillet (Tracer.param, set once in Tracer._ready),
-## Tracer.upload_fillet_table (slow in GDScript: not per frame), Tracer.upload_gravity,
-## Tracer.set_objects (its sorting and proxies use h and Rout), the stereo check scene
+## the shape: the renderer's profile, sweep table and gravity table (Renderer.upload_space), the
+## stereo check scene
 ## (check_scene.gd: its grid's rout and lsh, its balls' and cube's R^4 centres from h), and what
 ## stands in chart coordinates outside Rout: godot/scene.json's objects, the toys' places (toys.gd),
 ## CheckScene.BALLS and CUBE, main.START_POS, and bench.gd's PLACES and TOUR_L (metres of l chosen
@@ -300,8 +296,9 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 	return D
 
 
-## A chart position of the flat region on one side (the charts: wormhole_core.gdshaderinc's top) to
-## a manifold point.
+## A chart position of the flat region on one side to a manifold point. Chart A is R^4's xyz in
+## sheet A; chart B is sheet B's, mirrored in x (a frame right-handed in either chart has the same
+## orientation in the space).
 func point_from_chart(side: float, x: Vector3) -> Array:
 	var rr := x.length()
 	var n := x / rr
@@ -343,6 +340,21 @@ func dw(l: float) -> float:
 func embed(l: float, n: Vector3) -> Vector4:
 	var p := r(l) * n
 	return Vector4(p.x, p.y, p.z, w(l))
+
+
+## The point (l, n) of the space at its point P of R^4 (the inverse of embed): [l, n].
+func point_of(P: Vector4) -> Array:
+	var x := Vector3(P.x, P.y, P.z)
+	var rho := x.length()
+	var n := x / rho
+	var a := absf(P.w)
+	var sg := -1.0 if P.w < 0.0 else 1.0
+	var ka := Lc - fillet * sin(th0)
+	if rho >= Rout:
+		return [sg * (L + rho - Rout), n]
+	if a <= ka:
+		return [P.w, n]
+	return [sg * (Lc + fillet * (atan2(a - ka, Rout - rho) - th0)), n]
 
 
 ## A vector of R^4 projected onto the tangent space at (l, n), in the (U_l, u) representation.
@@ -470,66 +482,20 @@ func floor_gravity(l: float) -> float:
 	return gravity_f(l)[0] / r(l)
 
 
-## The ray tracer's gravity views (WH_GRAVITY in wormhole_core.gdshaderinc) without a table: the
-## closed forms' constants, and on the fillet f / r and f' as polynomials of degree GRAV_DEG in
-## x = (|l| - Lc) / (L - Lc), interpolating gravity_f at Chebyshev points (tests/gravity_test.gd
-## checks them). {cyl: (a / rho0, k, a k, beta), g, d: [Vector4...]}: the shader's grav_cyl,
-## grav_g, grav_d, coefficients from x^0 up.
-func gravity_shader() -> Dictionary:
-	var n := GRAV_DEG + 1
-	var V: Array = []
-	var yg := PackedFloat64Array()
-	var yd := PackedFloat64Array()
-	for i in n:
-		var x := 0.5 - 0.5 * cos(PI * (i + 0.5) / n)
-		var l := Lc + x * (L - Lc)
-		var F := gravity_f(l)
-		var row := PackedFloat64Array()
-		for k in n:
-			row.append(pow(x, k))
-		V.append(row)
-		yg.append(F[0] / r(l))
-		yd.append(F[1])
-	var cg := _solve(V, yg)
-	var cd := _solve(V, yd)
-	var g := []
-	var dd := []
-	for j in range(0, n, 4):
-		g.append(Vector4(cg[j], cg[j + 1], cg[j + 2], cg[j + 3]))
-		dd.append(Vector4(cd[j], cd[j + 1], cd[j + 2], cd[j + 3]))
-	return {"cyl": Vector4(grav_a / rho0, grav_k, grav_a * grav_k, grav_beta), "g": g, "d": dd}
+## Gravity on the floor for the renderer's gravity view (floor_gravity.gdshader): its strength in g
+## at |l| = i GRAV_FLOOR_END / (GRAV_FLOOR_N - 1), and beyond that end the closed form 1 + beta / r^3.
+## {image (RF, GRAV_FLOOR_N x 1), axes: (the end, beta)}.
+const GRAV_FLOOR_N := 512
 
 
-## A x = y by Gaussian elimination with partial pivoting, in doubles (rows: PackedFloat64Array).
-static func _solve(rows: Array, y: PackedFloat64Array) -> PackedFloat64Array:
-	var n := y.size()
-	var A: Array = []
-	for i in n:
-		var line: PackedFloat64Array = rows[i].duplicate()
-		line.append(y[i])
-		A.append(line)
-	for c in n:
-		var piv := c
-		for k in range(c + 1, n):
-			if absf(A[k][c]) > absf(A[piv][c]):
-				piv = k
-		var tmp: PackedFloat64Array = A[c]
-		A[c] = A[piv]
-		A[piv] = tmp
-		for k in range(c + 1, n):
-			var q: float = A[k][c] / A[c][c]
-			var rk: PackedFloat64Array = A[k]
-			for j in range(c, n + 1):
-				rk[j] -= q * A[c][j]
-			A[k] = rk
-	var out := PackedFloat64Array()
-	out.resize(n)
-	for c in range(n - 1, -1, -1):
-		var s: float = A[c][n]
-		for j in range(c + 1, n):
-			s -= A[c][j] * out[j]
-		out[c] = s / A[c][c]
-	return out
+func gravity_table() -> Dictionary:
+	var end := L + 8.0
+	var data := PackedFloat32Array()
+	data.resize(GRAV_FLOOR_N)
+	for i in GRAV_FLOOR_N:
+		data[i] = floor_gravity(end * i / (GRAV_FLOOR_N - 1))
+	var img := Image.create_from_data(GRAV_FLOOR_N, 1, false, Image.FORMAT_RF, data.to_byte_array())
+	return {"image": img, "axes": Vector2(end, grav_beta)}
 
 
 ## One RK4 step of free motion under gravity, -grav * potential_grad (geodesic + force).
@@ -582,79 +548,78 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	return x
 
 
-# ---------------------------------------------------------------- the fillet table
-## The ray tracer's fillet polynomials (wormhole_core.gdshaderinc, "curved part") by the ray's
-## impact parameter b: the shader samples them from this table instead of working them out per ray.
-## Four rows of TABLE_N knots, one per span of b with one regime of the moments (rows 0, 1: rays
-## that pass the throat, b < rmin; 2, 3: rays that turn in the fillet), knots evenly spaced over the
-## row. In rows of regimes 1 and 2 a factor 1 / sqrt(mx) (times 1 / sqrt(mn) in regime 2), which
-## goes to zero like a square root at the shell's edge, is taken out (the shader puts it back): what
-## is left is smooth enough for linear interpolation.
-const TABLE_N := 256           # the shader's WH_TABN (Tracer._fits_shader checks it)
-# the polynomial's nodes in tau: the squares of the 4-point Gauss-Legendre nodes on [0, 1], and the
-# inverse of their Vandermonde matrix, which takes F at them to the coefficients (numpy:
-# x = leggauss(4)[0]; _TAU = ((x + 1) / 2)^2; _A = inv(vander(_TAU, 4, increasing=True)))
-const _TAU := [0.004820780989426014, 0.10890625570683385, 0.44888729929169013, 0.8659570925834785]
-const _A := [
-	[1.0635954209629264, -0.06994895315294707, 0.0072202981818859785, -0.0008667659918653305],
-	[-13.363790651033874, 14.746483787306632, -1.5723807203730116, 0.1896875841002548],
-	[35.770406476784, -49.259940350673936, 15.558746458518186, -2.0692125846282434],
-	[-25.12406687051129, 37.32760503465092, -15.881390739642725, 3.6778525755030924]]
+# ---------------------------------------------------------------- the sweep table
+## The renderer's table (shaders/geo.gdshaderinc, ref/geo.py's top): G(b, v), the part of a ray's
+## sweep (r) and length (g) over the fillet that the closed forms leave, on SWEEP_NB x SWEEP_NV
+## nodes, both ends included: b by t = sign(s) sqrt(|s|), s = sigma - u0, evenly from b = 0 to
+## b = Rout (fine where the weight is singular, at b = r_min); v = sqrt((u - u_lo) / (1/2 - u_lo))
+## evenly from the fillet's start (or the turning point) to its end. Cumulative Gauss-Legendre,
+## four points (_GAUSS_X) per span; the last row (v = 1) is the whole fillet's. ref/geo.py builds
+## it the same way. {image (RGF), axes: the shader's g_tabx}.
+const SWEEP_NB := 256
+const SWEEP_NV := 64
+const _GAUSS_X := [-0.8611363115940526, -0.33998104358485626, 0.33998104358485626, 0.8611363115940526]
+const _GAUSS_W := [0.34785484513745385, 0.6521451548625461, 0.6521451548625461, 0.34785484513745385]
 
 
-## {image: the table (TABLE_N x 4, RGBA float), lo: each row's first b, inv: (TABLE_N - 1) / its
-## span of b, reg: its regime}: the shader's wh_tab, wh_tabLo, wh_tabInv, wh_tabReg.
-func fillet_table() -> Dictionary:
-	var s0 := sin(0.5 * th0)
-	var rmin := rho0 + 2.0 * fillet * s0 * s0
-	var sp := maxf(Rout - rmin, 1e-6 * fillet)       # the span of passing rays
-	var al_pass := (rmin - rho0) / sp
-	var b1 := clampf(rmin - sp, 0.0, rmin)           # passing: ga = (rmin - b) / sp >= 1 below
-	var b3 := clampf(0.5 * (Rout + rho0), rmin, Rout)   # turning: al = (b - rho0) / (Rout - b) >= 1 above
-	var lo := [0.0, b1, rmin, b3]
-	var hi := [b1, rmin, b3, Rout]
-	var reg := [2 if al_pass >= 1.0 else 1, 1 if al_pass >= 1.0 else 0, 0, 1]
+func sweep_table() -> Dictionary:
+	var u0 := sin(0.5 * th0) * sin(0.5 * th0)
+	var t0 := _t_of_b(0.0, u0)
+	var t1 := _t_of_b(Rout, u0)
 	var data := PackedFloat32Array()
-	data.resize(TABLE_N * 4 * 4)
-	var inv := Vector4.ZERO
-	for row in 4:
-		var span_b: float = hi[row] - lo[row]
-		inv[row] = (TABLE_N - 1) / span_b if span_b > 0.0 else 0.0
-		for i in TABLE_N:
-			var b: float = lo[row] + span_b * i / (TABLE_N - 1)
-			var e := _fillet_coef(b, row >= 2, reg[row], rmin)
-			for c in 4:
-				data[(row * TABLE_N + i) * 4 + c] = e[c]
-	var img := Image.create_from_data(TABLE_N, 4, false, Image.FORMAT_RGBAF, data.to_byte_array())
-	return {"image": img, "lo": Vector4(lo[0], lo[1], lo[2], lo[3]), "inv": inv,
-			"reg": Vector4(reg[0], reg[1], reg[2], reg[3])}
+	data.resize(SWEEP_NB * SWEEP_NV * 2)
+	for i in SWEEP_NB:
+		var col := _sweep_rest(_b_of_t(t0 + (t1 - t0) * i / (SWEEP_NB - 1), u0), u0)
+		for j in SWEEP_NV:
+			data[(j * SWEEP_NB + i) * 2] = col[j].x
+			data[(j * SWEEP_NB + i) * 2 + 1] = col[j].y
+	var img := Image.create_from_data(SWEEP_NB, SWEEP_NV, false, Image.FORMAT_RGF, data.to_byte_array())
+	return {"image": img, "axes": Vector4(t0, 1.0 / (t1 - t0), SWEEP_NB, SWEEP_NV)}
 
 
-## The shader's f.e for impact parameter b in the given regime, times sqrt(mx) (and sqrt(mn) in
-## regime 2): wh_fil, in float64.
-func _fillet_coef(b: float, turn: bool, reg: int, rmin: float) -> Vector4:
-	var ra := b if turn else rmin
-	var span := maxf(Rout - ra, 1e-6 * fillet)
-	var al := (ra - rho0) / span
-	var ga := 0.0 if turn else (rmin - b) / span
-	var mn := minf(al, ga)
-	var mx := maxf(al, ga)
-	var F := []
-	for k in 4:
-		var rk: float = ra + span * _TAU[k]
-		var u := (rk - rho0) / (2.0 * fillet)
-		var q := (1.0 - u) * (rk + b)
-		if reg >= 1:
-			q *= _TAU[k] + mx
-		if reg == 2:
-			q *= _TAU[k] + mn
-		F.append(b * sqrt(2.0 * fillet) / sqrt(q * rk * rk))
-	var scale := 1.0
-	if reg >= 1:
-		scale *= sqrt(mx)
-	if reg == 2:
-		scale *= sqrt(mn)
-	var e := Vector4.ZERO
-	for j in 4:
-		e[j] = scale * (_A[j][0] * F[0] + _A[j][1] * F[1] + _A[j][2] * F[2] + _A[j][3] * F[3])
-	return e
+func _t_of_b(b: float, u0: float) -> float:
+	var s := (b - rho0) / (2.0 * fillet) - u0
+	return signf(s) * sqrt(absf(s))
+
+
+func _b_of_t(t: float, u0: float) -> float:
+	return clampf(rho0 + 2.0 * fillet * (signf(t) * t * t + u0), 0.0, Rout)
+
+
+## The table's column at impact b: G at v = j / (SWEEP_NV - 1), cumulative over the spans.
+func _sweep_rest(b: float, u0: float) -> Array[Vector2]:
+	var col: Array[Vector2] = []
+	col.resize(SWEEP_NV)
+	col[0] = Vector2.ZERO
+	var sig := (b - rho0) / (2.0 * fillet)
+	var ul := maxf(sig, u0)
+	var span := 0.5 - ul
+	var acc := Vector2.ZERO
+	var f0 := _sweep_F(b, ul)
+	var f1 := _sweep_Fu(b, ul, f0)
+	for j in range(1, SWEEP_NV):
+		if span > 1e-12:
+			var va := (j - 1.0) / (SWEEP_NV - 1)
+			var vb := float(j) / (SWEEP_NV - 1)
+			for k in 4:
+				var v: float = 0.5 * (va + vb) + 0.5 * (vb - va) * _GAUSS_X[k]
+				var u := ul + span * v * v
+				var jac := 2.0 * span * v / sqrt(u * (u - sig))
+				acc += 0.5 * (vb - va) * _GAUSS_W[k] * jac * (_sweep_F(b, u) - f0 - f1 * (u - ul))
+		col[j] = acc
+	return col
+
+
+## The fillet's integrands of psi and length without the weight 1 / sqrt(u (u - sigma)), and their
+## derivatives in u (the shader's geo_F, geo_Fu).
+func _sweep_F(b: float, u: float) -> Vector2:
+	var rr := rho0 + 2.0 * fillet * u
+	var c := sqrt(0.5 * fillet) / (sqrt(1.0 - u) * sqrt(rr + b))
+	return Vector2(b / rr, rr) * c
+
+
+func _sweep_Fu(b: float, u: float, f: Vector2) -> Vector2:
+	var rr := rho0 + 2.0 * fillet * u
+	var a := 0.5 / (1.0 - u) - fillet / (rr + b)
+	var k := 2.0 * fillet / rr
+	return f * Vector2(a - k, a + k)

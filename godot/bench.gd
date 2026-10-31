@@ -7,37 +7,27 @@ extends Node
 ## What a frame costs depends on the pose: how far from the throat one stands (l), where one looks
 ## (degrees from the throat along the floor, degrees up) and how the head is tilted (roll: it
 ## changes how pixels fall into the GPU's groups). With the toys still (main.hold stops them) and
-## the viewer on the axis through the throat (main.place_on_axis), the pose decides what the ray
-## tracer does. Besides it a frame's time changes with where the eyes look under foveation (the
+## the viewer on the axis through the throat (main.place_on_axis), the pose decides what the
+## renderer does. Besides it a frame's time changes with where the eyes look under foveation (the
 ## density map follows them: foveation.gd) and with SteamVR's half rate after a late frame (below).
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), with the feet held there,
-## and the ray tracer is timed on the GPU (the median frame of each segment). A build can carry
-## other ray tracers in res://shaders/ab/1, 2, ... (tools/ab_shaders.sh). Every pose is then timed
-## with those of the kind this build runs and this build's own, in a palindrome order (1 2 .. n
-## n .. 2 1: a slow drift of heat or clock falls on all alike). RATE is low because a frame that
-## misses its refresh sends SteamVR to half rate (frame_rate.gd), and the GPU time then grows: a
-## variant over the frame's budget reads dearer than it is, and so does the segment after it.
-## Fewer instructions or registers (tools/adreno_stats.sh) are not faster by themselves, and frame
-## times from walking around don't compare between builds (where one looks changes them): this
-## part decides.
-## This build's ray tracer is timed each way FOVEATIONS lists (the split pass alone: what
-## foveation's pass costs without a map) and, with the toys, over the whole view too (what the
-## stencil saves); the others as comparable() takes them.
+## and the frame is timed on the GPU (the median frame of each segment), this build's renderer each
+## way VARIANTS lists: without foveation, the split pass alone (what foveation's pass costs without
+## a map), each foveation, and with a cube held right before the eyes (NEAR_CUBE: a body near the
+## eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
+## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
+## it is, and so does the segment after it.
 ##
-## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with this build's ray tracer and
-## the menu's foveation: does the rate hold all round, and where not. Each place starts from a cheap pose (TOUR_RECOVER),
-## which is not enough to undo SteamVR's half rate (frame_rate.gd).
+## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with the menu's foveation: does
+## the rate hold all round, and where not; its last rows with the cube before the eyes. Each place
+## starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
+## (frame_rate.gd).
 ##
-## Afterwards what it changed comes back (_restore, _finish). A build made for measuring
-## (tools/ab_shaders.sh --auto) runs it by itself once the headset has tracked the head for
-## AUTO_AFTER seconds: start it, put the headset on, close the eyes, send the log afterwards.
+## Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
-const AB_DIR := "res://shaders/ab/%d/wormhole.gdshader"
-const AB_BALLS := "res://shaders/ab/%d/wormhole_balls.gdshader"   # the same source's, with the toys
-const AUTO := "res://shaders/ab/auto"      # present: run by itself
-const AUTO_AFTER := 10.0        # s of head tracking before it starts by itself
 # l, in PLACES and TOUR_L: the start (main.START_POS); the other values are metres of l chosen
 # against this throat's curved zone (edge L), which WormholeSpace.set_profile's list names
 const START := INF
@@ -58,19 +48,24 @@ const PLACES := [   # the comparison's poses: [l, degrees to the right, degrees 
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
-const PREPARE := 2.0            # s each ray tracer runs before the timing (its pipeline is compiled)
-const TOUR_RATE := 120.0
+const PREPARE := 2.0            # s each variant runs before the timing (its pipelines are compiled)
+const TOUR_RATE := 144.0
 const TOUR_L := [START, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2]
 const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
-# this build's ray tracer: [label, foveation level (Foveation.set_level), split]; the first is the
-# reference the others are compared with
-const FOVEATIONS := [["this build", 0, false], ["this build, passes split", 0, true],
-	["this build, SteamVR low", 1, false], ["this build, SteamVR high", 3, false],
-	["this build, own wide", 4, false], ["this build, own narrow", 5, false]]
+# the comparison's variants: [label, foveation level (Foveation.set_level), split, the cube before
+# the eyes]; the first is the reference the others are compared with
+const VARIANTS := [["plain", 0, false, false], ["passes split", 0, true, false],
+	["SteamVR low", 1, false, false], ["SteamVR high", 3, false, false],
+	["own wide", 4, false, false], ["own narrow", 5, false, false], ["a cube at the eyes", 0, false, true]]
+# the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
+# held, the floor and the sky all round it (one filling the view would be the cheapest frame there
+# is: its pixels only shade)
+const NEAR_CUBE := [0.4, 0.1]
+const NEAR_COLOR := Color(0.55, 0.6, 0.95)
 
 var main: Main
 var menu: Menu                  # the result goes there; its render scale
@@ -80,10 +75,14 @@ var tour_scale := 1.0           # the tour's durations, scaled (tests)
 var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
-var others: Array[Other] = []   # from res://shaders/ab/
-var variants: Array[Setup] = []   # this run's ray tracers (start)
-var own := 0                    # the variant that is this build without foveation
-var own_shader: Shader
+var variants: Array[Setup] = []   # this run's (start)
+# the cube before the eyes is drawn (near_cube); set, the toys go to the renderer again at once:
+# main drew them before this node's _process, and the frame a variant starts in must have its cube
+var near := false:
+	set(v):
+		near = v
+		if main and main.toys.enabled:
+			main.draw_toys()
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
@@ -103,39 +102,26 @@ var saved_pose: Array
 var saved_rate := 0.0           # the rate to go back to
 var preparing := 0              # variants left to run untimed before the first segment
 var verdict := ""               # the comparison's line
-var auto := false               # start by itself (once)
-var auto_t := 0.0
 
 
-func _ready() -> void:
-	var i := 1
-	while ResourceLoader.exists(AB_DIR % i):
-		var sh: Shader = load(AB_DIR % i)
-		var with_balls: Shader = load(AB_BALLS % i) if ResourceLoader.exists(AB_BALLS % i) else null
-		others.append(Other.new(sh.code.get_slice("\n", 0).trim_prefix("//").strip_edges(), sh, with_balls))
-		i += 1
-	auto = FileAccess.file_exists(AUTO)
+## The cube before the eyes while near (the comparison's variant, the tour's last rows): [centre,
+## two axes (R^4), (colour, half size)], or [] (main.draw_toys). hp: the head as main has it
+## ([l, n, frame]), basis: the head's in the play space.
+func near_cube(hp: Array, basis: Basis) -> Array:
+	if not near:
+		return []
+	var f: Array = hp[2]
+	var fwd := -basis.z
+	var T: Vector4 = fwd.x * f[0] + fwd.y * f[1] + fwd.z * f[2]
+	var right: Vector4 = basis.x.x * f[0] + basis.x.y * f[1] + basis.x.z * f[2]
+	var up: Vector4 = basis.y.x * f[0] + basis.y.y * f[1] + basis.y.z * f[2]
+	var sp: WormholeSpace = main.space
+	var g := sp.geodesic(hp[0], hp[1], T.normalized(), NEAR_CUBE[0], [right, up])
+	var e1: Vector4 = sp.embed_vector(g[0], g[1], g[2][0]).normalized()
+	var e2: Vector4 = sp.embed_vector(g[0], g[1], g[2][1])
+	e2 = (e2 - e2.dot(e1) * e1).normalized()
+	return [sp.embed(g[0], g[1]), e1, e2, Vector4(NEAR_COLOR.r, NEAR_COLOR.g, NEAR_COLOR.b, NEAR_CUBE[1])]
 
-
-func has_ab() -> bool:
-	return not others.is_empty()
-
-
-## The others as variants of the kind this build runs now: without toys, or with them (the demo's),
-## theirs over the whole view: with the stencil test the whole view marked, without it no stencil
-## at all; none with the gravity view on (theirs are without it).
-func comparable() -> Array[Setup]:
-	var tracer: Tracer = main.tracer
-	var out: Array[Setup] = []
-	if tracer.gravity_view != 0:
-		return out
-	for o in others:
-		if tracer.plain():
-			out.append(Setup.new(o.label, o.shader, 0, false, Tracer.BARE))
-		elif o.balls != null:
-			var with_stencil := o.balls.code.contains("stencil_mode")
-			out.append(Setup.new(o.label, o.balls, 0, false, Tracer.WHOLE if with_stencil else Tracer.BARE))
-	return out
 
 
 ## The tour's steps.
@@ -154,6 +140,11 @@ func _make_tour() -> Array[Step]:
 		t.append(_st(l, l, 0.0, 360.0, 0.0, 4.0, "l %.1f m, turning round (yaw)" % l, true))
 		t.append(_st(l, l, 0.0, 0.0, 0.0, 6.0, "l %.1f m, nodding 60 deg (pitch)" % l, false, 60.0))
 		t.append(_st(l, l, 0.0, 0.0, 0.0, 4.0, "l %.1f m, tilting 30 deg (roll)" % l, false, 0.0, 30.0))
+	# the worst case: a cube right before the eyes, in the throat and at the curved zone's edge
+	for l in [6.2, 5.0, 4.0, 0.0, -5.0]:
+		var st := _st(l, l, 0.0, 360.0, 0.0, 4.0, "l %.1f m, a cube at the eyes, turning round and nodding" % l, true, 40.0)
+		st.near = true
+		t.append(st)
 	return t
 
 
@@ -180,14 +171,9 @@ func start() -> void:
 	if running:
 		return
 	running = true
-	var tracer: Tracer = main.tracer
-	own_shader = tracer.material.shader
-	variants = comparable()
-	own = variants.size()
-	for f in FOVEATIONS:
-		variants.append(Setup.new(f[0], own_shader, f[1], f[2], Tracer.SPLIT))
-	if not tracer.plain():
-		variants.append(Setup.new("this build, toys over the whole view", own_shader, 0, false, Tracer.WHOLE))
+	variants.clear()
+	for f in VARIANTS:
+		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
@@ -216,9 +202,8 @@ func start() -> void:
 	var names := []
 	for i in variants.size():
 		names.append("%d = %s" % [i + 1, variants[i].label])
-	print("bench: start, %s; %d places, %.1f s timed per segment; own maps coarsen the %s first; gravity view %s"
-			% [", ".join(names), PLACES.size(), time, "width" if main.foveation.order == 0 else "height",
-			Tracer.GRAVITY_VIEWS[tracer.gravity_view]])
+	print("bench: start, %s; %d places, %.1f s timed per segment; gravity view %s"
+			% [", ".join(names), PLACES.size(), time, Renderer.GRAVITY_VIEWS[main.renderer.gravity_view]])
 	var tour_s := 0.0
 	for s in tour:
 		tour_s += s.secs + (TOUR_RECOVER * tour_scale if s.recover else 0.0)
@@ -244,24 +229,13 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d (own maps %s first), %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process"
-				% [main.rate.rate, main.foveation.level, "width" if main.foveation.order == 0 else "height", tour.size()])
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
+				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
 
 
 func _process(delta: float) -> void:
-	if auto and not running:
-		# by itself, once the headset has tracked the head for a while
-		if _headset() and not main.await_pose and main.rate.rate > 0.0:
-			auto_t += delta
-			var left := ceili(AUTO_AFTER - auto_t)
-			if left != ceili(AUTO_AFTER - auto_t + delta):
-				_show("замер начнётся через %d с: закрой глаза" % left)
-			if auto_t >= AUTO_AFTER:
-				auto = false
-				start()
-		return
 	if not running:
 		return
 	phase_t += delta
@@ -285,17 +259,16 @@ func _process(delta: float) -> void:
 
 # ---------------------------------------------------------------- the comparison
 
-## Run a ray tracer untimed at the first place, so its pipeline is compiled before the timing.
+## Run a variant untimed at the first place, so its pipelines are compiled before the timing.
 func _prepare() -> void:
 	phase_t = 0.0
 	main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's ray tracer and foveation.
+## A variant's foveation and cube.
 func _use(v: Setup) -> void:
-	main.tracer.material.shader = v.shader
-	main.tracer.toy_mode = v.toy_mode
+	near = v.near
 	var fov: Foveation = main.foveation
 	if fov.level != v.foveation or fov.split_pass.enabled != (v.foveation > 0 or v.split):
 		fov.set_level(v.foveation, v.split)
@@ -358,34 +331,19 @@ func _end_segment() -> void:
 
 
 func _compared() -> void:
-	_restore()      # the tour runs with this build's ray tracer and the foveation chosen in the menu
-	if variants.size() > 1:
-		# each variant against the first, averaged over the places (geometric mean)
-		var summary := []
-		for v in range(1, variants.size()):
-			summary.append("%d/1 %.3f" % [v + 1, _ratio(v, 0)])
-		print("bench: compared, on average over the places %s (1 = %s)" % [", ".join(summary), variants[0].label])
-		var parts := []
-		if own > 0:
-			var m := _ratio(own, 0)
-			var pct := roundi(absf(1.0 - m) * 100.0)
-			parts.append(("этот и %s одинаковы" % variants[0].label) if absf(1.0 - m) <= 0.02 else
-					("этот %s, чем %s, на %d%%" % ["быстрее" if m < 1.0 else "медленнее", variants[0].label, pct]))
-		# the foveation against this build without it
-		summary.clear()
-		for v in range(own + 1, variants.size()):
-			summary.append("%s %.3f" % [variants[v].label.trim_prefix("this build, "), _ratio(v, own)])
-		print("bench: foveation (and the toys over the whole view), on average over the places against this build as it ran: %s" % ", ".join(summary))
-		# for the menu, what each foveation (a density map on) saves, by the menu's names
-		var pcts := []
-		for k in FOVEATIONS.size():
-			if FOVEATIONS[k][1] > 0:
-				pcts.append("%s %+d%%" % [Menu.FOVEATIONS[FOVEATIONS[k][1]], roundi(100.0 * (_ratio(own + k, own) - 1.0))])
-		parts.append("фовеация: " + ", ".join(pcts))
-		# and what the stencil saves: the toys' ray tracer over the whole view against split
-		if variants.size() > own + FOVEATIONS.size():
-			parts.append("трафарет %+d%%" % roundi(100.0 * (1.0 / _ratio(own + FOVEATIONS.size(), own) - 1.0)))
-		verdict = " · ".join(parts)
+	_restore()      # the tour runs with the foveation chosen in the menu
+	# each variant against the first, averaged over the places (geometric mean)
+	var summary := []
+	var pcts := []
+	for v in range(1, variants.size()):
+		summary.append("%s %.3f" % [variants[v].label, _ratio(v, 0)])
+		if variants[v].foveation > 0:
+			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
+	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
+	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс" % [_worst(0), _worst(variants.size() - 1)]]
+	parts.append("фовеация: " + ", ".join(pcts))
+	verdict = " · ".join(parts)
 	if _headset():
 		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
 		_rate(TOUR_RATE, "tour")
@@ -404,9 +362,10 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 		return
 	var vp: RID = main.rate.target.get_viewport_rid()
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
+	var mt: Vector3 = main.rate.before_ms()
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z])
 	sec.frames += 1
 	sec.refreshes += meter.refreshes - refreshes_before
 	sec.gpu += g
@@ -417,6 +376,7 @@ func _tour_step(i: int) -> void:
 	step = i
 	phase_t = 0.0
 	counting = false
+	near = tour[i].near
 	tour_results.append(Tally.new())
 	if tour[i].recover:
 		main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])     # recover at the start
@@ -549,11 +509,18 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
-## This build's ray tracer as it runs, with the foveation chosen in the menu.
+## As it runs: the foveation chosen in the menu, no cube.
 func _restore() -> void:
-	main.tracer.material.shader = own_shader
-	main.tracer.toy_mode = Tracer.SPLIT
+	near = false
 	main.foveation.set_level(menu.foveation)
+
+
+## Variant v's slowest place, ms.
+func _worst(v: int) -> float:
+	var w := 0.0
+	for r in results:
+		w = maxf(w, _mean(r[v]))
+	return w
 
 
 ## A headset whose rate can be asked for and measured (not the desktop, not a test's fake one).
@@ -565,32 +532,18 @@ func _show(s: String) -> void:
 	menu.bench_status(s)
 
 
-## A ray tracer the comparison times, and how.
+## A way the comparison times this build.
 class Setup:
 	var label: String
-	var shader: Shader
 	var foveation: int              # Foveation.set_level's level
 	var split: bool                 # the split pass without a density map
-	var toy_mode: int               # Tracer.SPLIT, WHOLE or BARE
+	var near: bool                  # the cube before the eyes
 
-	func _init(p_label: String, p_shader: Shader, p_foveation: int, p_split: bool, p_toy_mode: int) -> void:
+	func _init(p_label: String, p_foveation: int, p_split: bool, p_near: bool) -> void:
 		label = p_label
-		shader = p_shader
 		foveation = p_foveation
 		split = p_split
-		toy_mode = p_toy_mode
-
-
-## Another source's ray tracers (tools/ab_shaders.sh).
-class Other:
-	var label: String               # their first line
-	var shader: Shader
-	var balls: Shader               # with the toys, or null
-
-	func _init(p_label: String, p_shader: Shader, p_balls: Shader) -> void:
-		label = p_label
-		shader = p_shader
-		balls = p_balls
+		near = p_near
 
 
 ## A step of the tour: l and yaw (degrees to the right) from x to y over secs, pitch with a nod of
@@ -605,6 +558,7 @@ class Step:
 	var secs: float
 	var recover: bool
 	var what: String
+	var near := false               # the cube before the eyes
 
 
 ## Frames and refreshes counted: over a second, or over a step with its worst second.

@@ -6,16 +6,16 @@ extends SceneTree
 ## sets this app's rate in SteamVR's settings, and as the display stays at 20 Hz the head asks for
 ## a restart (a display that follows is answered too); choices made while vrcmd runs end with the
 ## last one written; the scale row sets the render scale and keeps it; foveation starts with our
-## narrow map; the foveation row turns foveated rendering
-## on at its level (the XR viewport's density map, the 3D pass split, Godot's own map under Monado,
-## which has no XR_FB_foveation), keeps it, and takes the render scale back to 100%, and a scale
-## below 100% turns it off again; our own density map comes from a texture, and the order of its
-## steps switches (the width or the height first); the gaze dot shows and hides; the gravity row
-## switches the gravity view (the floor, the arrows, off: A steps round) and its ray tracers;
+## own, wide; the foveation row turns foveated rendering on at its level (SteamVR's: the XR
+## viewport's density map, the 3D pass split, Godot's own map under Monado, which has no
+## XR_FB_foveation; our own: no density map, no split, the floor from floor_fov.gd's texture), keeps
+## it, and takes the render scale back to 100%, and a scale below 100% turns it off again; the gaze
+## dot shows and hides; the gravity row
+## switches the gravity view (the floor, the arrows, off: A steps round);
 ## frames made too slow for the display turn the head and the line below red; and the speed
 ## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
 ## offer: it stays at 20), closing the menu, the line below saying how it goes and what came out,
-## and puts the rate, the shader and the viewer back.
+## and puts the rate, the foveation and the viewer back.
 ## (The menu's buttons themselves: tests/walking_xr_test.gd; Monado's simulated controllers bind
 ## to none of our profiles, so here the menu's own calls stand for them.)
 ##   tools/test_openxr.sh
@@ -27,8 +27,6 @@ var main: Main
 var frames := 0
 var fake: String
 var bench_stored := 0.0
-var bench_auto := false
-var bench_seen := false
 var judged := 0                 # the frame the green verdict was seen, or the wait for it ended (0: waiting)
 var green := false
 const GREEN_WAIT := 400         # frames (20 s at Monado's 20 Hz) to see the frames judged green
@@ -49,9 +47,6 @@ func _process(_delta: float) -> bool:
 	var p: Menu = main.menu
 	var r: FrameRate = main.rate
 	if frames == 2:
-		# a build made for measuring starts the speed check by itself: not before its turn here
-		bench_auto = main.bench.auto
-		main.bench.auto = false
 		var home := OS.get_environment("HOME")
 		_fake_steamvr()
 		r.vrcmd = fake + "/vrcmd"
@@ -122,9 +117,9 @@ func _process(_delta: float) -> bool:
 			U.check("the menu heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		U.check("frames judged, green", green, "after %d frames, seconds %s" % [frames - 232, r.seconds])
 		# after the green check: each step of the render scale rebuilds the buffers, a missed frame or two
-		U.check("foveation at first: our narrow map, the width first", main.foveation.level == p.DEFAULT_FOVEATION
-				and main.foveation.order == p.DEFAULT_ORDER and _value(p, "fov") == "плавная узкая"
-				and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.foveation.split_pass.enabled)
+		U.check("foveation at first: our own, wide", main.foveation.level == p.DEFAULT_FOVEATION
+				and _value(p, "fov") == "плавная широкая" and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+				and not main.foveation.split_pass.enabled and main.renderer.floor_fov.enabled)
 		U.check("full resolution at first", p.target.scaling_3d_scale == 1.0 and _value(p, "scale") == "100% (128×128)")
 		p.select("scale")
 		p.change(1)
@@ -152,28 +147,20 @@ func _process(_delta: float) -> bool:
 		b.time = 0.2
 		b.tour_scale = 0.15
 		bench_stored = r.stored
-		if bench_auto:
-			b.auto = true
-			print("speed check: waiting for it to start by itself")
-		else:
-			p.set_open(true)
-			p.select("bench")
-			p.press()
-			U.check("speed check: its row and A start it, ask for 72 Hz, close the menu", b.running and r.desired == 72.0
-					and not p.open)
-			U.check("speed check: the line below says how it goes", p.strip.visible and p.strip_label.text.contains("замер:"))
-	if j > 70 and bench_auto and not bench_seen and b.running:
-		bench_seen = true
-		U.check("speed check: started by itself, asks for 72 Hz", r.desired == 72.0)
-	if j > 70 and not b.running and (bench_seen or not bench_auto):
+		p.set_open(true)
+		p.select("bench")
+		p.press()
+		U.check("speed check: its row and A start it, ask for 72 Hz, close the menu", b.running and r.desired == 72.0
+				and not p.open)
+		U.check("speed check: the line below says how it goes", p.strip.visible and p.strip_label.text.contains("замер:"))
+	if j > 70 and not b.running:
 		var segs: int = 2 if b.variants.size() > 1 else 1
 		var timed: bool = b.results.all(func(r: Array) -> bool: return r.all(func(v: Array) -> bool: return v.size() == segs))
 		U.check("speed check: every place timed", timed)
 		U.check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
-		U.check("speed check: back where it stood, its shader", absf(pose[0] - b.saved_pose[0]) < 1e-3
-				and main.tracer.material.shader == b.own_shader and b.own_shader == Tracer.SHADERS_TOYS[0])
+		U.check("speed check: back where it stood, no cube before the eyes", absf(pose[0] - b.saved_pose[0]) < 1e-3 and not b.near)
 		U.check("speed check: the rate set back", r.desired == bench_stored)
 		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED)
@@ -217,31 +204,22 @@ func _foveation(p: Menu) -> void:
 	U.check("scale 90%: foveation off, kept", main.foveation.level == 0 and main.xr_view.vrs_mode == Viewport.VRS_DISABLED
 			and not main.foveation.split_pass.enabled and cfg.get_value("render", "foveation", -1) == 0)
 	p.choose_scale(1.0)
-	# our own map: the viewport's density map from a texture, the pass split
-	for k in 3:
+	# our own: no density map, no split; the floor from its texture, a quarter of the picture's
+	# pixels or so at the narrow level
+	for k in 4:
 		p.change(1)
 	p.press()
-	U.check("широкая: our own map, from a texture, the pass split", main.foveation.level == 4
-			and main.xr_view.vrs_mode == Viewport.VRS_TEXTURE and main.foveation.split_pass.enabled and _value(p, "fov") == "плавная широкая")
-	var img: Image = main.foveation.maps[4 * 2 + 0].get_layer_data(0)
-	var mid: Color = img.get_pixel(32, 32)
-	var corner: Color = img.get_pixel(0, 0)
-	U.check("its map: full rate in the middle, 4x2 in the corner", mid.r8 == 0 and mid.g8 == 0 and corner.r8 == 192 and corner.g8 == 128)
-	# the height first: the same map turned, 2x4 in the corner, at once and kept
-	p.move(1)
-	p.change(1)
-	p.press()
-	var img2: Image = main.foveation.maps[4 * 2 + 1].get_layer_data(0)
-	var corner2: Color = img2.get_pixel(0, 0)
-	var ring2: Color = img2.get_pixel(32 + 26, 32)    # r 0.83: the ring after full rate
-	cfg.load("user://settings.cfg")
-	U.check("по вертикали: 2x4 in the corner, 1x2 next to the middle, kept", main.foveation.order == 1 and corner2.r8 == 128
-			and corner2.g8 == 192 and ring2.r8 == 0 and ring2.g8 == 128 and cfg.get_value("render", "own_order", -1) == 1
-			and p.picked() == "order" and _value(p, "order") == "по вертикали" and main.foveation.level == 4)
-	p.choose_order(0)
-	U.check("по горизонтали again", main.foveation.order == 0 and _value(p, "order") == "по горизонтали")
+	var fov := main.renderer.floor_fov
+	var size := main.xr.get_render_target_size()
+	U.check("узкая: our own, no density map, no split, the floor from floor_fov's texture", main.foveation.level == 5
+			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled
+			and fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == true
+			and _value(p, "fov") == "плавная узкая")
+	U.check("its texture: smaller than the picture", fov.fov_tex.get_width() < size.x and fov.fov_tex.get_layers() == 2,
+			"%d of %d" % [fov.fov_tex.get_width(), size.x])
 	p.choose_foveation(0)
-	U.check("off again: no density map, no split", main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled)
+	U.check("off again: no density map, no split, the floor per pixel", main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+			and not main.foveation.split_pass.enabled and not fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == false)
 	# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides
 	p.move(1)
 	p.press()
@@ -260,10 +238,10 @@ func _gravity(p: Menu) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.tracer.gravity_view, main.tracer.material.shader.resource_path.get_file(), _value(p, "grav") == p.GRAVITY_NAMES[v]])
-	# the demo's balls and cubes are there: the ray tracers with them
-	var want := [[1, "wormhole_balls_gravity.gdshader", true], [2, "wormhole_balls_arrows.gdshader", true],
-			[0, "wormhole_balls.gdshader", true]]
+		seen.append([main.renderer.gravity_view, main.renderer.floor_mat.shader.resource_path.get_file(), main.renderer.arrows.visible,
+				_value(p, "grav") == p.GRAVITY_NAMES[v]])
+	var want := [[1, "floor_gravity.gdshader", false, true], [2, "floor_gravity.gdshader", true, true],
+			[0, "floor.gdshader", false, true]]
 	U.check("the gravity row: each view, then off", seen == want)
 	if seen != want:
 		print("  ", seen)

@@ -1,24 +1,25 @@
 class_name Main
 extends Node3D
-## Real-time wormhole for VR (README.md, docs/). Every pixel is ray traced along a geodesic of
-## the wormhole space in the shader (tracer.gd); this script builds the scene and tracks where the
+## Real-time wormhole for VR (README.md, docs/). The renderer (renderer.gd) draws each body where
+## the eye sees it along a geodesic of the wormhole space, and the floor and the sky per pixel;
+## this script builds the scene and tracks where the
 ## viewer is in that curved space: walking in the room and with the sticks (the buttons: README.md,
 ## «Управление»).
 ##
 ## Body model: the feet stay on the floor (n.z = 0).
 ## Physical movement in the play space and stick locomotion move the feet along floor geodesics,
 ## parallel-transporting the play-space axes; stick turns rotate those axes; the head sits
-## head-height above the feet along the floor normal. Each eye is derived in the shader from that
-## view's own matrices (shaders/wormhole_view.gdshaderinc).
+## head-height above the feet along the floor normal. Each eye is derived in the shaders from that
+## view's own matrices (shaders/geo.gdshaderinc, geo_eye).
 ##
-## The parts: the space's geometry (wormhole_space.gd), the ray tracer (tracer.gd), the demo's
+## The parts: the space's geometry (wormhole_space.gd), the renderer (renderer.gd), the demo's
 ## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
-## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd), the menu and the
-## line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd), the speed
-## check (bench.gd) and the stereo check scene (check_scene.gd). Each
+## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
+## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd),
+## the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
 ## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
-## hold, and last the toys and the head to the ray tracer: a toy let go now starts from the hand.
+## hold, and last the toys and the head to the renderer: a toy let go now starts from the hand.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -48,7 +49,7 @@ const SNAP_ANGLE := deg_to_rad(30.0)
 const SMOOTH_TURN_SPEED := deg_to_rad(90.0)   # per second at full stick
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
-const NEAR := 0.05                  # m: the camera's near plane
+const NEAR := 0.01                  # m: the camera's near plane: what comes closer to an eye is cut
 const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
@@ -64,7 +65,7 @@ var in_xr := false
 var xr_view: SubViewport        # XR renders here, so the desktop window gets no mirror image
 var origin: XROrigin3D
 var camera: XRCamera3D
-var tracer: Tracer
+var renderer: Renderer
 var foveation: Foveation
 var rate: FrameRate
 var menu: Menu
@@ -93,6 +94,17 @@ var menu_active := false        # the menu was open this frame: its buttons are 
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
 var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lines about late frames)
+# and its parts, PARTS, ms; when it started (Time.get_ticks_usec)
+const PARTS := ["input and walk", "head", "toys", "hands", "drawing", "to the shaders"]
+var parts_ms := PackedFloat32Array([0, 0, 0, 0, 0, 0])
+var started_us := 0
+# the first frames are drawn with each kind of foveation pass in turn (none, SteamVR's map, our own
+# map: Foveation.set_level), then the menu's: their pipelines compile while the app starts, not at
+# the first switch in the menu (a stall on the Frame, and SteamVR at half rate after it); Renderer
+# does the same for the gravity views
+const WARM_FOVEATION := [0, Foveation.LEVELS, Foveation.LEVELS + 2]
+var warm := 0                   # frames of it done
+var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n, frame] (the speed check's cube)
 
 
 func _ready() -> void:
@@ -128,14 +140,15 @@ func _ready() -> void:
 	camera = XRCamera3D.new()
 	camera.near = NEAR
 	camera.compositor = Compositor.new()
-	camera.compositor.compositor_effects = [foveation.split_pass]
 	origin.add_child(camera)
 	if in_xr:
 		_add_controllers()
 	else:
 		camera.position = Vector3(0.0, DESKTOP_HEAD_HEIGHT, 0.0)
-	tracer = Tracer.new(space, scene, xr, xr_view)
-	camera.add_child(tracer)
+	renderer = Renderer.new(space, scene, xr, xr_view)
+	camera.add_child(renderer)
+	foveation.floor_fov = renderer.floor_fov
+	camera.compositor.compositor_effects = [foveation.split_pass, renderer.floor_fov]
 
 	rate = FrameRate.new()
 	rate.main = self
@@ -159,7 +172,7 @@ func _ready() -> void:
 		toys.enabled = false            # the check's red balls take the shader's ball slots
 		overlay = Node3D.new()
 		origin.add_child(overlay)
-		CheckScene.build(overlay, space, tracer)
+		CheckScene.build(overlay, space, renderer)
 		_update_chart_map()
 	elif toys.enabled:
 		toys.spawn()
@@ -206,12 +219,16 @@ func _add_controllers() -> void:
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	started_us = t0
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
 		place(START_POS, START_FORWARD)
 	if in_xr:
 		_log_profiles()
+		if warm <= WARM_FOVEATION.size():
+			foveation.set_level(WARM_FOVEATION[warm] if warm < WARM_FOVEATION.size() else menu.foveation)
+			warm += 1
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	menu_active = menu.handle_input(dt)
@@ -223,7 +240,7 @@ func _process(delta: float) -> void:
 		for b in [&"by_button", &"dpad_up", &"dpad_left", &"dpad_right"]:
 			grav_down = grav_down or left_hand.is_button_pressed(b)
 	if _pressed("gravity", grav_down) and not hold and not menu_active:
-		set_gravity_view((tracer.gravity_view + 1) % Tracer.GRAVITY_VIEWS.size())
+		set_gravity_view((renderer.gravity_view + 1) % Renderer.GRAVITY_VIEWS.size())
 
 	var head := camera.transform   # play space (the origin never moves)
 	var hz := Vector2(head.origin.x, head.origin.z)
@@ -249,6 +266,10 @@ func _process(delta: float) -> void:
 		_update_chart_map()
 	if gaze_dot and gaze_dot.visible:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
+	if gaze and gaze.get_has_tracking_data():
+		renderer.floor_fov.set_gaze(gaze.transform.origin - gaze.transform.basis.z * 10.0, true)
+	else:
+		renderer.floor_fov.set_gaze(Vector3.ZERO, false)
 	if overlay:
 		# the chart -> play map only exists with the feet in the flat part of sheet A
 		var shown := foot_l > space.L
@@ -259,27 +280,37 @@ func _process(delta: float) -> void:
 		overlay.visible = shown
 
 	# head above the feet along the floor normal; the shader moves from the head to each eye
+	var t1 := Time.get_ticks_usec()
 	var hp := space.geodesic(foot_l, foot_n, frame[1], maxf(head.origin.y, 0.05), frame)
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
 		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll), _head_forward_xz())
+	_head_pose = [hp[0], hp[1], hf]
 	# in the order the top of this file gives; nothing during the speed check: it times the same
 	# scene at every pose
 	var active := toys.enabled and not await_pose and not hold
+	var t2 := Time.get_ticks_usec()
 	if active:
 		toys.step(delta, hands.balls())
+	var t3 := Time.get_ticks_usec()
 	var new_ball := in_xr and _pressed("new_ball", right_hand.is_button_pressed(&"by_button")) and not menu_active
 	var new_cube := in_xr and _pressed("new_cube", left_hand.is_button_pressed(&"ax_button")
 			or left_hand.is_button_pressed(&"dpad_down")) and not menu_active
 	hands.update(delta, hp, head, active, new_ball, new_cube)
+	var t4 := Time.get_ticks_usec()
 	if toys.enabled:
 		draw_toys()
-	tracer.set_head(hp[0], hp[1], hf, head.origin)
-	scripts_ms = (Time.get_ticks_usec() - t0) / 1000.0
+	var t5 := Time.get_ticks_usec()
+	renderer.set_head(hp[0], hp[1], hf, head.origin)
+	var t6 := Time.get_ticks_usec()
+	scripts_ms = (t6 - t0) / 1000.0
+	var stamps := [t0, t1, t2, t3, t4, t5, t6]
+	for i in PARTS.size():
+		parts_ms[i] = (stamps[i + 1] - stamps[i]) / 1000.0
 
 
 func draw_toys() -> void:
-	toys.draw(tracer, hands.drawn())
+	toys.draw(renderer, hands.drawn(), bench.near_cube(_head_pose, camera.transform.basis))
 
 
 ## Put the feet at chart A position pos (z = 0), looking along forward.
@@ -355,8 +386,38 @@ func gaze_text() -> String:
 	return "none" if g == null else "%.0f deg right %.0f deg up" % [g.x, g.y]
 
 
+## What is before the eyes, for the log's lines about frames: the head's height and roll, the
+## bodies drawn and the nearest one: its distance from the head to its centre (the chord of R^4: no
+## longer than the geodesic, a few per cent shorter at most at 1 m, where the space bends tightest)
+## and its direction from where the head looks; the settings that change what a frame draws.
+func view_text() -> String:
+	var b := camera.transform.basis
+	var hf: Array = _head_pose[2]
+	var out := "head %.2f m up, right side %.0f deg up; drawn %d balls, %d cubes" % [camera.transform.origin.y,
+			rad_to_deg(asin(clampf(b.x.y, -1.0, 1.0))), renderer.ball_col.size(), renderer.toy_count - renderer.ball_col.size()]
+	if not hf.is_empty() and not renderer.bodies.is_empty():
+		var P := space.embed(_head_pose[0], _head_pose[1])
+		var N := space.normal4(_head_pose[0], _head_pose[1])
+		var near: Array = renderer.bodies[0]
+		for body: Array in renderer.bodies:
+			if (body[1] - P).length() < (near[1] - P).length():
+				near = body
+		var V: Vector4 = near[1] - P
+		var Vt := V - V.dot(N) * N
+		var to := func(v: Vector3) -> Vector4: return v.x * hf[0] + v.y * hf[1] + v.z * hf[2]
+		var x: float = Vt.dot(to.call(b.x))
+		var y: float = Vt.dot(to.call(b.y))
+		var z: float = Vt.dot(to.call(-b.z))
+		out += "; nearest: %s of %s %.2f m at %.2f m from the head to its centre, %.0f deg right %.0f deg up of the view" % [
+				near[0], "radius" if near[0] == "ball" else "half size", near[2], V.length(),
+				rad_to_deg(atan2(x, z)), rad_to_deg(atan2(y, Vector2(x, z).length()))]
+	var target: Viewport = xr_view if in_xr else get_viewport()
+	return out + "; gravity view %d, foveation %d, render scale %.2f, menu %s" % [renderer.gravity_view,
+			foveation.level, target.scaling_3d_scale, "open" if menu.open else "closed"]
+
+
 func set_gravity_view(view: int) -> void:
-	tracer.set_gravity_view(view)
+	renderer.set_gravity_view(view)
 	menu.refresh()
 
 
