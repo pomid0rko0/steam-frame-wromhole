@@ -61,8 +61,8 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 	vec4 X0 = zone_point(l0, al0, en, t);
 	vec4 T0 = zone_rate(l0, al0, en, t, dl, dal);
 	vec4 q = X0 - C;
-	// the slabs to first order: the nearest one's crossing, then Newton on it; a second round if
-	// another slab is crossed first there
+	// the slabs to first order: the nearest one's crossing, then Newton on it; if another slab is
+	// crossed first there, another round on the one crossed most, up to one round a slab
 	vec3 s0 = vec3(dot(q, E1), dot(q, E2), dot(q, E3));
 	if (max(max(abs(s0.x), abs(s0.y)), abs(s0.z)) >= size) return vec2(l0, al0);
 	vec3 ds = vec3(dot(T0, E1), dot(T0, E2), dot(T0, E3));
@@ -70,7 +70,7 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 	int f = r1.x <= r1.y && r1.x <= r1.z ? 0 : (r1.y <= r1.z ? 1 : 2);
 	float rho = min(min(r1.x, r1.y), r1.z);
 	vec3 sv = s0;
-	for (int round = 0; round < 2; round++) {
+	for (int round = 0; round < 3; round++) {
 		vec4 Ef = f == 0 ? E1 : (f == 1 ? E2 : E3);
 		float goal = sign(ds[f]) * size;
 		for (int i = 0; i < 2; i++) {
@@ -120,7 +120,7 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 		vec4 qc = zone_point(c.x, c.y, en, t) - C;
 		vec3 sc = abs(vec3(dot(qc, E1), dot(qc, E2), dot(qc, E3))) - size;
 		float moved = length(zone_point(c.x, c.y, en, t) - zone_point(p.x, p.y, en, t));
-		bool on = abs(sc[f]) <= 1e-4 && abs(sc[k]) <= 1e-4 && sc[3 - f - k] <= 1e-4;
+		bool on = abs(sc[f]) <= 4e-5 && abs(sc[k]) <= 4e-5 && sc[3 - f - k] <= 4e-5;
 		if (on && moved <= gap && c.y >= 0.0 && c.y <= GEO_PI && geo_finite(c.x + c.y + moved)) p = c;
 	}
 	return p;
