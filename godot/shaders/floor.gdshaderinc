@@ -30,6 +30,7 @@ varying flat vec4 v_ez;
 varying vec3 v_ray;
 varying vec2 v_clip;
 uniform bool fov_on = false;
+uniform bool lens_mark = false;    // tests: blue where the ray goes through the curved zone, else black
 uniform sampler2DArray fov_tex : filter_linear, repeat_disable;
 uniform sampler2D fov_warp : filter_nearest, repeat_disable;   // per eye (row): (gaze x, y, k, n), (A0, A1 along x, then y)
 
@@ -69,5 +70,6 @@ void fragment() {
 		vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
 		float e = dot(s.box, s.box) > 0.0 ? look_box_edge(s.box) : -1.0;
 		ALBEDO = lens_colour(s, a, dFdx(a), dFdy(a), vec2(e, fwidth(e)), 1.0);
+		if (lens_mark) ALBEDO = lensed ? vec3(0.0, 0.0, 1.0) : vec3(0.0);
 	}
 }
