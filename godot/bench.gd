@@ -68,7 +68,7 @@ const NEAR_CUBE := [0.4, 0.1]
 const NEAR_COLOR := Color(0.55, 0.6, 0.95)
 
 var main: Main
-var menu: Menu                  # the result goes there; its render scale
+var menu: Menu                  # the result goes there; the eye's size
 var warm := 0.3                 # s after each switch, not timed
 var time := 0.8                 # s timed per segment
 var tour_scale := 1.0           # the tour's durations, scaled (tests)
@@ -176,7 +176,7 @@ func start() -> void:
 		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
 	saved_pose = main.get_pose()
 	main.hold = true
-	menu.target.scaling_3d_scale = 1.0     # the menu keeps the scale chosen (menu.render_scale)
+	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
 	# back to this app's own setting where there is one, else to what the display ran at
 	var rate: FrameRate = main.rate
 	saved_rate = rate.stored if rate.steam_key != "" and rate.stored > 0.0 else rate.rate

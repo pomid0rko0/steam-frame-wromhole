@@ -3,8 +3,12 @@
 # (where the tools run: tools/box.sh), then it goes where the headset takes it from:
 #   on the Frame itself: ~/wormhole-vr/wormhole_vr.arm64, the Steam library's entry, at once
 #     (a running build keeps its old file); the owner starts it from the library
-#   elsewhere (a cloud session): godot/build/wormhole_vr_<label>_steam_frame.zip with the one
-#     .arm64, to attach to the chat; tools/deploy_frame.bat on the PC puts it on the Frame
+#   elsewhere (a cloud session): godot/build/wormhole_vr_<label>_<commit>_steam_frame.zip with the
+#     one .arm64, to attach to the chat; tools/deploy_frame.bat on the PC puts it on the Frame. The
+#     commit keeps each build's name its own: a browser saves a second file of the same name as
+#     "... (1).zip", and the PC's tools would take the first
+# The build carries its commit (godot/build.json while it exports, "+" after it if godot/ differs
+# from it): main.gd prints it at the start, so the headset's log says which build ran.
 #   tools/export.sh [--check] [label]      (label: the branch's name by default)
 # --check: the build for the one-eye check, with the stereo check scene on (its own export preset,
 # whose feature "check" main.show_check reads).
@@ -27,10 +31,13 @@ LABEL=${1:-$(git -C "$ROOT" symbolic-ref --short -q HEAD || true)}
 case $ROOT in "$REPO"/.wt/*) [ -n "$LABEL" ] || LABEL=${ROOT#"$REPO"/.wt/} ;; esac
 [ -n "$LABEL" ] || LABEL=$(git -C "$ROOT" rev-parse --short HEAD)
 LABEL=$(tr '/' '-' <<<"$LABEL")${CHECK:+_check}
+COMMIT=$(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD -- godot || echo +)
+printf '{"commit": "%s"}\n' "$COMMIT" > "$ROOT/godot/build.json"
 PRESET="Steam Frame${CHECK:+, the one-eye check} (Linux arm64)"
 rm -f "$BUILD"
 log=$(mktemp)
 "$ROOT/tools/box.sh" "$ROOT/tools/export.sh" --godot "$PRESET" > "$log" 2>&1 || true
+rm -f "$ROOT/godot/build.json"
 if [ ! -s "$BUILD" ] || grep -qE "SCRIPT ERROR|SHADER ERROR|^ERROR" "$log"; then
 	grep -E "ERROR" -A3 "$log" || tail -20 "$log"
 	rm -f "$log"
@@ -48,7 +55,7 @@ if grep -qsx 'ID=steamos' /etc/os-release; then
 	grep -aqs "$DEST/wormhole_vr.arm64" "$HOME"/.local/share/Steam/userdata/*/config/shortcuts.vdf \
 		|| echo "not in the Steam library yet: steamos-add-to-steam $DEST/wormhole_vr.arm64 adds it (once)"
 else
-	zip=$ROOT/godot/build/wormhole_vr_${LABEL}_steam_frame.zip
+	zip=$ROOT/godot/build/wormhole_vr_${LABEL}_${COMMIT}_steam_frame.zip
 	rm -f "$zip"
 	(cd "$ROOT/godot/build" && python3 -c 'import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z: z.write("wormhole_vr.arm64")' "$zip")

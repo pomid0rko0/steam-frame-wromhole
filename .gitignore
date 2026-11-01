@@ -1,6 +1,7 @@
 # Godot
 godot/.godot/
 godot/build/
+godot/build.json
 # tools/setup.sh downloads
 tools/.bin
 # generated

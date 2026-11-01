@@ -20,9 +20,10 @@ extends RefCounted
 ## are worked out coarser away from the gaze, smoothly, and filtered (floor_fov.gd); the bodies
 ## keep the full resolution.
 ##
-## Godot asks for the eye-tracked density map's offsets in the headset's full-size pixels: at a
-## render scale below 100% the sharp spot would sit beside where one looks, so foveation goes with
-## 100% only.
+## Godot gives the eye-tracked density map's offsets in pixels of the size it asks the runtime for.
+## The menu's resolution sets that size itself (Menu.set_eye), so the sharp spot is where one looks
+## at every size. A 3D render scale below 100% (Viewport.scaling_3d_scale, left at 1) would put it
+## beside: the 3D buffers smaller than that size.
 ##
 ## Subsampled images stay off (project.godot): SteamVR can't read them. verbose_stdout lists the
 ## OpenXR extensions and what the driver supports (long: keep it off).
@@ -49,11 +50,7 @@ func set_level(p_level: int, split := false) -> void:
 	if target.vrs_mode != mode:
 		target.vrs_mode = mode      # the 3D buffers are made again: not every call
 	split_pass.enabled = (level > 0 and level <= LEVELS) or split
-	if floor_fov:
-		var size := Vector2(1, 1)
-		if xr:
-			size = xr.get_render_target_size()
-		floor_fov.set_level(level, int(maxf(size.x, size.y)))
+	resize()
 	if level == 0 or level > LEVELS or xr == null:
 		return
 	var oxr := xr as OpenXRInterface
@@ -61,3 +58,11 @@ func set_level(p_level: int, split := false) -> void:
 		oxr.foveation_level = level
 	elif "vrs_strength" in xr:
 		xr.set("vrs_strength", OWN_MAP_STRENGTH[level - 1])
+
+
+## The eye's picture changed size (Menu.set_eye): our own foveation's texture follows it.
+func resize() -> void:
+	if floor_fov == null:
+		return
+	var size := xr.get_render_target_size() if xr else Vector2(1, 1)
+	floor_fov.set_level(level, int(maxf(size.x, size.y)))

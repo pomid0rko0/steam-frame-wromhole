@@ -7,7 +7,7 @@
 # Каждая новая сборка ложится в тот же файл, поэтому в библиотеке одна запись, wormhole_vr.arm64.
 #
 # Запуск: перетащи zip на deploy_frame.bat. Без zip берётся самый свежий
-# wormhole_vr_*_steam_frame.zip из «Загрузок».
+# wormhole_vr_*.zip из «Загрузок», в том числе сохранённый браузером как «... (1).zip».
 # Пароль Фрейма спросят дважды: при копировании и при установке.
 
 # ---- впиши свои данные ----
@@ -25,9 +25,9 @@ if ($Frame -like "ИМЯ@*") {
 
 if (-not $Zip) {
     $downloads = (New-Object -ComObject Shell.Application).NameSpace("shell:Downloads").Self.Path
-    $found = Get-ChildItem -Path $downloads -Filter "wormhole_vr_*_steam_frame.zip" |
+    $found = Get-ChildItem -Path $downloads -Filter "wormhole_vr_*.zip" |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $found) { throw "В $downloads нет wormhole_vr_*_steam_frame.zip" }
+    if (-not $found) { throw "В $downloads нет wormhole_vr_*.zip" }
     $Zip = $found.FullName
 }
 Write-Host "Сборка: $Zip"
