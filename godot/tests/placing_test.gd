@@ -14,11 +14,12 @@ extends SceneTree
 ##    a box of B come to rest on them, a ball rolled at A's wall comes back from 40 m off A's world
 ##    origin; the viewer walked at it stops there
 ## 4. allowed: a pillar, a sphere, a box, the wall and the viewer each keep the mouth off
-## 5. the buttons: X starts, the ring is drawn; the right stick up takes it farther, right turns it
-##    (and neither turns the viewer); A puts it there and does not go back to the start; B and X
-##    leave it; red where a pillar is, and A does nothing there; not from the curved zone, not while
-##    the speed check holds; the menu ends it; P and Backspace on the keyboard; A, placing over, puts
-##    the mouths back where scene.json has them with the toys
+## 5. the buttons: X takes hold of the mouth where it stands; the right stick up leads it farther,
+##    right turns it, and the throat glides after (neither turns nor moves the viewer); A lets go of
+##    it where it was led and does not go back to the start; B puts it back; X again lets go of it;
+##    led onto a pillar it stays, a red ring there, and A lets go of it where it stands; not from the
+##    curved zone, not while the speed check holds; the menu lets go of it; P and Backspace on the
+##    keyboard; A, placing over, puts the mouths back where scene.json has them with the toys
 
 const U := preload("res://tests/util.gd")
 const HAND := Vector3(0.25, 1.2, -0.3)      # the right controller in the room
@@ -48,8 +49,8 @@ func _initialize() -> void:
 	root.add_child(main)
 	queue = [_coordinates, _move, _move_checked, _push, _push_checked, _fly, _physics, _physics_checked,
 			_wall_walk, _allowed, _x, _x_checked, _farther, _farther_checked, _turned, _turned_checked,
-			_put, _put_checked, _cancel_start, _cancel, _cancel_checked, _red, _red_checked, _red_put,
-			_red_out, _zone, _zone_checked, _hold, _hold_checked, _menu, _menu_open, _menu_checked,
+			_put, _put_checked, _cancel_start, _cancel, _cancel_checked, _x_again, _x_again_checked, _red,
+			_red_checked, _red_put, _red_out, _zone, _zone_checked, _hold, _hold_checked, _menu, _menu_open, _menu_checked,
 			_keys, _keys_on, _keys_off, _reset, _reset_checked]
 
 
@@ -310,10 +311,10 @@ func _x_checked() -> int:
 	# the hand: 0.3 m ahead of the feet at (10, 0), 0.25 m to the right (world +y), pointing at the
 	# throat (-x): as far from its centre as the hand is
 	var want := Vector2(9.7, 0.25).length()
-	U.check("X starts placing in universe A, as far as the throat is, the ring green and drawn",
-			pl.active and pl.side == 1.0 and absf(pl.dist - want) < 1e-3 and pl.ok and pl.pts.size() == Placing.RING_POINTS + 2
-			and main.renderer.beams[Renderer.PLACING].visible,
-			"active %s, side %s, dist %.4f (%.4f), ok %s %s, %d points" % [pl.active, pl.side, pl.dist, want, pl.ok, pl.why, pl.pts.size()])
+	U.check("X takes hold of universe A's mouth where it stands: it stays, no ring",
+			pl.active and pl.side == 1.0 and absf(pl.dist - want) < 1e-3 and pl.ok and pl.pts.is_empty()
+			and pl.centre.length() < 1e-3 and Vector2(main.space.mouths[0].x, main.space.mouths[0].y).length() < 1e-3,
+			"active %s, side %s, dist %.4f (%.4f), ok %s %s, %d points, mouth %s" % [pl.active, pl.side, pl.dist, want, pl.ok, pl.why, pl.pts.size(), main.space.mouths[0]])
 	saved["fwd"] = _forward()
 	saved["feet"] = _feet()
 	right.set_input(&"primary", Vector2(0.0, 1.0))
@@ -322,14 +323,17 @@ func _x_checked() -> int:
 
 func _farther() -> int:
 	right.set_input(&"primary", Vector2.ZERO)
-	return 1
+	return 60
 
 
 func _farther_checked() -> int:
 	var pl := main.placing
 	var want := Vector2(9.7, 0.25).length() + 31.0 / 60.0 * Placing.DIST_SPEED
-	U.check("the right stick up for 31 frames: 3.1 m farther", absf(pl.dist - want) < 1e-3,
-			"dist %.3f, expected %.3f" % [pl.dist, want])
+	var m: Vector3 = main.space.mouths[0]
+	var c := Vector2(9.7, 0.25) + want * (-Vector2(9.7, 0.25).normalized())
+	U.check("the right stick up for 31 frames: led 3.1 m farther, and the throat has glided there",
+			absf(pl.dist - want) < 1e-3 and Vector2(m.x, m.y).distance_to(pl.centre) < 0.01 and pl.centre.distance_to(c) < 1e-3,
+			"dist %.3f, expected %.3f; mouth %s, led to %s" % [pl.dist, want, m, pl.centre])
 	saved["dist"] = pl.dist
 	right.set_input(&"primary", Vector2(1.0, 0.0))
 	return 30
@@ -337,14 +341,17 @@ func _farther_checked() -> int:
 
 func _turned() -> int:
 	right.set_input(&"primary", Vector2.ZERO)
-	return 1
+	return 60
 
 
 func _turned_checked() -> int:
 	var pl := main.placing
-	U.check("the right stick right for 31 frames: turned 46.5 degrees clockwise", absf(rad_to_deg(pl.turn) + 46.5) < 1e-3,
-			"turn %.2f deg" % rad_to_deg(pl.turn))
+	var m: Vector3 = main.space.mouths[0]
+	U.check("the right stick right for 31 frames: turned 46.5 degrees clockwise, the throat with it",
+			absf(rad_to_deg(pl.turn) + 46.5) < 1e-3 and absf(angle_difference(m.z, pl.turn)) < 0.01,
+			"led to %.2f deg, the mouth at %.2f" % [rad_to_deg(pl.turn), rad_to_deg(m.z)])
 	U.check("... and the viewer did not turn", _forward().distance_to(saved["fwd"]) < 1e-5, str(_forward()))
+	U.check("... nor move", (_feet() - saved["feet"]).length() < 1e-3, str(_feet()))
 	saved["turn"] = pl.turn
 	saved["centre"] = pl.centre
 	saved["balls"] = main.toys.world.balls.size()
@@ -359,9 +366,8 @@ func _put() -> int:
 func _put_checked() -> int:
 	var m: Vector3 = main.space.mouths[0]
 	var c: Vector2 = saved["centre"]
-	U.check("A puts it there", not main.placing.active and Vector2(m.x, m.y).distance_to(c) < 1e-4
-			and absf(m.z - saved["turn"]) < 1e-6 and absf(c.x - (9.7 - saved["dist"])) < 1e-3 and absf(c.y - 0.25) < 1e-3,
-			"mouth %s, centre %s" % [m, c])
+	U.check("A lets go of it where it was led", not main.placing.active and Vector2(m.x, m.y).distance_to(c) < 1e-5
+			and absf(m.z - saved["turn"]) < 1e-6, "mouth %s, led to %s" % [m, c])
 	U.check("... and does not go back to the start", (_feet() - saved["feet"]).length() < 1e-3, str(_feet()))
 	U.check("... the line below says so", main.menu.notice_text == "червоточина переставлена", main.menu.notice_text)
 	return 0
@@ -376,50 +382,71 @@ func _cancel_start() -> int:
 
 func _cancel() -> int:
 	right.set_input(&"primary", Vector2.ZERO)
+	saved["moved"] = Vector2(main.space.mouths[0].x - saved["mouth"].x, main.space.mouths[0].y - saved["mouth"].y).length()
 	_press(right, &"by_button")
 	return 3
 
 
 func _cancel_checked() -> int:
-	U.check("B leaves it where it was, and puts no new ball in the hand", not main.placing.active
-			and main.space.mouths[0] == saved["mouth"] and main.toys.world.balls.size() == saved["balls"]
-			and main.menu.notice_text == "червоточина осталась на месте",
-			"active %s, mouth %s, balls %d, line %s" % [main.placing.active, main.space.mouths[0], main.toys.world.balls.size(), main.menu.notice_text])
-	return 0
+	U.check("B puts it back where it stood, and puts no new ball in the hand", not main.placing.active
+			and saved["moved"] > 0.5 and main.space.mouths[0] == saved["mouth"] and main.toys.world.balls.size() == saved["balls"]
+			and main.menu.notice_text == "червоточина вернулась на место",
+			"active %s, had moved %.2f m, mouth %s, balls %d, line %s" % [main.placing.active, saved["moved"],
+			main.space.mouths[0], main.toys.world.balls.size(), main.menu.notice_text])
+	_press(right, &"place_button")
+	right.set_input(&"primary", Vector2(0.0, 1.0))
+	return 10
+
+
+func _x_again() -> int:
+	right.set_input(&"primary", Vector2.ZERO)
+	saved["led"] = Vector3(main.placing.centre.x, main.placing.centre.y, main.placing.turn)
+	_press(right, &"place_button")
+	return 3
+
+
+func _x_again_checked() -> int:
+	var m: Vector3 = main.space.mouths[0]
+	var led: Vector3 = saved["led"]
+	U.check("X again lets go of it where it was led", not main.placing.active and m.distance_to(led) < 1e-5
+			and Vector2(m.x - saved["mouth"].x, m.y - saved["mouth"].y).length() > 0.5, "mouth %s, led to %s" % [m, led])
+	saved["mouth"] = m
+	_press(right, &"place_button")
+	return 3
 
 
 func _red() -> int:
-	# the hand toward the pillar at (7.5, 7.5) of A from where it is, (9.7, 0.25): room x is world y,
-	# room -z world -x
+	# then, at once, the hand toward the pillar at (7.5, 7.5) of A from where it is, (9.7, 0.25): room
+	# x is world y, room -z world -x (led a few degrees off that: the way it took hold of the throat)
 	var w := Vector2(7.5 - 9.7, 7.5 - 0.25)
 	_hand(Basis.looking_at(Vector3(w.y, 0.0, w.x).normalized(), Vector3.UP))
-	_press(right, &"place_button")
+	main.placing.dist = w.length()
 	return 3
 
 
 func _red_checked() -> int:
-	main.placing.dist = Vector2(7.5 - 9.7, 7.5 - 0.25).length()
-	return 2
-
-
-func _red_put() -> int:
 	var pl := main.placing
-	U.check("the ring on a pillar is red", pl.active and not pl.ok and pl.why == "мешает столб" and pl.col == Placing.COLOR_NO
-			and pl.centre.distance_to(Vector2(7.5, 7.5)) < 1e-3, "ok %s %s, centre %s" % [pl.ok, pl.why, pl.centre])
+	U.check("led onto a pillar: the throat stays, a red ring there, the line below says why",
+			pl.active and not pl.ok and pl.why == "мешает столб" and pl.pts.size() == Placing.RING_POINTS + 2
+			and main.renderer.beams[Renderer.PLACING].visible and pl.centre.distance_to(Vector2(7.5, 7.5)) < 0.5
+			and main.space.mouths[0] == saved["mouth"] and main.menu.notice_text == "сюда нельзя: мешает столб",
+			"ok %s %s, %d points, centre %s, mouth %s, line %s" % [pl.ok, pl.why, pl.pts.size(), pl.centre, main.space.mouths[0], main.menu.notice_text])
 	_press(right, &"ax_button")
 	return 3
 
 
-func _red_out() -> int:
-	U.check("A there does nothing but say why", main.placing.active and main.space.mouths[0] == saved["mouth"]
-			and main.menu.notice_text == "сюда нельзя: мешает столб", main.menu.notice_text)
-	_press(right, &"place_button")
+func _red_put() -> int:
+	U.check("A there lets go of it where it stands", not main.placing.active and main.space.mouths[0] == saved["mouth"],
+			str(main.space.mouths[0]))
 	_hand(Basis.IDENTITY)
-	return 3
+	return 1
+
+
+func _red_out() -> int:
+	return 0
 
 
 func _zone() -> int:
-	U.check("X again leaves it", not main.placing.active)
 	main.place_on_axis(1.0)
 	_press(right, &"place_button")
 	return 3
@@ -456,7 +483,7 @@ func _menu_open() -> int:
 
 
 func _menu_checked() -> int:
-	U.check("the menu opened ends it", main.menu.open and not main.placing.active, "open %s" % main.menu.open)
+	U.check("the menu opened lets go of it", main.menu.open and not main.placing.active, "open %s" % main.menu.open)
 	_press(left, &"primary_click")
 	return 3
 
@@ -476,7 +503,7 @@ func _keys_on() -> int:
 
 func _keys_off() -> int:
 	U.key(KEY_BACKSPACE, false)
-	U.check("Backspace leaves it", not main.placing.active)
+	U.check("Backspace puts it back", not main.placing.active)
 	return 1
 
 

@@ -432,8 +432,8 @@ func view_text() -> String:
 ## the toys; a toy the new curved zone would take is pushed out past its edge, Placing.allowed keeps
 ## the viewer and the scene's objects clear of it), what is in the curved zone goes along with the
 ## throat, the other universe stays as it is. The demo's throw and drop still to come are dropped
-## (their places are the start's).
-func move_mouth(side: float, m: Vector3) -> void:
+## (their places are the start's). Returns how many toys it pushed out; say: a line in the log.
+func move_mouth(side: float, m: Vector3, say := true) -> int:
 	var was: Vector3 = space.mouths[WormholeSpace.side_index(side)]
 	var hp := viewer.head(camera.transform.origin.y)     # V is the head's
 	space.set_mouth(side, m)
@@ -463,8 +463,10 @@ func move_mouth(side: float, m: Vector3) -> void:
 	hands.moved()
 	renderer.set_mouths()
 	_update_world_map()
-	print("placing: universe %s's mouth from (%.2f, %.2f) turned %.0f deg to (%.2f, %.2f) turned %.0f deg; %d toys pushed out of it"
-			% ["A" if side > 0.0 else "B", was.x, was.y, rad_to_deg(was.z), m.x, m.y, rad_to_deg(m.z), pushed])
+	if say:
+		print("placing: universe %s's mouth from (%.2f, %.2f) turned %.0f deg to (%.2f, %.2f) turned %.0f deg; %d toys pushed out of it"
+				% ["A" if side > 0.0 else "B", was.x, was.y, rad_to_deg(was.z), m.x, m.y, rad_to_deg(m.z), pushed])
+	return pushed
 
 
 ## Both mouths moved to to ([A's, B's], as WormholeSpace.mouths), each as move_mouth does (the
