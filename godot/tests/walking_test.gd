@@ -6,8 +6,9 @@ extends SceneTree
 ## 2. E for one second turns smoothly 90 degrees to the right, Q for half a second 45 back
 ## 3. Tab switches to snaps: E snap-turns 30 degrees to the right (once per push), Q back
 ## 4. R puts the viewer back at the start, facing the wormhole
-## 5. Shift + W for six seconds runs 24 m: through the middle of the throat into universe B,
-##    on the floor, still walking straight, to where 24 m along the floor end in chart B
+## 5. Shift + W for six seconds runs 24 m along universe A's floor, under the wormhole's mouth
+##    (it hangs over the floor: no way through it on foot), from chart x 10 to -14, on the floor,
+##    still walking straight; put on universe B's floor, W walks 1.5 m a second there too
 ## 6. the speed check's view tilt turns about the head's own axes, whichever way it faces
 ## Controllers: tests/walking_xr_test.gd.
 
@@ -139,12 +140,20 @@ func _process(_delta: float) -> bool:
 			U.key(KEY_W, false)
 			U.key(KEY_SHIFT, false)
 		559:
-			# 24 m from the start: START_POS.x - Rout of flat floor, 2L of curved zone, the rest in B
-			var want_r: float = 24.0 - (main.START_POS.x - main.space.Rout) - 2.0 * main.space.L + main.space.Rout
+			var want: float = main.START_POS.x - 24.0
 			var p := _feet()
-			U.check("Shift + W runs through the throat into universe B", _side() < 0.0 and absf(p.x + want_r) < 0.05 and absf(p.y) < 0.01,
-					"side %+.0f, feet at (%.3f, %.3f), expected (%.3f, 0)" % [_side(), p.x, p.y, -want_r])
-			U.check("on the floor in B", absf(main.viewer.n.z) < 1e-6, "n.z %s" % main.viewer.n.z)
-			U.check("still walking straight in B", _forward().distance_to(Vector3(-1, 0, 0)) < 1e-3, "forward %s" % _forward())
+			U.check("Shift + W runs 24 m along universe A's floor under the mouth", _side() > 0.0 and absf(p.x - want) < 0.05 and absf(p.y) < 0.01,
+					"side %+.0f, feet at (%.3f, %.3f), expected (%.3f, 0)" % [_side(), p.x, p.y, want])
+			# Vector3 is single precision: the feet's direction n, and so their height, to 1e-6 m
+			U.check("on the floor", absf(p.z) < 1e-5 and absf(main.viewer.height()) < 1e-5, "chart z %s, height %s" % [p.z, main.viewer.height()])
+			U.check("still walking straight", _forward().distance_to(Vector3(-1, 0, 0)) < 1e-6, "forward %s" % _forward())
+			main.place(Vector3(-10.0, 1.0, 0.0), Vector3(1.0, 0.0, 0.0), -1.0)
+			U.key(KEY_W, true)
+		619:
+			U.key(KEY_W, false)
+		621:
+			var p := _feet()
+			U.check("on universe B's floor, W walks 1.5 m a second too", _side() < 0.0 and p.distance_to(Vector3(-8.5, 1.0, 0.0)) < 0.03
+					and _forward().distance_to(Vector3(1, 0, 0)) < 1e-6, "side %+.0f, feet at %s, forward %s" % [_side(), p, _forward()])
 			U.finish(self)
 	return false

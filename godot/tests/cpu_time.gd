@@ -6,9 +6,9 @@ extends SceneTree
 ## and both controllers moving, the right hand holding a new ball, the left empty and open, pointing
 ## to and fro across the throat (it aims: hands.gd's pull), the demo's toys at rest around.
 ## It prints the median, the 90th percentile and the largest of SECONDS of frames, and the median of
-## each part of main._process (Main.PARTS), with the feet at
-## the start (a flat universe), on the fillet (l 5) and flying (places), each after about WARM frames there. A measurement,
-## not a test (tools/test.sh does not run it): the times are this machine's.
+## each part of main._process (Main.PARTS), standing at the start (a flat universe) and flying with
+## the head on the axis through the throat's centre (places), each after about WARM frames there. A
+## measurement, not a test (tools/test.sh does not run it): the times are this machine's.
 ##   godot --path . --fixed-fps 120 --resolution 320x180 -s res://tests/cpu_time.gd    (under xvfb-run)
 ## The headset's log has main._process alone (Main.scripts_ms) in its lines about late frames
 ## (frame_rate.gd).
@@ -26,12 +26,11 @@ var frame := 0
 var stamps := {"t0": 0, "t1": 0}
 var times: Array[float] = []
 var parts: Array = []           # per frame, Main.parts_ms
-# [label, l to put the feet at (Main.place_on_axis), m to fly up from there]; the first is where main
-# puts them at the start; the last flies round the throat until the head (U.HEAD_0 up) is on its
-# top, where gravity pulls along the throat: it falls freely there (viewer.gd), swinging along the
-# top and turning upright, the feet off the floor
-var places := [["start (flat)", null, 0.0], ["fillet (l 5)", 5.0, 0.0],
-		["flying, falling freely (the throat's top, l 2)", 2.0, PI / 2.0 * Main.THROAT_RADIUS - U.HEAD_0.y]]
+# [label, l to put the head at on the axis (Main.place_on_axis)]; the first is where main puts the
+# viewer at the start; the others fly: hovering at the curved zone's edge, and in the throat with
+# gravity on, where it falls freely round the throat (viewer.gd), turning upright
+var places := [["start (flat)", null], ["flying, hovering at the curved zone's edge (l 5)", 5.0],
+		["flying, falling freely in the throat (l 2)", 2.0]]
 var place := 0
 var place_frame := 0
 
@@ -65,7 +64,8 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frame += 1
 	var t := frame / RATE
-	left.set_pose(&"grip", Transform3D(Basis(Vector3.UP, 0.5 * sin(t)), Vector3(-0.25 + 0.1 * sin(2.0 * t), 1.1, -0.35)),
+	# 20 degrees up: from the start, at the mouth
+	left.set_pose(&"grip", Transform3D(Basis(Vector3.UP, 0.5 * sin(t)) * Basis(Vector3.RIGHT, 0.35), Vector3(-0.25 + 0.1 * sin(2.0 * t), 1.1, -0.35)),
 			Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
 	right.set_pose(&"grip", Transform3D(Basis(Vector3.RIGHT, 0.4 * sin(1.3 * t)), Vector3(0.25, 1.1 + 0.1 * sin(1.7 * t), -0.35)),
 			Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
@@ -95,8 +95,6 @@ func _process(_delta: float) -> bool:
 		if place == places.size():
 			U.finish(self, hmd, [left, right])
 			return true
+		main.set_fall(place == 2)
 		main.place_on_axis(places[place][1])
-		if places[place][2] > 0.0:
-			main.viewer.take_off()
-			main.viewer.move(places[place][2] * main.viewer.frame[1])
 	return false

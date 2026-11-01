@@ -1,6 +1,8 @@
 """Gravity through the wormhole (ref/gravity.py): the separated ODE against an independent 2D
 solve of Laplace's equation, for several profiles; prints the numbers the Godot test checks.
 Exit status 1 on any failure."""
+import os
+import re
 import sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
@@ -26,8 +28,8 @@ def check(name, ok, detail):
 for name, (rho0, h, R) in PROFILES.items():
     W = Wormhole(rho0, h, R)
     G = Gravity(W)
-    print(f'--- {name}: beta = {G.beta:+.4f} m^3, floor g at the middle {G.floor_g(0.0):.4f}, '
-          f'at the mouth (l = L) {G.floor_g(W.L):.4f}')
+    print(f'--- {name}: beta = {G.beta:+.4f} m^3, g on the throat\'s side (n_z = 0) at its middle {G.side_g(0.0):.4f}, '
+          f'at the curved zone\'s edge (l = L) {G.side_g(W.L):.4f}')
     # 1. the ODE holds: (r^2 f')' - 2 f = 0, by finite differences of the solution
     ls = np.linspace(-W.L - 6, W.L + 6, 401)
     ls = ls[np.min(np.abs(ls[:, None] - np.array([-W.L, -W.Lc, 0, W.Lc, W.L])[None]), axis=1) > 2e-3]
@@ -52,8 +54,8 @@ for name, (rho0, h, R) in PROFILES.items():
     fx = (4 * f2 - f1) / 3                       # Richardson: second-order scheme
     fo = G.f(probe)[0]
     err = np.max(np.abs(fx - fo) / W.r(probe))
-    check('2D Laplace solve agrees (floor g)', err < 2e-3,
-          f'floor g at l = {np.round(probe, 2)}: ODE {np.round(fo / W.r(probe), 4)}, 2D {np.round(fx / W.r(probe), 4)}, '
+    check('2D Laplace solve agrees (g on the side, n_z = 0)', err < 2e-3,
+          f'g on the side at l = {np.round(probe, 2)}: ODE {np.round(fo / W.r(probe), 4)}, 2D {np.round(fx / W.r(probe), 4)}, '
           f'max diff {err:.1e}; non-cos(theta) part of the 2D solution {out[1][2]:.1e} m')
     # 4. the size axiom (docs/gravity.md, «Размер»)
     Gs = Gravity(Wormhole(rho0 / 10, h / 10, R / 10))
@@ -62,33 +64,61 @@ for name, (rho0, h, R) in PROFILES.items():
 
 W = Wormhole(*app_profile())
 G = Gravity(W)
-print('\nnumbers for godot/tests/gravity_test.gd (the throat of godot/main.gd): beta = %.5f, floor g at l = 0, 2, 4, 5, L: %s'
-      % (G.beta, np.array2string(G.floor_g(np.array([0.0, 2.0, 4.0, 5.0, W.L])), precision=5)))
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
+LIFT = float(re.search(r'^const LIFT := ([\d.]+)', src, re.M).group(1))
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'ball_world.gd')).read()
+RR = float(re.search(r'^const ROLLING_RESISTANCE := ([\d.]+)', src, re.M).group(1))
 
-# numbers for docs/gravity.md: a point let go 2 m above the floor (its height as docs/gravity.md
-# gives it)
+
+def floor_field(rho):
+    """On the floor rho metres along it from the point under the throat's centre (lift below it):
+    gravity's part along the floor, outward, and down, in g, from phi = z (1 + beta / r^3), z and r
+    from the centre (WormholeSpace.floor_gravity)."""
+    r2 = rho * rho + LIFT * LIFT
+    r5 = r2 * r2 * np.sqrt(r2)
+    return -3 * G.beta * LIFT * rho / r5, 1 + G.beta / r2 ** 1.5 - 3 * G.beta * LIFT * LIFT / r5
+
+
+rhos = np.array([0.0, 2.5, 5.0, 10.0, 20.0])
+along, up = floor_field(rhos)
+print('\nnumbers for godot/tests/gravity_test.gd (the throat of godot/main.gd, lift %.1f m): beta = %.5f, '
+      'floor g at rho = 0, 2.5, 5, 10, 20: %s' % (LIFT, G.beta, np.array2string(np.hypot(along, up), precision=5)))
+
+# numbers for docs/gravity.md
 from scipy.integrate import solve_ivp
+from scipy.optimize import brentq, minimize_scalar
 g = 9.81
-# in the middle of the throat it stays on the sphere l = 0 (f' = 0 there) and falls along a meridian:
-# phi = g f(0) sin(s / rho0), s the arc down to the floor, H = rho0 sin(s / rho0)
-f0 = G.f(np.array([0.0]))[0][0]
-down = lambda t, y: y[0]
-down.terminal, down.direction = True, -1
-s0 = W.rho0 * np.arcsin(2.0 / W.rho0)
-fall = solve_ivp(lambda t, y: [y[1], -g * f0 / W.rho0 * np.cos(y[0] / W.rho0)], [0, 20], [s0, 0.0],
-                 events=down, rtol=1e-10, atol=1e-12).t_events[0][0]
-print('a point let go 2 m above the floor: %.2f s to the floor in the middle of the throat, %.2f s far away'
-      % (fall, np.sqrt(2 * 2.0 / g)))
-# outside the shell, in the chart (docs/gravity.md's f with n_z = z / |x|): the beta part pulls
-# toward the throat
+best = minimize_scalar(lambda x: -floor_field(x)[0], bounds=(0.0, 3 * LIFT), method='bounded')
+print('the floor: g %.3f under the throat\'s centre, %.3f at 2.5 m along it, %.3f at 5 m, %.3f at 10 m; '
+      'the push along it outward, at most %.4f g at %.2f m' % (*np.hypot(along[:4], up[:4]), floor_field(best.x)[0], best.x))
+ratio = lambda x: floor_field(x)[0] / floor_field(x)[1] - RR
+print('  more than rolling friction (BallWorld.ROLLING_RESISTANCE %.3f of the weight) from %.2f to %.2f m along the floor'
+      % (RR, brentq(ratio, 1e-6, best.x), brentq(ratio, best.x, 10 * LIFT)))
+
+
+# in a flat universe's chart (the floor at z = 0, the throat's centre at (0, 0, lift)): docs/gravity.md's
+# field
 def flat(t, y):
-    x = y[:3]
+    x = y[:3] - np.array([0, 0, LIFT])
     r = np.linalg.norm(x)
     return np.r_[y[3:], -g * (np.array([0, 0, 1.0]) * (1 + G.beta / r ** 3) - 3 * G.beta * x[2] / r ** 5 * x)]
+
+
 land = lambda t, y: y[2]
 land.terminal, land.direction = True, -1
-for x0 in (5.0, 6.0):
-    y = solve_ivp(flat, [0, 5], [x0, 0, 2.0, 0, 0, 0], events=land, rtol=1e-10, atol=1e-12).y_events[0][0]
-    print('  let go %.0f m from the centre: lands %.1f cm closer to the throat' % (x0, 100 * (x0 - y[0])))
+for x0 in (2.5, 5.0):
+    y = solve_ivp(flat, [0, 5], [x0, 0, 2.0, 0, 0, 0], events=land, rtol=1e-10, atol=1e-12)
+    print('  let go 2 m over the floor %.1f m along it from under the throat\'s centre: lands %.1f cm farther out, '
+          'after %.4f s (%.4f s in a uniform field)' % (x0, 100 * (y.y_events[0][0][0] - x0), y.t_events[0][0], np.sqrt(2 * 2.0 / g)))
+# over the throat's centre, n = +z: phi = f(l) + lift, so l'' = -g f'(l), in a straight line through
+# the throat from universe A to B and back, without air
+l0 = W.L + 1.5
+mid = lambda t, y: y[0]
+mid.terminal, mid.direction = True, -1
+fall = solve_ivp(lambda t, y: [y[1], -g * G.f(np.array([y[0]]))[1][0]], [0, 10], [l0, 0.0], events=mid,
+                 rtol=1e-10, atol=1e-12).t_events[0][0]
+print('let go on the axis over the throat\'s centre, 1.5 m over the curved zone: to the throat\'s middle in %.3f s '
+      '(%.3f s in a uniform field over the same %.2f m), there and back to A in %.2f s, without air' %
+      (fall, np.sqrt(2 * l0 / g), l0, 4 * fall))
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

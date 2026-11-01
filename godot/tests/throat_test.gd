@@ -1,7 +1,8 @@
 extends SceneTree
 ## Bodies at the eye's own l (desktop), exit status 1 on any failure:
 ##   godot --path . --resolution 640x360 -s res://tests/throat_test.gd [-- shots_prefix]
-## A pink cube stands in front of a white ball round the throat, the eye at their l looking at them;
+## A pink cube hangs in front of a white ball round the throat, the eye at their l (flying on the
+## axis through the throat's centre: main.place_on_axis) looking along the throat's round at them;
 ## the eye steps 0.3 mm along l at a time across them, in the cylinder and at its end (where the
 ## fillet starts). The geodesic to a vertex at about the eye's l is launched nearly tangent: where
 ## its length came out short, the ball's vertices there came in front of the cube and the ball showed
@@ -68,7 +69,7 @@ func _process(_delta: float) -> bool:
 		_bodies(places[pi_])
 		k = 0
 		seen.clear()
-	main.place_on_axis(places[pi_] + _off(), 90.0, -30.0)
+	main.place_on_axis(places[pi_] + _off(), 90.0, 30.0)
 	main.draw_toys()
 	wait = 2
 	return false
@@ -82,16 +83,34 @@ func _off_at(step: int) -> float:
 	return -0.004 + STEP * step
 
 
-## The cube round the throat at l, the ball behind it (farther round), a little cube beside.
+## The cube round the throat at l, the ball behind it (farther round, showing over the cube's top
+## edge), a little cube beside: by the great circle the eye looks along (from n = +x toward +y, 30
+## degrees up), each its height (m) off it toward the view's up.
 func _bodies(l: float) -> void:
 	var w: BallWorld = main.toys.world
 	w.balls.clear()
 	w.cubes.clear()
-	main.toys.cube_in_throat(l, 0.3, 0.25, CUBE)
-	main.toys.cube_in_throat(l + 0.05, 0.55, 0.15, Color(0.35, 0.8, 0.75))
-	var z := 0.3 / main.space.r(l)
-	var phi := 0.42
-	w.add(l - 0.02, Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z), Vector4.ZERO, 0.3, BALL)
+	_cube(l, 0.3, -0.3, 0.25, CUBE)
+	_cube(l + 0.05, 0.55, -0.4, 0.15, Color(0.35, 0.8, 0.75))
+	w.add(l - 0.02, _round(l, 0.42, -0.1), Vector4.ZERO, 0.3, BALL)
+
+
+const LOOK := Vector3(0.0, 0.8660254, 0.5)       # the look's direction at n = +x
+const LOOK_UP := Vector3(0.0, -0.5, 0.8660254)   # and the view's up
+
+
+## n at angle phi round the great circle from +x along LOOK, height m toward LOOK_UP.
+func _round(l: float, phi: float, height: float) -> Vector3:
+	var z := height / main.space.r(l)
+	return (sqrt(1.0 - z * z) * (cos(phi) * Vector3(1.0, 0.0, 0.0) + sin(phi) * LOOK) + z * LOOK_UP).normalized()
+
+
+## A cube of half size half at l, phi round, height up, square to the circle.
+func _cube(l: float, phi: float, height: float, half: float, color: Color) -> void:
+	var n := _round(l, phi, height)
+	var across := WormholeSpace.tangent(n, Vector4(0.0, 0.0, LOOK.y, LOOK.z) * cos(phi) - Vector4(0.0, 1.0, 0.0, 0.0) * sin(phi))
+	var up := WormholeSpace.tangent(n, Vector4(0.0, LOOK_UP.x, LOOK_UP.y, LOOK_UP.z))
+	main.toys.world.add_cube(l, n, Vector4.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), up, across], Vector3.ZERO, half, color)
 
 
 ## The ball's pixels (white) between two of the cube's in a row.

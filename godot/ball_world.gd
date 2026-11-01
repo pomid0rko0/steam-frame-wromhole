@@ -25,13 +25,13 @@ const MAX_SUBSTEPS := 6
 const RESTITUTION_FLOOR := 0.55
 const RESTITUTION_BALL := 0.85
 # Rolling friction: a small part that follows the weight, and a part that follows the speed; air
-# drag on top. A ball at rest stays where the floor pulls along itself less than ROLLING_RESISTANCE
-# times its weight there;
-# near the wormhole gravity pulls along the floor toward the throat, so a ball set down at the
-# curved zone's edge rolls in by itself (tests/physics_test.gd). A larger part that follows the
-# weight would hold such a ball still; a smaller one would let a thrown ball roll very far: the
-# part that follows the speed stops it. Air drag (as the square of the speed) slows fast balls, in
-# flight too, but hardly a slow roll.
+# drag on top. A ball at rest stays where gravity pulls along the floor less than ROLLING_RESISTANCE
+# times its weight there. Under the mouth gravity pushes along the floor away from the point under
+# the throat's centre (docs/gravity.md), more than that but right at that point, so a ball set down
+# there off it rolls away by itself and stops farther out (tests/physics_test.gd, 6). A larger part
+# that follows the weight would hold such a ball still; a smaller one would let a thrown ball roll
+# very far: the part that follows the speed stops it. Air drag (as the square of the speed) slows
+# fast balls, in flight too, but hardly a slow roll.
 const ROLLING_RESISTANCE := 0.005
 const ROLLING_DRAG := 0.1            # 1/s: the deceleration per m/s of rolling speed
 const AIR_DENSITY := 1.2             # kg/m^3
@@ -39,7 +39,7 @@ const TOY_DENSITY := 25.0            # kg/m^3: big rubber toys (a 50 cm ball 1.6
 const DRAG_BALL := 0.47              # drag coefficients of a sphere and of a cube
 const DRAG_CUBE := 1.05
 const MAX_BALLS := 8
-const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls and cubes nearby
+const WORLD_RADIUS := 40.0           # m from the throat's centre: an invisible wall that keeps balls and cubes nearby
 const MAX_CUBES := 6
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates by this times the floor's push
@@ -168,10 +168,11 @@ func step(delta: float, hands: Array[Ball]) -> void:
 			if asleep(b):
 				continue
 			var before: Array = [b.l, b.n, b.U, b.still]
-			var s := space.dynamics_step(b.l, b.n, b.U, DT, GRAVITY)
+			var k := drag(b)
+			var s := space.dynamics_step(b.l, b.n, _air(b.U, k, 0.5 * DT), DT, GRAVITY)
 			b.l = s[0]
 			b.n = s[1]
-			b.U = _air(s[2], drag(b))
+			b.U = _air(s[2], k, 0.5 * DT)
 			_floor(b, before)
 			_statics(b)
 		for c in cubes:
@@ -198,7 +199,8 @@ static func asleep(b: Body) -> bool:
 
 
 ## A step of air drag, -k |U| U (k: drag / mass per metre, drag), integrated implicitly: stable at
-## any speed (and exact for drag alone along a line).
+## any speed (and exact for drag alone along a line). step and flight take it in half steps on
+## either side of the motion's (second order).
 static func _air(U: Vector4, k: float, dt := DT) -> Vector4:
 	return U / (1.0 + k * U.length() * dt)
 
@@ -218,7 +220,8 @@ func drag(b: Body) -> float:
 ## at most FLIGHT_DT long and FLIGHT_STEP of the length the space bends over (WormholeSpace.bend),
 ## between half steps of drag (second order where step's splitting is first). A step that stays
 ## in a flat universe is RK4 in its chart's coordinates, where the space is flat (vecs stay as they
-## are) and gravity is r + beta / r^2 times n_z's (docs/gravity.md); others, RK4 of dynamics_step.
+## are) and gravity is r + beta / r^2 times n_z's (docs/gravity.md, r from the throat's centre); others,
+## RK4 of dynamics_step.
 ## The last element: the lowest b's centre went against its size over the floor (its radius, a
 ## cube's half size; at the steps' ends): below 0, the flight went into the floor, which flight
 ## lets through and step does not. tests/pull_test.gd compares it with step's flight.
@@ -235,13 +238,14 @@ func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) ->
 			# a flat universe: on in its chart while the steps keep out of the shell
 			var side := signf(l)
 			var x := space.chart_position(l, n)
+			var centre := Vector3(0.0, 0.0, space.lift)
 			var v := WormholeSpace.vector_to_chart(side, n, U)
 			var cv := []
 			for A: Vector4 in vecs:
 				cv.append(WormholeSpace.vector_to_chart(side, n, A))
 			var went := false
 			for _j in 100000:
-				var r := x.length()
+				var r := (x - centre).length()          # from the throat's centre
 				var h := minf(minf(FLIGHT_DT, FLIGHT_STEP * r / maxf(v.length(), 0.1)), T - t)
 				if t >= T - 1e-9 or r - v.length() * h - GRAVITY * h * h <= space.Rout:
 					break
@@ -277,10 +281,12 @@ func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) ->
 	return [l, n, U, vecs, low]
 
 
-## Gravity at chart position x of a flat universe: -g grad phi, phi = (r + beta / r^2) z / r.
+## Gravity at chart position x of a flat universe: -g grad phi, phi = (r + beta / r^2) z / r with r
+## and z from the throat's centre.
 func _chart_gravity(x: Vector3) -> Vector3:
-	var r := x.length()
-	var nn := x / r
+	var d := x - Vector3(0.0, 0.0, space.lift)
+	var r := d.length()
+	var nn := d / r
 	var beta := space.grav_beta
 	var f := r + beta / (r * r)
 	var fp := 1.0 - 2.0 * beta / (r * r * r)
@@ -307,12 +313,12 @@ func _floor(b: Ball, before: Array) -> void:
 	var Ut := U - U.dot(N) * N
 	var speed := Ut.length()
 	if speed > 0.0:
-		# rolling friction follows the weight on the floor, which is weaker in the throat
+		# rolling friction follows the weight on the floor, which changes under the mouth
 		var weight := GRAVITY * maxf(space.potential_grad(b.l, b.n).dot(N), 0.0)
 		var stop := (ROLLING_RESISTANCE * weight + ROLLING_DRAG * speed) * DT
 		if speed <= stop and before[2].length() < 1e-6:
-			# at rest and held by friction: gravity pulls slightly along the floor near the
-			# wormhole, so undo this step's motion instead of letting the ball creep
+			# at rest and held by friction: gravity pulls slightly along the floor under the
+			# mouth, so undo this step's motion instead of letting the ball creep
 			b.l = before[0]
 			b.n = before[1]
 			b.U = Vector4.ZERO
@@ -359,12 +365,13 @@ func _statics(b: Ball) -> void:
 			if pen > depth and d.length() > 1e-6:
 				depth = pen
 				normal = d.normalized()
-	var cr := x.length()
+	var cx := x - Vector3(0.0, 0.0, space.lift)      # from the throat's centre
+	var cr := cx.length()
 	if cr > WORLD_RADIUS - rad:
 		var pen := cr - (WORLD_RADIUS - rad)
 		if pen > depth:
 			depth = pen
-			normal = -x / cr
+			normal = -cx / cr
 	if depth <= 0.0:
 		return
 	var N := WormholeSpace.vector_from_chart(side, b.n, normal)
@@ -503,10 +510,11 @@ func box4(c: Cube) -> Array:
 
 ## Free motion: the centre moves as a ball does, the axes are transported along and turn by w.
 func _integrate_cube(c: Cube) -> void:
-	var s := space.dynamics_step(c.l, c.n, c.U, DT, GRAVITY, c.F)
+	var k := drag(c)
+	var s := space.dynamics_step(c.l, c.n, _air(c.U, k, 0.5 * DT), DT, GRAVITY, c.F)
 	c.l = s[0]
 	c.n = s[1]
-	c.U = _air(s[2], drag(c))
+	c.U = _air(s[2], k, 0.5 * DT)
 	var F: Array = s[3]
 	var w: Vector3 = c.w
 	var rate := w.length()
@@ -704,7 +712,7 @@ func _wake(c: Cube, b: Body) -> void:
 
 
 ## Corners below the floor. Heights to first order at the centre: H + grad H . r, which is the
-## z of the box corner in R^4 (exact in the flat universes).
+## chart z of the box corner (exact in the flat universes, where the floor is).
 func _floor_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 	var H := space.height(c.l, c.n)
 	var a: float = c.half
@@ -723,7 +731,8 @@ func _floor_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 					FRICTION_CUBE, RESTITUTION_CUBE, group, dirs))
 
 
-## The static objects of the flat universes and the world's wall, in chart coordinates.
+## The static objects of the flat universes and the world's wall (round the throat's centre), in
+## chart coordinates.
 func _static_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 	var l: float = c.l
 	if absf(l) < space.L:
@@ -783,9 +792,10 @@ func _static_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 				if o.x > 0.0 and o.y > 0.0 and o.z > 0.0:
 					var k := o.min_axis_index()
 					found.append([q, -signf(q[k]) * f[k], o[k]])
-	if x.length() > WORLD_RADIUS - reach:
+	var cx := x - Vector3(0.0, 0.0, space.lift)      # from the throat's centre
+	if cx.length() > WORLD_RADIUS - reach:
 		for s: Vector3 in CORNERS:
-			var P: Vector3 = x + a * (s.x * f[0] + s.y * f[1] + s.z * f[2])
+			var P: Vector3 = cx + a * (s.x * f[0] + s.y * f[1] + s.z * f[2])
 			if P.length() > WORLD_RADIUS:
 				found.append([a * s, -P.normalized(), P.length() - WORLD_RADIUS])
 	for h in found:

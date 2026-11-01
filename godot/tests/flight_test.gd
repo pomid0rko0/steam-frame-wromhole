@@ -12,16 +12,17 @@ extends SceneTree
 ##    about the head; in snaps (Tab), K pitches 30 degrees at once
 ## 4. F: gravity on (the line below says so): let go, the room turns upright as it falls (faster
 ##    than exp(-t / RIGHT_TIME) would leave it), nearly upright at the floor, and lands upright
-## 5. in the middle of the throat, up from the floor goes round the throat (l stays 0, n along the
-##    great circle, up along it); over the top the head comes down to the far side's floor and
-##    stays out of it (HEAD_CLEAR); gravity on there turns it over, and it lands on its feet
-## 6. there with the head 2 m up and let go with gravity, the head falls round the great circle
-##    (l stays 0) by the equation ref/test_gravity.py gives docs/gravity.md's falls with, and the
-##    feet reach the floor when it says
-## 7. crouching, off the floor at the start and on (W) for 24 m through the throat into universe
-##    B: the head and the room's axes where an independent RK4 of the geodesic equations
-##    (docs/geometry.md, «Движение») puts them, up turned against the floor of B; and it prints how
-##    much a path at several heights turns up (viewer.gd's top)
+## 5. on the floor right under the throat's centre, up (without gravity) goes straight into the
+##    mouth and through the throat (n stays, l falls at the speed, up stays as it is): out in
+##    universe B upside down and head first, down toward B's floor; the head comes down to it and
+##    stays out of it (HEAD_CLEAR); gravity on there turns it over, and it lands on its feet in B
+## 6. hovering with the head in the middle of the throat on its side (n = +x) and let go with
+##    gravity, the head falls round the throat (l stays 0) by the equation ref/test_gravity.py's
+##    falls take from docs/gravity.md, reaching the throat's bottom when it says, and swings on
+## 7. off the floor at the start, up to 3.5 m and on (W) for 24 m into the mouth, through the
+##    throat and into universe B: the head and the room's axes where an independent RK4 of the
+##    geodesic equations (docs/geometry.md, «Движение») puts them, up turned against the floor of B;
+##    and it prints how much a straight flight at several heights turns up (viewer.gd's top)
 
 const U := preload("res://tests/util.gd")
 const SPEED := Main.FLY_SPEED
@@ -125,62 +126,56 @@ func _initialize() -> void:
 		[120, func() -> void:
 			U.check("... lands nearly upright, and stands upright", _v().standing and tilt_last < 5.0
 					and _axis(1).distance_to(Vector3(0.0, 0.0, 1.0)) < 1e-6, "%.2f deg off just before" % tilt_last)
-			# 5. the middle of the throat, facing across the throat (its right along it)
-			main.place_on_axis(0.0, 90.0)
+			# 5. on the floor right under the throat's centre, facing -x
+			main.place(Vector3.ZERO, Vector3(-1.0, 0.0, 0.0))
 			main.set_fall(false)
-			saved = [_v().frame.duplicate()]
+			saved = [_v().l, _v().n, _v().frame.duplicate()]
 			U.key(KEY_SPACE, true)],
 		[16, func() -> void:
-			# 15 frames from the floor at l 0: 1 m round the circle of radius rho0
-			var a := SPEED * 0.25 / main.space.rho0
+			# 15 frames up: 1 m straight in along l (the room's up is -l there)
 			var up: Vector4 = _v().frame[1]
-			U.check("up from the middle of the throat goes round it", absf(_v().l) < 1e-6
-					and _v().n.distance_to(Vector3(cos(a), 0.0, sin(a))) < 1e-5 and up.distance_to(Vector4(0.0, -sin(a), 0.0, cos(a))) < 1e-5,
-					"l %.9f, n %s, up %s" % [_v().l, _v().n, up])],
-		[134, func() -> void:
+			var ok: bool = absf(_v().l - (saved[0] - SPEED * 0.25)) < 1e-6 and _v().n.distance_to(saved[1]) < 1e-6
+			for i in 3:
+				ok = ok and (_v().frame[i] as Vector4).distance_to(saved[2][i]) < 1e-6
+			U.check("up from under the throat's centre goes straight in along l, the axes as they were", ok
+					and up.distance_to(Vector4(-1.0, 0.0, 0.0, 0.0)) < 1e-6, "l %.6f from %.6f, n %s, up %s" % [_v().l, saved[0], _v().n, up])],
+		[180, func() -> void:
 			U.key(KEY_SPACE, false)
 			var hp := _v().head(main.camera.transform.origin.y)
 			var H := main.space.height(hp[0], hp[1])
-			U.check("over the top the head comes down to the far side's floor and stays out of it", not _v().standing
-					and absf(H - Viewer.HEAD_CLEAR) < 2e-3 and absf(_v().l) < 1e-6 and absf(_v().n.y) < 1e-6 and _v().n.x < 0.0,
-					"head %.4f m over the floor, feet l %.9f n %s" % [H, _v().l, _v().n])
+			var up := _axis(1)
+			U.check("... through the throat, out in universe B upside down: the head comes down to B's floor and stays out of it",
+					not _v().standing and hp[0] < -main.space.L and absf(H - Viewer.HEAD_CLEAR) < 2e-3 and up.distance_to(Vector3(0.0, 0.0, -1.0)) < 1e-5,
+					"head at l %.4f, %.4f m over the floor; up in chart B %s" % [hp[0], H, up])
 			landed_at = -1
 			main.set_fall(true)],
 		[120, func() -> void:
-			# exactly upside down there: rolled about the line of sight (across the throat), the feet
-			# swing along the throat
-			U.check("gravity on there turns it over, and it lands on its feet on the far side", _v().standing
-					and _v().n.distance_to(Vector3(-1.0, 0.0, 0.0)) < 1e-3 and (_v().frame[1] as Vector4).distance_to(Vector4(0.0, 0.0, 0.0, 1.0)) < 1e-6,
-					"standing %s, l %.9f, n %s" % [_v().standing, _v().l, _v().n])
-			# 6. the middle of the throat again: 0.53 m round, hovering, the head 2 m over the floor
+			var p := _feet()
+			U.check("gravity on there turns it over, and it lands on its feet in universe B", _v().standing and _v().l < 0.0
+					and _axis(1).distance_to(Vector3(0.0, 0.0, 1.0)) < 1e-6 and Vector2(p.x, p.y).length() < 2.0,
+					"standing %s, l %.4f, feet at %s, up %s" % [_v().standing, _v().l, p, _axis(1)])
+			# 6. hovering with the head in the middle of the throat at n = +x, upright, then let go
 			main.place_on_axis(0.0, 0.0)
-			main.set_fall(false)
-			U.key(KEY_SPACE, true)],
-		[8, func() -> void: U.key(KEY_SPACE, false)],
-		[2, func() -> void:
-			var s0 := main.space.rho0 * atan2(_v().n.z, _v().n.x)
-			var want_s := SPEED * 8.0 / 60.0
-			U.check("8 frames up: %.3f m round the throat" % want_s, absf(s0 - want_s) < 1e-4 and absf(_v().l) < 1e-9, "%.5f m, l %.9f" % [s0, _v().l])
-			var h := main.camera.transform.origin.y
-			want = [_fall_on_circle(s0 + h, h), main.space.rho0 * sin((s0 + h) / main.space.rho0)]
 			main.set_fall(true)
+			var r0 := main.space.rho0
+			want = [_fall_on_circle(0.0, -0.5 * PI * r0)]
+			saved = [0.0, INF, -1]          # |l| at most, lowest head n.z, the frame it was lowest
 			_fall_starts()],
 		[150, func() -> void:
-			var n := landed_at - t0
-			U.check("let go in the middle of the throat, it falls slowly, as the field says", absf(n - want[0] * 60.0) <= 1.0,
-					"after %d frames, expected %.2f (the head from %.3f m)" % [n, want[0] * 60.0, want[1]])
-			U.check("... round the throat (l stays 0)", _v().standing and absf(_v().l) < 1e-6, "l %.9f" % _v().l)
-			# 7. the start, crouching (the head 0.5 m over the feet: at 2 m over the floor the head's
-			# geodesic would come down onto B's floor), 0.53 m up, then through the throat
-			main.camera.position.y = 0.5
+			var t_low: float = (saved[2] - t0) / 60.0
+			U.check("let go in the middle of the throat, the head falls round it, as the field says", absf(saved[1] + 1.0) < 1e-3
+					and absf(t_low - want[0]) <= 1.5 / 60.0 and saved[0] < 1e-6 and not _v().standing,
+					"lowest after %.3f s (expected %.3f s), n.z %.5f there; |l| at most %.9f" % [t_low, want[0], saved[1], saved[0]])
+			saved = []
+			# 7. off the floor at the start, the head up to 3.5 m, then 24 m along -x
 			main.place(main.START_POS, main.START_FORWARD)
 			main.set_fall(false)
 			U.key(KEY_SPACE, true)],
-		[8, func() -> void: U.key(KEY_SPACE, false)],
+		[28, func() -> void: U.key(KEY_SPACE, false)],
 		[1, func() -> void:
 			var hp := _v().head(main.camera.transform.origin.y)
 			saved = [hp[0], hp[1], hp[2].duplicate()]
-			U.check("8 frames up: 0.53 m", absf(_v().height() - SPEED * 8.0 / 60.0) < 1e-6, "%.6f" % _v().height())
+			U.check("28 frames up: 1.87 m", absf(_v().height() - SPEED * 28.0 / 60.0) < 1e-5, "%.6f" % _v().height())
 			U.key(KEY_W, true)],
 		[360, func() -> void: U.key(KEY_W, false)],
 		[1, func() -> void:
@@ -191,7 +186,7 @@ func _initialize() -> void:
 			var worst := 0.0
 			for i in 3:
 				worst = maxf(worst, (hp[2][i] as Vector4).distance_to(f[i]))
-			U.check("24 m through the throat: the head where the geodesic goes", hp[0] < -main.space.L
+			U.check("24 m into the mouth, through the throat: the head where the geodesic goes", hp[0] < -main.space.L
 					and absf(hp[0] - ref[0]) < 1e-3 and (hp[1] as Vector3).distance_to(ref[1]) < 1e-3,
 					"l %.4f n %s, expected %.4f %s" % [hp[0], hp[1], ref[0], ref[1]])
 			U.check("... the room's axes carried along it", worst < 1e-3, "off by %.6f" % worst)
@@ -203,6 +198,13 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	if saved.size() == 3 and saved[0] is float and saved[1] is float:
+		# 6: the head's |l| at most and where it is lowest
+		var hp := _v().head(main.camera.transform.origin.y)
+		saved[0] = maxf(saved[0], absf(hp[0]))
+		if hp[1].z < saved[1]:
+			saved[1] = hp[1].z
+			saved[2] = frames
 	if not _v().standing:
 		landed_at = -1
 		tilt_last = rad_to_deg(acos(clampf(_axis(1).z, -1.0, 1.0))) if absf(_v().l) > main.space.L else tilt_last
@@ -245,15 +247,17 @@ static func _deg(a: Vector3, b: Vector3) -> float:
 
 
 ## The head let go at chart A position x with velocity u under docs/gravity.md's field there (phi
-## = z + beta z / r^3, as ref/test_gravity.py's flat), the room's up from up turning toward the
+## = z + beta z / r^3 from the throat's centre, as ref/test_gravity.py's flat), the room's up from up turning toward the
 ## field's (the least way, exp(-t / Viewer.RIGHT_TIME), at most Viewer.RIGHT_MAX a second), RK4 and
 ## Euler in small steps: [the time the feet, h below the head along up, reach z = 0, where].
 func _fall_in_chart(x: Vector3, up: Vector3, u: Vector3, h: float) -> Array:
 	var beta := main.space.grav_beta
 	var g := BallWorld.GRAVITY
+	var lift := main.space.lift
 	var grad := func(p: Vector3) -> Vector3:
-		var r := p.length()
-		return Vector3(0.0, 0.0, 1.0) * (1.0 + beta / (r * r * r)) - 3.0 * beta * p.z / pow(r, 5.0) * p
+		var c := p - Vector3(0.0, 0.0, lift)
+		var r := c.length()
+		return Vector3(0.0, 0.0, 1.0) * (1.0 + beta / (r * r * r)) - 3.0 * beta * c.z / pow(r, 5.0) * c
 	var dt := 1e-4
 	var t := 0.0
 	var feet := x - h * up
@@ -281,8 +285,8 @@ func _fall_in_chart(x: Vector3, up: Vector3, u: Vector3, h: float) -> Array:
 	return []
 
 
-## The time a point let go at arc s0 up the circle l = 0 takes to arc s1: s'' = -g f(0) / rho0
-## cos(s / rho0) (ref/test_gravity.py's), RK4 in small steps.
+## The time a point let go at arc s0 up the circle l = 0 (from n = +x toward +z) takes to arc s1 < s0:
+## s'' = -g f(0) / rho0 cos(s / rho0) (ref/test_gravity.py's), RK4 in small steps.
 func _fall_on_circle(s0: float, s1: float) -> float:
 	var rho := main.space.rho0
 	var k := BallWorld.GRAVITY * main.space.gravity_f(0.0)[0] / rho
@@ -352,12 +356,12 @@ static func _rate(sp: WormholeSpace, st: Array) -> Array:
 	return out
 
 
-## How much a straight flight from the start toward the throat turns up, for viewer.gd's top: from
-## chart A (10, 0, z) along -x, the room's up carried along (WormholeSpace.geodesic), until it meets
-## the floor or is 40 m on.
+## How much a straight flight toward the throat turns up, for viewer.gd's top: from chart A
+## (10, 0, z) along -x, the room's up carried along (WormholeSpace.geodesic), until it meets the
+## floor or is 40 m on.
 func _print_turns() -> void:
 	var sp: WormholeSpace = main.space
-	for z in [0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]:
+	for z in [1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 7.5, 8.0, 8.5]:
 		var p := sp.point_from_chart(1.0, Vector3(10.0, 0.0, z))
 		var l: float = p[0]
 		var n: Vector3 = p[1]
