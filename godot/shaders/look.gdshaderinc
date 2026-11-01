@@ -1,6 +1,8 @@
 // What the worlds look like: the floor, the sky and the light on bodies. Colours are linear (Godot
 // shows them through its sRGB output). Universe A is warm, B cool; the light of the throat is
-// blended between the two along l, so a ball in the middle is lit half by each sky.
+// blended between the two along l, so a ball in the middle is lit half by each sky. The floor's
+// checker and the suns stand in each universe's world (WormholeSpace, «the worlds»: g_mouth), so
+// they stay where they are when the mouth moves; the includer declares g_mouth.
 
 const vec3 LOOK_FLOOR_A[2] = vec3[2](vec3(0.7874, 0.6038, 0.4064), vec3(0.6559, 0.4624, 0.2846));
 const vec3 LOOK_FLOOR_B[2] = vec3[2](vec3(0.6383, 0.7106, 0.7874), vec3(0.4624, 0.5542, 0.6739));
@@ -9,7 +11,7 @@ const vec3 LOOK_HORIZON_A = vec3(1.0, 0.6739, 0.3931);
 const vec3 LOOK_ZENITH_B = vec3(0.0397, 0.1626, 0.7106);
 const vec3 LOOK_HORIZON_B = vec3(0.5071, 0.7293, 1.0);
 const vec3 LOOK_SUN = vec3(1.0, 0.9551, 0.8276);
-// each universe's sun, in its own chart
+// each universe's sun, in its own world
 const vec3 LOOK_SUN_A = vec3(0.4472, -0.5367, 0.7155);
 const vec3 LOOK_SUN_B = vec3(-0.5345, 0.2673, 0.8018);
 const float LOOK_SUN_COS = 0.99863;      // cos 3 degrees: the sun's disc
@@ -22,12 +24,30 @@ float look_checker(vec2 p, vec2 w, vec2 iw) {
 	return 0.5 - 0.5 * i.x * i.y;
 }
 
-// the floor's pattern coordinates at (l, n) (n.z = 0): rings at whole metres of |l|, 24 sectors of
-// the chart's azimuth (chart B is mirrored in x); the check scene's green lines follow the same
-// (check_grid.gdshader). Returns (|l|, sector).
+// the floor's pattern coordinates at (l, n) (n.z = 0): in the curved zone rings at whole metres of
+// |l| and 24 sectors of the chart's azimuth (chart B is mirrored in x): (|l|, sector); in the flat
+// universes the world's x and y, cells a metre a side. Where they meet, at the curved zone's edge,
+// a pixel's neighbours across take the other pattern: its footprint there is wide, and it fades to
+// the cells' mean. The check scene's green lines follow the flat universe's (check_grid.gdshader).
 vec2 look_floor_coords(float l, vec3 n) {
 	float x = l < 0.0 ? -n.x : n.x;
-	return vec2(abs(l), geo_atan2(n.y, x) * (24.0 / (2.0 * GEO_PI)));
+	float al = abs(l);
+	if (al < g_prof.w) return vec2(al, geo_atan2(n.y, x) * (24.0 / (2.0 * GEO_PI)));
+	vec4 m = g_mouth[l < 0.0 ? 1 : 0];
+	vec2 c = (al - g_prof.w + g_prof2.x) * normalize(vec2(x, n.y));     // n's x and y: of any length
+	return vec2(m.z * c.x - m.w * c.y, m.w * c.x + m.z * c.y) + m.xy;
+}
+
+// a chart direction d of universe side (+1 A, -1 B) in its world
+vec3 look_world_dir(vec3 d, float side) {
+	vec4 m = g_mouth[side > 0.0 ? 0 : 1];
+	return vec3(m.z * d.x - m.w * d.y, m.w * d.x + m.z * d.y, d.z);
+}
+
+// and back
+vec3 look_chart_dir(vec3 d, float side) {
+	vec4 m = g_mouth[side > 0.0 ? 0 : 1];
+	return vec3(m.z * d.x + m.w * d.y, -m.w * d.x + m.z * d.y, d.z);
 }
 
 // the floor's colour from its pattern coordinates c (look_floor_coords) and their footprints fw (per
@@ -55,7 +75,7 @@ vec3 look_floor(vec2 q, vec2 fw, float px, vec3 lightc, vec3 darkc) {
 vec3 look_sky(vec3 d, float side) {
 	vec3 zen = side > 0.0 ? LOOK_ZENITH_A : LOOK_ZENITH_B;
 	vec3 hor = side > 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B;
-	vec3 sun = side > 0.0 ? LOOK_SUN_A : LOOK_SUN_B;
+	vec3 sun = look_chart_dir(side > 0.0 ? LOOK_SUN_A : LOOK_SUN_B, side);
 	float up = clamp(d.z, 0.0, 1.0);
 	vec3 col = mix(hor, zen, pow(up, 0.6));
 	float cs = dot(d, sun);
@@ -98,11 +118,12 @@ vec3 look_grav_contours(vec3 col, float t, float fw, float px) {
 	return col * (1.0 - 0.4 * thin) * (1.0 - 0.85 * one);
 }
 
-// light on a body at l: the sun's direction there as a vector of R^4 (each universe's sun, A's in
-// its chart = R^4's xyz, B's mirrored), blended across the throat, and the ambient colour
+// light on a body at l: the sun's direction there as a vector of R^4 (each universe's sun in its
+// chart: A's is R^4's xyz, B's mirrored), blended across the throat, and the ambient colour
 vec4 look_sun4(float l) {
-	vec4 a = vec4(LOOK_SUN_A, 0.0);
-	vec4 b = vec4(-LOOK_SUN_B.x, LOOK_SUN_B.yz, 0.0);
+	vec4 a = vec4(look_chart_dir(LOOK_SUN_A, 1.0), 0.0);
+	vec3 sb = look_chart_dir(LOOK_SUN_B, -1.0);
+	vec4 b = vec4(-sb.x, sb.yz, 0.0);
 	return mix(b, a, smoothstep(-1.5, 1.5, l));
 }
 
@@ -121,8 +142,8 @@ vec3 look_body(vec3 albedo, float nl, float up, float nv, float l) {
 	return albedo * (look_ambient(l, up) + 0.75 * LOOK_SUN * max(nl, 0.0) + 0.25 * rim * rim * rim);
 }
 
-// The floor at l = lh, n's x and y nh (look_floor_coords), and with GRAVITY the gravity's level
-// there (look_grav_level): (|l|, sector, level). With GRAVITY the includer declares g_grav (the
+// The floor at l = lh, the way from the centre nh (n's x and y, of any length): its pattern's
+// coordinates (look_floor_coords) and with GRAVITY the gravity's level there (look_grav_level). With GRAVITY the includer declares g_grav (the
 // floor's gravity in g at |l| up to g_gravx.x) and g_gravx (that end, beta: 1 + beta / r^3 beyond).
 vec3 look_ground_at(float lh, vec2 nh) {
 	vec2 c = look_floor_coords(lh, vec3(nh, 0.0));
@@ -142,8 +163,10 @@ vec3 look_ground_at(float lh, vec2 nh) {
 // pixels across (look_floor)
 vec3 look_ground(vec3 a, vec3 dx, vec3 dy, float px, float lh, float way) {
 	// across the sectors' seam at the chart's -x the angle jumps by 24: taken out
-	dx.y -= 24.0 * round(dx.y / 24.0);
-	dy.y -= 24.0 * round(dy.y / 24.0);
+	if (abs(lh) < g_prof.w) {
+		dx.y -= 24.0 * round(dx.y / 24.0);
+		dy.y -= 24.0 * round(dy.y / 24.0);
+	}
 	vec3 fw = abs(dx) + abs(dy);
 #ifdef GRAVITY
 	vec3 base = look_grav_colour(a.z);

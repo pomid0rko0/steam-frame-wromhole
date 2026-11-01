@@ -29,6 +29,7 @@ const BINDINGS := {
 		"menu_button": [L + "input/view/click", R + "input/menu/click"],
 		"ax_button": [R + "input/a/click"],
 		"by_button": [R + "input/b/click"],
+		"place_button": [R + "input/x/click"],
 		"dpad_up": [L + "input/dpad_up/click"],
 		"dpad_down": [L + "input/dpad_down/click"],
 		"dpad_left": [L + "input/dpad_left/click"],
@@ -112,8 +113,8 @@ static func controller(tracker_name: StringName) -> XRControllerTracker:
 	t.set_input(&"primary", Vector2.ZERO)
 	t.set_input(&"trigger", 0.0)
 	t.set_input(&"grip", 0.0)
-	for b in [&"primary_click", &"ax_button", &"by_button", &"menu_button", &"dpad_up", &"dpad_down",
-			&"dpad_left", &"dpad_right", &"bumper"]:
+	for b in [&"primary_click", &"ax_button", &"by_button", &"place_button", &"menu_button", &"dpad_up",
+			&"dpad_down", &"dpad_left", &"dpad_right", &"bumper"]:
 		t.set_input(b, false)
 	XRServer.add_tracker(t)
 	return t

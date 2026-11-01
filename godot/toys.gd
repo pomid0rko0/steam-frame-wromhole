@@ -5,8 +5,8 @@ extends RefCounted
 ## cube and a ball are thrown from chest height; the ball rolls through the throat into universe B.
 ## Then two balls are dropped together from the same height: one beside the wormhole, one in the
 ## middle of the throat, where gravity is weaker (docs/gravity.md). The reset (main._turn_and_reset)
-## puts it all back and does it again. Places are chart A's, laid out for the view from
-## main.START_POS.
+## puts it all back and does it again. Places are universe A's world's (WormholeSpace, «the worlds»),
+## laid out round the mouth at scene.json's place, for the view from main.START_POS.
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
@@ -42,7 +42,7 @@ func spawn() -> void:
 	var spots := [Vector2(7.0, -1.5), Vector2(7.0, 0.0), Vector2(7.0, 1.5), Vector2(6.0, -0.75), Vector2(6.0, 0.75)]
 	for i in spots.size():
 		var rad := 0.25 if i < 3 else 0.35
-		var p := space.point_from_chart(1.0, Vector3(spots[i].x, spots[i].y, rad))
+		var p := space.point_from_world(1.0, Vector3(spots[i].x, spots[i].y, rad))
 		world.add(p[0], p[1], Vector4.ZERO, rad, BALL_COLORS[i % BALL_COLORS.size()])
 	cube_on_floor(Vector2(5.4, -2.5), 0.3, 0.35, CUBE_COLORS[0])
 	cube_on_floor(Vector2(6.2, 3.6), 0.25, -0.5, CUBE_COLORS[2])
@@ -67,16 +67,16 @@ func step(delta: float, hands: Array[BallWorld.Ball]) -> void:
 ## From chest height in front of the start: a tumbling cube that lands to the left of the balls
 ## and slides to a stop, and a ball that bounces, rolls on and goes through to universe B.
 func throw() -> void:
-	var p := space.point_from_chart(1.0, Vector3(9.0, -1.9, 1.4))
+	var p := space.point_from_world(1.0, Vector3(9.0, -1.9, 1.4))
 	var b := Basis.from_euler(Vector3(0.4, 0.3, 0.2))
 	var F := []
 	for ax in [b.x, b.y, b.z]:
-		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
-	world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
+		F.append(space.vector_from_world(1.0, p[1], ax))
+	world.add_cube(p[0], p[1], space.vector_from_world(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
 			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
-	var q := space.point_from_chart(1.0, Vector3(9.0, 2.4, 1.4))
+	var q := space.point_from_world(1.0, Vector3(9.0, 2.4, 1.4))
 	# fast enough to climb out of the throat's well into B against the rolling and the air's drag
-	world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-5.4, -0.36, 1.8)), 0.25, BALL_COLORS[5])
+	world.add(q[0], q[1], space.vector_from_world(1.0, q[1], Vector3(-5.4, -0.36, 1.8)), 0.25, BALL_COLORS[5])
 	print("toys: thrown")
 
 
@@ -85,7 +85,7 @@ func throw() -> void:
 ## the throat (azimuth 0): from the start it is seen in the middle of the wormhole against universe
 ## B's sky, and falls and bounces in slow motion.
 func drop() -> Array[BallWorld.Ball]:
-	var p := space.point_from_chart(1.0, DROP_SPOT_A)
+	var p := space.point_from_world(1.0, DROP_SPOT_A)
 	var balls: Array[BallWorld.Ball] = [world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR),
 			world.add(0.0, throat_point(0.0, DROP_HEIGHT), Vector4.ZERO, DROP_RADIUS, DROP_COLOR)]
 	print("toys: two balls dropped")
@@ -99,12 +99,12 @@ func throat_point(phi: float, height: float) -> Vector3:
 	return Vector3(cos(phi) * sqrt(1.0 - z * z), sin(phi) * sqrt(1.0 - z * z), z)
 
 
-## A cube resting on the floor of universe A at chart position pos, turned by yaw.
+## A cube resting on the floor of universe A at world position pos, turned by yaw.
 func cube_on_floor(pos: Vector2, half: float, yaw: float, color: Color) -> BallWorld.Cube:
-	var p := space.point_from_chart(1.0, Vector3(pos.x, pos.y, half))
+	var p := space.point_from_world(1.0, Vector3(pos.x, pos.y, half))
 	var F := []
 	for ax in [Vector3(cos(yaw), sin(yaw), 0.0), Vector3(-sin(yaw), cos(yaw), 0.0), Vector3(0.0, 0.0, 1.0)]:
-		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
+		F.append(space.vector_from_world(1.0, p[1], ax))
 	return world.add_cube(p[0], p[1], Vector4.ZERO, F, Vector3.ZERO, half, color)
 
 

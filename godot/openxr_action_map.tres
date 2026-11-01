@@ -40,6 +40,12 @@ localized_name = "B/Y button"
 action_type = 0
 toplevel_paths = PackedStringArray("/user/hand/left", "/user/hand/right")
 
+[sub_resource type="OpenXRAction" id="action_place_button"]
+resource_name = "place_button"
+localized_name = "Place the wormhole"
+action_type = 0
+toplevel_paths = PackedStringArray("/user/hand/left", "/user/hand/right")
+
 [sub_resource type="OpenXRAction" id="action_dpad_up"]
 resource_name = "dpad_up"
 localized_name = "D-pad up"
@@ -97,7 +103,7 @@ toplevel_paths = PackedStringArray("/user/eyes_ext")
 [sub_resource type="OpenXRActionSet" id="action_set"]
 resource_name = "godot"
 localized_name = "Godot action set"
-actions = [SubResource("action_trigger"), SubResource("action_grip"), SubResource("action_primary"), SubResource("action_primary_click"), SubResource("action_menu_button"), SubResource("action_ax_button"), SubResource("action_by_button"), SubResource("action_dpad_up"), SubResource("action_dpad_down"), SubResource("action_dpad_left"), SubResource("action_dpad_right"), SubResource("action_bumper"), SubResource("action_aim_pose"), SubResource("action_grip_pose"), SubResource("action_haptic"), SubResource("action_eye_gaze_pose")]
+actions = [SubResource("action_trigger"), SubResource("action_grip"), SubResource("action_primary"), SubResource("action_primary_click"), SubResource("action_menu_button"), SubResource("action_ax_button"), SubResource("action_by_button"), SubResource("action_place_button"), SubResource("action_dpad_up"), SubResource("action_dpad_down"), SubResource("action_dpad_left"), SubResource("action_dpad_right"), SubResource("action_bumper"), SubResource("action_aim_pose"), SubResource("action_grip_pose"), SubResource("action_haptic"), SubResource("action_eye_gaze_pose")]
 
 [sub_resource type="OpenXRIPBinding" id="frame_1"]
 action = SubResource("action_aim_pose")
@@ -195,9 +201,13 @@ binding_path = "/user/hand/left/input/bumper/click"
 action = SubResource("action_bumper")
 binding_path = "/user/hand/right/input/bumper/click"
 
+[sub_resource type="OpenXRIPBinding" id="frame_25"]
+action = SubResource("action_place_button")
+binding_path = "/user/hand/right/input/x/click"
+
 [sub_resource type="OpenXRInteractionProfile" id="profile_frame"]
 interaction_profile_path = "/interaction_profiles/valve/frame_controller_valve"
-bindings = [SubResource("frame_1"), SubResource("frame_2"), SubResource("frame_3"), SubResource("frame_4"), SubResource("frame_5"), SubResource("frame_6"), SubResource("frame_7"), SubResource("frame_8"), SubResource("frame_9"), SubResource("frame_10"), SubResource("frame_11"), SubResource("frame_12"), SubResource("frame_13"), SubResource("frame_14"), SubResource("frame_15"), SubResource("frame_16"), SubResource("frame_17"), SubResource("frame_18"), SubResource("frame_19"), SubResource("frame_20"), SubResource("frame_21"), SubResource("frame_22"), SubResource("frame_23"), SubResource("frame_24")]
+bindings = [SubResource("frame_1"), SubResource("frame_2"), SubResource("frame_3"), SubResource("frame_4"), SubResource("frame_5"), SubResource("frame_6"), SubResource("frame_7"), SubResource("frame_8"), SubResource("frame_9"), SubResource("frame_10"), SubResource("frame_11"), SubResource("frame_12"), SubResource("frame_13"), SubResource("frame_14"), SubResource("frame_15"), SubResource("frame_16"), SubResource("frame_17"), SubResource("frame_18"), SubResource("frame_19"), SubResource("frame_20"), SubResource("frame_21"), SubResource("frame_22"), SubResource("frame_23"), SubResource("frame_24"), SubResource("frame_25")]
 
 [sub_resource type="OpenXRIPBinding" id="generic_1"]
 action = SubResource("action_aim_pose")

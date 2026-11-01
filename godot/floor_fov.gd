@@ -9,8 +9,8 @@ extends CompositorEffect
 ## pixels, no edge where the density changes; away from the gaze the floor is softer, not blocky.
 ##
 ## On the XR camera's compositor, before the opaque pass (which it does not split). Renderer hands
-## it the space's numbers, the head each frame, and the material the floor's quad samples with; Main
-## the gaze (set_gaze). The warp's numbers each eye's texture was made with go into a small texture
+## it the space's numbers, where the mouths stand, the head each frame, and the material the floor's
+## quad samples with; Main the gaze (set_gaze). The warp's numbers each eye's texture was made with go into a small texture
 ## the quad reads too, so both take the same.
 
 # the warp's strength k by level: away from the gaze by s (in clip space) a texel spans
@@ -41,6 +41,7 @@ var _size := 0                      # the picture's pixels a side it was made fo
 var _k := 1.0
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
 var _gravx := Vector2.ZERO
+var _mouths := PackedFloat32Array([0, 0, 1, 0, 0, 0, 1, 0])   # g_mouth
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
 var _gaze := Vector3.ZERO           # a point the eyes look at (play space); _gaze_on: valid
 var _gaze_on := false
@@ -62,6 +63,13 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, gra
 	_grav = RenderingServer.texture_get_rd_texture(grav.get_rid())
 	_gravx = gravx
 	_sets.clear()
+	_mutex.unlock()
+
+
+## Where the mouths stand (Renderer.set_mouths): g_mouth, A's then B's.
+func set_mouths(m: PackedFloat32Array) -> void:
+	_mutex.lock()
+	_mouths = m
 	_mutex.unlock()
 
 
@@ -154,7 +162,7 @@ func _build() -> void:
 	s.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
 	s.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
 	_sampler = _rd.sampler_create(s)
-	_ubo = _rd.uniform_buffer_create(448)
+	_ubo = _rd.uniform_buffer_create(480)
 	_eyes = _rd.storage_buffer_create(160)
 
 
@@ -201,6 +209,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	p.append_array(_head)
 	var gaze := _gaze
 	var gaze_on := _gaze_on
+	var mouths := _mouths
 	_mutex.unlock()
 	p.append_array([_gravx.x, _gravx.y, 0.0, 0.0])
 	for c in [cam.basis.x, cam.basis.y, cam.basis.z]:
@@ -234,6 +243,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	p.append_array(wg)
 	p.append_array(wa)
 	p.append_array([_size, 0.0, 0.0, 0.0])
+	p.append_array(mouths)
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	_rd.texture_update(_warp, 0, warp.to_byte_array())

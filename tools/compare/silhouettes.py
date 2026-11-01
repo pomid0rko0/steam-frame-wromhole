@@ -19,6 +19,8 @@ for eye in ('left', 'right'):
     A = mask(f'{sys.argv[1]}_app_{eye}.png'); B = mask(f'{sys.argv[1]}_mesh_{eye}.png')
     iou = (A & B).sum() / max((A | B).sum(), 1)
     lb, nb = ndimage.label(B)
+    # each pixel's nearest mesh blob: an app pixel counts for that one alone (objects close together)
+    nearest = lb[tuple(ndimage.distance_transform_edt(lb == 0, return_distances=False, return_indices=True))]
     print(f'{eye}: union IoU {iou:.4f}, mesh blobs {nb}')
     checked = 0
     for k in range(1, nb + 1):
@@ -26,8 +28,8 @@ for eye in ('left', 'right'):
         ys, xs = np.nonzero(mb)
         if xs.min() == 0 or ys.min() == 0 or xs.max() == B.shape[1] - 1 or ys.max() == B.shape[0] - 1:
             print('   blob at edge, skipped'); continue
-        # the app blob is whatever app pixels lie in this blob's neighbourhood
-        near = ndimage.binary_dilation(mb, iterations=25) & A
+        # the app blob is whatever app pixels lie in this blob's neighbourhood, nearer it than any other
+        near = ndimage.binary_dilation(mb, iterations=25) & A & (nearest == k)
         if near.sum() == 0:
             print(f'   mesh blob ({xs.mean():.1f},{ys.mean():.1f}) n={mb.sum()}: NO app blob'); worst = 1e9; continue
         ry, rx = np.nonzero(near)

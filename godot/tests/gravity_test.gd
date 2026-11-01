@@ -52,7 +52,7 @@ func _process(_delta: float) -> bool:
 		var p: Array = PICS[i]
 		if k == 0:
 			main.set_gravity_view(p[3])
-			var start_l: float = main.space.point_from_chart(1.0, main.START_POS)[0]
+			var start_l: float = main.space.point_from_world(1.0, main.START_POS)[0]
 			main.place_on_axis(p[1] if p[1] != null else start_l, 0.0, p[2])
 		elif k == 2:
 			var img := root.get_texture().get_image()

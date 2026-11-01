@@ -2,7 +2,9 @@
 traces itself, independently of the shaders' method: the eye moved from the head along a geodesic
 and its frame carried along (RK4), each pixel's ray integrated as a geodesic of the space in 3D
 (RK4, the equations of docs/geometry.md, «Движение»), the balls and cubes as BallWorld defines them
-(chord distance in R^4; the 4D box cut by the space), the floor n.z = 0.
+(chord distance in R^4; the 4D box cut by the space), the floor n.z = 0, its pattern as
+look.gdshaderinc has it: in the curved zone rings and sectors, in the flat universes the world's
+metre cells, where the mouths stand (the JSON's mouths: x, y, turn in rad).
 Checks per eye:
   bodies: in a band round each body's outline in the picture and inside it, the pixels whose ray
     meets a red ball or a green cube against the picture's red and green: at most MAX_FAR
@@ -33,6 +35,7 @@ th0 = float(np.arcsin(max(1.0 - h / R, 0.0)))
 L = Lc + R * (np.pi / 2 - th0)
 Rout = rho0 + R
 W, H = D['size']
+MOUTHS = np.array(D['mouths'])
 
 
 def theta(al):
@@ -195,6 +198,20 @@ def to_tangent(n0, d, axes):
     return D4 / np.linalg.norm(D4, axis=-1, keepdims=True)
 
 
+def floor_coords(l, n):
+    """The floor's pattern coordinates at (l, n) (look.gdshaderinc, look_floor_coords): (|l|, sector)
+    in the curved zone, else the world's x, y; and which (True: the curved zone's)."""
+    x = np.where(l < 0, -n[:, 0], n[:, 0])
+    al = np.abs(l)
+    polar = al < L
+    sector = np.arctan2(n[:, 1], x) * 24 / (2 * np.pi)
+    c = (al - L + Rout)[:, None] * np.c_[x, n[:, 1]]
+    m = MOUTHS[np.where(l < 0, 1, 0)]
+    cs, sn = np.cos(m[:, 2]), np.sin(m[:, 2])
+    world = np.c_[cs * c[:, 0] - sn * c[:, 1] + m[:, 0], sn * c[:, 0] + cs * c[:, 1] + m[:, 1]]
+    return np.where(polar[:, None], np.c_[al, sector], world), polar
+
+
 def look_floor(l, n, way):
     """The floor's light and dark colours there after the haze (look.gdshaderinc), sRGB 0..255."""
     A = np.array([[0.7874, 0.6038, 0.4064], [0.6559, 0.4624, 0.2846]])
@@ -252,13 +269,12 @@ for side_i, eye_name in enumerate(('left', 'right')):
     T = to_tangent(n0, np.vstack([d, dxr, dyr]), axes)
     kind, hl, hn, way = trace(l0, n0, T, 40.0, FLOOR_STEP, bodies=False)
     m = len(fx)
-    q = np.c_[np.abs(hl), np.arctan2(hn[:, 1], np.where(hl < 0, -hn[:, 0], hn[:, 0])) * 24 / (2 * np.pi)]
-    qx = np.c_[np.abs(hl[m:2 * m]), np.arctan2(hn[m:2 * m, 1], np.where(hl[m:2 * m] < 0, -hn[m:2 * m, 0], hn[m:2 * m, 0])) * 24 / (2 * np.pi)]
-    qy = np.c_[np.abs(hl[2 * m:]), np.arctan2(hn[2 * m:, 1], np.where(hl[2 * m:] < 0, -hn[2 * m:, 0], hn[2 * m:, 0])) * 24 / (2 * np.pi)]
-    qq = q[:m]
+    q, polar = floor_coords(hl, hn)
+    qq, qx, qy = q[:m], q[m:2 * m], q[2 * m:]
     fw = np.maximum(np.abs(qx - qq), np.abs(qy - qq))
-    fw = np.where(fw > 12, 24 - fw, fw)                      # the sectors' seam
+    fw = np.where(polar[:m, None] & (fw > 12), 24 - fw, fw)  # the sectors' seam
     good = (kind[:m] == 3) & (kind[m:2 * m] == 3) & (kind[2 * m:] == 3)
+    good &= (polar[:m] == polar[m:2 * m]) & (polar[:m] == polar[2 * m:])   # one pattern round the sample
     frac = np.abs(qq - np.round(qq))                         # cell units to the nearest edge or line
     good &= np.all(frac > np.maximum(4 * fw, 0.06), axis=1) & np.all(fw < 0.08, axis=1) & (way[:m] < 35)
     parity = (np.floor(qq[:, 0]) + np.floor(qq[:, 1])).astype(int) % 2

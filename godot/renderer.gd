@@ -9,8 +9,8 @@ extends Node3D
 ## each frame (set_head) and the view's matrices.
 ##
 ## What it draws: the physics' balls and cubes, the hands' balls (set_objects), the hands' pointing
-## beams (set_beam), the scene's static objects (scene.json), the gravity view's floor and arrows
-## (set_gravity_view), the floor and the sky. The floor quad hangs under the camera (its parent); the bodies go into the play space, the
+## beams and the placing's ring (set_beam), the scene's static objects (scene.json, in their worlds:
+## set_mouths), the gravity view's floor and arrows (set_gravity_view), the floor and the sky. The floor quad hangs under the camera (its parent); the bodies go into the play space, the
 ## camera's parent's parent (the origin, which never moves: their shader reads their numbers from the
 ## instance transform, which must stay theirs).
 ##
@@ -36,6 +36,7 @@ const BALL_RINGS := 24
 const CUBE_STEPS := 8
 const BEAM_POINTS := 48         # a beam's points at most (body.gdshaderinc's BEAM_POINTS)
 const BEAM_SIDES := 6           # a beam's tube: its sides
+const PLACING := 2              # set_beam's tube for placing.gd's ring
 const FLOOR_PRIORITY := 100     # opaque draws go by render_priority, lower first: the floor last
 # the static objects' colours (linear), each sphere its own in scene.json's order, A's then B's
 const SPHERE_COLORS := [Color(0.62, 0.27, 0.22), Color(0.25, 0.45, 0.62), Color(0.55, 0.52, 0.2),
@@ -69,7 +70,7 @@ var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var scene_mats: Array[ShaderMaterial] = []
 var arrow_mat := ShaderMaterial.new()
-var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's
+var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's, PLACING
 var balls: MultiMeshInstance3D
 var cubes: MultiMeshInstance3D
 var statics: Array[MeshInstance3D] = []
@@ -155,7 +156,7 @@ func _process(_delta: float) -> void:
 
 
 var _warm := 3                  # frames left drawing the gravity views and the beams (_process)
-var _beam_on: Array[bool] = [false, false]
+var _beam_on: Array[bool] = [false, false, false]
 
 
 ## Every material that reads geo_uniforms.gdshaderinc.
@@ -183,6 +184,20 @@ func upload_space() -> void:
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
 	floor_fov.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
 			Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex, gtex, grav.axes)
+	set_mouths()
+
+
+## Where the mouths stand (WormholeSpace.mouths) to every shader: at the start and whenever one
+## moves (main.mouths_back, main.move_mouth).
+func set_mouths() -> void:
+	var g := PackedVector4Array()
+	var f := PackedFloat32Array()
+	for m: Vector3 in space.mouths:
+		g.append(Vector4(m.x, m.y, cos(m.z), sin(m.z)))
+		f.append_array([m.x, m.y, cos(m.z), sin(m.z)])
+	for mat in materials():
+		mat.set_shader_parameter("g_mouth", g)
+	floor_fov.set_mouths(f)
 
 
 var _sweep_tex: Texture2D
@@ -241,7 +256,8 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		bodies.append(["cube", cpos[i], ccol[i].w])
 
 
-## Hand i's beam (0 left, 1 right): a tube round the line through points of R^4 (pts, at most
+## Hand i's beam (0 left, 1 right), or the placing's ring (i PLACING: placing.gd): a tube round the
+## line through points of R^4 (pts, at most
 ## BEAM_POINTS: the rest are left out), radii[k] in radius at pts[k], in colour col (sRGB); fewer
 ## than two points: none.
 func set_beam(i: int, pts: PackedVector4Array, radii: PackedFloat32Array, col: Color) -> void:

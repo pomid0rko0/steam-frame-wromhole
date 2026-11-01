@@ -14,16 +14,18 @@ extends Node3D
 ##
 ## The parts: the space's geometry (wormhole_space.gd), the viewer's body (viewer.gd), the renderer
 ## (renderer.gd), the demo's balls and cubes in gravity through the wormhole (toys.gd,
-## ball_world.gd), the hands that grab, throw and pull them (hands.gd), foveated rendering
-## (foveation.gd, split_pass.gd, floor_fov.gd), the menu and the line under it (menu.gd) with the
-## measured frame rate (frame_rate.gd, rate_meter.gd), the speed check (bench.gd) and the stereo
-## check scene (check_scene.gd). Each frame (_process): the menu takes its buttons, then the turn,
-## the reset and the gravity view's button, the body's motion (_locomotion), the free toys (pushed
-## by the hands where they were), the hands and what they hold, and last the toys and the head to
-## the renderer: a toy let go now starts from the hand.
+## ball_world.gd), the hands that grab, throw and pull them (hands.gd), moving the wormhole's mouth
+## (placing.gd, move_mouth), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
+## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd,
+## rate_meter.gd), the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
+## frame (_process): the menu takes its buttons, then the placing its, then the turn, the reset and
+## the gravity view's button, the body's motion (_locomotion), the free toys (pushed by the hands
+## where they were), the hands and what they hold, and last the toys and the head to the renderer: a
+## toy let go now starts from the hand.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
-## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
+## and those that open it (README.md, «Управление»), are the menu's; while placing (placing_on,
+## also the frame that ends it) the right stick, A and B are its; during the speed check (hold)
 ## the body stays, and the sticks, A, the gravity view's button, the hands and the toys do nothing. A
 ## new action goes into openxr_action_map.tres and tests/util.gd alike (BINDINGS per profile, POSES
 ## or STICKS for one every controller has; the tests compare them exactly), in the Frame's profile
@@ -50,7 +52,7 @@ const STICK_DEAD_ZONE := 0.15
 const SNAP_ANGLE := deg_to_rad(30.0)
 const SMOOTH_TURN_SPEED := deg_to_rad(90.0)   # per second at full stick
 const TILT_SPEED := deg_to_rad(60.0)   # flying: pitch per second at full stick, roll with a bumper held
-const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
+const START_POS := Vector3(10.0, 0.0, 0.0)   # universe A's world, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const NEAR := 0.01                  # m: the camera's near plane: what comes closer to an eye is cut
 const DESKTOP_HEAD_HEIGHT := 1.6
@@ -62,6 +64,7 @@ var viewer := Viewer.new(space)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
 var toys := Toys.new(space, scene)
 var hands := Hands.new(space, toys.world)
+var placing := Placing.new()
 var xr_name := "OpenXR"         # tests: "FakeHMD" (tests/fake_hmd.gd), "Native mobile", "none" (the desktop)
 var show_check := OS.has_feature("check")   # the export preset for the one-eye check (tools/export.sh --check)
 var xr: XRInterface
@@ -74,8 +77,8 @@ var foveation: Foveation
 var rate: FrameRate
 var menu: Menu
 var bench: Bench
-var overlay: Node3D             # the stereo check's Godot geometry in chart A (_update_chart_map)
-var chart_map_stale := false    # the body was where there is no chart map: made again once out
+var overlay: Node3D             # the stereo check's Godot geometry in universe A's world (_update_world_map)
+var world_map_stale := false    # the body was where there is no world map: made again once out
 var left_hand: XRController3D   # at their aim pose: the buttons and sticks (XR only)
 var right_hand: XRController3D
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
@@ -92,6 +95,7 @@ var smooth_turn := true         # false: snaps of SNAP_ANGLE
 var snap_armed := true          # the right stick went back to the middle since the last turn
 var roll_armed := true          # the bumpers let go since the last roll in snaps
 var menu_active := false        # the menu was open this frame: its buttons are its (Menu.handle_input)
+var placing_on := false         # placing this frame: the right stick, A and B are its (placing.gd)
 var tilting := false            # flying, pitched or rolled this frame (_turns_and_reset)
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
@@ -114,6 +118,7 @@ func _ready() -> void:
 	var build: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://build.json")) \
 			if FileAccess.file_exists("res://build.json") else null
 	print("build: ", build.get("commit", "?") if build is Dictionary else "the source, not an export")
+	mouths_back()
 	xr = XRServer.find_interface(xr_name)
 	var host: Node = self
 	if xr and xr.is_initialized():
@@ -171,6 +176,7 @@ func _ready() -> void:
 	bench.menu = menu
 	add_child(bench)                # first: the menu asks it what it compares
 	origin.add_child(menu)
+	placing.main = self
 
 	place(START_POS, START_FORWARD)
 	if show_check:
@@ -178,7 +184,7 @@ func _ready() -> void:
 		overlay = Node3D.new()
 		origin.add_child(overlay)
 		CheckScene.build(overlay, space, renderer)
-		_update_chart_map()
+		_update_world_map()
 	elif toys.enabled:
 		toys.spawn()
 		draw_toys()
@@ -237,6 +243,10 @@ func _process(delta: float) -> void:
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	menu_active = menu.handle_input(dt)
+	placing_on = placing.active
+	placing.update(dt)
+	placing_on = placing_on or placing.active
+	renderer.set_beam(Renderer.PLACING, placing.pts, placing.radii, placing.col)
 	var moved := false if hold else _turns_and_reset(dt, camera.transform.origin.y)
 	# its button (README.md, «Управление») / G: the next gravity view (not during the speed check:
 	# it times what it set up)
@@ -260,7 +270,7 @@ func _process(delta: float) -> void:
 		moved = true
 	if moved:
 		# the controls or a recentre moved the world against the room; physical walking does not
-		_update_chart_map()
+		_update_world_map()
 	if gaze_dot and gaze_dot.visible:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
 	if gaze and gaze.get_has_tracking_data():
@@ -272,13 +282,13 @@ func _process(delta: float) -> void:
 	var t1 := Time.get_ticks_usec()
 	var hp := viewer.head(head.origin.y)
 	if overlay:
-		# the chart -> play map only exists with the feet in the flat part of sheet A, and Godot's
+		# the world -> play map only exists with the feet in the flat part of sheet A, and Godot's
 		# geometry is seen right only from there: the head there too
 		var shown: bool = viewer.l > space.L and hp[0] > space.L
 		if not shown:
-			chart_map_stale = true
-		elif chart_map_stale:
-			_update_chart_map()
+			world_map_stale = true
+		elif world_map_stale:
+			_update_world_map()
 		overlay.visible = shown
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
@@ -291,7 +301,8 @@ func _process(delta: float) -> void:
 	if active:
 		toys.step(delta, hands.balls())
 	var t3 := Time.get_ticks_usec()
-	var new_ball := in_xr and _pressed("new_ball", right_hand.is_button_pressed(&"by_button")) and not menu_active
+	var new_ball := in_xr and _pressed("new_ball", right_hand.is_button_pressed(&"by_button")) and not menu_active \
+			and not placing_on
 	var new_cube := in_xr and _pressed("new_cube", left_hand.is_button_pressed(&"ax_button")
 			or left_hand.is_button_pressed(&"dpad_down")) and not menu_active
 	hands.update(delta, hp, head, active, new_ball, new_cube)
@@ -314,16 +325,16 @@ func draw_toys() -> void:
 		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
 
 
-## Stand at chart A position pos (z = 0), looking along forward.
+## Stand at universe A's world position pos (z = 0), looking along forward (in that world).
 func place(pos: Vector3, forward: Vector3) -> void:
-	var p := space.point_from_chart(1.0, Vector3(pos.x, pos.y, 0.0))
+	var p := space.point_from_world(1.0, Vector3(pos.x, pos.y, 0.0))
 	var f := Vector3(forward.x, forward.y, 0.0).normalized()
 	var up := Vector3(0.0, 0.0, 1.0)
 	var back := -f
 	var right := up.cross(back)
-	viewer.stand(p[0], p[1], [WormholeSpace.vector_from_chart(1.0, p[1], right),
-			WormholeSpace.vector_from_chart(1.0, p[1], up),
-			WormholeSpace.vector_from_chart(1.0, p[1], back)])
+	viewer.stand(p[0], p[1], [space.vector_from_world(1.0, p[1], right),
+			space.vector_from_world(1.0, p[1], up),
+			space.vector_from_world(1.0, p[1], back)])
 	_face_head()
 	hands.forget_motion()
 
@@ -353,7 +364,7 @@ func set_pose(p: Array) -> void:
 	view_pitch = 0.0
 	view_roll = 0.0
 	prev_head = Vector2(camera.position.x, camera.position.z)
-	_update_chart_map()
+	_update_world_map()
 	hands.forget_motion()
 
 
@@ -416,6 +427,70 @@ func view_text() -> String:
 			foveation.level, px.x, px.y, "open" if menu.open else "closed"]
 
 
+## The side's mouth moved to m (Vector3(x, y, turn in rad) of that world: WormholeSpace.mouths): what
+## is in that flat universe stays where it is in its world (WormholeSpace.rechart: the viewer and
+## the toys; a toy the new curved zone would take is pushed out past its edge, Placing.allowed keeps
+## the viewer and the scene's objects clear of it), what is in the curved zone goes along with the
+## throat, the other universe stays as it is. The demo's throw and drop still to come are dropped
+## (their places are the start's).
+func move_mouth(side: float, m: Vector3) -> void:
+	var was: Vector3 = space.mouths[WormholeSpace.side_index(side)]
+	space.set_mouth(side, m)
+	if viewer.l * side > space.L:
+		var r := space.rechart(was, viewer.l, viewer.n, viewer.frame + [viewer.V])
+		viewer.l = r[0]
+		viewer.n = r[1] if not viewer.standing else Vector3(r[1].x, r[1].y, 0.0).normalized()
+		viewer.frame = WormholeSpace.orthonormalize(r[2].slice(0, 3))
+		viewer.V = r[2][3]
+	var pushed := 0
+	for b: BallWorld.Body in toys.world.balls + toys.world.cubes:
+		if b.l * side <= space.L:
+			continue
+		var cube := b as BallWorld.Cube
+		var size: float = cube.half * sqrt(3.0) if cube else (b as BallWorld.Ball).radius
+		var r := space.rechart(was, b.l, b.n, [b.U] + (cube.F if cube else []), size + 0.05)
+		b.l = r[0]
+		b.n = r[1]
+		b.U = r[2][0]
+		if cube:
+			cube.F = WormholeSpace.orthonormalize(r[2].slice(1, 4))
+		b.still = 0.0                   # gravity there is the new throat's now
+		pushed += int(r[3])
+	toys.launch_in = -1.0
+	toys.drop_in = -1.0
+	hands.moved()
+	renderer.set_mouths()
+	_update_world_map()
+	print("placing: universe %s's mouth from (%.2f, %.2f) turned %.0f deg to (%.2f, %.2f) turned %.0f deg; %d toys pushed out of it"
+			% ["A" if side > 0.0 else "B", was.x, was.y, rad_to_deg(was.z), m.x, m.y, rad_to_deg(m.z), pushed])
+
+
+## Both mouths moved to to ([A's, B's], as WormholeSpace.mouths), each as move_mouth does (the
+## speed check times the scene's own: bench.gd).
+func move_mouths(to: Array) -> void:
+	for k in 2:
+		if space.mouths[k] != to[k]:
+			move_mouth(1.0 if k == 0 else -1.0, to[k])
+
+
+## Where scene.json puts the mouths: [A's, B's], as WormholeSpace.mouths.
+func scene_mouths() -> Array:
+	var out := []
+	for k: String in ["A", "B"]:
+		var a: Array = scene["mouths"][k]
+		out.append(Vector3(a[0], a[1], deg_to_rad(a[2])))
+	return out
+
+
+## The mouths where scene.json puts them (the start, the reset), nothing carried along.
+func mouths_back() -> void:
+	var m := scene_mouths()
+	space.set_mouth(1.0, m[0])
+	space.set_mouth(-1.0, m[1])
+	if renderer:
+		renderer.set_mouths()
+
+
 func set_gravity_view(view: int) -> void:
 	renderer.set_gravity_view(view)
 	menu.refresh()
@@ -443,7 +518,7 @@ func _face_head() -> void:
 	var hf := _head_forward_xz()
 	viewer.turn(-atan2(hf.x, -hf.y))
 	prev_head = Vector2(camera.position.x, camera.position.z)
-	_update_chart_map()
+	_update_world_map()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -516,7 +591,7 @@ func _run_pressed() -> bool:
 ## The turns and the reset (README.md, «Управление»): the right stick across turns (yaw); flying, the
 ## room also pitches (the right stick up and down) and rolls (the bumpers) about the head (Viewer.
 ## tilt_at_head; height: the head's in the room), smoothly or in snaps as the turns go. True if a
-## turn moved the view against the room (the reset redoes the chart map itself); tilting: pitched or
+## turn moved the view against the room (the reset redoes the world map itself); tilting: pitched or
 ## rolled this frame (no turning upright then).
 func _turns_and_reset(delta: float, height: float) -> bool:
 	var s := Vector2.ZERO           # right stick: x yaw, y pitch
@@ -528,6 +603,8 @@ func _turns_and_reset(delta: float, height: float) -> bool:
 		fall_down = fall_down or right_hand.is_button_pressed(&"primary_click")
 	s.x = clampf(s.x + float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)), -1.0, 1.0)
 	s.y = clampf(s.y + float(Input.is_key_pressed(KEY_I)) - float(Input.is_key_pressed(KEY_K)), -1.0, 1.0)
+	if placing_on:
+		s = Vector2.ZERO            # the placing's
 	roll = clampf(roll, -1.0, 1.0)
 	if viewer.standing:
 		s.y = 0.0
@@ -575,8 +652,10 @@ func _turns_and_reset(delta: float, height: float) -> bool:
 			tilting = true
 		elif roll == 0.0:
 			roll_armed = true
-	if _pressed("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))) and not menu_active:
-		place(START_POS, START_FORWARD)    # also redoes the chart -> play map
+	if _pressed("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))) \
+			and not menu_active and not placing_on:
+		mouths_back()
+		place(START_POS, START_FORWARD)    # also redoes the world -> play map
 		if toys.enabled:
 			hands.empty()
 			toys.spawn()
@@ -626,25 +705,25 @@ func _head_forward_xz() -> Vector2:
 	return v.normalized() if v.length() > 1e-4 else Vector2(0.0, -1.0)
 
 
-## With the feet in the flat part of sheet A, chart coordinates and the play space differ by a
-## rigid motion: computed where the body is placed and after a recentre of the play space, a stick
-## step or turn, a fall or a landing, and left alone while one walks and turns in the room. The
-## stereo check's overlay hangs on it (check_scene.gd). Elsewhere (the curved zone, sheet B) there is
-## none, and a walk or a flight in the curved zone turns the axes against the chart: the map is made
-## again as the feet come out.
-func _update_chart_map() -> void:
+## With the feet in the flat part of sheet A, universe A's world coordinates and the play space
+## differ by a rigid motion: computed where the body is placed and after a recentre of the play
+## space, a stick step or turn, a fall or a landing, a mouth moved, and left alone while one walks
+## and turns in the room. The stereo check's overlay hangs on it (check_scene.gd). Elsewhere (the
+## curved zone, sheet B) there is none, and a walk or a flight in the curved zone turns the axes
+## against the world: the map is made again as the feet come out.
+func _update_world_map() -> void:
 	if overlay == null:
 		return
 	if viewer.l <= space.L:
-		chart_map_stale = true
+		world_map_stale = true
 		return
-	chart_map_stale = false
+	world_map_stale = false
 	var n := viewer.n
 	var f: Array = viewer.frame
-	var fc := space.chart_position(viewer.l, n)
-	# columns: where play x, y, z point in the chart
-	var B := Basis(WormholeSpace.vector_to_chart(1.0, n, f[0]), WormholeSpace.vector_to_chart(1.0, n, f[1]),
-			WormholeSpace.vector_to_chart(1.0, n, f[2])).orthonormalized()
+	var fc := space.world_position(viewer.l, n)
+	# columns: where play x, y, z point in the world
+	var B := Basis(space.vector_to_world(1.0, n, f[0]), space.vector_to_world(1.0, n, f[1]),
+			space.vector_to_world(1.0, n, f[2])).orthonormalized()
 	var Bt := B.transposed()
 	overlay.transform = Transform3D(Bt, Vector3(prev_head.x, 0.0, prev_head.y) - Bt * fc)
 

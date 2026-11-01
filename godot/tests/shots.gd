@@ -53,7 +53,7 @@ func _process(_delta: float) -> bool:
 		quit()
 		return false
 	var p: Array = POSES[pose]
-	var l: float = main.space.point_from_chart(1.0, main.START_POS)[0] if is_inf(p[1]) else p[1]
+	var l: float = main.space.point_from_world(1.0, main.START_POS)[0] if is_inf(p[1]) else p[1]
 	main.place_on_axis(l, p[2], p[3])
 	main.bench.near = p[4]
 	wait = 3

@@ -39,7 +39,7 @@ const TOY_DENSITY := 25.0            # kg/m^3: big rubber toys (a 50 cm ball 1.6
 const DRAG_BALL := 0.47              # drag coefficients of a sphere and of a cube
 const DRAG_CUBE := 1.05
 const MAX_BALLS := 8
-const WORLD_RADIUS := 40.0           # chart radius of an invisible wall that keeps balls and cubes nearby
+const WORLD_RADIUS := 40.0           # m from each world's origin: an invisible wall that keeps balls and cubes nearby
 const MAX_CUBES := 6
 const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates by this times the floor's push
@@ -323,12 +323,13 @@ func _floor(b: Ball, before: Array) -> void:
 	_move(b, N, (rad - H) / gl)
 
 
+## The scene's objects of the ball's flat universe and its world's wall, in world coordinates.
 func _statics(b: Ball) -> void:
 	var l: float = b.l
 	if absf(l) < space.L:
 		return                               # static objects live in the flat universes only
 	var side := signf(l)
-	var x := space.chart_position(l, b.n)
+	var x := space.world_position(l, b.n)
 	var rad: float = b.radius
 	var normal := Vector3.ZERO
 	var depth := 0.0
@@ -367,7 +368,7 @@ func _statics(b: Ball) -> void:
 			normal = -x / cr
 	if depth <= 0.0:
 		return
-	var N := WormholeSpace.vector_from_chart(side, b.n, normal)
+	var N := space.vector_from_world(side, b.n, normal)
 	var U: Vector4 = b.U
 	var vn := U.dot(N)
 	if vn < 0.0:
@@ -723,18 +724,18 @@ func _floor_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 					FRICTION_CUBE, RESTITUTION_CUBE, group, dirs))
 
 
-## The static objects of the flat universes and the world's wall, in chart coordinates.
+## The static objects of the flat universes and the world's wall, in world coordinates.
 func _static_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 	var l: float = c.l
 	if absf(l) < space.L:
 		return
 	var side := signf(l)
 	var n: Vector3 = c.n
-	var x := space.chart_position(l, n)
+	var x := space.world_position(l, n)
 	var a: float = c.half
 	var F: Array = c.F
-	var f: Array[Vector3] = [WormholeSpace.vector_to_chart(side, n, F[0]),
-			WormholeSpace.vector_to_chart(side, n, F[1]), WormholeSpace.vector_to_chart(side, n, F[2])]
+	var f: Array[Vector3] = [space.vector_to_world(side, n, F[0]),
+			space.vector_to_world(side, n, F[1]), space.vector_to_world(side, n, F[2])]
 	var reach := 1.7321 * a
 	var found := []         # [body point, chart normal pushing the cube out, depth]
 	var spheres: Array = scene["spheres_A"] if side > 0.0 else scene["spheres_B"]
@@ -789,7 +790,7 @@ func _static_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
 			if P.length() > WORLD_RADIUS:
 				found.append([a * s, -P.normalized(), P.length() - WORLD_RADIUS])
 	for h in found:
-		contacts.append(_contact(c, h[0], WormholeSpace.vector_from_chart(side, n, h[1]), null,
+		contacts.append(_contact(c, h[0], space.vector_from_world(side, n, h[1]), null,
 				Vector3.ZERO, Vector4.ZERO, h[2], FRICTION_CUBE, RESTITUTION_CUBE, group))
 
 

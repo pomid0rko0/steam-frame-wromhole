@@ -59,13 +59,24 @@ for c in 0 1; do
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/bea$c" $m $c beams
 	done
 done
+# universe A's objects, which stand in its world, with its mouth moved far off and turned, drawn by
+# the app against Godot's own
+for c in 0 1; do
+	for m in app mesh; do render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/sta$c" $m $c statics; done
+done
 # the curved zone: the throat, sideways in it, the curved zone's edge, universe B's fillet, and a
 # place in the flat universe the same way as a control; flying round the throat, over its top, high
-# above it and out of it tilted (curved_check.gd's PLACES)
+# above it and out of it tilted (curved_check.gd's PLACES); the mouths moved and turned in their
+# worlds (curved_check.gd's MOUTHS)
 for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
 # the stereo check scene, also flying (cases 4 and 5)
 for c in 0 1 2 3 4 5; do
 	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
+done
+# the same with the mouths moved and turned in their worlds (multiview_check.gd's MOVED): standing,
+# the head turned, walking and turning
+for c in 0 1 3; do
+	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/mov$c" $m $c moved; done
 done
 # the same floor lines without the balls and the cube
 for c in 0 1 2 3 4 5; do
@@ -106,12 +117,16 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: balls, each eye" python3 "$CMP/silhouettes.py" "$OUT/hmd$c"
 	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
 	verdict "simulated headset, case $c: the hands' beams, each eye" python3 "$CMP/silhouettes.py" "$OUT/bea$c" 2
+	verdict "simulated headset, case $c: universe A's objects in its world, the mouth moved and turned, each eye" python3 "$CMP/silhouettes.py" "$OUT/sta$c" 2
 done
 for p in 0 1 2 3 4 5 6 7 8; do
 	verdict "simulated headset, curved zone, place $p: balls, cubes and the floor against traced rays, each eye" python3 "$CMP/curved.py" "$OUT/crv$p"
 done
 for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
+done
+for c in 0 1 3; do
+	verdict "simulated headset, case $c: stereo check scene, the mouths moved and turned" python3 "$CMP/check_scene.py" "$OUT/mov$c"
 done
 for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: floor lines, without the balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only

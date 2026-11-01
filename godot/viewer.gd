@@ -33,13 +33,13 @@ extends RefCounted
 ## below them and the frame turns the least way that stands up along the floor's normal. With
 ## gravity it has mostly turned upright by then; a landing still tilted (without gravity, or
 ## falling too soon) moves the view at once, as a snap turn does (main.gd: hands.forget_motion). The
-## feet stay within LIMIT of the throat's centre in the flat universes.
+## feet stay within LIMIT of their world's origin in the flat universes while flying (_keep_in).
 
 const GRAVITY := BallWorld.GRAVITY
 const HEAD_MIN := 0.05          # m: the head at least this far above the feet along up (the room's floor)
 const HEAD_CLEAR := 0.04        # m: the head this close to the floor (height, WormholeSpace.height) is pushed out
 const FALL_DT := 1.0 / 120.0    # s: a free fall's longest RK4 step
-const LIMIT := BallWorld.WORLD_RADIUS   # m: the feet's chart radius at most (the toys' wall)
+const LIMIT := BallWorld.WORLD_RADIUS   # m from the world's origin: the feet at most (the toys' wall)
 const RIGHT_TIME := 0.35        # s: turning upright with gravity (right_up)
 const RIGHT_MAX := deg_to_rad(120.0)    # per second
 const RIGHT_G := 0.15           # g: weaker gravity turns it slower, in proportion
@@ -314,12 +314,26 @@ func set_state(p: Array) -> void:
 	V = p[4]
 
 
-## The feet within LIMIT of the centre in a flat universe: back on its sphere, the velocity's part
-## outward taken away.
+## The feet within LIMIT of their world's origin in a flat universe: back on its sphere, the
+## velocity's part outward taken away (V is the head's, read at the feet: off by the angle the
+## head's height makes seen from the throat's centre).
 func _keep_in() -> void:
-	if absf(l) <= space.L or space.r(l) <= LIMIT:
+	if absf(l) <= space.L:
 		return
 	var side := signf(l)
-	l = side * (LIMIT - space.Rout + space.L)
-	if V.x * side > 0.0:
-		V.x = 0.0
+	var x := space.world_position(l, n)
+	if x.length() <= LIMIT:
+		return
+	var out := x / x.length()
+	var p := space.point_from_world(side, out * LIMIT)
+	if p[0] * side <= space.L:
+		return                  # the mouth at the wall: its curved zone keeps the feet
+	var d := space.vector_to_world(side, n, V)
+	d -= maxf(d.dot(out), 0.0) * out
+	var f := []
+	for A: Vector4 in frame:
+		f.append(space.vector_from_world(side, p[1], space.vector_to_world(side, n, A)))
+	l = p[0]
+	n = p[1]
+	frame = WormholeSpace.orthonormalize(f)
+	V = space.vector_from_world(side, n, d)

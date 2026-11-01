@@ -300,6 +300,17 @@ func forget_motion() -> void:
 		h.moves.clear()
 
 
+## The world moved under the hands (main.move_mouth): the motion before is no motion, and a pull's
+## way, a lock and the pointing geodesic kept no longer hold.
+func moved() -> void:
+	forget_motion()
+	for h in list:
+		h.pull = null
+		h.locked = false
+		h.aimed = null
+		h.ray = []
+
+
 ## The toy nearest to hand h's centre within REACH of its surface (not one it holds; the one it
 ## pulls within CATCH_REACH), or null.
 func _nearest(h: Hand) -> BallWorld.Body:
@@ -989,10 +1000,10 @@ static func _stretch(J: Basis) -> float:
 	return sqrt(maxf(v.dot(A * v), 0.0))
 
 
-## Where (l, n) is, for the log: universe A's or B's chart position, else l and n.
+## Where (l, n) is, for the log: universe A's or B's world position, else l and n.
 func _where(l: float, n: Vector3) -> String:
 	if absf(l) > space.L:
-		var x := space.chart_position(l, n)
+		var x := space.world_position(l, n)
 		return "%s (%.1f, %.1f, %.1f)" % ["A" if l > 0.0 else "B", x.x, x.y, x.z]
 	return "l %.2f, n (%.2f, %.2f, %.2f)" % [l, n.x, n.y, n.z]
 

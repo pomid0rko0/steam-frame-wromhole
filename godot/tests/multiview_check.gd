@@ -4,7 +4,7 @@ extends SceneTree
 ## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
 ## renderer's white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov] [moved]
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
@@ -15,6 +15,8 @@ extends SceneTree
 ## pitched 20 degrees and rolled 15 (as a flight through the curved zone leaves them). Run with
 ## --fixed-fps 60, so every mode walks and turns the same.
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
+## moved: the mouths moved and turned in their worlds (MOVED), the check scene where it stands in
+## universe A's world.
 ## gravity, arrows: the gravity views "floor" and "floor and field lines" (Renderer.GRAVITY_VIEWS: the
 ## floor coloured by gravity, also the field lines with their arrows).
 ## fov: foveated rendering on (the runtime's strongest in even cases: the 3D scene in a render pass
@@ -42,6 +44,8 @@ var case := 0
 var plain := false
 var gravity := 0
 var fov := false
+# moved: scene.json's mouths for it, A's and B's [x, y, degrees]
+const MOVED := {"A": [-1.5, 2.0, 30.0], "B": [2.0, -3.0, -40.0]}
 
 
 func _initialize() -> void:
@@ -51,10 +55,13 @@ func _initialize() -> void:
 	plain = args.slice(3).has("plain")
 	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
 	fov = args.slice(3).has("fov")
+	var moved := args.slice(3).has("moved")
 	hmd = U.headset(mini(case, 1), -25.0)
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = true
+	if moved:
+		main.scene["mouths"] = MOVED
 	if case == 3 or case == 4:
 		main.smooth_turn = false
 	root.add_child(main)
@@ -71,7 +78,7 @@ func _process(_delta: float) -> bool:
 			v.take_off()
 			v.move(WormholeSpace.combine(v.frame, Vector3(0.0, 1.0, 0.0)))
 			v.frame = Viewer.tilt(v.frame, deg_to_rad(20.0), deg_to_rad(15.0), main._head_forward_xz())
-			main._update_chart_map()
+			main._update_world_map()
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view
 		if plain:

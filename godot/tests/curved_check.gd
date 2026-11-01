@@ -3,8 +3,10 @@ extends SceneTree
 ## headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced head) stands or
 ## flies at a place of PLACES with red balls and green cubes round the head, and each eye's picture is saved
 ## with what tools/compare/curved.py needs to trace that eye's rays itself, independently of the
-## shaders: the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's
-## static objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
+## shaders: the head as the renderer got it, each eye's pose and frustum, the bodies, where the
+## mouths stand (MOUTHS: moved and turned, so the floor's checker in the flat universes is checked in
+## their worlds). The scene's static objects are hidden: the traced rays don't know them, and a
+## reddish one would count as a ball.
 ##   godot --path . -s res://tests/curved_check.gd -- out_prefix place
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
@@ -23,6 +25,8 @@ const PLACES := [[0.0, 10.0, [], -10.0], [0.3, 95.0, [], -10.0], [5.0, 15.0, [],
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
+# scene.json's mouths for this test: A's and B's [x, y, degrees]
+const MOUTHS := {"A": [1.3, -0.7, 23.0], "B": [-2.1, 1.6, -51.0]}
 const CUBES := [[Vector3(0.35, 0.15, -0.6), 0.1, Vector3(0.4, 0.6, 0.1)], [Vector3(-0.4, -0.5, -2.6), 0.28, Vector3(-0.2, 0.9, 0.3)]]
 
 var main: Main
@@ -39,6 +43,7 @@ func _initialize() -> void:
 	main.xr_name = "FakeHMD"
 	main.show_check = false
 	main.toys.enabled = false            # this test draws its own
+	main.scene["mouths"] = MOUTHS
 	root.add_child(main)
 
 
@@ -120,7 +125,7 @@ func _dump(path: String) -> void:
 	var d := {"profile": [sp.rho0, sp.h, sp.fillet], "size": [hmd.size.x, hmd.size.y],
 		"head": {"l": hp[0], "n": _v3(hp[1]), "frame": [_v4(f[0]), _v4(f[1]), _v4(f[2])],
 			"pos": _v3(main.camera.transform.origin)},
-		"eyes": eyes, "balls": [], "cubes": []}
+		"eyes": eyes, "balls": [], "cubes": [], "mouths": [_v3(sp.mouths[0]), _v3(sp.mouths[1])]}
 	for i in _objects[0].size():
 		d.balls.append({"c": _v4(_objects[0][i]), "r": _objects[1][i].w})
 	for i in _objects[2].size():

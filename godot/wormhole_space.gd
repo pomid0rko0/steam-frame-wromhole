@@ -7,6 +7,8 @@ extends RefCounted
 ## A point is (l, n): n is a unit Vector3 on the shared angular sphere.
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
+## Positions in a flat universe: its chart's (centred on the throat, «the worlds» below) and its
+## world's, where the mouth stands at mouths.
 
 const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet radii (it takes none elsewhere)
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
@@ -25,6 +27,9 @@ var grav_a := 1.0
 var grav_k := 1.0
 var grav_beta := 0.0
 var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_NODES, interleaved
+# where the mouth stands in universe A's world and in B's: Vector3(x, y, turn in rad) («the worlds»
+# below)
+var mouths: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 
 
 func _init(throat_radius: float, half_length: float, fillet_radius: float) -> void:
@@ -638,6 +643,94 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	if l < 0.0:
 		x.x = -x.x
 	return x
+
+
+# ---------------------------------------------------------------- the worlds
+# Each flat universe is a world of its own coordinates, where the mouth stands (mouths, scene.json's
+# "mouths"): world = turn(chart) + centre, the turn about z. The maths above is the chart's, with the
+# throat's centre at its origin; what stands in a world (the scene, the start, the toys' places, the
+# walls) is the world's. The curved zone has no world coordinates.
+
+## The side's index in mouths: A 0, B 1.
+static func side_index(side: float) -> int:
+	return 0 if side > 0.0 else 1
+
+
+## Put the side's mouth (Vector3(x, y, turn in rad)).
+func set_mouth(side: float, m: Vector3) -> void:
+	mouths[side_index(side)] = m
+
+
+## A chart position of the side's flat region in that world's coordinates, by the mouth m (the side's
+## own if not given).
+func world_from_chart(side: float, c: Vector3, m := Vector3(NAN, 0.0, 0.0)) -> Vector3:
+	if is_nan(m.x):
+		m = mouths[side_index(side)]
+	var cs := cos(m.z)
+	var sn := sin(m.z)
+	return Vector3(cs * c.x - sn * c.y + m.x, sn * c.x + cs * c.y + m.y, c.z)
+
+
+func chart_from_world(side: float, x: Vector3) -> Vector3:
+	var m: Vector3 = mouths[side_index(side)]
+	var cs := cos(m.z)
+	var sn := sin(m.z)
+	var dx := x.x - m.x
+	var dy := x.y - m.y
+	return Vector3(cs * dx + sn * dy, -sn * dx + cs * dy, x.z)
+
+
+## A direction: chart to world and back (the turn alone).
+func world_dir(side: float, d: Vector3) -> Vector3:
+	var t: float = mouths[side_index(side)].z
+	return Vector3(cos(t) * d.x - sin(t) * d.y, sin(t) * d.x + cos(t) * d.y, d.z)
+
+
+func chart_dir(side: float, d: Vector3) -> Vector3:
+	var t: float = mouths[side_index(side)].z
+	return Vector3(cos(t) * d.x + sin(t) * d.y, -sin(t) * d.x + cos(t) * d.y, d.z)
+
+
+## A world position of the side's flat region to a manifold point [l, n]; what world positions and
+## directions at (l, n) are (l on a flat side).
+func point_from_world(side: float, x: Vector3) -> Array:
+	return point_from_chart(side, chart_from_world(side, x))
+
+
+func world_position(l: float, n: Vector3) -> Vector3:
+	return world_from_chart(signf(l), chart_position(l, n))
+
+
+func vector_from_world(side: float, n: Vector3, d: Vector3) -> Vector4:
+	return vector_from_chart(side, n, chart_dir(side, d))
+
+
+func vector_to_world(side: float, n: Vector3, U: Vector4) -> Vector3:
+	return world_dir(side, vector_to_chart(side, n, U))
+
+
+## A point (l, n) of the side's flat region and tangent vectors there (vecs) where the same world
+## place is once the side's mouth stood at was (Vector3(x, y, turn)) and now stands where mouths
+## says: [l, n, vecs, pushed]. A place nearer the new throat's centre than Rout + clear is pushed out
+## along the floor to that (pushed true).
+func rechart(was: Vector3, l: float, n: Vector3, vecs: Array, clear := 0.0) -> Array:
+	var side := signf(l)
+	var c := chart_from_world(side, world_from_chart(side, chart_position(l, n), was))
+	var reach := Rout + clear
+	var pushed := c.length() < reach
+	if pushed:
+		var flat := Vector2(c.x, c.y)
+		var to := sqrt(maxf(reach * reach - c.z * c.z, 0.0))
+		flat = (flat / flat.length() if flat.length() > 1e-6 else Vector2.RIGHT) * to
+		c = Vector3(flat.x, flat.y, c.z)
+	var p := point_from_chart(side, c)
+	var out := []
+	var cw := cos(was.z)
+	var sw := sin(was.z)
+	for U: Vector4 in vecs:
+		var d := vector_to_chart(side, n, U)
+		out.append(vector_from_world(side, p[1], Vector3(cw * d.x - sw * d.y, sw * d.x + cw * d.y, d.z)))
+	return [p[0], p[1], out, pushed]
 
 
 # ---------------------------------------------------------------- the sweep table

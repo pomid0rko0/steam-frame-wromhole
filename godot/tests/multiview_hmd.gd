@@ -5,8 +5,11 @@ extends SceneTree
 ## of the head are drawn either by the app's renderer (mode "app": placed by walking from the feet
 ## along their play-space offset, a cube's axes carried along; a beam's points so) or by Godot's
 ## standard renderer (mode "mesh": a beam as a prism of Renderer.BEAM_SIDES sides turned as
-## body.gdshaderinc turns the app's). In each eye the silhouettes must coincide.
-##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix app|mesh case balls|cubes|beams
+## body.gdshaderinc turns the app's). Or statics: universe A's mouth far off and turned (STATICS_MOUTH),
+## the scene's objects of A, which stand in its world, drawn red by the app or by Godot (the same
+## meshes, mapped from the world to the room as main maps the check scene's). In each eye the
+## silhouettes must coincide.
+##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix app|mesh case balls|cubes|beams|statics
 
 const U := preload("res://tests/util.gd")
 const RADIUS := 0.25
@@ -27,6 +30,10 @@ var beams := false
 const BEAMS := [[Vector3(-0.9, 0.3, -2.2), Vector3(0.6, 0.55, -2.6)], [Vector3(-0.5, -0.6, -1.6), Vector3(0.8, -0.25, -2.0)]]
 const BEAM_RADIUS := 0.08
 const BEAM_POINTS := 12
+# statics: universe A's mouth [x, y, degrees], far enough that the objects in view are seen along
+# straight lines
+const STATICS_MOUTH := [-25.0, 15.0, 35.0]
+var statics := false
 
 
 func _initialize() -> void:
@@ -34,11 +41,14 @@ func _initialize() -> void:
 	mode = args[1]
 	cubes = args[3] == "cubes"
 	beams = args[3] == "beams"
+	statics = args[3] == "statics"
 	hmd = U.headset(int(args[2]))
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = false             # its balls and grids would cover the ones under test
 	main.toys.enabled = false            # this test draws its own
+	if statics:
+		main.scene["mouths"] = {"A": STATICS_MOUTH, "B": [0.0, 0.0, 0.0]}
 	root.add_child(main)
 
 
@@ -52,6 +62,8 @@ func _process(_delta: float) -> bool:
 		var head: Transform3D = hmd.head
 		var feet := Vector3(head.origin.x, 0.0, head.origin.z)
 		var sp: WormholeSpace = main.space
+		if statics:
+			_statics(head)
 		if beams:
 			for i in BEAMS.size():
 				var a: Vector3 = head * BEAMS[i][0]
@@ -85,7 +97,7 @@ func _process(_delta: float) -> bool:
 		var pos := PackedVector4Array()
 		var axes := PackedVector4Array()
 		var col := PackedVector4Array()
-		for i in (0 if beams else PLACES.size()):
+		for i in (0 if beams or statics else PLACES.size()):
 			var p: Vector3 = head * PLACES[i]                        # play space
 			var turn := head.basis * Basis.from_euler(TURNS[i])      # a cube's axes in play space
 			if mode == "mesh":
@@ -113,7 +125,7 @@ func _process(_delta: float) -> bool:
 				col.append(Vector4(4.0, 0.0, 0.0, HALF))   # saturated: shading and edges stay red
 			else:
 				col.append(Vector4(1.0, 0.0, 0.0, RADIUS))
-		if mode == "app" and not beams:
+		if mode == "app" and not beams and not statics:
 			if cubes:
 				main.renderer.set_objects(PackedVector4Array(), PackedVector4Array(), pos, axes, col)
 			else:
@@ -124,3 +136,52 @@ func _process(_delta: float) -> bool:
 		U.finish(self, hmd)
 		return true
 	return false
+
+
+## Universe A's objects red: the app's (its mesh with every vertex red) or Godot's (the same
+## primitives, under a node mapping A's world to the room as main._update_world_map does); B's
+## hidden.
+func _statics(head: Transform3D) -> void:
+	var r := main.renderer
+	r.statics[1].visible = false
+	if mode == "app":
+		var src: ArrayMesh = r.statics[0].mesh
+		var arr := src.surface_get_arrays(0)
+		var c := PackedColorArray()
+		c.resize((arr[Mesh.ARRAY_VERTEX] as PackedVector3Array).size())
+		c.fill(Color(1.0, 0.0, 0.0))
+		arr[Mesh.ARRAY_COLOR] = c
+		var m := ArrayMesh.new()
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		r.statics[0].mesh = m
+		return
+	r.statics[0].visible = false
+	var sp: WormholeSpace = main.space
+	var v: Viewer = main.viewer
+	var fc := sp.world_position(v.l, v.n)
+	var B := Basis(sp.vector_to_world(1.0, v.n, v.frame[0]), sp.vector_to_world(1.0, v.n, v.frame[1]),
+			sp.vector_to_world(1.0, v.n, v.frame[2])).orthonormalized()
+	var Bt := B.transposed()
+	var world := Node3D.new()
+	world.transform = Transform3D(Bt, Vector3(head.origin.x, 0.0, head.origin.z) - Bt * fc)
+	main.origin.add_child(world)
+	var up := Basis(Vector3(1, 0, 0), PI / 2.0)      # Renderer._scene_mesh's: Godot's y up -> z
+	for s: Array in main.scene["spheres_A"]:
+		var m := SphereMesh.new()
+		m.radius = s[3]
+		m.height = 2.0 * s[3]
+		m.radial_segments = 64 if s[3] >= 2.0 else 48
+		m.rings = m.radial_segments / 2
+		var n := U.red(m)
+		n.transform = Transform3D(up, Vector3(s[0], s[1], s[2]))
+		world.add_child(n)
+	for p: Array in main.scene["pillars_A"]:
+		var c := CylinderMesh.new()
+		c.top_radius = p[2]
+		c.bottom_radius = p[2]
+		c.height = p[3]
+		c.radial_segments = 48
+		c.rings = 8
+		var n := U.red(c)
+		n.transform = Transform3D(up, Vector3(p[0], p[1], 0.5 * p[3]))
+		world.add_child(n)

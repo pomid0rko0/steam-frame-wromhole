@@ -8,8 +8,9 @@
 //     chord distance radius from C in that direction (BallWorld's ball). A cube's is the cube
 //     [-1, 1]^3: its 4D box cut by the space, each point taken along the space's normal at C.
 //     Below the floor they are hidden: the floor hides whatever is below it.
-//   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
-//     sheet (A +1, B -1), all in the flat sheets.
+//   STATIC (scene.gdshader): the scene's objects, vertices in the world coordinates of universe
+//     sheet (A +1, B -1), turned and moved into its chart by its mouth (g_mouth), all in the flat
+//     sheets.
 //   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
 //     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR; COLOR.a 1 (the arrow,
 //     over its outline of COLOR.a 0) a hair nearer the eye in depth, in the same place in the view.
@@ -97,10 +98,13 @@ void vertex() {
 	P = geo_onto(C + beam_r[i] * (cos(VERTEX.y) * e1 + sin(VERTEX.y) * e2), N);
 	nrm = vec4(0.0);
 #else
-	vec3 xc = VERTEX;
+	vec4 m = g_mouth[sheet > 0.0 ? 0 : 1];
+	vec2 dx = VERTEX.xy - m.xy;
+	vec3 xc = vec3(m.z * dx.x + m.w * dx.y, -m.w * dx.x + m.z * dx.y, VERTEX.z);
+	vec3 nc = vec3(m.z * NORMAL.x + m.w * NORMAL.y, -m.w * NORMAL.x + m.z * NORMAL.y, NORMAL.z);
 	float h = g_prof.z - g_prof.y * geo_sin(g_prof2.w) + g_prof.y;
 	P = sheet > 0.0 ? vec4(xc, h) : vec4(-xc.x, xc.yz, -h);
-	nrm = vec4(sheet > 0.0 ? NORMAL.x : -NORMAL.x, NORMAL.yz, 0.0);
+	nrm = vec4(sheet > 0.0 ? nc.x : -nc.x, nc.yz, 0.0);
 #endif
 	vec3 pn;
 #ifdef ARROWS

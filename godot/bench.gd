@@ -25,6 +25,8 @@ extends Node
 ## starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
 ## (frame_rate.gd).
 ##
+## The mouths stand where scene.json has them throughout (main.move_mouths: a moved one is taken
+## there and back, and a toy in the way of either stays pushed out).
 ## Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
@@ -99,6 +101,7 @@ var tour_t := 0.0               # s since the tour began counting (the "tf" line
 var pose := [0.0, 0.0, 0.0, 0.0]     # the tour's pose now: l, degrees right, up, roll
 var sec := Tally.new()          # this second's
 var saved_pose: Array
+var saved_mouths: Array         # where the mouths stood: they go to the scene's for the check (_finish)
 var saved_rate := 0.0           # the rate to go back to
 var preparing := 0              # variants left to run untimed before the first segment
 var verdict := ""               # the comparison's line
@@ -150,7 +153,7 @@ func _make_tour() -> Array[Step]:
 
 ## A pose's l: START as the start's.
 func _l(l: float) -> float:
-	return main.space.point_from_chart(1.0, main.START_POS)[0] if is_inf(l) else l
+	return main.space.point_from_world(1.0, main.START_POS)[0] if is_inf(l) else l
 
 
 func _st(l0: float, l1: float, y0: float, y1: float, p: float, secs: float, what: String,
@@ -175,6 +178,8 @@ func start() -> void:
 	for f in VARIANTS:
 		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
 	saved_pose = main.get_pose()
+	saved_mouths = main.space.mouths.duplicate()
+	main.move_mouths(main.scene_mouths())
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
 	# back to this app's own setting where there is one, else to what the display ran at
@@ -469,6 +474,7 @@ func _finish(tour_line: String) -> void:
 	phase = ""
 	_restore()
 	main.hold = false
+	main.move_mouths(saved_mouths)
 	main.set_pose(saved_pose)
 	menu.set_render_scale(menu.render_scale)
 	# also when the display never followed: SteamVR's setting for the app may hold TOUR_RATE now
