@@ -5,8 +5,9 @@ extends RefCounted
 ## with the room's axes there, frame = [x, up, z] (tangent vectors, orthonormal); the head is the
 ## head's room height along up from the feet (head). main.gd reads the buttons and moves it.
 ##
-## Standing, the feet are on the floor (n.z = 0, up its normal) and every move goes along the
-## floor, which keeps them on it (the floor is totally geodesic). Flying, the body is the head: it
+## Standing, the feet are on the floor, the plane z = 0 of their flat universe's chart (WormholeSpace's
+## top: it keeps out of the curved zone), with up the chart's up, and every move is a straight line
+## of that chart along it, the axes as they are in it (stand_at). Flying, the body is the head: it
 ## moves, falls and turns, and the feet follow it as the room hangs from it (_set_head). Every move
 ## is a geodesic of the head with the room's axes parallel-transported along it: a flight with the
 ## stick held and the head still is one geodesic, through the throat as light goes. The room pitches
@@ -14,32 +15,37 @@ extends RefCounted
 ## What the sticks push moves at the speed they ask for, as a ship's thrusters that hold it up
 ## would; nothing pushed, the body hovers without gravity and with it falls freely from the velocity
 ## it had (WormholeSpace.dynamics_step: the geodesic and -g grad phi, the toys' gravity,
-## docs/gravity.md: weaker in the throat, and over the throat's top, n = +z, along the throat toward
+## docs/gravity.md: weaker in the throat, and on the throat's top, n = +z, along the throat toward
 ## its middle, where it is zero). No air: a fall keeps its energy.
 ##
-## Up is carried along like any other axis, so a flight off the floor through the curved zone comes
-## out tilted against the floor: the path and up turn together in the path's plane. Straight from
-## 10 m out at the throat's middle with the feet 0.25, 0.5, 1 and 1.5 m over the floor, a flight
-## comes out into universe B turned 24, 48, 100 and 160 degrees up; at 2 m it comes down onto B's
-## floor, at 3 m back onto A's (tests/flight_test.gd prints these). With gravity, flying and not
-## pitched or rolled, the room turns about the head toward up against gravity there, as Portal turns
-## the player upright after a portal (right_up): the least turn (upside down: a roll), approaching as
-## exp(-t / RIGHT_TIME) and at most RIGHT_MAX a second, both slower where gravity is weaker than
-## RIGHT_G (near the zero over the throat's middle it would turn fast and every way).
+## Up is carried along like any other axis, so a flight through the curved zone comes out tilted
+## against the floor: the path and up turn together in the path's plane. Straight along -x from chart
+## A (10, 0, z), with the throat's centre at z = 5: through it the flight comes out into universe B
+## upright (a radial path carries every vector as it is); at z = 4 or 6, 3 or 7, 2.5 or 7.5 it comes
+## out with up 100, 122 and 12 degrees from B's; at 2 or 8 it goes round the throat and back into A,
+## 148 degrees; at 1.5 or 8.5 it passes the rim, 5 degrees (tests/flight_test.gd prints these). Up
+## from the floor right under the throat's centre goes straight in and comes out in B upside down,
+## head first toward B's floor.
+##
+## With gravity, flying and not pitched or rolled, the room turns about the head toward up against
+## gravity there, as Portal turns the player upright after a portal (right_up): the least turn
+## (upside down: a roll), approaching as exp(-t / RIGHT_TIME) and at most RIGHT_MAX a second, both
+## slower where gravity is weaker than RIGHT_G (near its zeros, at the top and the bottom of the
+## throat's middle, it would turn fast and every way).
 ##
 ## The head does not go into the floor: within HEAD_CLEAR of it (the eyes must stay above it: the
 ## renderer draws from above it only), the body is pushed back out along the floor's normal at the
-## head (keep_head_up). Where the feet reach the floor, the body lands: the feet go onto the floor
-## below them and the frame turns the least way that stands up along the floor's normal. With
-## gravity it has mostly turned upright by then; a landing still tilted (without gravity, or
-## falling too soon) moves the view at once, as a snap turn does (main.gd: hands.forget_motion). The
-## feet stay within LIMIT of the throat's centre in the flat universes.
+## head (keep_head_up). Where the feet reach the floor, the body lands: the frame turns the least way
+## that stands it up and the feet go straight up onto the floor (touch_down; below the floor is only
+## ever in a flat universe). With gravity it has mostly turned upright by then; a landing still
+## tilted (without gravity, or falling too soon) moves the view at once, as a snap turn does
+## (main.gd: hands.forget_motion). The feet stay within LIMIT of the throat's centre.
 
 const GRAVITY := BallWorld.GRAVITY
 const HEAD_MIN := 0.05          # m: the head at least this far above the feet along up (the room's floor)
 const HEAD_CLEAR := 0.04        # m: the head this close to the floor (height, WormholeSpace.height) is pushed out
 const FALL_DT := 1.0 / 120.0    # s: a free fall's longest RK4 step
-const LIMIT := BallWorld.WORLD_RADIUS   # m: the feet's chart radius at most (the toys' wall)
+const LIMIT := BallWorld.WORLD_RADIUS   # m: the feet this far from the throat's centre at most (the toys' wall)
 const RIGHT_TIME := 0.35        # s: turning upright with gravity (right_up)
 const RIGHT_MAX := deg_to_rad(120.0)    # per second
 const RIGHT_G := 0.15           # g: weaker gravity turns it slower, in proportion
@@ -59,13 +65,25 @@ func _init(p_space: WormholeSpace) -> void:
 	space = p_space
 
 
-## Stand at (pl, pn) of the floor with the room's axes f (up along the floor's normal).
-func stand(pl: float, pn: Vector3, f: Array) -> void:
-	l = pl
-	n = Vector3(pn.x, pn.y, 0.0).normalized()
-	frame = f.duplicate()
+## Stand on the floor of universe side (+1 A, -1 B) at chart point (xy, 0), the room's x and z
+## along the chart directions fx and fz made level (their parts along the floor), up the chart's up.
+func stand_at(side: float, xy: Vector2, fx: Vector3, fz: Vector3) -> void:
+	var p := space.point_from_chart(side, Vector3(xy.x, xy.y, 0.0))
+	l = p[0]
+	n = p[1]
+	frame = WormholeSpace.orthonormalize([WormholeSpace.vector_from_chart(side, n, Vector3(fx.x, fx.y, 0.0)),
+			WormholeSpace.vector_from_chart(side, n, Vector3(0.0, 0.0, 1.0)),
+			WormholeSpace.vector_from_chart(side, n, Vector3(fz.x, fz.y, 0.0))])
 	V = Vector4.ZERO
 	standing = true
+
+
+## Flying, at rest, with the head at (hl, hn), the room's axes fh there, height (m, the head's in the
+## room) above the feet.
+func fly_at(hl: float, hn: Vector3, fh: Array, height: float) -> void:
+	standing = false
+	V = Vector4.ZERO
+	_set_head(hl, hn, fh, height)
 
 
 ## Off the floor (standing: else nothing changes), at rest.
@@ -122,19 +140,20 @@ func coast(dt: float, height: float) -> bool:
 
 
 ## Move the feet by the tangent displacement T there along its geodesic, the frame carried along;
-## standing, they stay exactly on the floor (removes round-off only).
+## standing, along the floor (T's part across it dropped): a straight line of the chart.
 func move(T: Vector4) -> void:
 	var dist := T.length()
 	if dist < 1e-7:
 		return
+	if standing:
+		var side := signf(l)
+		var x := space.chart_position(l, n)
+		var d := WormholeSpace.vector_to_chart(side, n, T)
+		var xy := (Vector2(x.x, x.y) + Vector2(d.x, d.y)).limit_length(sqrt(LIMIT * LIMIT - space.lift * space.lift))
+		stand_at(side, xy, WormholeSpace.vector_to_chart(side, n, frame[0]), WormholeSpace.vector_to_chart(side, n, frame[2]))
+		return
 	var res := space.geodesic(l, n, T / dist, dist, frame)
 	l = res[0]
-	if standing:
-		n = Vector3(res[1].x, res[1].y, 0.0).normalized()
-		var fx: Vector4 = WormholeSpace.tangent(n, Vector4(res[2][0].x, res[2][0].y, res[2][0].z, 0.0))
-		var fz: Vector4 = WormholeSpace.tangent(n, Vector4(res[2][2].x, res[2][2].y, res[2][2].z, 0.0))
-		frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
-		return
 	n = res[1]
 	frame = WormholeSpace.orthonormalize(res[2])
 	_keep_in()
@@ -240,23 +259,11 @@ func height() -> float:
 func touch_down() -> bool:
 	if standing or space.height(l, n) > 0.0:
 		return false
-	# the feet onto the floor along the great circle at their l, the floor's normal geodesic
-	var u := Vector3(0.0, 0.0, 1.0) - n.z * n
-	var ul := u.length()
-	var dist := space.r(l) * asin(clampf(absf(n.z), 0.0, 1.0))
-	if ul > 1e-9 and dist > 1e-9:
-		var d := (-signf(n.z) / ul) * u
-		var res := space.geodesic(l, n, Vector4(0.0, d.x, d.y, d.z), dist, frame)
-		l = res[0]
-		n = res[1]
-		frame = res[2]
-	n = Vector3(n.x, n.y, 0.0).normalized()
-	var f := turn_up(frame, Vector4(0.0, 0.0, 0.0, 1.0))
-	var fx: Vector4 = WormholeSpace.tangent(n, Vector4(f[0].x, f[0].y, f[0].z, 0.0))
-	var fz: Vector4 = WormholeSpace.tangent(n, Vector4(f[2].x, f[2].y, f[2].z, 0.0))
-	frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
-	V = Vector4.ZERO
-	standing = true
+	var side := signf(l)
+	var f := turn_up(frame, WormholeSpace.vector_from_chart(side, n, Vector3(0.0, 0.0, 1.0)))
+	var x := space.chart_position(l, n)
+	stand_at(side, Vector2(x.x, x.y), WormholeSpace.vector_to_chart(side, n, f[0]),
+			WormholeSpace.vector_to_chart(side, n, f[2]))
 	return true
 
 
@@ -314,8 +321,8 @@ func set_state(p: Array) -> void:
 	V = p[4]
 
 
-## The feet within LIMIT of the centre in a flat universe: back on its sphere, the velocity's part
-## outward taken away.
+## Flying, the feet within LIMIT of the throat's centre: back on that sphere, the velocity's part
+## outward taken away (standing: move keeps them in).
 func _keep_in() -> void:
 	if absf(l) <= space.L or space.r(l) <= LIMIT:
 		return

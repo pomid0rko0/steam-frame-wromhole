@@ -4,14 +4,16 @@ extends Node
 ## closed throughout: the world is turned and moved to the head, and some pictures are no proper
 ## ones.
 ##
-## What a frame costs depends on the pose: how far from the throat one stands (l), where one looks
-## (degrees from the throat along the floor, degrees up) and how the head is tilted (roll: it
-## changes how pixels fall into the GPU's groups). With the toys still (main.hold stops them) and
-## the viewer on the axis through the throat (main.place_on_axis), the pose decides what the
-## renderer does. Besides it a frame's time changes with where the eyes look under foveation (the
-## density map follows them: foveation.gd) and with SteamVR's half rate after a late frame (below).
+## What a frame costs depends on the pose: where the head is (on the floor, at the start or under
+## the mouth; flying at the curved zone's edge, in the throat, in universe B), where one looks
+## (degrees from the throat, degrees up) and how the head is tilted (roll: it changes how pixels
+## fall into the GPU's groups). With the toys still (main.hold stops them) and the viewer put at the
+## pose (_put: standing, main.place, or flying on the axis through the throat's centre at its
+## height, main.place_on_axis), the pose decides what the renderer does. Besides it a frame's time
+## changes with where the eyes look under foveation (the density map follows them: foveation.gd)
+## and with SteamVR's half rate after a late frame (below).
 ##
-## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), with the feet held there,
+## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
 ## and the frame is timed on the GPU (the median frame of each segment), this build's renderer each
 ## way VARIANTS lists: without foveation, the split pass alone (what foveation's pass costs without
 ## a map), each foveation, and with a cube held right before the eyes (NEAR_CUBE: a body near the
@@ -21,36 +23,46 @@ extends Node
 ## it is, and so does the segment after it.
 ##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with the menu's foveation: does
-## the rate hold all round, and where not; its last rows with the cube before the eyes. Each place
-## starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
+## the rate hold all round, and where not: sweeps round at each place, a flight along the axis
+## through the throat into universe B and back, and its last rows with the cube before the eyes.
+## Each place starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
 ## (frame_rate.gd).
 ##
 ## Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
-# l, in PLACES and TOUR_L: the start (main.START_POS); the other values are metres of l chosen
-# against this throat's curved zone (edge L), which WormholeSpace.set_profile's list names
+# Where a pose is (_put): START, standing at main.START_POS facing the wormhole; Vector3(x, y, side),
+# standing on universe side's floor at chart (x, y), facing the point under the throat's centre;
+# a float, the head at that l on the axis through the throat's centre (main.place_on_axis: flying,
+# main.LIFT over the floor, facing the throat at l > 0 and away from it at l < 0). Degrees to the
+# right and up are from there. The values are metres chosen against this throat's curved zone (edge
+# L, radius Rout) and main.LIFT, which WormholeSpace.set_profile's list names.
 const START := INF
-const PLACES := [   # the comparison's poses: [l, degrees to the right, degrees up] (place_on_axis)
-	[START, 0.0, 0.0],
-	[6.2, 0.0, 0.0],    # just outside the curved zone: the wormhole fills the view
+const UNDER_A := Vector3(2.5, 0.0, 1.0)     # on A's floor under the mouth, the head just below the curved zone
+const UNDER_A_IN := Vector3(0.5, 0.0, 1.0)  # right under the throat's centre: the head in the curved zone
+const UNDER_B := Vector3(-2.5, 0.0, -1.0)   # on B's floor under its mouth
+const PLACES := [   # the comparison's poses: [where, degrees to the right, degrees up]
+	[START, 0.0, 0.0],      # the mouth over the floor ahead
+	[UNDER_A, 0.0, 60.0],   # looking up into the mouth
+	[UNDER_A_IN, 0.0, 80.0],
+	[6.2, 0.0, 0.0],        # flying just outside the curved zone: the wormhole fills the view
 	[6.2, 60.0, 0.0],
-	[5.0, 0.0, 0.0],    # inside, at the edge: every ray starts in the curved zone
+	[5.0, 0.0, 0.0],        # inside, at the edge: every ray starts in the curved zone
 	[5.0, 90.0, 0.0],
-	[5.0, 180.0, 0.0],  # facing away
-	[5.0, 0.0, -35.0],  # down at the floor
-	[5.0, 0.0, 35.0],   # up
-	[0.0, 0.0, 0.0],    # in the throat
-	[0.0, 90.0, 0.0],   # in the throat, looking sideways round it
-	[-5.0, 180.0, 0.0], # world B, at the edge, facing the throat (boxes where A has pillars)
-	[-5.7, 160.0, -5.0],  # world B at the edge, 20 deg from the throat
-	[-6.2, 180.0, 0.0], # world B, just outside the curved zone, facing the throat
+	[5.0, 180.0, 0.0],      # facing away
+	[5.0, 0.0, -35.0],      # down at the floor
+	[0.0, 0.0, 0.0],        # in the throat, looking along it
+	[0.0, 90.0, 0.0],       # in the throat, looking sideways round it
+	[-5.0, 180.0, 0.0],     # world B, at the edge, facing the throat (boxes where A has pillars)
+	[-6.2, 180.0, 0.0],     # world B, just outside the curved zone, facing the throat
+	[UNDER_B, 0.0, 60.0],   # on B's floor, looking up into its mouth
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
 const PREPARE := 2.0            # s each variant runs before the timing (its pipelines are compiled)
 const TOUR_RATE := 144.0
-const TOUR_L := [START, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2]
+const TOUR_AT := [START, UNDER_A, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2, UNDER_B]   # sweeping round
+const TOUR_FLY := 12.0          # l: the tour's flight from here along the axis, through the throat to -6.2
 const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
@@ -96,7 +108,7 @@ var tour_results: Array[Tally] = []   # per step
 var meter := RateMeter.new()    # fed by main.rate each frame
 var counting := false
 var tour_t := 0.0               # s since the tour began counting (the "tf" lines' time)
-var pose := [0.0, 0.0, 0.0, 0.0]     # the tour's pose now: l, degrees right, up, roll
+var pose: Array = [START, 0.0, 0.0, 0.0]     # the tour's pose now: where, degrees right, up, roll
 var sec := Tally.new()          # this second's
 var saved_pose: Array
 var saved_rate := 0.0           # the rate to go back to
@@ -127,36 +139,65 @@ func near_cube(hp: Array, basis: Basis) -> Array:
 ## The tour's steps.
 func _make_tour() -> Array[Step]:
 	var t: Array[Step] = []
-	var start_l := _l(START)
-	for tl in TOUR_L:
-		var l := _l(tl)
+	for at: Variant in TOUR_AT:
 		for i in TOUR_PITCH.size():
 			var y0 := 0.0 if i % 2 == 0 else 180.0
-			t.append(_st(l, l, y0, 180.0 - y0, TOUR_PITCH[i], SWEEP,
-					"l %.1f m, %.0f deg up, sweeping round" % [l, TOUR_PITCH[i]], i == 0))
-	t.append(_st(start_l, -6.2, 0.0, 720.0, 0.0, 15.0, "walking from the start through the throat, turning and nodding", true, 30.0))
-	t.append(_st(-6.2, start_l, 180.0, -540.0, 0.0, 15.0, "walking back, turning, nodding and tilting", true, 30.0, 20.0))
+			t.append(_st(at, at, y0, 180.0 - y0, TOUR_PITCH[i], SWEEP,
+					"%s, %.0f deg up, sweeping round" % [_name(at), TOUR_PITCH[i]], i == 0))
+	t.append(_st(TOUR_FLY, -6.2, 0.0, 720.0, 0.0, 15.0, "flying along the axis through the throat, turning and nodding", true, 30.0))
+	t.append(_st(-6.2, TOUR_FLY, 180.0, -540.0, 0.0, 15.0, "flying back, turning, nodding and tilting", true, 30.0, 20.0))
 	for l in [6.2, 5.0, 0.0]:
-		t.append(_st(l, l, 0.0, 360.0, 0.0, 4.0, "l %.1f m, turning round (yaw)" % l, true))
-		t.append(_st(l, l, 0.0, 0.0, 0.0, 6.0, "l %.1f m, nodding 60 deg (pitch)" % l, false, 60.0))
-		t.append(_st(l, l, 0.0, 0.0, 0.0, 4.0, "l %.1f m, tilting 30 deg (roll)" % l, false, 0.0, 30.0))
+		t.append(_st(l, l, 0.0, 360.0, 0.0, 4.0, "%s, turning round (yaw)" % _name(l), true))
+		t.append(_st(l, l, 0.0, 0.0, 0.0, 6.0, "%s, nodding 60 deg (pitch)" % _name(l), false, 60.0))
+		t.append(_st(l, l, 0.0, 0.0, 0.0, 4.0, "%s, tilting 30 deg (roll)" % _name(l), false, 0.0, 30.0))
 	# the worst case: a cube right before the eyes, in the throat and at the curved zone's edge
 	for l in [6.2, 5.0, 4.0, 0.0, -5.0]:
-		var st := _st(l, l, 0.0, 360.0, 0.0, 4.0, "l %.1f m, a cube at the eyes, turning round and nodding" % l, true, 40.0)
+		var st := _st(l, l, 0.0, 360.0, 0.0, 4.0, "%s, a cube at the eyes, turning round and nodding" % _name(l), true, 40.0)
 		st.near = true
 		t.append(st)
 	return t
 
 
-## A pose's l: START as the start's.
-func _l(l: float) -> float:
-	return main.space.point_from_chart(1.0, main.START_POS)[0] if is_inf(l) else l
+## The viewer at a pose (where: PLACES' top), turned yaw degrees right, the view pitch degrees up
+## and roll degrees about the line of sight.
+func _put(where: Variant, yaw: float, pitch: float, roll := 0.0) -> void:
+	if where is float and not is_inf(where):
+		main.place_on_axis(where, yaw, pitch, roll)
+		return
+	var stand: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
+	var xy := Vector2(stand.x, stand.y)
+	var fwd: Vector2 = Vector2(main.START_FORWARD.x, main.START_FORWARD.y) if where is float else -xy.normalized()
+	fwd = fwd.rotated(-deg_to_rad(yaw))      # to the right: clockwise in either chart (main.place's right)
+	main.place(Vector3(xy.x, xy.y, 0.0), Vector3(fwd.x, fwd.y, 0.0), stand.z, pitch, roll)
 
 
-func _st(l0: float, l1: float, y0: float, y1: float, p: float, secs: float, what: String,
+## A pose's place in words, for the log.
+func _name(where: Variant) -> String:
+	if where is float:
+		return "the start" if is_inf(where) else "on the axis at l %.1f m" % where
+	var v: Vector3 = where
+	return "on %s's floor at (%.1f, %.1f)" % ["A" if v.z > 0.0 else "B", v.x, v.y]
+
+
+## The l of a pose's place: the head's on the axis, the feet's standing (the "tf" lines).
+func _l(where: Variant) -> float:
+	if where is float and not is_inf(where):
+		return where
+	var v: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
+	return main.space.point_from_chart(v.z, Vector3(v.x, v.y, 0.0))[0]
+
+
+## Between two places of a step: along the axis if both are on it, else the first.
+static func _between(a: Variant, b: Variant, k: float) -> Variant:
+	if a is float and b is float and not is_inf(a) and not is_inf(b):
+		return lerpf(a, b, k)
+	return a
+
+
+func _st(at0: Variant, at1: Variant, y0: float, y1: float, p: float, secs: float, what: String,
 		recover := false, nod := 0.0, roll := 0.0) -> Step:
 	var st := Step.new()
-	st.l = Vector2(l0, l1)
+	st.at = [at0, at1]
 	st.yaw = Vector2(y0, y1)
 	st.pitch = p
 	st.nod = nod
@@ -229,7 +270,7 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m, deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
 				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -262,7 +303,7 @@ func _process(delta: float) -> void:
 ## Run a variant untimed at the first place, so its pipelines are compiled before the timing.
 func _prepare() -> void:
 	phase_t = 0.0
-	main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])
+	_put(PLACES[0][0], PLACES[0][1], PLACES[0][2])
 	_use(variants[variants.size() - preparing])
 
 
@@ -300,7 +341,7 @@ func _clock() -> void:
 func _begin(i: int) -> void:
 	step = i
 	var place: Array = PLACES[plan[i].x]
-	main.place_on_axis(_l(place[0]), place[1], place[2])
+	_put(place[0], place[1], place[2])
 	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
@@ -326,8 +367,8 @@ func _end_segment() -> void:
 			s += " (%.3f)" % (_mean(r[v]) / _mean(r[0]))
 		parts.append(s)
 		segs.append(_list(r[v]))
-	print("bench: l %.1f m, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [_l(place[0]), place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
+	print("bench: %s, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
+			% [_name(place[0]), place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
 
 
 func _compared() -> void:
@@ -363,7 +404,7 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 	var vp: RID = main.rate.target.get_viewport_rid()
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
 	var mt: Vector3 = main.rate.before_ms()
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, pose[0], pose[1], pose[2], pose[3],
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
 			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z])
 	sec.frames += 1
@@ -379,7 +420,7 @@ func _tour_step(i: int) -> void:
 	near = tour[i].near
 	tour_results.append(Tally.new())
 	if tour[i].recover:
-		main.place_on_axis(_l(PLACES[0][0]), PLACES[0][1], PLACES[0][2])     # recover at the start
+		_put(PLACES[0][0], PLACES[0][1], PLACES[0][2])     # recover at the start
 	_show("замер %.0f Гц: шаг %d из %d, глаза закрыты" % [main.rate.rate, i + 1, tour.size()])
 
 
@@ -390,10 +431,10 @@ func _tour(delta: float) -> void:
 		return
 	var t := phase_t - recover
 	var k := clampf(t / s.secs, 0.0, 1.0)
-	pose = [lerpf(s.l.x, s.l.y, k), lerpf(s.yaw.x, s.yaw.y, k),
+	pose = [_between(s.at[0], s.at[1], k), lerpf(s.yaw.x, s.yaw.y, k),
 			s.pitch + s.nod * sin(TAU * t / (NOD_PERIOD * tour_scale)),
 			s.roll * sin(TAU * t / (TILT_PERIOD * tour_scale))]
-	main.place_on_axis(pose[0], pose[1], pose[2], pose[3])
+	_put(pose[0], pose[1], pose[2], pose[3])
 	if not counting:
 		counting = true
 		_new_second()
@@ -402,8 +443,8 @@ func _tour(delta: float) -> void:
 	sec.t += delta
 	var r := tour_results[step]
 	if sec.t >= 1.0 or k >= 1.0:
-		print("tour: step %d, l %.2f m, %.0f deg right, %.0f deg up, %.0f deg roll: %d frames of %d refreshes, gpu %.2f ms avg %.2f max"
-				% [step + 1, pose[0], pose[1], pose[2], pose[3], sec.frames, sec.refreshes, sec.gpu / maxi(sec.frames, 1), sec.gpu_max])
+		print("tour: step %d, %s, %.0f deg right, %.0f deg up, %.0f deg roll: %d frames of %d refreshes, gpu %.2f ms avg %.2f max"
+				% [step + 1, _name(pose[0]), pose[1], pose[2], pose[3], sec.frames, sec.refreshes, sec.gpu / maxi(sec.frames, 1), sec.gpu_max])
 		r.frames += sec.frames
 		r.refreshes += sec.refreshes
 		var share := float(sec.refreshes - sec.frames) / sec.refreshes if sec.refreshes > 0 else 0.0
@@ -413,9 +454,9 @@ func _tour(delta: float) -> void:
 		_new_second()
 	if k >= 1.0:
 		counting = false
-		print("tour: %s: %d of %d refreshes without a new frame (%.1f%%), worst second %.0f%% at l %.1f m, %.0f deg right, %.0f deg up"
+		print("tour: %s: %d of %d refreshes without a new frame (%.1f%%), worst second %.0f%% %s, %.0f deg right, %.0f deg up"
 				% [s.what, r.refreshes - r.frames, r.refreshes, 100.0 * r.missed(), 100.0 * r.worst,
-				r.worst_pose[0], r.worst_pose[1], r.worst_pose[2]])
+				_name(r.worst_pose[0]), r.worst_pose[1], r.worst_pose[2]])
 		if step + 1 < tour.size():
 			_tour_step(step + 1)
 		else:
@@ -448,12 +489,20 @@ func _toured() -> void:
 
 
 ## A pose in words for the menu.
-func _ru(l: float, yaw: float, pitch: float) -> String:
-	var a := absf(l)
-	var where := "старт" if a >= _l(START) - 0.05 else ("снаружи у края" if a >= main.space.L else ("край зоны" if a >= main.space.Lc else "горло"))
-	if l < 0.0:
+func _ru(at: Variant, yaw: float, pitch: float) -> String:
+	var where := "старт"
+	var b := false
+	var y := fposmod(yaw, 360.0)    # degrees from the throat
+	if at is Vector3:
+		where = "на полу под горлом"
+		b = (at as Vector3).z < 0.0
+	elif not is_inf(at):
+		var a := absf(at as float)
+		where = "в полёте " + ("снаружи у края" if a >= main.space.L else ("на краю зоны" if a >= main.space.Lc else "в горле"))
+		b = at < 0.0
+		y = fposmod(yaw if at >= 0.0 else 180.0 - yaw, 360.0)
+	if b:
 		where += " (мир B)"
-	var y := fposmod(yaw if l >= 0.0 else 180.0 - yaw, 360.0)    # degrees from the throat
 	y = minf(y, 360.0 - y)
 	var dir := "на горло" if y < 45.0 else ("от горла" if y > 135.0 else "вбок")
 	if pitch > 20.0:
@@ -546,11 +595,11 @@ class Setup:
 		near = p_near
 
 
-## A step of the tour: l and yaw (degrees to the right) from x to y over secs, pitch with a nod of
-## that amplitude (degrees, NOD_PERIOD), a tilt of roll's (TILT_PERIOD); back to the start first if
-## recover.
+## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees
+## to the right) from the first to the second over secs, pitch with a nod of that amplitude
+## (degrees, NOD_PERIOD), a tilt of roll's (TILT_PERIOD); back to the start first if recover.
 class Step:
-	var l: Vector2
+	var at: Array                   # [from, to]
 	var yaw: Vector2
 	var pitch: float
 	var nod: float
@@ -569,7 +618,7 @@ class Tally:
 	var gpu := 0.0                  # ms, summed
 	var gpu_max := 0.0
 	var worst := 0.0                # the worst second's share of refreshes without a new frame
-	var worst_pose: Array = [0.0, 0.0, 0.0, 0.0]   # and where: l, degrees right, up, roll
+	var worst_pose: Array = [START, 0.0, 0.0, 0.0]   # and where: where, degrees right, up, roll
 
 	func missed() -> float:
 		return float(refreshes - frames) / refreshes if refreshes > 0 else 0.0

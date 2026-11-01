@@ -315,28 +315,29 @@ func draw_toys() -> void:
 		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
 
 
-## Stand at chart A position pos (z = 0), looking along forward.
-func place(pos: Vector3, forward: Vector3) -> void:
-	var p := space.point_from_chart(1.0, Vector3(pos.x, pos.y, 0.0))
+## Stand on the floor of universe side (+1 A, -1 B) at chart position pos (its z ignored), looking
+## along forward (its part along the floor), the view turned pitch degrees up and roll degrees about
+## the line of sight (right side up) on top of the head's own (the speed check).
+func place(pos: Vector3, forward: Vector3, side := 1.0, pitch := 0.0, roll := 0.0) -> void:
 	var f := Vector3(forward.x, forward.y, 0.0).normalized()
-	var up := Vector3(0.0, 0.0, 1.0)
-	var back := -f
-	var right := up.cross(back)
-	viewer.stand(p[0], p[1], [WormholeSpace.vector_from_chart(1.0, p[1], right),
-			WormholeSpace.vector_from_chart(1.0, p[1], up),
-			WormholeSpace.vector_from_chart(1.0, p[1], back)])
+	viewer.stand_at(side, Vector2(pos.x, pos.y), Vector3(0.0, 0.0, 1.0).cross(-f), -f)
 	_face_head()
 	hands.forget_motion()
+	view_pitch = pitch
+	view_roll = roll
 
 
-## Stand at l on the axis through the throat (n = +x), looking yaw degrees to the right of
-## the direction of falling l (toward the throat at l > 0, away from it at l < 0; the head's own yaw
-## is taken out), and turn the view pitch degrees up and roll
-## degrees about the line of sight (right side up) on top of the head's own: the speed check.
+## Fly, at rest, with the head at l on the axis through the throat's centre (n = +x: in chart A the
+## line (x, 0, LIFT), in chart B (-x, 0, LIFT)), the room upright in chart A's axes, looking yaw
+## degrees to the right of the direction of falling l (toward the throat at l > 0, away from it at
+## l < 0; the head's own yaw is taken out); the view turned pitch degrees up and roll degrees about
+## the line of sight (right side up) on top of the head's own: the speed check. Along the axis the
+## room's axes stay as they are (a radial path carries every vector as it is, in (U_l, u)), so it
+## is upright in chart B too.
 func place_on_axis(l: float, yaw := 0.0, pitch := 0.0, roll := 0.0) -> void:
 	# right, up, back as (U_l, u): back is +l (facing the throat at l > 0), right is +y of chart A
-	viewer.stand(l, Vector3(1.0, 0.0, 0.0),
-			[Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)])
+	viewer.fly_at(l, Vector3(1.0, 0.0, 0.0),
+			[Vector4(0.0, 0.0, 1.0, 0.0), Vector4(0.0, 0.0, 0.0, 1.0), Vector4(1.0, 0.0, 0.0, 0.0)], camera.transform.origin.y)
 	viewer.turn(deg_to_rad(yaw))
 	_face_head()
 	hands.forget_motion()
@@ -358,14 +359,18 @@ func set_pose(p: Array) -> void:
 	hands.forget_motion()
 
 
-## Where the head looks: degrees from the direction to the throat along the room's floor (the
-## floor, standing), and degrees up in the room.
+## Where the head looks: degrees from the direction to the throat's centre (falling |l| at the
+## head) along the room's floor, and degrees up in the room.
 func look_angles() -> Vector2:
 	var f := -camera.transform.basis.z
-	var T: Vector4 = f.x * viewer.frame[0] + f.z * viewer.frame[2]     # along the room's floor, as (U_l, u)
-	var toward := -1.0 if viewer.l > 0.0 else 1.0        # the throat is where |l| decreases
-	var h := T.length()
-	var yaw := rad_to_deg(acos(clampf(toward * T.x / h, -1.0, 1.0))) if h > 1e-6 else 0.0
+	var hf: Array = _head_pose[2]
+	if hf.is_empty():
+		return Vector2.ZERO
+	var T: Vector4 = f.x * hf[0] + f.z * hf[2]          # along the room's floor, as (U_l, u)
+	var R := Vector4(-1.0 if _head_pose[0] > 0.0 else 1.0, 0.0, 0.0, 0.0)
+	R -= R.dot(hf[1]) * (hf[1] as Vector4)               # along the room's floor too
+	var c := T.length() * R.length()
+	var yaw := rad_to_deg(acos(clampf(T.dot(R) / c, -1.0, 1.0))) if c > 1e-6 else 0.0
 	return Vector2(yaw, rad_to_deg(asin(clampf(f.y, -1.0, 1.0))))
 
 

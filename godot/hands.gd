@@ -653,11 +653,11 @@ func _candidates() -> Array:
 
 
 ## The length of the straight line from P along Dp (points and vectors of R^4 in one flat universe)
-## to the floor or PULL_RANGE, if it keeps out of the shell's sphere that far; else -1.
+## to the floor (R^4's z = -lift) or PULL_RANGE, if it keeps out of the shell's sphere that far; else -1.
 func _straight(P: Vector4, Dp: Vector4) -> float:
 	var end := PULL_RANGE
 	if Dp.z < 0.0:
-		end = minf(end, -P.z / Dp.z)
+		end = minf(end, -(P.z + space.lift) / Dp.z)
 	var p := Vector3(P.x, P.y, P.z)
 	var v := Vector3(Dp.x, Dp.y, Dp.z)
 	var t := clampf(-p.dot(v) / maxf(v.length_squared(), 1e-12), 0.0, end)
