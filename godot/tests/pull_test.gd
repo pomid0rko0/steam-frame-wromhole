@@ -7,7 +7,7 @@ extends SceneTree
 ##    cube into the throat, within 1 cm after the flight's time; WormholeSpace.ray ends where
 ##    geodesic does and stops at the floor
 ## 2. a hand pointing at a ball far off aims at it: the ball glows and the hand turns orange;
-##    pointing 20 degrees past it, neither
+##    pointing 20 degrees past it, neither; pointing through two balls, at the nearer one
 ## 3. the grip locks on it; a slow move pulls nothing, and the grip let go, nothing flies
 ## 4. a flick of the wrist throws the ball to the hand: let fly within PULL_TRIES frames, missing
 ##    by less than PULL_MISS, caught by the closed hand before the planned arrival, drawn in until
@@ -189,6 +189,16 @@ func _aim() -> void:
 	await _step(AIM)
 	U.check("pointed 20 degrees past it, neither", h.aimed == null and _drawn(0.25) == own
 			and _hand_color(1) == Hands.COLOR, "aimed %s, ball %s, hand %s" % [h.aimed, _drawn(0.25), _hand_color(1)])
+	# from 0.5 m up at the centre of a ball 4.2 m off, through one 2.2 m off on the way (the far one
+	# first in the list)
+	_clear()
+	var far := _ball_at(Vector3(5.5, 0.2, 0.25), 0.25)
+	var near := _ball_at(Vector3(7.5, 0.2, 0.25), 0.25)
+	var q := Vector3(0.2, 0.5, -0.3)
+	_pose(right, q, _toward(_play(Vector3(5.5, 0.2, 0.25)) - q))
+	await _step(AIM)
+	U.check("pointed through two balls, the hand aims at the nearer", h.aimed == near,
+			"aimed the near one %s, the far one %s" % [h.aimed == near, h.aimed == far])
 
 
 # 3

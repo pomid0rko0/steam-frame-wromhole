@@ -448,7 +448,7 @@ func _pulled(b: BallWorld.Body) -> bool:
 
 ## What hand h points at: of the toys beyond its reach, the one whose surface the geodesic along
 ## its aim pose's -z passes nearest seen from the hand, within AIM_ANGLE (the one aimed at already
-## counts AIM_STICK as far off): h.aimed, how far along the geodesic it is and the geodesic's
+## counts AIM_STICK as far off; of those it goes through, the nearest along it): h.aimed, how far along the geodesic it is and the geodesic's
 ## direction there; a tick in the hand at a new one. A toy in the flat universe the hand is in,
 ## not behind the shell's sphere from it, it sees along the chord of R^4 (a straight line there);
 ## for the others, if any, the geodesic itself up to PULL_RANGE, the floor in the way: a straight
@@ -480,7 +480,7 @@ func _aim(h: Hand) -> void:
 		if s <= 0.0:
 			continue
 		var k := (AIM_STICK if b == h.aimed else 1.0) * maxf((V - s * Dp).length() - c[2], 0.0) / maxf(s, 0.1)
-		if k < best_k:
+		if k < best_k or (k == 0.0 and best_k == 0.0 and dist < best_s):
 			best_k = k
 			best = b
 			best_s = dist
@@ -521,7 +521,7 @@ func _aim(h: Hand) -> void:
 				var t := clampf((C - A).dot(AB) / len2, 0.0, 1.0)
 				var s: float = lens[j] + t * (lens[j + 1] - lens[j])
 				var k := (AIM_STICK if c[0] == h.aimed else 1.0) * maxf((C - A - t * AB).length() - c[2], 0.0) / maxf(s, 0.1)
-				if k < best_k:
+				if k < best_k or (k == 0.0 and best_k == 0.0 and s < best_s):
 					best_k = k
 					best = c[0]
 					best_s = s
