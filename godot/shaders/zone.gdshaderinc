@@ -125,8 +125,8 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 
 // A point inside a cube's section by the half-surface toward t (the hyperplane through the axis with
 // normal m, R^4's xyz): the middle of where the hyperplane cuts the cube's edges, to first order (in
-// the cube's tangent space at C, then onto the space along N), as (l, alpha); false if it misses
-// them all. The centre's own place in the hyperplane is outside the small sections near a corner.
+// the cube's tangent space at C, then onto the space along N), as (l, alpha). The centre's own
+// place in the hyperplane is outside the small sections near a corner.
 bool zone_inner_cube(vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, vec3 m, vec3 en, vec3 t, out vec2 la) {
 	vec3 mu = vec3(dot(E1.xyz, m), dot(E2.xyz, m), dot(E3.xyz, m));
 	float c = -dot(C.xyz, m);
@@ -148,11 +148,51 @@ bool zone_inner_cube(vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, vec3
 			}
 		}
 	}
-	la = vec2(0.0);
-	if (count < 0.5) return false;
-	vec3 x = sum / count;
+	// none (a section at the end of the cube's span, to rounding): the cube's point nearest the
+	// hyperplane's nearest to C, so the section's points gather on the cube, not beside it
+	vec3 x = count < 0.5 ? clamp(mu * (c / max(dot(mu, mu), 1e-12)), vec3(-size), vec3(size)) : sum / count;
 	vec4 P = geo_onto(C + x.x * E1 + x.y * E2 + x.z * E3, N);
 	vec3 nn;
 	la = vec2(geo_l_of(P, nn), geo_atan2(dot(P.xyz, t), dot(P.xyz, en)));
 	return true;
+}
+
+// A cube's azimuth for the mesh's column u in [0, 1] (columns of them), so that a column falls on
+// the azimuth of each of its corners (on the space: geo_onto from the 4D box's corner along N),
+// where its outline turns: off the axis (round false) from the least to the greatest of those
+// azimuths, round the axis all the way round; the columns between them shared out by their
+// angles (each corner on the column nearest its share). a1, a2: the axis's frame across it; th0:
+// an azimuth inside the cube's span (off the axis).
+float zone_cube_azimuth(float u, float columns, bool round_axis, float th0, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, vec3 a1, vec3 a2) {
+	float k[9];
+	for (int i = 0; i < 8; i++) {
+		vec4 P = geo_onto(C + size * (((i & 1) == 0 ? -1.0 : 1.0) * E1 + ((i & 2) == 0 ? -1.0 : 1.0) * E2
+				+ ((i & 4) == 0 ? -1.0 : 1.0) * E3), N);
+		float a = geo_atan2(dot(P.xyz, a2), dot(P.xyz, a1)) - th0;
+		k[i] = a - 2.0 * GEO_PI * floor(a / (2.0 * GEO_PI) + (round_axis ? 0.0 : 0.5));   // [0, 2 pi) or [-pi, pi)
+	}
+	// sorted (a network of 19 exchanges)
+	const int NET[38] = int[38](0, 1, 2, 3, 4, 5, 6, 7, 0, 2, 1, 3, 4, 6, 5, 7, 1, 2, 5, 6, 0, 4, 3, 7, 1, 5, 2, 6,
+			1, 4, 3, 6, 2, 4, 3, 5, 3, 4);
+	for (int e = 0; e < 19; e++) {
+		int i = NET[2 * e], j = NET[2 * e + 1];
+		float lo = min(k[i], k[j]), hi = max(k[i], k[j]);
+		k[i] = lo;
+		k[j] = hi;
+	}
+	// the last knot: the greatest corner, or round the axis the first again a turn on
+	k[8] = round_axis ? k[0] + 2.0 * GEO_PI : k[7];
+	float span = max(k[8] - k[0], 1e-9);
+	float col = clamp(u, 0.0, 1.0) * columns;
+	float c0 = 0.0;
+	float th = k[8];
+	for (int i = 0; i < 8; i++) {
+		float c1 = i == 7 ? columns : floor(columns * (k[i + 1] - k[0]) / span + 0.5);
+		if (col <= c1 + 1e-4) {
+			th = c1 > c0 ? mix(k[i], k[i + 1], clamp((col - c0) / (c1 - c0), 0.0, 1.0)) : k[i + 1];
+			break;
+		}
+		c0 = c1;
+	}
+	return th0 + th;
 }

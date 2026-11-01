@@ -58,7 +58,8 @@ uniform float sheet = 1.0;       // the universe: A +1, B -1
 #ifdef ZONE
 uniform int zone_first = 0;      // instance i draws image zone_first + i % zone_images (Renderer)
 uniform int zone_images = 1;
-uniform float zone_round = 48.0; // the mesh's points round a section (Renderer._zone_mesh)
+uniform float zone_round = 48.0; // the mesh's points round a section and azimuths (Renderer._zone_mesh)
+uniform float zone_columns = 64.0;
 #endif
 #ifdef BEAM
 #define BEAM_POINTS 48           // Renderer.BEAM_POINTS
@@ -135,6 +136,10 @@ void vertex() {
 		phi = 2.0 * GEO_PI * VERTEX.y;
 		dsg = 1.0;
 	}
+#ifdef CUBE
+	// a cube's outline turns at its corners: a column on each one's azimuth
+	th = zone_cube_azimuth(VERTEX.x, zone_columns, round_axis, round_axis ? 0.0 : geo_atan2(cp.y, cp.x), C, E1, E2, E3, N, size, a1, a2);
+#endif
 	vec2 sct = geo_sincos(th);
 	vec3 t = sct.y * a1 + sct.x * a2;
 	if (!round_axis) {

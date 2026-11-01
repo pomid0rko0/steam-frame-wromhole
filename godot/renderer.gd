@@ -42,7 +42,7 @@ const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LE
 # body's k-th turn round it is a ring that thins only as 1 / k
 const ZONE_IMAGES := 20
 const ZONE_FINE := 4
-const ZONE_AZIMUTHS := 64
+const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
@@ -132,6 +132,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_first", 0 if k % 2 == 0 else ZONE_FINE)
 		m.set_shader_parameter("zone_images", ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
+		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
 		zone_mats.append(m)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
@@ -156,10 +157,10 @@ func _ready() -> void:
 	add_child(floor_quad)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
-	var grids := [_zone_mesh(ZONE_ROUND), _zone_mesh(ZONE_ROUND_COARSE)]
 	for k in 4:
 		var images := ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE
-		zone.append(_multimesh(grids[k % 2], zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
+		var grid := _zone_mesh(ZONE_AZIMUTHS[k / 2], ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE)
+		zone.append(_multimesh(grid, zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
 	for mm in [balls, cubes] + zone:
 		play.add_child(mm)
 	_lens_statics()
@@ -516,16 +517,16 @@ static func _beam_mesh() -> ArrayMesh:
 	return mesh
 
 
-## A body in the curved zone's mesh (body.gdshaderinc, ZONE): a grid of ZONE_AZIMUTHS x round
-## squares, VERTEX.xy in [0, 1]^2.
-static func _zone_mesh(round: int) -> ArrayMesh:
+## A body in the curved zone's mesh (body.gdshaderinc, ZONE): a grid of azimuths x round squares,
+## VERTEX.xy in [0, 1]^2.
+static func _zone_mesh(azimuths: int, round: int) -> ArrayMesh:
 	var v := PackedVector3Array()
-	for i in ZONE_AZIMUTHS + 1:
+	for i in azimuths + 1:
 		for j in round + 1:
-			v.append(Vector3(float(i) / ZONE_AZIMUTHS, float(j) / round, 0.0))
+			v.append(Vector3(float(i) / azimuths, float(j) / round, 0.0))
 	var idx := PackedInt32Array()
 	var w := round + 1
-	for i in ZONE_AZIMUTHS:
+	for i in azimuths:
 		for j in round:
 			var a := i * w + j
 			idx.append_array([a, a + w, a + 1, a + 1, a + w, a + w + 1])
