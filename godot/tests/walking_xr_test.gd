@@ -7,19 +7,23 @@ extends SceneTree
 ## 0. the action map is exactly util.gd's, every binding of every profile (U.check_bindings)
 ## 1. left stick forward for a second walks 1.5 m; with the left trigger, half a second runs 2 m
 ## 2. the right stick at half way (past the dead zone) turns 45 degrees per second, smoothly
-## 3. a right stick click switches to snaps, even with the stick out (it snaps only once back
-##    in the middle): then the right stick held right turns 30 degrees once
+## 3. a right stick click switches the flight's gravity off (the line below says so) and on again;
+##    a switch to snaps (the menu's) with the stick out snaps only once it is back in the middle:
+##    then the right stick held right turns 30 degrees once
 ## 4. A goes back to the start
 ## 5. the menu by actions the generic profile binds too (util.gd's BINDINGS): a left stick click
 ##    opens it; then the left stick walks no more but picks rows (held, it repeats), A presses the
-##    picked row (turns: snap -> smooth) and does not go back to the start, right steps the
-##    gravity row's value, which takes effect half a second later, B closes it; then the stick
+##    picked row (turns: snap -> smooth) and does not go back to the start, two rows up (past the
+##    flight's) right steps the gravity row's value, which takes effect half a second later, B
+##    closes it; then the stick
 ##    walks again
 ## 6. the menu by actions only the Frame's profile binds: View opens it, the D-pad picks and
 ##    changes, A puts the value into effect at once, Menu closes it; closed, the D-pad up, left and
 ##    right show gravity (the floor, the arrows, off)
 ## 7. while the speed check holds the viewer (main.hold), the sticks and A do nothing; then
 ##    left Y (generic: secondary/click) shows gravity: the floor, the arrows, off
+## 8. the right stick up (and a little right) flies up and turns nothing; let go, the body falls
+##    back onto the floor where it took off; held by the speed check, it does not fly
 
 const U := preload("res://tests/util.gd")
 
@@ -42,12 +46,12 @@ func _initialize() -> void:
 
 
 func _feet() -> Vector3:
-	return main.space.chart_position(main.foot_l, main.foot_n)
+	return main.space.chart_position(main.viewer.l, main.viewer.n)
 
 
 ## Which way the view points in chart A (horizontal).
 func _forward() -> Vector3:
-	var d := WormholeSpace.vector_to_chart(1.0, main.foot_n, -main.frame[2])
+	var d := WormholeSpace.vector_to_chart(1.0, main.viewer.n, -main.viewer.frame[2])
 	return Vector3(d.x, d.y, 0.0).normalized()
 
 
@@ -91,12 +95,22 @@ func _process(_delta: float) -> bool:
 			_check_turn("the right stick inside the dead zone turns nothing", 45.0)
 			right.set_input(&"primary", Vector2(1.0, 0.0))
 		193:
-			# a click with the stick still out, after 10 frames of a smooth turn at full speed
+			# a switch with the stick still out, after 10 frames of a smooth turn at full speed (the
+			# menu's turn row; no button has it)
+			main.set_smooth_turn(false)
 			right.set_input(&"primary_click", true)
 		195:
 			right.set_input(&"primary_click", false)
+			U.check("a right stick click: flying, nothing pushed hovers, the line below says so", not main.viewer.gravity
+					and main.menu.strip.visible and main.menu.strip_label.text.begins_with("полёт: без гравитации"),
+					"gravity %s, line %s" % [main.viewer.gravity, main.menu.strip_label.text])
+		197:
+			right.set_input(&"primary_click", true)
+		199:
+			right.set_input(&"primary_click", false)
+			U.check("... clicked again, it falls", main.viewer.gravity)
 		205:
-			U.check("a right stick click switches to snaps", not main.smooth_turn, "smooth_turn %s" % main.smooth_turn)
+			U.check("the stick turns in snaps now", not main.smooth_turn, "smooth_turn %s" % main.smooth_turn)
 			_check_turn("with the stick still out, no snap until it comes back", 60.0)
 			right.set_input(&"primary", Vector2.ZERO)
 		207:
@@ -124,7 +138,7 @@ func _process(_delta: float) -> bool:
 		279:
 			U.check("a left stick click opens the menu, the line hides", main.menu.open and main.menu.menu.visible
 					and not main.menu.strip.visible, "open %s" % main.menu.open)
-			U.check("its rows here (no OpenXR: no rate, scale or foveation)", _keys() == ["gaze", "beam", "grav", "turn", "strip", "bench"], str(_keys()))
+			U.check("its rows here (no OpenXR: no rate, scale or foveation)", _keys() == ["gaze", "beam", "grav", "fly", "turn", "strip", "bench"], str(_keys()))
 			left.set_input(&"primary", Vector2(0.0, 1.0))
 			left.set_input(&"trigger", 1.0)
 		309:
@@ -147,62 +161,67 @@ func _process(_delta: float) -> bool:
 			left.set_input(&"primary", Vector2(0.0, 1.0))
 		321:
 			left.set_input(&"primary", Vector2.ZERO)
+			U.check("... one row up: the flight row", main.menu.picked() == "fly", main.menu.picked())
 		323:
-			left.set_input(&"primary", Vector2(1.0, 0.0))
+			left.set_input(&"primary", Vector2(0.0, 1.0))
 		325:
 			left.set_input(&"primary", Vector2.ZERO)
 		327:
+			left.set_input(&"primary", Vector2(1.0, 0.0))
+		329:
+			left.set_input(&"primary", Vector2.ZERO)
+		331:
 			U.check("the stick right on the gravity row: the floor chosen, not yet in effect", main.menu.picked() == "grav"
 					and main.renderer.gravity_view == 0 and main.menu.pending == 1, "row %s, view %d, pending %d" % [main.menu.picked(), main.renderer.gravity_view, main.menu.pending])
-		360:
+		364:
 			U.check("... in effect half a second later", main.renderer.gravity_view == 1 and main.menu.pending == -1, "view %d, pending %d" % [main.renderer.gravity_view, main.menu.pending])
 			right.set_input(&"by_button", true)
-		362:
+		366:
 			right.set_input(&"by_button", false)
-		364:
+		368:
 			U.check("B closes the menu", not main.menu.open and main.menu.strip.visible, "open %s" % main.menu.open)
 			left.set_input(&"primary", Vector2(0.0, 1.0))
-		394:
+		398:
 			left.set_input(&"primary", Vector2.ZERO)
-		396:
+		400:
 			_check_feet("menu closed: the stick walks again", 8.5)
 			left.profile = U.FRAME
 			right.profile = U.FRAME
 			left.set_input(&"menu_button", true)
-		398:
+		402:
 			left.set_input(&"menu_button", false)
-		400:
+		404:
 			U.check("Frame: View opens the menu where it was", main.menu.open and main.menu.picked() == "grav", "open %s, row %s" % [main.menu.open, main.menu.picked()])
 			left.set_input(&"dpad_down", true)
-		402:
-			left.set_input(&"dpad_down", false)
-		404:
-			U.check("the D-pad down: the next row", main.menu.picked() == "turn", main.menu.picked())
-			left.set_input(&"dpad_up", true)
 		406:
-			left.set_input(&"dpad_up", false)
+			left.set_input(&"dpad_down", false)
 		408:
+			U.check("the D-pad down: the next row", main.menu.picked() == "fly", main.menu.picked())
+			left.set_input(&"dpad_up", true)
+		410:
+			left.set_input(&"dpad_up", false)
+		412:
 			U.check("the D-pad up: back", main.menu.picked() == "grav", main.menu.picked())
 			left.set_input(&"dpad_left", true)
-		410:
+		414:
 			left.set_input(&"dpad_left", false)
 			right.set_input(&"ax_button", true)
-		412:
+		416:
 			right.set_input(&"ax_button", false)
-		414:
+		418:
 			U.check("the D-pad left, then A: gravity off at once, the menu stays", main.renderer.gravity_view == 0 and main.menu.open
 					and main.menu.pending == -1, "view %d, open %s" % [main.renderer.gravity_view, main.menu.open])
 			right.set_input(&"menu_button", true)
-		416:
+		420:
 			right.set_input(&"menu_button", false)
-		418:
+		422:
 			U.check("Menu closes it", not main.menu.open, "open %s" % main.menu.open)
-		420, 422, 424:
-			left.set_input([&"dpad_up", &"dpad_left", &"dpad_right"][(frames - 420) / 2], true)
-		421, 423, 425:
-			left.set_input([&"dpad_up", &"dpad_left", &"dpad_right"][(frames - 421) / 2], false)
+		424, 426, 428:
+			left.set_input([&"dpad_up", &"dpad_left", &"dpad_right"][(frames - 424) / 2], true)
+		425, 427, 429:
+			left.set_input([&"dpad_up", &"dpad_left", &"dpad_right"][(frames - 425) / 2], false)
 			grav_frame.append(main.renderer.gravity_view)
-		426:
+		430:
 			U.check("menu closed, the D-pad up, left, right show gravity: the floor, the arrows, off", grav_frame == [1, 2, 0], "views %s" % [grav_frame])
 			left.profile = U.GENERIC
 			right.profile = U.GENERIC
@@ -211,22 +230,43 @@ func _process(_delta: float) -> bool:
 			left.set_input(&"trigger", 1.0)
 			right.set_input(&"primary", Vector2(1.0, 0.0))
 			right.set_input(&"ax_button", true)
-		456:
+		460:
 			left.set_input(&"primary", Vector2.ZERO)
 			left.set_input(&"trigger", 0.0)
 			right.set_input(&"primary", Vector2.ZERO)
 			right.set_input(&"ax_button", false)
-		458:
+		462:
 			_check_feet("while the speed check holds the viewer, the sticks do nothing", 8.5)
 			_check_turn("... nor does the right stick turn", 0.0)
 			main.hold = false
-		460, 462, 464:
+		464, 466, 468:
 			left.set_input(&"by_button", true)
-		461, 463, 465:
+		465, 467, 469:
 			left.set_input(&"by_button", false)
 			gravity_seen.append(main.renderer.gravity_view)
-		466:
+		470:
 			U.check("left Y shows gravity: the floor, the arrows, off", gravity_seen == [1, 2, 0], "views %s" % [gravity_seen])
+			# up, a little to the right: the main axis climbs, nothing turns
+			right.set_input(&"primary", Vector2(0.3, 1.0))
+		500:
+			right.set_input(&"primary", Vector2.ZERO)
+			var hgt: float = main.viewer.height()
+			U.check("the right stick up for half a second flies 0.75 m up", not main.viewer.standing and absf(hgt - 0.75) < 0.03,
+					"standing %s, the feet %.3f m over the floor" % [main.viewer.standing, hgt])
+			_check_turn("... and turns nothing", 0.0)
+		540:
+			# from 0.75 m at 1.5 m/s up (the climb's speed, kept): on the floor 0.57 s later
+			U.check("let go, it falls back onto the floor", main.viewer.standing and absf(main.viewer.n.z) < 1e-6,
+					"standing %s, n.z %s" % [main.viewer.standing, main.viewer.n.z])
+			_check_feet("... where it took off", 8.5)
+			main.hold = true
+			right.set_input(&"primary", Vector2(0.0, 1.0))
+		555:
+			right.set_input(&"primary", Vector2.ZERO)
+		557:
+			U.check("while the speed check holds the viewer, the right stick does not fly", main.viewer.standing
+					and main.viewer.height() == 0.0, "standing %s" % main.viewer.standing)
+			main.hold = false
 			U.finish(self, hmd, [left, right])
 	return false
 

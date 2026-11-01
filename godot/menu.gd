@@ -23,10 +23,12 @@ const DEFAULT_FOVEATION := 5
 const SETTINGS := "user://settings.cfg"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
+const FALLS := ["с гравитацией", "без гравитации"]  # main.viewer.gravity true, false
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
 const HINT := "крестовина или левый стик: выбрать, менять\nA — нажать · B — закрыть"
 const SETTLE := 0.5             # s a value stepped to waits before it takes effect
+const NOTICE_TIME := 2.0        # s a notice stays on the line below (notice)
 const REPEAT_AFTER := 0.4       # s a direction is held before it repeats
 const REPEAT := 0.12            # s between repeats
 const STICK_ON := 0.6           # the left stick as a D-pad: pushed out this far it points
@@ -80,6 +82,8 @@ var rows: Array[Row] = []       # those shown, top to bottom
 var rate_options: Array = []
 var bench_text := ""            # the speed check's line: how it goes, what came out
 var bench_unseen := false       # the line below shows it until the menu is opened
+var notice_text := ""           # a button's setting on the line below for a while (notice)
+var notice_left := 0.0
 var was := {}                   # buttons down last frame (handle_input)
 var dir_held := Vector2i.ZERO   # the direction held (_direction)
 var held_for := 0.0             # s it has been held: then it repeats
@@ -477,7 +481,16 @@ func refresh() -> void:
 
 func _show() -> void:
 	menu.visible = open
-	strip.visible = not open and (strip_on or _bench_below())
+	strip.visible = not open and (strip_on or _bench_below() or notice_text != "")
+
+
+## What a button set (it has no row in sight), on the line below for NOTICE_TIME, shown even
+## with the line off.
+func notice(s: String) -> void:
+	notice_text = s
+	notice_left = NOTICE_TIME
+	_show()
+	_update_strip()
 
 
 ## The speed check's line goes on the line below: while it runs (and its countdown) and until the
@@ -488,6 +501,12 @@ func _bench_below() -> bool:
 
 func _process(delta: float) -> void:
 	_follow(delta)
+	if notice_text != "":
+		notice_left -= delta
+		if notice_left <= 0.0:
+			notice_text = ""
+			_show()
+			_update_strip()
 	if pending >= 0:
 		pending_t += delta
 		if pending_t >= SETTLE:
@@ -685,6 +704,8 @@ func _compose_line() -> String:
 	elif s.size() > 1:
 		first += " · " + s[1]
 	var lines := [first] + rate.notes()
+	if notice_text != "":
+		lines.push_front(notice_text)
 	if _bench_below():
 		lines.append(bench_text)
 	return "\n".join(lines)
@@ -718,7 +739,8 @@ func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"),
 			GazeRow.new(self, "gaze", "точка взгляда"), BeamRow.new(self, "beam", "луч прицела"),
-			GravRow.new(self, "grav", "гравитация"), TurnRow.new(self, "turn", "поворот"),
+			GravRow.new(self, "grav", "гравитация"), FlyRow.new(self, "fly", "полёт"),
+			TurnRow.new(self, "turn", "поворот"),
 			StripRow.new(self, "strip", "строка частоты"),
 			BenchRow.new(self, "bench", "замер скорости")]
 
@@ -895,6 +917,21 @@ class GravRow extends Row:
 
 	func text(i: int) -> String:
 		return GRAVITY_NAMES[i]
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+
+## Flying with nothing pushed: falls or hovers (viewer.gd).
+class FlyRow extends Row:
+	func current() -> int:
+		return 0 if menu.main.viewer.gravity else 1
+
+	func apply(i: int) -> void:
+		menu.main.set_fall(i == 0)
+
+	func text(i: int) -> String:
+		return FALLS[i]
 
 	func enabled() -> bool:
 		return not menu.main.hold
