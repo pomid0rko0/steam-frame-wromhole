@@ -1,6 +1,6 @@
 """
 Reference maths of the renderer, float64 (NumPy): the sweep of a ray round the throat, where a
-ray meets the floor, which way an eye sees a point. The renderer's method: docs/geometry.md,
+ray leaves the curved zone, which way an eye sees a point. The renderer's method: docs/geometry.md,
 «Как рисуется кадр». The shaders (godot/shaders/geo.gdshaderinc) do the same in float32 with the
 table this module builds the same way as WormholeSpace.sweep_table.
 
@@ -20,17 +20,26 @@ and of the rest the part linear in u - u_lo has a closed form too (F_u(u_lo) tim
 int (u - u_lo) dW); what is left, G(b, u), small and smooth, comes from a table (over the whole
 fillet, its last row).
 """
+import math
 import os
 import re
 import numpy as np
 from scipy import integrate
 
 
+def _main_const(k):
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
+    return float(re.search(r'^const %s := ([\d.]+)' % k, src, re.M).group(1))
+
+
 def app_profile():
     """The app's throat, (rho0, h, R) in metres: godot/main.gd's THROAT_RADIUS, HALF_LENGTH, FILLET."""
-    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
-    return tuple(float(re.search(r'^const %s := ([\d.]+)' % k, src, re.M).group(1))
-                 for k in ('THROAT_RADIUS', 'HALF_LENGTH', 'FILLET'))
+    return tuple(_main_const(k) for k in ('THROAT_RADIUS', 'HALF_LENGTH', 'FILLET'))
+
+
+def app_lift():
+    """The throat's centre above the floor in metres: godot/main.gd's LIFT."""
+    return _main_const('LIFT')
 
 
 class Space:
@@ -71,6 +80,12 @@ class Space:
     def l_of_u(self, u):
         return self.Lc + self.R * (2 * np.arcsin(np.sqrt(u)) - self.th0)
 
+    def gap0(self, al):
+        """r(|l|) - rho0 without the difference (geo_dr): exact next to the cylinder's end."""
+        if al >= self.L:
+            return al - self.L + self.R
+        return 2 * self.R * np.sin(self.theta(al) / 2) ** 2
+
     def l_turn(self, b):
         """|l| of the turning point of a ray with impact b >= r_min."""
         if b >= self.Rout:
@@ -79,8 +94,10 @@ class Space:
         return self.l_of_u(max(sig, self.u0))
 
     # ---------- the fillet's integrand ----------
-    def sigma(self, b):
-        return (b - self.rho0) / (2 * self.R)
+    # sig: (b - rho0) / 2R if the caller knows it better than b does (b next to rho0 keeps only
+    # its absolute digits), else from b
+    def sigma(self, b, sig=None):
+        return (b - self.rho0) / (2 * self.R) if sig is None else sig
 
     def F(self, b, u):
         """psi and length integrands on the fillet without the weight 1 / sqrt(u (u - sigma))."""
@@ -88,8 +105,8 @@ class Space:
         c = np.sqrt(self.R / 2) / (np.sqrt(1 - u) * np.sqrt(r + b))
         return b * c / r, r * c
 
-    def u_lo(self, b):
-        return max(self.sigma(b), self.u0)
+    def u_lo(self, b, sig=None):
+        return max(self.sigma(b, sig), self.u0)
 
     def Fu(self, b, u):
         """dF/du (psi, length)."""
@@ -98,25 +115,25 @@ class Space:
         return f * np.array([1 / (2 * (1 - u)) - 2 * self.R / r - self.R / (r + b),
                              1 / (2 * (1 - u)) + 2 * self.R / r - self.R / (r + b)])
 
-    def closed(self, b, u):
+    def closed(self, b, u, sig=None):
         """The closed-form part from u_lo to u: F(u_lo) W + F_u(u_lo) int (u - u_lo) dW."""
-        sig = self.sigma(b)
-        ul = self.u_lo(b)
-        W = self.W(b, u)
+        sig = self.sigma(b, sig)
+        ul = self.u_lo(b, sig)
+        W = self.W(b, u, sig)
         I1 = np.sqrt(u * (u - sig)) - np.sqrt(ul * (ul - sig)) + sig / 2 * W
         return np.array(self.F(b, ul)) * W + self.Fu(b, ul) * (I1 - ul * W)
 
-    def W(self, b, u):
+    def W(self, b, u, sig=None):
         """int from u_lo to u of du / sqrt(u (u - sigma)), closed form."""
-        sig = self.sigma(b)
-        ul = self.u_lo(b)
+        sig = self.sigma(b, sig)
+        ul = self.u_lo(b, sig)
         return 2 * np.log((np.sqrt(u) + np.sqrt(u - sig)) / (np.sqrt(ul) + np.sqrt(ul - sig)))
 
-    def G_exact(self, b, u):
+    def G_exact(self, b, u, sig=None):
         """int from u_lo to u of (F - F(u_lo) - F_u(u_lo) (u - u_lo)) dW (psi, length), by
         quadrature in v."""
-        sig = self.sigma(b)
-        ul = self.u_lo(b)
+        sig = self.sigma(b, sig)
+        ul = self.u_lo(b, sig)
         span = 0.5 - ul
         if span <= 0 or u <= ul:
             return np.zeros(2)
@@ -204,19 +221,19 @@ class Space:
                 + (1 - fx) * fy * T[i, j + 1] + fx * fy * T[i + 1, j + 1])
 
     # ---------- sweep and length ----------
-    def fillet(self, b, u, table=False):
+    def fillet(self, b, u, table=False, sig=None):
         """(psi, length) over the fillet from u_lo to u."""
-        ul = self.u_lo(b)
+        ul = self.u_lo(b, sig)
         if u <= ul:
             return np.zeros(2)
         if table:
             v = np.sqrt((u - ul) / (0.5 - ul))
             g = self.G_table(b, v)
         else:
-            g = self.G_exact(b, u)
-        return self.closed(b, u) + g
+            g = self.G_exact(b, u, sig)
+        return self.closed(b, u, sig) + g
 
-    def sweep(self, b, l, table=False):
+    def sweep(self, b, l, table=False, sig=None):
         """(psi, length) from the ray's origin to l (docstring at the top). b >= r_min needs |l| >= l_turn(b)."""
         al = abs(l)
         if b >= self.Rout:
@@ -224,25 +241,20 @@ class Space:
             q = np.sqrt(max(r * r - b * b, 0.0))
             return np.array([np.arctan2(q, b), q])
         out = np.zeros(2)
-        passing = b < self.rmin
+        sig = self.sigma(b, sig)
+        passing = sig < self.u0
         if passing and self.Lc > 0:
             lc = min(al, self.Lc)
-            k = np.sqrt(self.rho0 ** 2 - b * b)
+            k = np.sqrt(-2 * self.R * sig * (self.rho0 + b))      # sqrt(rho0^2 - b^2)
             out += np.array([b * lc / (self.rho0 * k), lc * self.rho0 / k])
         if al > self.Lc:
-            out += self.fillet(b, float(self.u_of(min(al, self.L))), table)
+            out += self.fillet(b, float(self.u_of(min(al, self.L))), table, sig)
         if al > self.L:
             r = float(self.r(al))
             qo = np.sqrt(self.Rout ** 2 - b * b)
             q = np.sqrt(r * r - b * b)
             out += np.array([np.arctan2(q, b) - np.arctan2(qo, b), q - qo])
         return out * (np.sign(l) if passing else 1.0)
-
-    def sweep_inf(self, b, table=False):
-        """psi from the origin to infinity on one side."""
-        if b >= self.Rout:
-            return np.pi / 2
-        return self.sweep(b, self.L, table)[0] + np.arcsin(b / self.Rout)
 
     def l_at(self, b, psi, table=False, newton=3):
         """|l| (or l, for b < r_min, with psi's sign) where the sweep from the origin is psi; inf
@@ -284,54 +296,50 @@ class Space:
 
 # ---------- independent check: the geodesic ODE in the ray's plane ----------
 def plane_rhs(S, s, y, b):
+    """The profile in scalars (S.r and S.dr, without NumPy's per-call cost)."""
     l, vl, phi = y
-    r = float(S.r(l))
-    return [vl, float(S.dr(l)) * b * b / r ** 3, b / r ** 2]
+    al = abs(l)
+    if al >= S.L:
+        r, d = al - S.L + S.Rout, 1.0
+    else:
+        th = S.th0 + (max(al, S.Lc) - S.Lc) / S.R
+        r, d = S.rho0 + S.R * (1 - math.cos(th)), math.sin(th)
+    d = d if l > 0 else (-d if l < 0 else 0.0)
+    return [vl, d * b * b / r ** 3, b / (r * r)]
 
 
-def shoot(S, l0, alpha, smax=200.0, events=(), rtol=1e-11):
+def shoot(S, l0, alpha, smax=200.0, events=(), rtol=1e-11, max_step=0.05):
     """Integrate the ray from (l0, phi = 0) at angle alpha to the outward radial direction
     (outward: growing |l|). Returns the solve_ivp result; y = (l, dl/ds, phi)."""
     b = float(S.r(l0)) * np.sin(alpha)
     out = 1.0 if l0 >= 0 else -1.0
     return integrate.solve_ivp(lambda s, y: plane_rhs(S, s, y, b), (0, smax), [l0, out * np.cos(alpha), 0.0],
                                method='DOP853', rtol=rtol, atol=1e-12, events=list(events),
-                               dense_output=True, max_step=0.05)
+                               dense_output=True, max_step=max_step)
 
 
-# ---------- what a ray meets: the floor or the sky ----------
-def floor_hit(S, l0, alpha, phi_f, table=False):
-    """A ray from (l0, phi = 0) at angle alpha to the outward radial direction, in a plane where the
-    floor is at position angle phi_f (0 < phi_f < pi): (l, length) where it meets the floor, or
-    (None, sweep to infinity, side at infinity)."""
-    side = 1.0 if l0 >= 0 else -1.0
-    al = abs(l0)
-    b = float(S.r(al)) * np.sin(alpha)
-    se, le = S.sweep(b, al, table)      # from the origin to the eye
-    if b >= S.rmin and al < S.l_turn(b):
-        se, le = 0.0, 0.0
-    outward = np.cos(alpha) >= 0
-    if outward:
-        tot = S.sweep_inf(b, table) - se
-        if phi_f >= tot:
-            return None, tot, side
-        l = S.l_at(b, se + phi_f, table)
-        return side * l, S.sweep(b, l, table)[1] - le
-    if b >= S.rmin:                      # turns
-        if phi_f <= se:
-            l = S.l_at(b, se - phi_f, table)
-            return side * l, le - S.sweep(b, l, table)[1]
-        tot = se + S.sweep_inf(b, table)
-        if phi_f >= tot:
-            return None, tot, side
-        l = S.l_at(b, phi_f - se, table)
-        return side * l, le + S.sweep(b, l, table)[1]
-    # passes the throat: psi odd, falls from se
-    tot = se + S.sweep_inf(b, table)
-    if phi_f >= tot:
-        return None, tot, -side
-    l = S.l_at(b, se - phi_f, table)      # signed
-    return side * l, le - S.sweep(b, l, table)[1]
+# ---------- where a ray leaves the curved zone ----------
+def leave(S, el, ca, sa):
+    """The ray from the eye at l = el launched at the angle to the outward radial direction whose
+    cosine and sine are (ca, sa): None if it never enters the curved zone (an eye outside, the ray
+    going out or passing the zone's ball by); else (sheet, psi, length) where it leaves the zone
+    (|l| = L, out): the universe it goes on in (+1 A, -1 B), its position angle's turn and its
+    length from the eye. By the sweeps from its origin (quadrature), however many turns; its
+    (b - rho0) / 2R from the angle, not as a difference of b and rho0, in the precision ca and sa
+    come in (np.longdouble: next to r_min, where the turn grows without bound, it keeps its digits
+    from an eye far out)."""
+    side = 1.0 if el >= 0 else -1.0
+    le = abs(el)
+    re = float(S.r(le))
+    b = float(re * sa)
+    if le >= S.L and (ca >= 0 or b >= S.Rout):
+        return None
+    sig = float((S.gap0(le) - re * ca * ca / (1 + sa)) / (2 * S.R))
+    se = S.sweep(b, le, sig=sig)
+    sl = S.sweep(b, S.L, sig=sig)
+    if ca >= 0:
+        return side, *(sl - se)
+    return (-side if sig < S.u0 else side), *(sl + se)
 
 
 # ---------- which way an eye sees a point ----------
