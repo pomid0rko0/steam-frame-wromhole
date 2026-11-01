@@ -21,8 +21,11 @@ extends SceneTree
 ## 9. from the start, the demo's cube in the throat (seen along no straight line): aimed at,
 ##    pulled and caught
 ## 11. from the start, a ball on the far side of the throat in universe A, seen round its rim:
-##    aimed at, thrown over the throat, its flight out of the curved zone, caught; a ball seen
-##    along a straight line 25 m off is not aimed at (PULL_RANGE), one 20 m off is
+##    aimed at, thrown steadily, caught; a ball seen along a straight line 25 m off is not aimed
+##    at (PULL_RANGE), one 20 m off is
+## 12. eleven pulls from the start (MANY: near, far, round the throat, from it, from universe B),
+##    the throw found as _fly finds it, then flown by the world's own physics: each within 10 cm
+##    of the hand, in PULL_FLIGHTS flights at most
 ## 10. the beam (the menu's «луч прицела»): off, none; on, from the hand along its pointing geodesic
 ##    to the ball it aims at, orange, and else to the floor, pale; through the throat into universe
 ##    B; none while the hand holds a toy
@@ -123,6 +126,7 @@ func _run() -> void:
 	await _throat_cube()
 	await _beam()
 	await _far_side()
+	_many()
 	U.finish(self, hmd, [left, right])
 
 
@@ -615,9 +619,10 @@ func _far_side() -> void:
 		if h.held == ball:
 			caught = true
 			break
-	U.check("... thrown over the throat, out of the curved zone, and caught", pull != null and pull.way == "over the throat"
-			and caught and lo > sp.L, "way '%s', %d tries, missing by %.3f m, %.2f s; caught %s; |l| down to %.2f (the curved zone below %.2f)"
-			% [pull.way if pull else "", pull.tries if pull else 0, pull.miss if pull else 0.0, pull.T if pull else 0.0, caught, lo, sp.L])
+	U.check("... thrown steadily and caught", pull != null and caught and pull.sens <= Hands.STEADY,
+			"thrown %s, %d flights tried, its miss moving %.1f m per m/s, missing by %.3f m, %.2f s; |l| down to %.2f (the curved zone below %.2f)"
+			% [pull.way if pull else "", pull.tries if pull else 0, pull.sens if pull else 0.0, pull.miss if pull else 0.0,
+			pull.T if pull else 0.0, lo, sp.L])
 	right.set_input(&"grip", 0.0)
 	await _step(2)
 	# straight lines to the right, 25 and 20 m off
@@ -630,3 +635,65 @@ func _far_side() -> void:
 		var want: bool = d < Hands.PULL_RANGE
 		U.check("a ball %.0f m off along a straight line: %s" % [d, "aimed at" if want else "not aimed at (PULL_RANGE)"],
 				(h.aimed == far) == want, "aimed %s" % [h.aimed == far])
+
+
+# 12
+# [universe: A, B or T (the throat: l, azimuth, height), place, radius]
+const MANY := [["A", Vector3(6.5, 0.4, 0.25), 0.25], ["A", Vector3(4.6, -2.0, 0.25), 0.25],
+		["A", Vector3(0.5, 4.6, 0.25), 0.25], ["A", Vector3(-6.0, 0.5, 0.25), 0.25], ["A", Vector3(-5.0, 2.5, 0.25), 0.25],
+		["A", Vector3(-4.5, -1.0, 0.25), 0.25], ["A", Vector3(-8.0, 3.0, 0.25), 0.25], ["B", Vector3(4.7, 0.0, 0.3), 0.3],
+		["B", Vector3(4.5, 3.0, 0.3), 0.3], ["B", Vector3(6.4, 0.6, 0.3), 0.3], ["T", Vector3(0.8, -0.45, 0.3), 0.3]]
+
+
+## Off the scene: a world and a hand of their own, the hand 1.3 m up at the start (chart A
+## (9.7, 0.2)), the room's axes as there.
+func _many() -> void:
+	var sp: WormholeSpace = main.space
+	for cs: Array in MANY:
+		var w := BallWorld.new(sp, main.scene)
+		var hands := Hands.new(sp, w)
+		var g := XRController3D.new()
+		hands.add(g, null)
+		var h: Hands.Hand = hands.list[0]
+		var p: Array = sp.point_from_chart(1.0, Vector3(9.7, 0.2, 1.3))
+		h.ball.l = p[0]
+		h.ball.n = p[1]
+		h.ball.held = &"many"
+		h.room = [WormholeSpace.vector_from_chart(1.0, p[1], Vector3(0, 1, 0)),
+				WormholeSpace.vector_from_chart(1.0, p[1], Vector3(0, 0, 1)), WormholeSpace.vector_from_chart(1.0, p[1], Vector3(1, 0, 0))]
+		var at: Vector3 = cs[1]
+		var ball: BallWorld.Ball
+		if cs[0] == "T":
+			var z: float = at.z / sp.r(at.x)
+			ball = w.add(at.x, Vector3(cos(at.y) * sqrt(1.0 - z * z), sin(at.y) * sqrt(1.0 - z * z), z), Vector4.ZERO, cs[2], Color.WHITE)
+		else:
+			var q: Array = sp.point_from_chart(1.0 if cs[0] == "A" else -1.0, at)
+			ball = w.add(q[0], q[1], Vector4.ZERO, cs[2], Color.WHITE)
+		var way := _toward_geodesic(h, sp.embed(ball.l, ball.n))
+		g.transform = Transform3D(Basis.looking_at(way[0]), Vector3.ZERO)
+		hands.clock += 1.0
+		hands._aim(h)
+		var name := "%s %s" % [cs[0], at]
+		if h.aimed != ball:
+			U.check("pull from %s: aimed at" % name, false, "the geodesic %.2f m from its centre" % way[1])
+			continue
+		h.locked = true
+		hands._launch(0)
+		var pl: Hands.Pull = h.pull
+		var us := 0
+		var done := false
+		while not done:
+			var t0 := Time.get_ticks_usec()
+			done = hands._solve(pl)
+			us += Time.get_ticks_usec() - t0
+		ball.held = &""
+		ball.U = pl.best
+		var nearest := INF
+		var lo := INF
+		for k in roundi((pl.best_T + 0.3) * 60.0):
+			w.step(1.0 / 60.0, [])
+			nearest = minf(nearest, (sp.embed(ball.l, ball.n) - pl.target).length())
+			lo = minf(lo, absf(ball.l))
+		U.check("pull from %s, %.1f m: flown within 10 cm of the hand" % [name, h.aim_s], nearest < 0.1 and pl.tries <= Hands.PULL_FLIGHTS,
+				"thrown %s in %.2f s at %.1f m/s, its miss moving %.1f m per m/s; %d flights tried, %.1f ms; flown %.3f m from the hand at the nearest, |l| down to %.2f"
+				% [pl.way, pl.best_T, pl.best.length(), pl.sens, pl.tries, us / 1000.0, nearest, lo])
