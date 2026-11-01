@@ -1,15 +1,16 @@
-"""Per-eye comparison of red silhouettes, balls or cubes: union IoU and per-object centroid
-offsets. Argument: the image prefix (<prefix>_app_left.png, <prefix>_mesh_left.png, ...). PASS:
-in each eye at least MIN_CHECKED objects lie wholly in the picture (a turned head can lose one or
-two past its edge), each of them has its app's silhouette's centre within MAX_OFFSET px of
-Godot's, and the union IoU is at least MIN_IOU (no object of the app's where Godot drew none)."""
+"""Per-eye comparison of red silhouettes, balls, cubes or beams: union IoU and per-object centroid
+offsets. Arguments: the image prefix (<prefix>_app_left.png, <prefix>_mesh_left.png, ...), and
+how many objects at least (MIN_CHECKED by default). PASS: in each eye at least that many objects
+lie wholly in the picture (a turned head can lose one or two past its edge), each of them has its
+app's silhouette's centre within MAX_OFFSET px of Godot's, and the union IoU is at least MIN_IOU
+(no object of the app's where Godot drew none)."""
 import sys, numpy as np
 from PIL import Image
 from scipy import ndimage
 def mask(p):
     a = np.asarray(Image.open(p).convert('RGB'), int)
     return (a[..., 0] - np.maximum(a[..., 1], a[..., 2])) > 60
-MIN_CHECKED = 3
+MIN_CHECKED = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 MIN_IOU = 0.99
 MAX_OFFSET = 0.5
 worst = 0.0

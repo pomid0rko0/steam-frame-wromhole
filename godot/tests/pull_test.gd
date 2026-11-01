@@ -19,6 +19,9 @@ extends SceneTree
 ##    through the throat and caught, its throw missing the hand by less than 10 cm
 ## 9. from the start, the demo's cube in the throat (seen along no straight line): aimed at,
 ##    pulled and caught
+## 10. the beam (the menu's «луч прицела»): off, none; on, from the hand along its pointing geodesic
+##    to the ball it aims at, orange, and else to the floor, pale; through the throat into universe
+##    B; none while the hand holds a toy
 
 const U := preload("res://tests/util.gd")
 const SIZE := 96
@@ -113,6 +116,7 @@ func _run() -> void:
 	await _near_first()
 	await _through()
 	await _throat_cube()
+	await _beam()
 	U.finish(self, hmd, [left, right])
 
 
@@ -448,3 +452,75 @@ func _throat_cube() -> void:
 			pull.T if pull else 0.0, (res[2] - res[0]) / 60.0])
 	right.set_input(&"grip", 0.0)
 	await _step(2)
+
+
+## Hand 1's beam as the renderer has it: [drawn, its points, colour].
+func _drawn_beam() -> Array:
+	var m: ShaderMaterial = main.renderer.beam_mats[1]
+	var n: int = m.get_shader_parameter("beam_n")
+	var pts: PackedVector4Array = m.get_shader_parameter("beam_p")
+	return [main.renderer.beams[1].visible, pts.slice(0, n), m.get_shader_parameter("beam_col")]
+
+
+# 10
+func _beam() -> void:
+	_clear()
+	_away(left)
+	var sp: WormholeSpace = main.space
+	var ball := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var p := Vector3(0.2, 1.2, -0.3)
+	var dir := _play(Vector3(6.5, 0.4, 0.25)) - p
+	_pose(right, p, _toward(dir))
+	await _step(AIM)
+	var h := _hand(1)
+	U.check("the beam off: none drawn", not main.hands.beam and not _drawn_beam()[0], "drawn %s" % _drawn_beam()[0])
+	main.menu.show_beam(true)
+	await _step(2)
+	var b := _drawn_beam()
+	var pts: PackedVector4Array = b[1]
+	var at := sp.embed(h.ball.l, h.ball.n)
+	var C := sp.embed(ball.l, ball.n)
+	var gap := 0.0
+	for k in pts.size() - 1:
+		gap = maxf(gap, (pts[k + 1] - pts[k]).length())
+	U.check("the beam on: from the hand to the ball it aims at, in steps of BEAM_STEP at most, orange",
+			b[0] and h.aimed == ball and pts.size() >= 2 and (pts[0] - at).length() < 1e-4
+			and (pts[pts.size() - 1] - C).length() < 1e-3 and gap <= Hands.BEAM_STEP + 1e-4 and b[2] == Hands.COLOR_AIM,
+			"drawn %s, %d points %.2f m apart at most, from %.5f m off the hand to %.5f m off the ball's centre, colour %s"
+			% [b[0], pts.size(), gap, (pts[0] - at).length(), (pts[pts.size() - 1] - C).length(), b[2]])
+	# a little past it: the beam ends where it passes nearest the ball
+	var past := Basis(Vector3.UP, deg_to_rad(4.0)) * dir
+	_pose(right, p, _toward(past))
+	await _step(AIM)
+	b = _drawn_beam()
+	pts = b[1]
+	var E: Vector4 = pts[pts.size() - 1]
+	var along := (E - at).normalized()
+	U.check("... pointing 4 degrees past it: still at it, the beam ending where it passes nearest the ball",
+			h.aimed == ball and absf((C - E).dot(along)) < 1e-3,
+			"aimed %s, the ball's centre %.4f m along the beam from its end" % [h.aimed == ball, (C - E).dot(along)])
+	_pose(right, p, _toward(Basis(Vector3.UP, deg_to_rad(20.0)) * dir))
+	await _step(AIM)
+	b = _drawn_beam()
+	pts = b[1]
+	U.check("... pointing past it: to the floor, pale", b[0] and h.aimed == null and absf(pts[pts.size() - 1].z) < 1e-4
+			and b[2] == Hands.BEAM_COLOR, "aimed %s, ends %.5f m up, colour %s" % [h.aimed, pts[pts.size() - 1].z, b[2]])
+	# 3 degrees down toward the throat: through it into universe B
+	_pose(right, p, _toward(Vector3(0.0, -sin(deg_to_rad(3.0)), -cos(deg_to_rad(3.0)))))
+	await _step(2)
+	b = _drawn_beam()
+	pts = b[1]
+	var into := false
+	for q: Vector4 in pts:
+		into = into or (sp.point_of(q)[0] < -sp.L)
+	U.check("... toward the throat: through it into universe B", b[0] and into, "%d points, into B %s" % [pts.size(), into])
+	right.set_input(&"grip", 1.0)
+	right.set_input(&"by_button", true)
+	await _step(2)
+	right.set_input(&"by_button", false)
+	await _step(1)
+	U.check("... none while the hand holds a toy", h.held != null and not _drawn_beam()[0], "holds %s, drawn %s" % [h.held, _drawn_beam()[0]])
+	right.set_input(&"grip", 0.0)
+	main.menu.show_beam(false)
+	await _step(2)
+	U.check("off again: none", not _drawn_beam()[0])

@@ -50,12 +50,13 @@ verdict() {   # name, comparison command...
 
 for m in app mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
 for m in app mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
-# balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES) drawn by the app against
-# Godot's own
+# balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES), and the hands' beams, drawn
+# by the app against Godot's own
 for c in 0 1; do
 	for m in app mesh; do
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c balls
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/cub$c" $m $c cubes
+		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/bea$c" $m $c beams
 	done
 done
 # the curved zone: the throat, sideways in it, the curved zone's edge, universe B's fillet, and a
@@ -103,6 +104,7 @@ verdict "Godot 'Native mobile' stereo: one ball, each eye" python3 "$CMP/one_bal
 for c in 0 1; do
 	verdict "simulated headset, case $c: balls, each eye" python3 "$CMP/silhouettes.py" "$OUT/hmd$c"
 	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
+	verdict "simulated headset, case $c: the hands' beams, each eye" python3 "$CMP/silhouettes.py" "$OUT/bea$c" 2
 done
 for p in 0 1 2 3 4; do
 	verdict "simulated headset, curved zone, place $p: balls, cubes and the floor against traced rays, each eye" python3 "$CMP/curved.py" "$OUT/crv$p"

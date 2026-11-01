@@ -314,6 +314,9 @@ func _process(delta: float) -> void:
 
 func draw_toys() -> void:
 	toys.draw(renderer, hands.drawn(), bench.near_cube(_head_pose, camera.transform.basis), hands.lit())
+	var b := hands.beams()
+	for i in b.size():
+		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
 
 
 ## Put the feet at chart A position pos (z = 0), looking along forward.

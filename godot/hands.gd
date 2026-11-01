@@ -15,7 +15,8 @@ extends RefCounted
 ## it (_solve): BallWorld.flight, the toys' own free motion in steps much longer than the physics',
 ## from the toy held at rest meanwhile, each try's miss at the hand turning into the next by Newton's
 ## step with a Jacobian (Broyden's, probed first where the throat bends the ways); then the toy flies
-## as any toy does. A closed hand catches its toy within CATCH_REACH and draws it in.
+## as any toy does. A closed hand catches its toy within CATCH_REACH and draws it in. With beam on
+## (the menu's «луч прицела») an empty hand's pointing geodesic is drawn (_beam, Renderer.set_beam).
 ## What it costs: tests/pull_test.gd prints the tries' count and time (also the headset's log, "pull:"
 ## lines), tests/cpu_time.gd a frame's with a hand pointing into the throat.
 
@@ -57,12 +58,17 @@ const PULL_BUDGET := 300         # us: a frame tries again while it has spent le
 const PULL_LATE := 0.4           # s past the planned arrival: a toy not caught by then is let be
 const CATCH_REACH := 0.3         # m from the hand's centre to its pulled toy's surface: a closed hand catches it
 const CATCH_GLIDE := 2.0         # m/s: a caught toy slides in until it touches the hand
+const BEAM_STEP := 0.5           # m between a beam's points (_beam)
+const BEAM_RADIUS := 0.003       # m: a beam's radius at the hand
+const BEAM_GROW := 0.0015        # m more per metre along it
+const BEAM_COLOR := Color(0.85, 0.9, 1.0)   # a beam at no toy
 
 var space: WormholeSpace
 var world: BallWorld
 var list: Array[Hand] = []      # left, right; none on the desktop
 var clock := 0.0                # s: the recent places' times
 var frames := 0                 # update's: the hands aim by turns (_pull)
+var beam := false               # the pointing geodesics drawn (_beam; the menu's «луч прицела»)
 
 
 ## One hand.
@@ -89,11 +95,15 @@ class Hand:
 	var moves: Array = []              # its recent grip poses in the room [t, origin, basis]: a flick
 	var aimed: BallWorld.Body          # the toy it points at, or null
 	var aim_room := Vector3.ZERO       # the room's direction it pointed in at it
-	var aim_s := 0.0                   # m along the pointing geodesic to it
+	var aim_s := 0.0                   # m along the pointing geodesic to it,
+	var aim_end := 0.0                 # and to where the geodesic passes nearest it (the beam's end)
 	var aim_tan := Vector4.ZERO        # the geodesic's direction there, in R^4
 	var locked := false                # the grip closed on the toy aimed at: a flick pulls it
 	var locked_at := 0.0               # s (clock): when
 	var pull: Pull                     # the toy it throws to itself, or null
+	var beam_pts := PackedVector4Array()   # its beam (_beam): points of R^4, radii, colour
+	var beam_r := PackedFloat32Array()
+	var beam_col := Color.WHITE
 	var ray: Array = []                # its last pointing geodesic (WormholeSpace.ray), from ray_at along ray_dir
 	var ray_at := Vector4.ZERO
 	var ray_dir := Vector4.ZERO
@@ -154,6 +164,7 @@ func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: 
 			h.tracked = false
 			h.aimed = null
 			h.locked = false
+			h.beam_pts = PackedVector4Array()
 			continue
 		var tracked := c.get_has_tracking_data()
 		if tracked and not h.tracked:
@@ -201,6 +212,7 @@ func update(delta: float, hp: Array, head: Transform3D, active: bool, new_ball: 
 			_release(i)
 			h.locked = false
 		_pull(i, delta)
+		_beam(h)
 		if h.on and h.pull == null and ((i == 1 and new_ball) or (i == 0 and new_cube)):
 			_new_toy(i, i == 0)
 		var ready := h.held != null or (h.on and _nearest(h) != null)
@@ -448,22 +460,20 @@ func _pulled(b: BallWorld.Body) -> bool:
 
 ## What hand h points at: of the toys beyond its reach, the one whose surface the geodesic along
 ## its aim pose's -z passes nearest seen from the hand, within AIM_ANGLE (the one aimed at already
-## counts AIM_STICK as far off; of those it goes through, the nearest along it): h.aimed, how far along the geodesic it is and the geodesic's
-## direction there; a tick in the hand at a new one. A toy in the flat universe the hand is in,
+## counts AIM_STICK as far off; of those it goes through, the nearest along it): h.aimed, how far
+## along the geodesic it is and the geodesic's direction there; a tick in the hand at a new one. A toy in the flat universe the hand is in,
 ## not behind the shell's sphere from it, it sees along the chord of R^4 (a straight line there);
-## for the others, if any, the geodesic itself up to PULL_RANGE, the floor in the way: a straight
-## line unless it comes into the shell, else WormholeSpace.ray (kept while the hand moves and turns
-## less than RAY_KEEP and RAY_KEEP_TURN).
+## for the others, if any, the geodesic itself (_path).
 func _aim(h: Hand) -> void:
-	var a: XRController3D = h.aim if h.aim and h.aim.get_has_tracking_data() else h.grip
-	var d := -a.transform.basis.z.normalized()
-	var D := WormholeSpace.combine(h.room, d)
-	var P := space.embed(h.ball.l, h.ball.n)
-	var Dp := space.embed_vector(h.ball.l, h.ball.n, D)
+	var way := _pointing(h)
+	var d: Vector3 = way[0]
+	var P: Vector4 = way[1]
+	var Dp: Vector4 = way[2]
 	var side := signf(h.ball.l) if absf(h.ball.l) > space.L else 0.0
 	var best: BallWorld.Body = null
 	var best_k := tan(AIM_ANGLE)
 	var best_s := 0.0
+	var best_end := 0.0
 	var best_tan := Vector4.ZERO
 	var others := []                       # candidates seen along no chord
 	for c: Array in _candidates():
@@ -484,21 +494,12 @@ func _aim(h: Hand) -> void:
 			best_k = k
 			best = b
 			best_s = dist
+			best_end = s
 			best_tan = V / dist
 	if not others.is_empty():
-		var pts: Array
-		var lens: Array
-		var end := _straight(P, Dp) if side != 0.0 else -1.0
-		if end >= 0.0:
-			pts = [P, P + end * Dp]
-			lens = [0.0, end]
-		else:
-			if h.ray.is_empty() or (P - h.ray_at).length() > RAY_KEEP or Dp.dot(h.ray_dir) < cos(RAY_KEEP_TURN):
-				h.ray = space.ray(h.ball.l, h.ball.n, D, PULL_RANGE)
-				h.ray_at = P
-				h.ray_dir = Dp
-			pts = h.ray[0]
-			lens = h.ray[1]
+		var path := _path(h, way)
+		var pts: Array = path[0]
+		var lens: Array = path[1]
 		var last := pts.size() - 1
 		for c: Array in others:
 			var C: Vector4 = c[1]
@@ -525,13 +526,80 @@ func _aim(h: Hand) -> void:
 					best_k = k
 					best = c[0]
 					best_s = s
+					best_end = s
 					best_tan = AB / sqrt(len2)
 	if best and best != h.aimed:
 		h.grip.trigger_haptic_pulse(&"haptic", 0.0, 0.1, 0.015, 0.0)
 	h.aimed = best
 	h.aim_room = d
 	h.aim_s = best_s
+	h.aim_end = best_end
 	h.aim_tan = best_tan
+
+
+## Where hand h points: [the room's direction, the hand as a point of R^4, the direction there as a
+## vector of R^4, and as a tangent vector]: its aim pose's -z (else its grip pose's).
+func _pointing(h: Hand) -> Array:
+	var a: XRController3D = h.aim if h.aim and h.aim.get_has_tracking_data() else h.grip
+	var d := -a.transform.basis.z.normalized()
+	var D := WormholeSpace.combine(h.room, d)
+	return [d, space.embed(h.ball.l, h.ball.n), space.embed_vector(h.ball.l, h.ball.n, D), D]
+
+
+## Hand h's pointing geodesic (way: _pointing's) up to PULL_RANGE, the floor in the way, as points
+## of R^4 and their lengths along it: a straight line where it keeps out of the shell in the flat
+## universe the hand is in (_straight), else WormholeSpace.ray, kept while the hand moves and turns
+## less than RAY_KEEP and RAY_KEEP_TURN.
+func _path(h: Hand, way: Array) -> Array:
+	var P: Vector4 = way[1]
+	var Dp: Vector4 = way[2]
+	var end := _straight(P, Dp) if absf(h.ball.l) > space.L else -1.0
+	if end >= 0.0:
+		return [[P, P + end * Dp], [0.0, end]]
+	if h.ray.is_empty() or (P - h.ray_at).length() > RAY_KEEP or Dp.dot(h.ray_dir) < cos(RAY_KEEP_TURN):
+		h.ray = space.ray(h.ball.l, h.ball.n, way[3], PULL_RANGE)
+		h.ray_at = P
+		h.ray_dir = Dp
+	return h.ray
+
+
+## Hand h's beam this frame (beam on, the hand empty and pulling nothing): its pointing geodesic up
+## to the toy it aims at (where it passes nearest), else to its end; points at most BEAM_STEP apart
+## along it (more apart if Renderer.BEAM_POINTS would not do), BEAM_RADIUS thick at the hand and
+## BEAM_GROW more per metre (it stays as thick in the view); in COLOR_AIM at a toy.
+func _beam(h: Hand) -> void:
+	h.beam_pts = PackedVector4Array()
+	h.beam_r = PackedFloat32Array()
+	if not beam or not h.on or h.held or h.pull:
+		return
+	var path := _path(h, _pointing(h))
+	var pts: Array = path[0]
+	var lens: Array = path[1]
+	var total: float = lens[lens.size() - 1]
+	if h.aimed:
+		total = minf(total, h.aim_end)
+	if total <= 0.0:
+		return
+	var parts := ceili(total / maxf(BEAM_STEP, total / (Renderer.BEAM_POINTS - 1)) - 1e-9)
+	var j := 0
+	for k in parts + 1:
+		var s := total * k / parts
+		while j < lens.size() - 2 and lens[j + 1] < s:
+			j += 1
+		var a: float = lens[j]
+		var b: float = lens[j + 1]
+		h.beam_pts.append((pts[j] as Vector4).lerp(pts[j + 1], clampf((s - a) / maxf(b - a, 1e-9), 0.0, 1.0)))
+		h.beam_r.append(BEAM_RADIUS + BEAM_GROW * s)
+	h.beam_col = COLOR_AIM if h.aimed else BEAM_COLOR
+
+
+## The beams to draw, a hand each: [points of R^4, radii, colour] (Renderer.set_beam); no points
+## when not drawn.
+func beams() -> Array:
+	var out := []
+	for h in list:
+		out.append([h.beam_pts, h.beam_r, h.beam_col])
+	return out
 
 
 ## The toys a hand may aim at: [toy, centre in R^4, radius or half size, the radius of a ball round
