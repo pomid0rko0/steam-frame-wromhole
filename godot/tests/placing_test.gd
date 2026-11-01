@@ -174,6 +174,12 @@ func _move_checked() -> int:
 	var g: PackedVector4Array = main.renderer.ball_mat.get_shader_parameter("g_mouth")
 	var want := Vector4(-3.0, -14.0, cos(deg_to_rad(40.0)), sin(deg_to_rad(40.0)))
 	U.check("... the shaders have it", g.size() == 2 and g[0].distance_to(want) < 1e-5, str(g))
+	var suns: PackedVector3Array = main.renderer.ball_mat.get_shader_parameter("g_sun")
+	var a: Array = main.scene["suns"]["A"]
+	var sun := main.space.chart_dir(1.0, Vector3(a[0], a[1], a[2]))
+	U.check("... and A's sun turned into its chart, so it stays put in the world", suns.size() == 2
+			and suns[0].distance_to(sun) < 1e-6 and absf(suns[0].z - a[2]) < 1e-6
+			and Vector2(suns[0].x, suns[0].y).angle_to(Vector2(a[0], a[1])) > 0.69, str(suns))
 	return 0
 
 

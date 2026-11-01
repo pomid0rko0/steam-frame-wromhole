@@ -41,7 +41,7 @@ var _size := 0                      # the picture's pixels a side it was made fo
 var _k := 1.0
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
 var _gravx := Vector2.ZERO
-var _mouths := PackedFloat32Array([0, 0, 1, 0, 0, 0, 1, 0])   # g_mouth
+var _mouths := PackedFloat32Array([0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0])   # g_mouth, then g_sun
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
 var _gaze := Vector3.ZERO           # a point the eyes look at (play space); _gaze_on: valid
 var _gaze_on := false
@@ -66,7 +66,8 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, gra
 	_mutex.unlock()
 
 
-## Where the mouths stand (Renderer.set_mouths): g_mouth, A's then B's.
+## Where the mouths stand and the suns in the charts (Renderer.set_mouths): g_mouth, A's then B's,
+## then g_sun, each in a vec4's room.
 func set_mouths(m: PackedFloat32Array) -> void:
 	_mutex.lock()
 	_mouths = m
@@ -162,7 +163,7 @@ func _build() -> void:
 	s.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
 	s.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
 	_sampler = _rd.sampler_create(s)
-	_ubo = _rd.uniform_buffer_create(480)
+	_ubo = _rd.uniform_buffer_create(512)
 	_eyes = _rd.storage_buffer_create(160)
 
 

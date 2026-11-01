@@ -1,8 +1,9 @@
 // What the worlds look like: the floor, the sky and the light on bodies. Colours are linear (Godot
 // shows them through its sRGB output). Universe A is warm, B cool; the light of the throat is
 // blended between the two along l, so a ball in the middle is lit half by each sky. The floor's
-// checker and the suns stand in each universe's world (WormholeSpace, «the worlds»: g_mouth), so
-// they stay where they are when the mouth moves; the includer declares g_mouth.
+// checker and the suns stand in each universe's world (WormholeSpace, «the worlds»: g_mouth; the
+// suns scene.json's, turned into the charts on the CPU: g_sun), so they stay where they are when the
+// mouth moves; the includer declares g_mouth and g_sun.
 
 const vec3 LOOK_FLOOR_A[2] = vec3[2](vec3(0.7874, 0.6038, 0.4064), vec3(0.6559, 0.4624, 0.2846));
 const vec3 LOOK_FLOOR_B[2] = vec3[2](vec3(0.6383, 0.7106, 0.7874), vec3(0.4624, 0.5542, 0.6739));
@@ -11,9 +12,6 @@ const vec3 LOOK_HORIZON_A = vec3(1.0, 0.6739, 0.3931);
 const vec3 LOOK_ZENITH_B = vec3(0.0397, 0.1626, 0.7106);
 const vec3 LOOK_HORIZON_B = vec3(0.5071, 0.7293, 1.0);
 const vec3 LOOK_SUN = vec3(1.0, 0.9551, 0.8276);
-// each universe's sun, in its own world
-const vec3 LOOK_SUN_A = vec3(0.4472, -0.5367, 0.7155);
-const vec3 LOOK_SUN_B = vec3(-0.5345, 0.2673, 0.8018);
 const float LOOK_SUN_COS = 0.99863;      // cos 3 degrees: the sun's disc
 const float LOOK_HAZE = 70.0;            // m: the floor fades to the horizon's colour over this
 const float LOOK_LINE = 0.6;             // px: half the width of the floor's white lines
@@ -38,17 +36,6 @@ vec2 look_floor_coords(float l, vec3 n) {
 	return vec2(m.z * c.x - m.w * c.y, m.w * c.x + m.z * c.y) + m.xy;
 }
 
-// a chart direction d of universe side (+1 A, -1 B) in its world
-vec3 look_world_dir(vec3 d, float side) {
-	vec4 m = g_mouth[side > 0.0 ? 0 : 1];
-	return vec3(m.z * d.x - m.w * d.y, m.w * d.x + m.z * d.y, d.z);
-}
-
-// and back
-vec3 look_chart_dir(vec3 d, float side) {
-	vec4 m = g_mouth[side > 0.0 ? 0 : 1];
-	return vec3(m.z * d.x + m.w * d.y, -m.w * d.x + m.z * d.y, d.z);
-}
 
 // the floor's colour from its pattern coordinates c (look_floor_coords) and their footprints fw (per
 // pixel), the pixel px of the picture's pixels across (1 but in floor_fov's coarser texels); base:
@@ -75,7 +62,7 @@ vec3 look_floor(vec2 q, vec2 fw, float px, vec3 lightc, vec3 darkc) {
 vec3 look_sky(vec3 d, float side) {
 	vec3 zen = side > 0.0 ? LOOK_ZENITH_A : LOOK_ZENITH_B;
 	vec3 hor = side > 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B;
-	vec3 sun = look_chart_dir(side > 0.0 ? LOOK_SUN_A : LOOK_SUN_B, side);
+	vec3 sun = g_sun[side > 0.0 ? 0 : 1];
 	float up = clamp(d.z, 0.0, 1.0);
 	vec3 col = mix(hor, zen, pow(up, 0.6));
 	float cs = dot(d, sun);
@@ -121,9 +108,8 @@ vec3 look_grav_contours(vec3 col, float t, float fw, float px) {
 // light on a body at l: the sun's direction there as a vector of R^4 (each universe's sun in its
 // chart: A's is R^4's xyz, B's mirrored), blended across the throat, and the ambient colour
 vec4 look_sun4(float l) {
-	vec4 a = vec4(look_chart_dir(LOOK_SUN_A, 1.0), 0.0);
-	vec3 sb = look_chart_dir(LOOK_SUN_B, -1.0);
-	vec4 b = vec4(-sb.x, sb.yz, 0.0);
+	vec4 a = vec4(g_sun[0], 0.0);
+	vec4 b = vec4(-g_sun[1].x, g_sun[1].yz, 0.0);
 	return mix(b, a, smoothstep(-1.5, 1.5, l));
 }
 

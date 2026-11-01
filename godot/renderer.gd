@@ -187,16 +187,23 @@ func upload_space() -> void:
 	set_mouths()
 
 
-## Where the mouths stand (WormholeSpace.mouths) to every shader: at the start and whenever one
-## moves (main.mouths_back, main.move_mouth).
+## Where the mouths stand (WormholeSpace.mouths) and the suns (scene.json's, turned into the charts)
+## to every shader: at the start and whenever one moves (main.mouths_back, main.move_mouth).
 func set_mouths() -> void:
 	var g := PackedVector4Array()
+	var suns := PackedVector3Array()
 	var f := PackedFloat32Array()
 	for m: Vector3 in space.mouths:
 		g.append(Vector4(m.x, m.y, cos(m.z), sin(m.z)))
 		f.append_array([m.x, m.y, cos(m.z), sin(m.z)])
+	for k in 2:
+		var a: Array = scene["suns"]["A" if k == 0 else "B"]
+		var s := space.chart_dir(1.0 if k == 0 else -1.0, Vector3(a[0], a[1], a[2]))
+		suns.append(s)
+		f.append_array([s.x, s.y, s.z, 0.0])
 	for mat in materials():
 		mat.set_shader_parameter("g_mouth", g)
+		mat.set_shader_parameter("g_sun", suns)
 	floor_fov.set_mouths(f)
 
 

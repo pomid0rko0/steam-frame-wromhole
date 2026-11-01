@@ -78,6 +78,8 @@ done
 for c in 0 1 3; do
 	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/mov$c" $m $c moved; done
 done
+# and with our own foveation (the floor worked out in floor_fov.gd's compute shader)
+for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/mvf1" $m 1 moved fov; done
 # the same floor lines without the balls and the cube
 for c in 0 1 2 3 4 5; do
 	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
@@ -128,6 +130,7 @@ done
 for c in 0 1 3; do
 	verdict "simulated headset, case $c: stereo check scene, the mouths moved and turned" python3 "$CMP/check_scene.py" "$OUT/mov$c"
 done
+verdict "simulated headset, case 1: stereo check scene, the mouths moved and turned, our own foveation" python3 "$CMP/check_scene.py" "$OUT/mvf1"
 for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: floor lines, without the balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done

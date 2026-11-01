@@ -9,5 +9,7 @@ uniform vec3 head_n;
 uniform vec4 head_f[3];
 uniform vec3 head_pos;
 // each universe's mouth (A, B): the throat's centre in its world, x and y, and the turn's cos and
-// sin (WormholeSpace.mouths; look.gdshaderinc and the scene's objects read it)
+// sin (WormholeSpace.mouths; look.gdshaderinc and the scene's objects read it); each universe's sun
+// in its chart (scene.json's suns turned by its mouth: Renderer.set_mouths)
 uniform vec4 g_mouth[2];
+uniform vec3 g_sun[2];

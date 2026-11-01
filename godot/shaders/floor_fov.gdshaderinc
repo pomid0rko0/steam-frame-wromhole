@@ -30,6 +30,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 warp_a[2];     // each eye's A0, A1 along x, then along y
 	vec4 pic;           // the picture's pixels a side
 	vec4 mouth[2];      // g_mouth
+	vec3 sun[2];        // g_sun (a vec4's room each)
 } fovp;
 layout(set = 0, binding = 3, std430) buffer Eyes {
 	vec4 eyes[10];      // each eye: (el, en), ex, ey, ez, (r, the root of u, r - rho0)
@@ -45,6 +46,7 @@ layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2DArray ou
 #define head_pos fovp.head_p.xyz
 #define g_gravx fovp.gravx.xy
 #define g_mouth fovp.mouth
+#define g_sun fovp.sun
 
 #include_geo_and_look
 
