@@ -14,12 +14,12 @@ const U := preload("res://tests/util.gd")
 # along), the head's pitch in degrees (util.gd's headset)]: standing in the throat looking along it
 # and sideways round it, at the curved zone's edge, inside universe B's fillet facing the throat, in
 # the flat universe the same way as a control; flying 2 m up round the throat's middle, 5.5 m up
-# round it at l 1 (past its top: up turned 105 degrees from the floor's normal), high above universe
-# A looking down into the throat, and through the throat 1 m over the floor into universe B (up
-# turned about 100 degrees: tests/flight_test.gd)
+# round it at l 1 (past its top), high above universe A looking down into the throat, and through
+# the throat 0.5 m over the floor into universe B, looking down to B's floor (up turned about 48
+# degrees: tests/flight_test.gd)
 const PLACES := [[0.0, 10.0, [], -10.0], [0.3, 95.0, [], -10.0], [5.0, 15.0, [], -10.0], [-4.6, 170.0, [], -10.0],
 		[12.0, 40.0, [], -10.0], [0.0, 10.0, [Vector3(0.0, 2.0, 0.0)], -10.0], [1.0, 30.0, [Vector3(0.0, 5.5, 0.0)], -10.0],
-		[12.0, 0.0, [Vector3(0.0, 6.0, -9.0)], -60.0], [12.0, 0.0, [Vector3(0.0, 1.0, 0.0), Vector3(0.0, 0.0, -20.0)], -10.0]]
+		[12.0, 0.0, [Vector3(0.0, 6.0, -9.0)], -60.0], [12.0, 0.0, [Vector3(0.0, 0.5, 0.0), Vector3(0.0, 0.0, -20.0)], -55.0]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]

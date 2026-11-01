@@ -15,11 +15,10 @@ extends Node3D
 ## ball_world.gd), the hands that grab, throw and pull them (hands.gd), foveated rendering
 ## (foveation.gd, split_pass.gd, floor_fov.gd), the menu and the line under it (menu.gd) with the
 ## measured frame rate (frame_rate.gd, rate_meter.gd), the speed check (bench.gd) and the stereo
-## check scene (check_scene.gd). Each
-## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
-## button, the body's motion (_locomotion), the free toys (pushed by the hands where they were), the
-## hands and what they hold, and last the toys and the head to the renderer: a toy let go now starts
-## from the hand.
+## check scene (check_scene.gd). Each frame (_process): the menu takes its buttons, then the turn,
+## the reset and the gravity view's button, the body's motion (_locomotion), the free toys (pushed
+## by the hands where they were), the hands and what they hold, and last the toys and the head to
+## the renderer: a toy let go now starts from the hand.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -352,7 +351,8 @@ func set_pose(p: Array) -> void:
 	hands.forget_motion()
 
 
-## Where the head looks: degrees from the direction to the throat along the floor, and degrees up.
+## Where the head looks: degrees from the direction to the throat along the room's floor (the
+## floor, standing), and degrees up in the room.
 func look_angles() -> Vector2:
 	var f := -camera.transform.basis.z
 	var T: Vector4 = f.x * viewer.frame[0] + f.z * viewer.frame[2]     # along the room's floor, as (U_l, u)
@@ -558,7 +558,6 @@ func _turn_and_reset(delta: float) -> bool:
 ## height: the head's in the room. True if the sticks, a fall or a landing moved the world against
 ## the room.
 func _locomotion(step: Vector2, dt: float, height: float) -> bool:
-	viewer.landed = false
 	viewer.move(step.x * viewer.frame[0] + step.y * viewer.frame[2])
 	var stick := Vector2.ZERO if menu_active else _move_input()
 	var climb := _climb_input()     # not the menu's (as the turns)

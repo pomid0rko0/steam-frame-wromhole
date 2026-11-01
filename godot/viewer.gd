@@ -11,14 +11,15 @@ extends RefCounted
 ## with the stick held and the head still is one geodesic, through the throat as light goes. What
 ## the sticks push moves at the speed they ask for, as a jetpack that holds the body up would;
 ## nothing pushed, the body hovers without gravity and with it falls freely from the velocity it
-## had (WormholeSpace.dynamics_step: the geodesic and -g grad phi, the toys' gravity, docs/gravity.md;
-## a fifth of g on the floor in the middle of the throat). No air: a fall keeps its energy, and one
-## that never meets the floor goes on (above the throat's top, n = +z, gravity pulls along the throat
-## toward its middle, where it is zero: a body let go there swings along the throat).
+## had (WormholeSpace.dynamics_step: the geodesic and -g grad phi, the toys' gravity, docs/gravity.md:
+## weaker in the throat, and over the throat's top, n = +z, along the throat toward its middle, where
+## it is zero). No air: a fall keeps its energy.
 ##
 ## Up is carried along like any other axis, so a flight off the floor through the curved zone comes
-## out tilted against the floor: up turns with the path (a path at head height through the throat
-## comes out about 25 degrees up, one over the throat's top turns over). Where the feet reach the
+## out tilted against the floor: the path and up turn together in the path's plane. Straight from
+## 10 m out at the throat's middle with the feet 0.25, 0.5, 1 and 1.5 m over the floor, a flight
+## comes out into universe B turned 24, 48, 100 and 160 degrees up; at 2 m it comes down onto B's
+## floor, at 3 m back onto A's (tests/flight_test.gd prints these). Where the feet reach the
 ## floor, or the head comes within HEAD_CLEAR of it (the eyes must stay above it: the renderer
 ## draws from above it only), the body lands: the feet go onto the floor below them and the frame
 ## turns the least way that stands up along the floor's normal (upside down: a roll, the line of
@@ -38,7 +39,8 @@ var frame: Array = []           # the room's axes at the feet [x, up, z]
 var V := Vector4.ZERO           # velocity at the feet, m/s (flying)
 var standing := true
 var gravity := true             # flying with nothing pushed: falls (else hovers)
-var landed := false             # set by touch_down when it lands (main clears it each frame)
+var _head_of := []              # head's last [l, n, frame, height] and what it gave: touch_down and
+var _head_was := []             # main ask for the same head in a frame
 
 
 func _init(p_space: WormholeSpace) -> void:
@@ -74,12 +76,12 @@ func push(S: Vector4, dt: float) -> void:
 
 ## Nothing pushed for dt s: flying, a free fall with gravity, else at rest. True if it moved.
 func coast(dt: float) -> bool:
-	if standing:
+	if standing or dt <= 0.0:
 		return false
 	if not gravity:
 		V = Vector4.ZERO
 		return false
-	var steps := ceili(dt / FALL_DT - 1e-9)
+	var steps := maxi(ceili(dt / FALL_DT - 1e-9), 1)
 	var h := dt / steps
 	for _i in steps:
 		var s := space.dynamics_step(l, n, V, h, GRAVITY, frame)
@@ -121,9 +123,14 @@ func turn(angle: float) -> void:
 	frame = WormholeSpace.orthonormalize([c * fx + s * fz, frame[1], c * fz - s * fx])
 
 
-## The head at height (m, the head's in the room) above the feet along up: [l, n, frame].
+## The head at height (m, the head's in the room) above the feet along up: [l, n, frame] (not to be
+## changed: the same Array comes back while nothing moved).
 func head(height: float) -> Array:
-	return space.geodesic(l, n, frame[1], maxf(height, HEAD_MIN), frame)
+	var key := [l, n, frame, height]
+	if key != _head_of:
+		_head_of = [l, n, frame.duplicate(), height]
+		_head_was = space.geodesic(l, n, frame[1], maxf(height, HEAD_MIN), frame)
+	return _head_was
 
 
 ## The feet's height above the floor (WormholeSpace.height).
@@ -156,7 +163,6 @@ func touch_down(height_in_room: float) -> bool:
 	frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
 	V = Vector4.ZERO
 	standing = true
-	landed = true
 	return true
 
 
