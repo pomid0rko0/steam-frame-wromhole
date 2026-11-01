@@ -172,7 +172,12 @@ func materials() -> Array[ShaderMaterial]:
 func upload_space() -> void:
 	var tab := space.sweep_table()
 	var tex := ImageTexture.create_from_image(tab.image)
-	var grav := space.gravity_table()
+	# the floor's gravity by the distance along it from under the throat's centre (temporary)
+	var gdata := PackedFloat32Array()
+	for i in 512:
+		gdata.append(space.floor_gravity(60.0 * i / 511.0))
+	var grav := {"image": Image.create_from_data(512, 1, false, Image.FORMAT_RF, gdata.to_byte_array()),
+			"axes": Vector2(60.0, space.grav_beta)}
 	var gtex := ImageTexture.create_from_image(grav.image)
 	_sweep_tex = tex
 	_sweep_axes = tab.axes

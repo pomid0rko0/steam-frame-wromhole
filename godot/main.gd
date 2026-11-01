@@ -43,6 +43,7 @@ extends Node3D
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
+const LIFT := 5.0                   # m: the throat's centre above the floor (above the curved zone's radius, 4 m)
 const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
 const FLY_SPEED := 4.0              # flying: metres per second at full stick or trigger
@@ -57,7 +58,7 @@ const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
 
-var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET)
+var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET, LIFT)
 var viewer := Viewer.new(space)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
 var toys := Toys.new(space, scene)
