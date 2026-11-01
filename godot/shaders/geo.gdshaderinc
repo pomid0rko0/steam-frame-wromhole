@@ -271,23 +271,28 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 }
 
 // ---------------------------------------------------------------- seeing a point
-// The geodesic along which the eye at (el, en) sees the point (pl, pn): the only one whose position
-// angle turns by the angle between en and pn (less than pi; any other crosses the floor first:
-// docs/geometry.md). Returns the launch direction as a tangent vector at the eye (.xyzw) and the
-// length (out len); arrive: the direction it comes in at the point, as a vector of R^4; fell: 1/2
-// where a ray of the search came out not finite (passed over), 1 where none was finite and the
-// stand-in below took the search's place (ref/test_gpu.py: never either).
-// Taken at once: where the eye and the point are in the same flat universe and the segment between
-// them stays out of the curved zone, the segment (most of a scene seen not through the throat);
-// where both are in the throat's cylinder, the straight line on it unrolled. Else the ray is found
-// among those that reach |l| = |pl| (below): GEO_ITERS rays, the first the one between the two
-// families, then false position with halving (Illinois) in the family that holds the point, until
-// a ray turns to within GEO_TOL of the point's angle (how many it takes: ref/test_gpu.py).
+// The geodesics along which the eye at (el, en) sees the point (pl, pn). Every one lies in a plane
+// through the centre, and in it turns from en to pn by alpha + 2 pi k on one side or 2 pi (k + 1) -
+// alpha on the other (alpha the angle between en and pn, k = 0, 1...): on the plane's surface,
+// whose curvature is nowhere positive, one geodesic for each, the images of the point
+// (docs/geometry.md). geo_see_to finds the one that leaves the eye toward t (a unit vector
+// orthogonal to en, in the plane) and turns by target to reach the point (pn = cos target en + sin
+// target t). Returns the launch direction as a tangent vector at the eye (.xyzw) and the length
+// (out len); arrive: the direction it comes in at the point, as a vector of R^4; fell: 1/2 where a
+// ray of the search came out not finite (passed over), 1 where none was finite and the stand-in
+// below took the search's place (ref/test_gpu.py: never either). straight: the turn is alpha the
+// short way (the first image), which the straight line takes where it can.
+// Taken at once: with straight, where the eye and the point are in the same flat universe and the
+// segment between them stays out of the curved zone, the segment; where both are in the throat's
+// cylinder, the straight line on it unrolled. Else the ray is found among those that reach |l| =
+// |pl| (below): GEO_ITERS rays, the first the one between the two families, then false position
+// with halving (Illinois) in the family that holds the point, until a ray turns to within GEO_TOL of
+// the target (how many it takes: ref/test_gpu.py).
 const int GEO_ITERS = 12;
 const int GEO_SPARE = 8;
 const float GEO_TOL = 1e-5;
 
-vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive, out float fell) {
+vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool straight, out float len, out vec4 arrive, out float fell) {
 	float side = el < 0.0 ? -1.0 : 1.0;
 	float le = abs(el);
 	float lp = side * pl;           // the eye's side is +
@@ -303,7 +308,7 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 	arrive = vec4(0.0);
 	fell = 0.0;
 	bool seg = false;
-	if (le >= g_prof.w && lp >= g_prof.w) {
+	if (straight && le >= g_prof.w && lp >= g_prof.w) {
 		vec3 xe = re * en;
 		vec3 dv = rp * pn - xe;
 		float d2 = max(dot(dv, dv), 1e-20);
@@ -320,11 +325,8 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 	if (!seg) {
 		float rmin = g_prof2.z;
 		float dr0 = 2.0 * g_prof.y * g_prof2.y;             // r_min - rho0
-		float c = dot(en, pn);
-		vec3 cr = cross(en, pn);
-		float sd = length(cr);
-		float delta = geo_atan2(sd, c);
-		vec3 t = sd > 1e-9 ? (pn - c * en) / sd : (abs(en.z) < 0.9 ? normalize(cross(en, vec3(0.0, 0.0, 1.0))) : normalize(cross(en, vec3(1.0, 0.0, 0.0))));
+		float delta = target;
+		vec2 scd = geo_sincos(delta);
 		bool found = false;
 		if (le > g_prof.z || alp > g_prof.z) {
 			// The rays that reach |l| = |lp|, by their launch angle from the radial direction
@@ -453,7 +455,7 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 			float dl = (arrive_out ? 1.0 : -1.0) * vr;
 			vec2 dd = geo_drdw(pl);
 			float dls = side * dl;                    // dl/ds in the true l
-			vec3 tau = -sd * en + c * t;              // toward growing angle at pn
+			vec3 tau = -scd.x * en + scd.y * t;       // toward growing angle at pn
 			vec4 arr = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
 			// the search's ray if any was finite
 			float lens = res.y;
@@ -473,13 +475,30 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 			float dl0 = lp - le, arc0 = re * delta;
 			len = sqrt(dl0 * dl0 + arc0 * arc0);
 			float cl0 = dl0 / max(len, 1e-20), sl0 = arc0 / max(len, 1e-20);
-			arrive = vec4(sl0 * (c * t - sd * en), side * cl0);
+			arrive = vec4(sl0 * (scd.y * t - scd.x * en), side * cl0);
 			dir = vec4(side * cl0, sl0 * t);
 		}
 	}
 	return dir;
 }
 
+// The first image: the geodesic that turns by the angle between en and pn the short way.
+vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arrive, out float fell) {
+	float c = dot(en, pn);
+	vec3 cr = cross(en, pn);
+	float sd = length(cr);
+	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : (abs(en.z) < 0.9 ? normalize(cross(en, vec3(0.0, 0.0, 1.0))) : normalize(cross(en, vec3(1.0, 0.0, 0.0))));
+	return geo_see_to(el, en, pl, pn, t, geo_atan2(sd, c), true, len, arrive, fell);
+}
+
+// Image j of the point (j = 0 the first; then by the turn: 2 pi - alpha, 2 pi + alpha, 4 pi -
+// alpha...), the plane's direction t from en toward pn and alpha the angle between them.
+vec4 geo_see_image(float el, vec3 en, float pl, vec3 pn, vec3 t, float alpha, int j, out float len, out vec4 arrive, out float fell) {
+	float k = float(j / 2);
+	bool far = (j & 1) == 1;
+	float target = far ? 2.0 * GEO_PI * (k + 1.0) - alpha : alpha + 2.0 * GEO_PI * k;
+	return geo_see_to(el, en, pl, pn, far ? -t : t, target, j == 0, len, arrive, fell);
+}
 
 // ---------------------------------------------------------------- a ray's way out of the zone
 // Outside the curved zone a ray is straight, and a straight ray that leaves the zone's ball never

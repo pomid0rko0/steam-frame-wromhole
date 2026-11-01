@@ -36,6 +36,16 @@ const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
+# a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
+# rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
+# azimuths about the eye's axis, points round each section. Seen from the throat's cylinder, a
+# body's k-th turn round it is a ring that thins only as 1 / k
+const ZONE_IMAGES := 20
+const ZONE_FINE := 4
+const ZONE_AZIMUTHS := 64
+const ZONE_ROUND := 48
+const ZONE_ROUND_COARSE := 12
+const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
 const BEAM_SHADER := preload("res://shaders/beam.gdshader")
@@ -56,11 +66,13 @@ const SPHERE_COLORS := [Color(0.62, 0.27, 0.22), Color(0.25, 0.45, 0.62), Color(
 const PILLAR_COLOR := Color(0.55, 0.45, 0.38)
 const BOX_COLOR := Color(0.42, 0.48, 0.58)
 # the gravity view's field lines: on the vertical surface n.x = 0 (through the throat, across chart
-# x), from the edge of the region shown (LINE_REACH beyond the curved zone), every LINE_STEP across
-# it, along the force down to the floor; arrows on them every ARROW_GAP along the line, each along it;
-# the colour the strength (_gravity_color); each with a dark outline, which keeps it seen on the
-# floor of the same g
-const LINE_REACH := 4.5
+# x), from LINE_TOP over the throat's top in each universe, every LINE_STEP across within LINE_REACH
+# beyond the curved zone, along the force down to the floor (in through the mouth's top and out at
+# its bottom where they meet it); arrows on them every ARROW_GAP along the line, each along it; the
+# colour the strength (_gravity_color); each with a dark outline, which keeps it seen on the floor of
+# the same g
+const LINE_TOP := 2.0           # m over the curved zone's top
+const LINE_REACH := 3.0
 const LINE_STEP := 1.0          # m between the lines' starts, across (chart y)
 const LINE_DS := 0.2            # m: the steps a line is traced and drawn in
 const LINE_MAX_STEPS := 300
@@ -80,18 +92,16 @@ var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
 var floor_mat: ShaderMaterial   # the one drawn (gravity_view)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
-var zone_ball_mat := ShaderMaterial.new()
-var zone_cube_mat := ShaderMaterial.new()
+var zone_mats: Array[ShaderMaterial] = []   # balls fine, coarse, cubes fine, coarse
 var scene_mats: Array[ShaderMaterial] = []
 var arrow_mat := ShaderMaterial.new()
 var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's
 var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
-var zone_balls: MultiMeshInstance3D     # in the curved zone (or reaching into it)
-var zone_cubes: MultiMeshInstance3D
+var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
 var statics: Array[MeshInstance3D] = []
-var arrows: MeshInstance3D
-var beams: Array[MeshInstance3D] = []
+var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
+var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
 var floor_fov := FloorFov.new()  # our own foveation's floor (on the camera's compositor: Main)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
@@ -116,8 +126,13 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	floor_fov.floor_mats = floor_mats
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
-	zone_ball_mat.shader = ZONE_BALL_SHADER
-	zone_cube_mat.shader = ZONE_CUBE_SHADER
+	for k in 4:
+		var m := ShaderMaterial.new()
+		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
+		m.set_shader_parameter("zone_first", 0 if k % 2 == 0 else ZONE_FINE)
+		m.set_shader_parameter("zone_images", ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
+		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
+		zone_mats.append(m)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
@@ -141,9 +156,11 @@ func _ready() -> void:
 	add_child(floor_quad)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
-	zone_balls = _multimesh(_ball_mesh(), zone_ball_mat, MAX_BALLS)
-	zone_cubes = _multimesh(_cube_mesh(), zone_cube_mat, MAX_CUBES)
-	for mm in [balls, cubes, zone_balls, zone_cubes]:
+	var grids := [_zone_mesh(ZONE_ROUND), _zone_mesh(ZONE_ROUND_COARSE)]
+	for k in 4:
+		var images := ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE
+		zone.append(_multimesh(grids[k % 2], zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
+	for mm in [balls, cubes] + zone:
 		play.add_child(mm)
 	_lens_statics()
 	_upload_lens(PackedVector4Array(), PackedVector4Array())
@@ -151,12 +168,12 @@ func _ready() -> void:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
 		play.add_child(mi)
-	arrows = _body(_arrow_mesh(), arrow_mat)
+	arrows = _images(_arrow_mesh(), arrow_mat)
 	arrows.visible = false
 	play.add_child(arrows)
 	var tube := _beam_mesh()
 	for m in beam_mats:
-		var b := _body(tube, m)
+		var b := _images(tube, m)
 		# below the floor at the start, where nothing of it is seen, until a hand points
 		var under := PackedVector4Array([Vector4(10.0, 0.0, -space.lift - 1.0, space.h), Vector4(11.0, 0.0, -space.lift - 1.0, space.h)])
 		m.set_shader_parameter("beam_p", under)
@@ -185,7 +202,8 @@ var _beam_on: Array[bool] = [false, false]
 
 ## Every material that reads geo_uniforms.gdshaderinc.
 func materials() -> Array[ShaderMaterial]:
-	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, zone_ball_mat, zone_cube_mat, arrow_mat]
+	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]
+	out.append_array(zone_mats)
 	out.append_array(beam_mats)
 	out.append_array(floor_mats)
 	out.append_array(scene_mats)
@@ -247,7 +265,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	var n := mini(pos.size(), MAX_BALLS)
 	var nc := mini(cpos.size(), MAX_CUBES)
 	var flat := [0, 0]          # instances out in a flat universe, in the zone
-	var zone := [0, 0]
+	var inz := [0, 0]
 	var lens_a := PackedVector4Array()
 	var lens_b := PackedVector4Array()
 	for i in n:
@@ -255,10 +273,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		var e := _tangent_pair(C)
 		var c := _linear(col[i])
 		var out := out_of_zone(C, col[i].w)
-		var mm := (balls if out else zone_balls).multimesh
-		var k: int = flat[0] if out else zone[0]
-		mm.set_instance_transform(k, pack(C, e[0], e[1]))
-		mm.set_instance_custom_data(k, c)
+		_place(0, out, flat[0] if out else inz[0], pack(C, e[0], e[1]), c)
 		if out:
 			flat[0] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 0.0), Vector4(1.0, 0.0, 0.0, col[i].w),
@@ -268,7 +283,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			else:
 				lens_b.append_array(rows)
 		else:
-			zone[0] += 1
+			inz[0] += 1
 	for i in nc:
 		var C := cpos[i]
 		var E1 := cube_axes[2 * i]
@@ -276,10 +291,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		var c := _linear(ccol[i])
 		var half := ccol[i].w
 		var out := out_of_zone(C, half * sqrt(3.0))
-		var mm := (cubes if out else zone_cubes).multimesh
-		var k: int = flat[1] if out else zone[1]
-		mm.set_instance_transform(k, pack(C, E1, E2))
-		mm.set_instance_custom_data(k, c)
+		_place(1, out, flat[1] if out else inz[1], pack(C, E1, E2), c)
 		if out:
 			flat[1] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 2.0), Vector4(E1.x, E1.y, E1.z, half),
@@ -289,11 +301,11 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			else:
 				lens_b.append_array(rows)
 		else:
-			zone[1] += 1
+			inz[1] += 1
 	balls.multimesh.visible_instance_count = flat[0]
 	cubes.multimesh.visible_instance_count = flat[1]
-	zone_balls.multimesh.visible_instance_count = zone[0]
-	zone_cubes.multimesh.visible_instance_count = zone[1]
+	for k in 4:
+		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
 	ball_col = col.slice(0, n)
@@ -302,6 +314,17 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		bodies.append(["ball", pos[i], col[i].w])
 	for i in nc:
 		bodies.append(["cube", cpos[i], ccol[i].w])
+
+
+## Body k of a kind (0 balls, 1 cubes) out of the zone (out: one instance in balls or cubes) or in
+## it (one per image in zone's two of its kind, from k times their count).
+func _place(kind: int, out: bool, k: int, xf: Transform3D, c: Color) -> void:
+	var mms: Array = [[balls, cubes][kind].multimesh] if out else [zone[2 * kind].multimesh, zone[2 * kind + 1].multimesh]
+	for mm: MultiMesh in mms:
+		var count := 1 if out else (ZONE_FINE if mm == mms[0] else ZONE_IMAGES - ZONE_FINE)
+		for j in count:
+			mm.set_instance_transform(k * count + j, xf)
+			mm.set_instance_custom_data(k * count + j, c)
 
 
 ## A body round C (a point of R^4) reaching reach (chord) stays out of the curved zone's ball, in a
@@ -453,6 +476,15 @@ static func _multimesh(mesh: Mesh, mat: ShaderMaterial, count: int) -> MultiMesh
 	return mi
 
 
+## A mesh drawn once per image (LINE_IMAGES instances; its shader puts them).
+static func _images(mesh: Mesh, mat: ShaderMaterial) -> MultiMeshInstance3D:
+	var mi := _multimesh(mesh, mat, LINE_IMAGES)
+	for j in LINE_IMAGES:
+		mi.multimesh.set_instance_transform(j, Transform3D.IDENTITY)
+	mi.multimesh.visible_instance_count = LINE_IMAGES
+	return mi
+
+
 static func _body(mesh: Mesh, mat: ShaderMaterial) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
@@ -475,6 +507,28 @@ static func _beam_mesh() -> ArrayMesh:
 			var a := i * BEAM_SIDES + j
 			var b := i * BEAM_SIDES + (j + 1) % BEAM_SIDES
 			idx.append_array([a, b, a + BEAM_SIDES, b, b + BEAM_SIDES, a + BEAM_SIDES])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = v
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## A body in the curved zone's mesh (body.gdshaderinc, ZONE): a grid of ZONE_AZIMUTHS x round
+## squares, VERTEX.xy in [0, 1]^2.
+static func _zone_mesh(round: int) -> ArrayMesh:
+	var v := PackedVector3Array()
+	for i in ZONE_AZIMUTHS + 1:
+		for j in round + 1:
+			v.append(Vector3(float(i) / ZONE_AZIMUTHS, float(j) / round, 0.0))
+	var idx := PackedInt32Array()
+	var w := round + 1
+	for i in ZONE_AZIMUTHS:
+		for j in round:
+			var a := i * w + j
+			idx.append_array([a, a + w, a + 1, a + 1, a + w, a + w + 1])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = v
@@ -552,18 +606,18 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
 ## LINE_* and ARROW_*). Vertices as points of the space: n in the vertex, l in UV.x (body.gdshaderinc,
 ## ARROWS); each line and arrow twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1).
+## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
 func _arrow_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var lmax := space.L + LINE_REACH
-	var R := space.r(lmax)
-	var k := int(R / LINE_STEP)
+	var top := space.Rout + LINE_TOP
+	var reach := space.Rout + LINE_REACH
+	var k := int(reach / LINE_STEP)
 	for side in [1.0, -1.0]:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
-			if absf(y) > R - 0.5 * LINE_STEP:
-				continue
-			var pts := _field_line(side * lmax, acos(y / R), lmax)
+			var rr := Vector2(y, top).length()
+			var pts := _field_line(side * (rr - space.Rout + space.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
 			if pts.size() < 2:
 				continue
 			_line(st, pts, true)
@@ -579,9 +633,9 @@ func _force(l: float, beta: float) -> Vector2:
 	return Vector2(F.x, Vector3(F.y, F.z, F.w).dot(Vector3(0.0, -sin(beta), cos(beta))))
 
 
-## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (beta 0 or pi)
-## or out of |l| < lmax: its points [l, beta, g].
-func _field_line(l: float, beta: float, lmax: float) -> Array:
+## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (where the
+## height goes through 0) or out past rmax from the throat's centre: its points [l, beta, g].
+func _field_line(l: float, beta: float, rmax: float) -> Array:
 	var dir := func(ll: float, bb: float) -> Vector2:
 		var f := _force(ll, bb)
 		var g := f.length()
@@ -596,15 +650,14 @@ func _field_line(l: float, beta: float, lmax: float) -> Array:
 		var k3: Vector2 = dir.call(p.x + 0.5 * LINE_DS * k2.x, p.y + 0.5 * LINE_DS * k2.y)
 		var k4: Vector2 = dir.call(p.x + LINE_DS * k3.x, p.y + LINE_DS * k3.y)
 		var q := p + LINE_DS / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-		if q.y <= 0.0 or q.y >= PI:
+		var h0 := space.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
+		var h1 := space.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
+		if h1 <= 0.0:
 			# onto the floor: the step's part that gets there
-			var edge := 0.0 if q.y <= 0.0 else PI
-			var t := (edge - p.y) / (q.y - p.y)
-			q = p.lerp(q, t)
-			q.y = edge
+			q = p.lerp(q, h0 / (h0 - h1))
 			pts.append([q.x, q.y, _force(q.x, q.y).length()])
 			break
-		if absf(q.x) > lmax:
+		if space.r(q.x) > rmax:
 			break
 		l = q.x
 		beta = q.y
@@ -655,13 +708,11 @@ func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
 		s += len
 
 
-## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0, kept above the floor (the
-## floor hides nothing: what is below it would show through).
+## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0.
 static func _vertex(st: SurfaceTool, q: Vector2, c: Color) -> void:
-	var b := clampf(q.y, 0.0, PI)
 	st.set_color(c)
 	st.set_uv(Vector2(q.x, 0.0))
-	st.add_vertex(Vector3(0.0, cos(b), sin(b)))
+	st.add_vertex(Vector3(0.0, cos(q.y), sin(q.y)))
 
 
 ## An arrow's colour at g (in g): look.gdshaderinc's look_grav_colour, brighter by ARROW_GLOW.

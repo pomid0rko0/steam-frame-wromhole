@@ -6,16 +6,30 @@
 //     ordinary camera); a fragment whose line of sight goes through the curved zone's ball is
 //     dropped: that part of the view is the lens's (floor.gdshaderinc, which draws these bodies
 //     there along the rays that come out of the zone).
-//   Else: bodies in the curved zone, each vertex along its geodesic (geo_see).
+//   Else: each vertex along its geodesics (geo_see_image), every image.
 //   TOY: balls (BALL) and cubes (CUBE) of the physics (ball_world.gd), one MultiMesh each. An
 //     instance: its centre C (a point of R^4) and body axes E1, E2 packed in the transform's 12
 //     numbers (Renderer.pack), E3 from them and the space's normal; INSTANCE_CUSTOM = (colour,
-//     radius or half size). A ball's mesh is the unit sphere: the point of the space at chord
-//     distance radius from C in that direction (BallWorld's ball). A cube's is the cube [-1, 1]^3:
-//     its 4D box cut by the space, each point taken along the space's normal at C.
+//     radius or half size). A ball is the space's points at chord distance radius from C
+//     (BallWorld's ball); a cube its 4D box cut by the space: the points whose offsets from C
+//     along E1, E2, E3 are within the half size. With DIRECT the mesh is the unit sphere or the
+//     cube [-1, 1]^3, each point taken along the space's normal at C.
 //     Below the floor they are hidden: the floor hides whatever is below it.
+//   ZONE (zone_ball.gdshader, zone_cube.gdshader): toys in the curved zone, each drawn once per image
+//     (zone_first, zone_images), as a mesh made anew for each view round the line
+//     through its eye and the centre (the axis): there the images of a point fold into a ring (an
+//     Einstein ring), and a triangle across the axis would join a point's image on one side with its
+//     neighbour's on the other. So the mesh is a grid (VERTEX.xy in [0, 1]^2) of the azimuth theta
+//     about the axis and of the place round the body's section by the half-surface of that azimuth
+//     (points (l, alpha): alpha the angle from the eye's direction toward theta): a body off the axis
+//     takes the azimuths it spans, each section a closed curve round the point nearest its centre;
+//     a body round the axis every azimuth, each section an arc from where the axis enters it to
+//     where it leaves. No triangle crosses the axis, and the images come out as rings where they
+//     are. Each point found by Newton's steps on the body's own definition along a straight line of
+//     (l, r alpha) from the inner point (zone.gdshaderinc).
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
+//   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
 //   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
 //     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR; COLOR.a 1 (the arrow,
 //     over its outline of COLOR.a 0) a hair nearer the eye in depth, in the same place in the view.
@@ -28,7 +42,7 @@
 #if defined(STATIC) && !defined(DIRECT)
 #define DIRECT
 #endif
-#if defined(ARROWS) || defined(BEAM)
+#if defined(ARROWS) || defined(BEAM) || defined(ZONE)
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 #else
 render_mode unshaded, cull_back, fog_disabled, shadows_disabled;
@@ -40,6 +54,11 @@ render_mode unshaded, cull_back, fog_disabled, shadows_disabled;
 
 #ifdef STATIC
 uniform float sheet = 1.0;       // the universe: A +1, B -1
+#endif
+#ifdef ZONE
+uniform int zone_first = 0;      // instance i draws image zone_first + i % zone_images (Renderer)
+uniform int zone_images = 1;
+uniform float zone_round = 48.0; // the mesh's points round a section (Renderer._zone_mesh)
 #endif
 #ifdef BEAM
 #define BEAM_POINTS 48           // Renderer.BEAM_POINTS
@@ -64,10 +83,95 @@ varying flat vec3 v_eye;     // the eye (R^4's xyz)
 varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
 #endif
 
+#ifdef ZONE
+#include "res://shaders/zone.gdshaderinc"
+#endif
+
 void vertex() {
 	vec4 P;
 	vec4 nrm;
-#ifdef TOY
+#ifdef ZONE
+	float el;
+	vec3 en;
+	vec4 ex, ey, ez;
+	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
+	int image = zone_first + INSTANCE_ID % zone_images;
+	vec4 C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
+	vec4 E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);
+	vec4 E2 = vec4(MODEL_MATRIX[2].z, MODEL_MATRIX[3].xyz);
+	vec4 N = geo_normal(C);
+	vec4 E3 = -geo_cross4(E1, E2, N);
+	float size = INSTANCE_CUSTOM.a;
+#ifdef BALL
+	float reach = size;
+#else
+	float reach = 1.8 * size;    // its cut box within this chord of C (sqrt 3, and the cut's bulge)
+#endif
+	// the axis's frame: a1, a2 across it; the body's centre's offset across it, and the axis's
+	// point nearest the centre, inside the body or not
+	vec3 a1 = normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 a2 = cross(en, a1);
+	vec2 cp = vec2(dot(C.xyz, a1), dot(C.xyz, a2));
+	float d = length(cp);
+	float ce = dot(C.xyz, en);
+	vec3 nn;
+	float l0 = geo_l_of(vec4(ce * en, C.w), nn);
+	float al0 = ce >= 0.0 ? 0.0 : GEO_PI;
+#ifdef BALL
+	bool ball = true;
+#else
+	bool ball = false;
+#endif
+	bool round_axis = d < reach && zone_out(ball, zone_point(l0, al0, en, a1), C, E1, E2, E3, size) < 0.0;
+	float th, phi, dsg;
+	if (round_axis) {
+		// every azimuth; from the axis's entry round to its exit, into the half-surface
+		th = 2.0 * GEO_PI * VERTEX.x;
+		phi = GEO_PI * VERTEX.y;
+		dsg = ce >= 0.0 ? 1.0 : -1.0;
+	} else {
+		float w = d > reach ? geo_asin(reach / d) : GEO_PI;
+		th = geo_atan2(cp.y, cp.x) + (2.0 * VERTEX.x - 1.0) * w;
+		phi = 2.0 * GEO_PI * VERTEX.y;
+		dsg = 1.0;
+	}
+	vec2 sct = geo_sincos(th);
+	vec3 t = sct.y * a1 + sct.x * a2;
+	if (!round_axis) {
+		// the inner point: the centre's place in the half-surface's hyperplane, its direction there
+		// and the l of the profile's point nearest it
+		vec3 m = sct.y * a2 - sct.x * a1;
+		vec3 cq = C.xyz - dot(C.xyz, m) * m;
+		al0 = geo_atan2(dot(cq, t), dot(cq, en));
+		l0 = geo_l_of(vec4(cq, C.w), nn);
+	}
+	vec2 scp = geo_sincos(phi);
+	float r0 = geo_r(abs(l0));
+	float dl = scp.y, dal = dsg * scp.x / r0;
+#ifdef BALL
+	vec2 pe = zone_edge_ball(l0, al0, dl, dal, en, t, C, size);
+#else
+	vec2 pe = zone_edge_cube(l0, al0, dl, dal, (round_axis ? GEO_PI : 2.0 * GEO_PI) / zone_round, en, t, C, E1, E2, E3, size);
+#endif
+	float pl = pe.x;
+	float alpha = clamp(pe.y, 0.0, GEO_PI);
+	vec2 sca = geo_sincos(alpha);
+	vec3 pn = sca.y * en + sca.x * t;
+	P = vec4(geo_r(abs(pl)) * pn, zone_w(pl));
+	vec4 q = P - C;
+#ifdef BALL
+	nrm = q;
+#else
+	vec3 sv = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
+	vec3 av = abs(sv);
+	nrm = av.x >= av.y && av.x >= av.z ? sign(sv.x) * E1 : (av.y >= av.z ? sign(sv.y) * E2 : sign(sv.z) * E3);
+	v_box = sv;
+#endif
+	float len, fell;
+	vec4 arrive;
+	vec4 dir = geo_see_image(el, en, pl, pn, t, alpha, image, len, arrive, fell);
+	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+#elif defined(TOY)
 	vec4 C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
 	vec4 E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);
 	vec4 E2 = vec4(MODEL_MATRIX[2].z, MODEL_MATRIX[3].xyz);
@@ -115,6 +219,7 @@ void vertex() {
 	P = sheet > 0.0 ? vec4(xc, h) : vec4(-xc.x, xc.yz, -h);
 	nrm = vec4(sheet > 0.0 ? NORMAL.x : -NORMAL.x, NORMAL.yz, 0.0);
 #endif
+#ifndef ZONE
 	vec3 pn;
 #ifdef ARROWS
 	pn = normalize(VERTEX);
@@ -146,12 +251,18 @@ void vertex() {
 		POSITION = vec4(2.0, 0.0, 0.5, 1.0);
 	}
 #else
+	// image INSTANCE_ID of each vertex, by its own plane (a triangle across the axis
+	// through the eye and the centre would join two images: a long thin line or tube there does)
+	float c = dot(en, pn);
+	float sd = length(cross(en, pn));
+	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
 	float len, fell;
-	vec4 dir = geo_see(el, en, pl, pn, len, arrive, fell);
+	vec4 dir = geo_see_image(el, en, pl, pn, t, geo_atan2(sd, c), INSTANCE_ID, len, arrive, fell);
 #ifdef ARROWS
 	len *= 1.0 - 1e-3 * COLOR.a;
 #endif
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+#endif
 #endif
 	v_ray = arrive;
 #ifdef ARROWS
@@ -164,7 +275,7 @@ void vertex() {
 	vec4 Np = geo_normal(P);
 #ifdef TOY
 	v_col = INSTANCE_CUSTOM.rgb;
-#ifdef CUBE
+#if defined(CUBE) && !defined(ZONE)
 	v_box = VERTEX;
 #endif
 #else
