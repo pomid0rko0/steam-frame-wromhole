@@ -3,28 +3,29 @@ extends RefCounted
 ## The demo's balls and cubes: the physics is BallWorld's, this sets the scene, laid out for the
 ## view from main.START_POS (facing the wormhole, its mouth hanging over the floor ahead). At rest:
 ## balls and cubes on universe A's floor in front of the mouth and under it, and in universe B a ball
-## on the line of sight from the start through the throat's centre (RING_BALL) with a cube beside it.
-## A ball rests on the floor only where gravity pushes along it less than rolling friction holds
-## (BallWorld.ROLLING_RESISTANCE: not under the mouth but right under the throat's centre), a cube
-## anywhere. A moment after the start a cube and a ball are thrown from
-## chest height: the cube lands in front of the mouth and slides to a stop, the ball flies up into
-## the mouth, through the throat, and comes out in universe B, where it lands on the floor. Then a
-## ball is dropped into the throat's top (DROP_AT). The reset (main._turns_and_reset) puts it all back
-## and does it again. Places are in charts (WormholeSpace's top: the floor at z = 0) and keep out of
-## the curved zone and scene.json's objects.
+## on the line of sight from the start through the throat's centre (ring_point) with a cube beside
+## it. A ball rests on the floor only where gravity pushes along it less than rolling friction holds
+## (BallWorld.ROLLING_RESISTANCE: under the mouth only right under the throat's centre), a cube
+## anywhere. A moment after the start a cube and a ball are thrown from chest height: the cube lands
+## in front of the mouth and slides to a stop, the ball flies up into the mouth, through the throat,
+## and comes out in universe B, where it lands on the floor. Then a ball is dropped into the throat's
+## top (DROP_AT). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
+## charts (WormholeSpace's top: the floor at z = 0) and keep out of the curved zone and scene.json's
+## objects.
 ##
-## The line of sight from the head at the start (1.6 m over START_POS) through the throat's centre
-## is a radial geodesic: it goes on in universe B at the same direction n from the centre, which
-## chart B shows mirrored in x, and comes down to B's floor in front of B's mouth. A ball with its
-## centre on it is seen from the start in the middle of the throat and again, all round, as rings
-## (light that goes round the throat once, twice, ... on its way: every plane through that line
-## holds such a path); the cube beside it, off the line, as two arcs on opposite sides.
+## The line of sight from the head at the start (HEAD_HEIGHT over START_POS) through the throat's
+## centre is a radial geodesic: it goes on in universe B at the same direction n from the centre,
+## which chart B shows mirrored in x, and comes down to B's floor in front of B's mouth. A ball with
+## its centre on it is seen from the start in the middle of the throat and again, all round, as rings
+## (light that goes round the throat once, twice, ... on its way: every plane through that line holds
+## such a path); the cube beside it, off the line, as two arcs on opposite sides.
 ##
-## The drop: the throat's top is where gravity is weakest (docs/gravity.md); dropped straight over
-## the throat's centre, a ball falls through the throat into universe B, rises over B's mouth, falls
-## back and so on, A and B by turns. That way down is unstable: DROP_AT is 20 cm off it, and the
-## ball, through to B and rising there, tips off the throat's top and falls past B's mouth onto B's
-## floor, and the floor's push rolls it away from under the mouth (tests/physics_test.gd, 7).
+## The drop: along the axis over the throat's centre the potential is even in l (docs/gravity.md,
+## «Сквозь горло»): dropped straight there, a ball falls through the throat into universe B, rises over
+## B's mouth as high as it fell from, falls back and so on, A and B by turns. That way is unstable
+## across: DROP_AT is 20 cm off it, and the ball, through to B and rising there, tips off the throat's
+## top and falls past B's mouth onto B's floor, and the floor's push rolls it away from under the
+## mouth (tests/physics_test.gd, 7).
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
