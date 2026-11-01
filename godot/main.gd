@@ -1,10 +1,10 @@
 class_name Main
 extends Node3D
-## Real-time wormhole for VR (README.md, docs/). The renderer (renderer.gd) draws each body where
-## the eye sees it along a geodesic of the wormhole space, and the floor and the sky per pixel;
-## this script builds the scene and moves the viewer through that curved space: walking in the room,
-## with the sticks along the floor and flying off it as a ship (the buttons: README.md,
-## «Управление»).
+## Real-time wormhole for VR (README.md, docs/). The throat hangs LIFT over the floor; the renderer
+## (renderer.gd) draws every image of each body along the geodesics of the wormhole space, the
+## curved zone as a lens per pixel; this script builds the scene and moves the viewer through that
+## curved space: walking in the room, with the sticks along the floor and flying off it as a ship
+## (the buttons: README.md, «Управление»).
 ##
 ## The viewer's body (viewer.gd): the room's floor under the head and the room's axes there, on the
 ## floor or flying; physical movement in the room, the sticks and the triggers move it along

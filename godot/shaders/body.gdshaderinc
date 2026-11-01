@@ -26,7 +26,8 @@
 //     a body round the axis every azimuth, each section an arc from where the axis enters it to
 //     where it leaves. No triangle crosses the axis, and the images come out as rings where they
 //     are. Each point found by Newton's steps on the body's own definition along a straight line of
-//     (l, r alpha) from the inner point (zone.gdshaderinc).
+//     (l, r alpha) from the inner point (zone.gdshaderinc); a cube's columns stand on its corners'
+//     azimuths and its sections' points near an edge on that edge, so its outline keeps its corners.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.

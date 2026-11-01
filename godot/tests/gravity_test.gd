@@ -168,11 +168,12 @@ func _picture_checks() -> void:
 	U.check("floor under the mouth: yellow too, 1.03 g", und.r > 0.8 and und.g > 0.7 and und.r > und.b + 0.35 and und.g > und.b + 0.3
 			and (und - off).get_luminance() != 0.0, "middle of the view %s (without the view %s)" % [und, off])
 	# from the start: the sky (top fifth) is the same with the floor view and without, the floor (bottom fifth) changes
-	# with the floor view, and the arrows show only with view 2
+	# with the floor view, and the arrows show only with view 2 (the lines a metre apart across the plane through the
+	# throat, seen face on from 10 m: 2 % of the view)
 	var sky := _diff(pics.start_off, pics.start_floor, 0.0, 0.2)
 	var flo := _diff(pics.start_off, pics.start_floor, 0.8, 1.0)
 	var arr := _diff(pics.start_floor, pics.start_arrows, 0.0, 1.0)
-	U.check("from the start: sky untouched, floor coloured, arrows drawn", sky.x < 3.0 / 255.0 and flo.y > 0.9 and arr.y > 0.03 and arr.y < 0.6,
+	U.check("from the start: sky untouched, floor coloured, arrows drawn", sky.x < 3.0 / 255.0 and flo.y > 0.9 and arr.y > 0.01 and arr.y < 0.6,
 			"sky differs by %.1f/255 at most; %.0f%% of the floor's pixels changed; arrows on %.0f%% of the view" % [sky.x * 255.0, 100.0 * flo.y, 100.0 * arr.y])
 
 
