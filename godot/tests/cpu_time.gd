@@ -3,7 +3,8 @@ extends SceneTree
 ## processed before main to one processed after main and the nodes under it (main._process: the
 ## walk, the head, the hands, the toys' physics, what goes to the shader; then the menu's, the frame
 ## rate's and the speed check's own). The simulated headset (tests/fake_hmd.gd)
-## and both controllers moving, the right hand holding a new ball, the demo's toys at rest around.
+## and both controllers moving, the right hand holding a new ball, the left empty and open, pointing
+## to and fro across the throat (it aims: hands.gd's pull), the demo's toys at rest around.
 ## It prints the median, the 90th percentile and the largest of SECONDS of frames, and the median of
 ## each part of main._process (Main.PARTS), with the feet at
 ## the start (a flat universe) and on the fillet (l 5), each after about WARM frames there. A measurement,

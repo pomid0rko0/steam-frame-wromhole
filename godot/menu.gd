@@ -130,6 +130,7 @@ func _ready() -> void:
 	strip_label.width = STRIP_WRAP / PIXEL
 	var cfg := _load()
 	strip_on = bool(cfg.get_value("ui", "strip", true))
+	main.hands.beam = bool(cfg.get_value("ui", "beam", false))
 	if xr:
 		runtime_eye = xr.get_render_target_size() / xr.render_target_size_multiplier
 		var runtime := str(xr.get_system_info().get("XRRuntimeName", ""))
@@ -544,6 +545,14 @@ func show_gaze(on: bool) -> void:
 	refresh()
 
 
+## The hands' pointing beams on or off (Hands.beam); kept for the next start.
+func show_beam(on: bool) -> void:
+	main.hands.beam = on
+	_save()
+	print("menu: the pointing beams %s" % ("on" if on else "off"))
+	refresh()
+
+
 ## The line below on or off; kept for the next start.
 func set_strip(on: bool) -> void:
 	strip_on = on
@@ -557,6 +566,7 @@ func set_strip(on: bool) -> void:
 func _save() -> void:
 	var cfg := _load()
 	cfg.set_value("ui", "strip", strip_on)
+	cfg.set_value("ui", "beam", main.hands.beam)
 	if xr:
 		_keep(cfg, "eye", render_scale, scale_chosen)
 		_keep(cfg, "foveation", foveation, foveation_chosen)
@@ -707,8 +717,9 @@ func _update_strip() -> void:
 func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"),
-			GazeRow.new(self, "gaze", "точка взгляда"), GravRow.new(self, "grav", "гравитация"),
-			TurnRow.new(self, "turn", "поворот"), StripRow.new(self, "strip", "строка частоты"),
+			GazeRow.new(self, "gaze", "точка взгляда"), BeamRow.new(self, "beam", "луч прицела"),
+			GravRow.new(self, "grav", "гравитация"), TurnRow.new(self, "turn", "поворот"),
+			StripRow.new(self, "strip", "строка частоты"),
 			BenchRow.new(self, "bench", "замер скорости")]
 
 
@@ -899,6 +910,21 @@ class TurnRow extends Row:
 
 	func text(i: int) -> String:
 		return TURNS[i] if i == 0 else TURNS[i] % roundi(rad_to_deg(Main.SNAP_ANGLE))
+
+
+## The hands' pointing beams (hands.gd's pull).
+class BeamRow extends Row:
+	func shown() -> bool:
+		return not menu.main.hands.list.is_empty()
+
+	func current() -> int:
+		return 1 if menu.main.hands.beam else 0
+
+	func apply(i: int) -> void:
+		menu.show_beam(i == 1)
+
+	func text(i: int) -> String:
+		return OFF_ON[i]
 
 
 ## The line below the menu.

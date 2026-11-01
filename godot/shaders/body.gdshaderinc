@@ -13,8 +13,13 @@
 //   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
 //     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR; COLOR.a 1 (the arrow,
 //     over its outline of COLOR.a 0) a hair nearer the eye in depth, in the same place in the view.
+//   BEAM (beam.gdshader): a hand's pointing beam (Renderer.set_beam), a tube round a line of up to
+//     BEAM_POINTS points of R^4 (beam_p, beam_n of them), beam_r[i] in radius at point i; its mesh
+//     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
+//     up (R^4's z, else x, made orthogonal to the line and the space's normal). Unlit, in beam_col;
+//     below the floor hidden.
 // Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point.
-#ifdef ARROWS
+#if defined(ARROWS) || defined(BEAM)
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 #else
 render_mode unshaded, cull_back, fog_disabled, shadows_disabled;
@@ -26,6 +31,13 @@ render_mode unshaded, cull_back, fog_disabled, shadows_disabled;
 
 #ifdef STATIC
 uniform float sheet = 1.0;       // the universe: A +1, B -1
+#endif
+#ifdef BEAM
+#define BEAM_POINTS 48           // Renderer.BEAM_POINTS
+uniform vec4 beam_p[BEAM_POINTS];
+uniform float beam_r[BEAM_POINTS];
+uniform int beam_n = 0;
+uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 
 varying vec4 v_n;       // the surface's normal (R^4)
@@ -67,6 +79,23 @@ void vertex() {
 #elif defined(ARROWS)
 	P = vec4(0.0);
 	nrm = vec4(0.0);
+#elif defined(BEAM)
+	int last = max(beam_n - 1, 0);
+	int i = clamp(int(VERTEX.x + 0.5), 0, last);
+	vec4 C = beam_p[i];
+	vec4 N = geo_normal(C);
+	vec4 T = beam_p[min(i + 1, last)] - beam_p[max(i - 1, 0)];
+	T = normalize(T - dot(T, N) * N);
+	vec4 up = vec4(0.0, 0.0, 1.0, 0.0);
+	vec4 e1 = up - dot(up, N) * N - dot(up, T) * T;
+	if (dot(e1, e1) < 1e-4) {
+		up = vec4(1.0, 0.0, 0.0, 0.0);
+		e1 = up - dot(up, N) * N - dot(up, T) * T;
+	}
+	e1 = normalize(e1);
+	vec4 e2 = geo_cross4(T, e1, N);
+	P = geo_onto(C + beam_r[i] * (cos(VERTEX.y) * e1 + sin(VERTEX.y) * e2), N);
+	nrm = vec4(0.0);
 #else
 	vec3 xc = VERTEX;
 	float h = g_prof.z - g_prof.y * geo_sin(g_prof2.w) + g_prof.y;
@@ -97,6 +126,9 @@ void vertex() {
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
 	v_col = COLOR.rgb;
+#elif defined(BEAM)
+	vec4 Np = N;
+	v_col = beam_col;
 #else
 	vec4 Np = geo_normal(P);
 #ifdef TOY
@@ -120,10 +152,10 @@ void vertex() {
 }
 
 void fragment() {
-#ifdef TOY
+#if defined(TOY) || defined(BEAM)
 	if (v_h < 0.0) discard;
 #endif
-#ifdef ARROWS
+#if defined(ARROWS) || defined(BEAM)
 	ALBEDO = v_col;
 #else
 	vec4 n = normalize(v_n);

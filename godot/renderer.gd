@@ -8,9 +8,9 @@ extends Node3D
 ## the floor's shader. Each view's own eye is worked out in the shaders from the head this gets
 ## each frame (set_head) and the view's matrices.
 ##
-## What it draws: the physics' balls and cubes, the hands' balls (set_objects), the scene's static
-## objects (scene.json), the gravity view's floor and arrows (set_gravity_view), the floor and the
-## sky. The floor quad hangs under the camera (its parent); the bodies go into the play space, the
+## What it draws: the physics' balls and cubes, the hands' balls (set_objects), the hands' pointing
+## beams (set_beam), the scene's static objects (scene.json), the gravity view's floor and arrows
+## (set_gravity_view), the floor and the sky. The floor quad hangs under the camera (its parent); the bodies go into the play space, the
 ## camera's parent's parent (the origin, which never moves: their shader reads their numbers from the
 ## instance transform, which must stay theirs).
 ##
@@ -25,6 +25,7 @@ const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
+const BEAM_SHADER := preload("res://shaders/beam.gdshader")
 const GRAVITY_VIEWS := ["off", "floor", "floor and field lines"]
 const MAX_BALLS := 12           # the toys' balls and both hands'
 const MAX_CUBES := 8           # the toys' and the speed check's cube before the eyes
@@ -33,6 +34,8 @@ const MAX_CUBES := 8           # the toys' and the speed check's cube before the
 const BALL_SEGMENTS := 48
 const BALL_RINGS := 24
 const CUBE_STEPS := 8
+const BEAM_POINTS := 48         # a beam's points at most (body.gdshaderinc's BEAM_POINTS)
+const BEAM_SIDES := 6           # a beam's tube: its sides
 const FLOOR_PRIORITY := 100     # opaque draws go by render_priority, lower first: the floor last
 # the static objects' colours (linear), each sphere its own in scene.json's order, A's then B's
 const SPHERE_COLORS := [Color(0.62, 0.27, 0.22), Color(0.25, 0.45, 0.62), Color(0.55, 0.52, 0.2),
@@ -66,10 +69,12 @@ var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var scene_mats: Array[ShaderMaterial] = []
 var arrow_mat := ShaderMaterial.new()
+var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's
 var balls: MultiMeshInstance3D
 var cubes: MultiMeshInstance3D
 var statics: Array[MeshInstance3D] = []
 var arrows: MeshInstance3D
+var beams: Array[MeshInstance3D] = []
 var floor_quad: MeshInstance3D
 var floor_fov := FloorFov.new()  # our own foveation's floor (on the camera's compositor: Main)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
@@ -93,6 +98,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
 	arrow_mat.shader = ARROW_SHADER
+	for m in beam_mats:
+		m.shader = BEAM_SHADER
 
 
 func _ready() -> void:
@@ -122,24 +129,39 @@ func _ready() -> void:
 	arrows = _body(_arrow_mesh(), arrow_mat)
 	arrows.visible = false
 	play.add_child(arrows)
+	var tube := _beam_mesh()
+	for m in beam_mats:
+		var b := _body(tube, m)
+		# below the floor at the start, where nothing of it is seen, until a hand points
+		var under := PackedVector4Array([Vector4(10.0, 0.0, -1.0, space.h), Vector4(11.0, 0.0, -1.0, space.h)])
+		m.set_shader_parameter("beam_p", under)
+		m.set_shader_parameter("beam_r", PackedFloat32Array([0.01, 0.01]))
+		m.set_shader_parameter("beam_n", 2)
+		beams.append(b)
+		play.add_child(b)
 
 
-## The first frames also draw the gravity views' floor and lines: their pipelines compile while the
-## app starts, not at the first switch to them (a stall of a tenth of a second or more on the Frame,
-## and SteamVR at half rate after it).
+## The first frames also draw the gravity views' floor and lines and the beams: their pipelines
+## compile while the app starts, not at the first switch to them (a stall of a tenth of a second or
+## more on the Frame, and SteamVR at half rate after it).
 func _process(_delta: float) -> void:
 	if _warm > 0:
 		_warm -= 1
 		floor_quad.material_override = floor_mats[1] if _warm > 0 else floor_mat
 		arrows.visible = _warm > 0 or gravity_view == 2
+		if _warm == 0:
+			for k in beams.size():
+				beams[k].visible = _beam_on[k]
 
 
-var _warm := 3                  # frames left drawing the gravity views (_process)
+var _warm := 3                  # frames left drawing the gravity views and the beams (_process)
+var _beam_on: Array[bool] = [false, false]
 
 
 ## Every material that reads geo_uniforms.gdshaderinc.
 func materials() -> Array[ShaderMaterial]:
 	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]
+	out.append_array(beam_mats)
 	out.append_array(floor_mats)
 	out.append_array(scene_mats)
 	return out
@@ -180,6 +202,9 @@ func _space_params(m: ShaderMaterial) -> void:
 func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 	var f := PackedVector4Array(hf)
 	for m in materials():
+		var k := beam_mats.find(m)
+		if k >= 0 and not beams[k].visible:
+			continue                    # a beam not drawn: set_beam's frame sets it before this
 		m.set_shader_parameter("head_l", l)
 		m.set_shader_parameter("head_n", n)
 		m.set_shader_parameter("head_f", f)
@@ -214,6 +239,23 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		bodies.append(["ball", pos[i], col[i].w])
 	for i in nc:
 		bodies.append(["cube", cpos[i], ccol[i].w])
+
+
+## Hand i's beam (0 left, 1 right): a tube round the line through points of R^4 (pts, at most
+## BEAM_POINTS: the rest are left out), radii[k] in radius at pts[k], in colour col (sRGB); fewer
+## than two points: none.
+func set_beam(i: int, pts: PackedVector4Array, radii: PackedFloat32Array, col: Color) -> void:
+	var n := mini(pts.size(), BEAM_POINTS)
+	_beam_on[i] = n >= 2
+	if _warm == 0:
+		beams[i].visible = n >= 2
+	if n < 2:
+		return
+	var m := beam_mats[i]
+	m.set_shader_parameter("beam_p", pts.slice(0, n))
+	m.set_shader_parameter("beam_r", radii.slice(0, n))
+	m.set_shader_parameter("beam_n", n)
+	m.set_shader_parameter("beam_col", col)
 
 
 static func _linear(c: Vector4) -> Color:
@@ -293,6 +335,28 @@ static func _body(mesh: Mesh, mat: ShaderMaterial) -> MeshInstance3D:
 	mi.extra_cull_margin = 16384.0
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
+
+
+## A beam's tube (body.gdshaderinc, BEAM): a ring of BEAM_SIDES a point, BEAM_POINTS points; each
+## vertex (the point, the angle round it, 0).
+static func _beam_mesh() -> ArrayMesh:
+	var v := PackedVector3Array()
+	for i in BEAM_POINTS:
+		for j in BEAM_SIDES:
+			v.append(Vector3(i, TAU * j / BEAM_SIDES, 0.0))
+	var idx := PackedInt32Array()
+	for i in BEAM_POINTS - 1:
+		for j in BEAM_SIDES:
+			var a := i * BEAM_SIDES + j
+			var b := i * BEAM_SIDES + (j + 1) % BEAM_SIDES
+			idx.append_array([a, b, a + BEAM_SIDES, b, b + BEAM_SIDES, a + BEAM_SIDES])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = v
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 static func _ball_mesh() -> Mesh:

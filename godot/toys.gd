@@ -12,6 +12,8 @@ const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98,
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
 const CUBE_COLORS := [Color(0.93, 0.93, 0.88), Color(0.95, 0.45, 0.55), Color(0.35, 0.8, 0.75),
 		Color(0.95, 0.7, 0.3), Color(0.55, 0.6, 0.95), Color(0.6, 0.85, 0.35)]
+const GLOW := Color(1.0, 0.55, 0.1)     # a toy a hand aims at or pulls is drawn toward this (glow)
+const GLOW_NEAR := Color(0.2, 0.85, 1.0)  # or toward this, if its own colour is near GLOW
 const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
 const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
 const DROP_HEIGHT := 2.0        # m
@@ -115,14 +117,16 @@ func cube_in_throat(l: float, phi: float, half: float, color: Color) -> BallWorl
 	return world.add_cube(l, n, Vector4.ZERO, [Vector4(1.0, 0.0, 0.0, 0.0), up, across], Vector3.ZERO, half, color)
 
 
-## The balls and cubes, the hands' balls (hands: [centre, colour with the radius]) and the speed
-## check's cube (extra: Bench.near_cube's, or []), to the renderer (Renderer.set_objects).
-func draw(renderer: Renderer, hands: Array, extra := []) -> void:
+## The balls and cubes (those in lit, Hands.lit, glowing), the hands' balls (hands: [centre, colour
+## with the radius]) and the speed check's cube (extra: Bench.near_cube's, or []), to the renderer
+## (Renderer.set_objects).
+func draw(renderer: Renderer, hands: Array, extra := [], lit := {}) -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
 	for b in world.balls:
+		var c := glow(b.color, lit[b]) if lit.has(b) else b.color
 		pos.append(space.embed(b.l, b.n))
-		col.append(Vector4(b.color.r, b.color.g, b.color.b, b.radius))
+		col.append(Vector4(c.r, c.g, c.b, b.radius))
 	for h in hands:
 		pos.append(h[0])
 		col.append(h[1])
@@ -131,13 +135,20 @@ func draw(renderer: Renderer, hands: Array, extra := []) -> void:
 	var ccol := PackedVector4Array()
 	for c in world.cubes:
 		var box := world.box4(c)
+		var k := glow(c.color, lit[c]) if lit.has(c) else c.color
 		cpos.append(box[0])
 		axes.append(box[1])
 		axes.append(box[2])
-		ccol.append(Vector4(c.color.r, c.color.g, c.color.b, c.half))
+		ccol.append(Vector4(k.r, k.g, k.b, c.half))
 	if not extra.is_empty():
 		cpos.append(extra[0])
 		axes.append(extra[1])
 		axes.append(extra[2])
 		ccol.append(extra[3])
 	renderer.set_objects(pos, col, cpos, axes, ccol)
+
+
+## Colour c a fraction k of the way to GLOW (GLOW_NEAR for a colour near it): a toy aimed at.
+static func glow(c: Color, k: float) -> Color:
+	var near := Vector3(c.r - GLOW.r, c.g - GLOW.g, c.b - GLOW.b).length() < 0.5
+	return c.lerp(GLOW_NEAR if near else GLOW, k)
