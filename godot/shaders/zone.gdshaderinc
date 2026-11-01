@@ -113,12 +113,15 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 			if (abs(det) < 1e-12) break;
 			c += vec2(b1 * a22 - a12 * b2, a11 * b2 - a21 * b1) / det;
 		}
-		// a corner of the section only if it is on the cube (the two faces' planes may meet beyond
-		// a third) and within the spacing of the point it replaces
+		// a corner of the section only if Newton got there (both slabs at their bounds: their planes
+		// may also meet almost along each other, and Newton then runs off), it is on the cube (the
+		// two faces' planes may meet beyond a third), within the spacing of the point it replaces
+		// and a number
 		vec4 qc = zone_point(c.x, c.y, en, t) - C;
-		vec3 sc = abs(vec3(dot(qc, E1), dot(qc, E2), dot(qc, E3)));
+		vec3 sc = abs(vec3(dot(qc, E1), dot(qc, E2), dot(qc, E3))) - size;
 		float moved = length(zone_point(c.x, c.y, en, t) - zone_point(p.x, p.y, en, t));
-		if (max(max(sc.x, sc.y), sc.z) <= size * (1.0 + 1e-4) && moved <= gap && c.y >= 0.0 && c.y <= GEO_PI) p = c;
+		bool on = abs(sc[f]) <= 1e-4 && abs(sc[k]) <= 1e-4 && sc[3 - f - k] <= 1e-4;
+		if (on && moved <= gap && c.y >= 0.0 && c.y <= GEO_PI && geo_finite(c.x + c.y + moved)) p = c;
 	}
 	return p;
 }

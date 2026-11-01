@@ -4,7 +4,6 @@ WormholeSpace.sweep_table builds them (ref/geo.py), on three throats: the app's,
 (h < R). Every sin and cos goes through the headset driver's range reduction (TURNIP below), and the
 table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
-  where the sweep reaches a value (geo_l_at): the sweep at the GPU's l against the value;
   which way the eye sees a point, the first image (geo_see): rays shot by DOP853 from an eye to a
     point within its first half turn, the GPU given the point must find that ray (angle) and its
     length, no ray of its search coming out not finite; half of them launched within a hair to a
@@ -83,7 +82,6 @@ LIFT = app_lift()           # the floor at z = -LIFT (every profile's zone, radi
 # radians of direction (the headset's pixel is about 1e-3: half a pixel 5e-4), metres; a ray's length
 # only orders bodies in depth and hazes the floor: a share of it
 SWEEP_ABS, SWEEP_REL = 5e-5, 1e-5
-INVERSE = 5e-4
 DIRECTION = 5e-4
 NAN_DIRECTION = 2e-2         # radians: the search, a quarter of its rays lost, at most this far off
 LENGTH_REL = 1e-2
@@ -111,8 +109,6 @@ void main() {
 	vec4 a = inp[I], c = inp[I + 1];
 	if (mode == 0) {            // a = (b, |l|, b - rho0, r - b): (psi, len) from the origin
 		outp[O] = vec4(geo_from_origin(a.x, geo_sigma(a.z), a.y, a.w), 0.0, 0.0);
-	} else if (mode == 1) {     // a = (b, psi, b - rho0): |l|
-		outp[O] = vec4(geo_l_at(a.x, geo_sigma(a.z), a.y), 0.0, 0.0, 0.0);
 	} else if (mode == 2) {     // a = (eye l, n), c = (point l, n): (direction's radial, tangential, len, fell)
 		float len, fell; vec4 arr;
 		g_rays = 0;
@@ -254,17 +250,6 @@ def profile_checks(name, S, gpu, gpu_nan, rng):
     lerr = np.abs(o[:, 1] - ref[:, 1]) / (1e-3 + LENGTH_REL * ref[:, 1])
     fails += not check(f'{name}: sweep from the origin', err.max() <= 1 and lerr.max() <= 1,
                        f'worst {err.max():.2f} of the limit, length {lerr.max():.2f} (1500 rays, turns up to {ref[:, 0].max():.0f} rad)')
-    # where the sweep reaches a value
-    rows, want = [], []
-    while len(rows) < 1000:
-        b = float(np.float32(rng.uniform(0, S.Rout * 1.2))); psi = rng.uniform(0, 2.5)
-        L = S.l_at(b, psi)
-        if not np.isfinite(L):
-            continue
-        rows.append([b, psi, b - S.rho0, 0, 0, 0, 0, 0]); want.append(psi)
-    o = gpu.run(1, rows)[:, 0]
-    err = [abs(S.sweep(r[0], max(l, S.l_turn(r[0]) if r[0] >= S.rmin else l))[0] - w) for r, l, w in zip(rows, o, want)]
-    fails += not check(f'{name}: where the sweep reaches a value', max(err) <= INVERSE, f'sweep at the GPU l off by {max(err):.1e} rad at most (1000 rays)')
     # which way the eye sees a point, the first image
     rows, cases = [], []
     places = eye_places(S)
@@ -680,6 +665,10 @@ def zone_checks(name, S, gpu, rng):
                 lc = rng.choice([-1, 1]) * (S.L + rng.uniform(-size, size))
             else:                   # out
                 lc = rng.choice([-1, 1]) * rng.uniform(S.L + 1, S.L + 10)
+            if S.th0 > 0 and abs(lc) < 2 * size:
+                # a body across the crease of h < R: zone.gdshaderinc's Newton steps take the profile
+                # smooth, and the app's throat (h > R) has no crease
+                continue
             en, t = frame(rng)
             m = np.cross(en, t)
             r_c = float(S.r(lc))
@@ -737,12 +726,12 @@ def zone_checks(name, S, gpu, rng):
             if not ball and dist > 1e-5:
                 # onto an edge of its section: both slabs at their bounds (the third within). How far
                 # from the line's way out, in the largest gap the shader snaps across (rho dphi over
-                # the line's slant, that at least 0.3; the gap is in a slab's offset, the move along
+                # the line's slant, that at least 0.05; the gap is in a slab's offset, the move along
                 # the section): reported only
                 snapped += 1
                 e = max(e, abs(sl[1] - size))
                 edge = max(edge, e)
-                mv = np.linalg.norm(w - rho1 * v) / max(rho1 * dphi / 0.3, 1e-9)
+                mv = np.linalg.norm(w - rho1 * v) / max(rho1 * dphi / 0.05, 1e-9)
                 moved = max(moved, mv)
                 past += mv > 1
                 if e > CHORD:

@@ -51,8 +51,6 @@ vec2 geo_sincos(float x) {
 }
 float geo_sin(float x) { return geo_sincos(x).x; }
 float geo_cos(float x) { return geo_sincos(x).y; }
-// the GPU's own, a direction's: 4e-7 rad off on the headset at any x, a cost of one instruction
-vec2 geo_sincos_dir(float x) { return vec2(sin(x), cos(x)); }
 
 // x is a number, not NaN or infinite, by its bits: GLSL leaves comparisons with NaN to the
 // compiler (the PC's let x < 1e30 hold for NaN), and isnan may be folded away
@@ -183,61 +181,6 @@ vec2 geo_from_origin(float b, float sigma, float a, float gap) {
 	return geo_between(b, sigma, geo_origin(b, sigma), 0.0, a, gap, true);
 }
 
-// psi from the origin to infinity
-float geo_psi_inf(float b, float sigma) {
-	if (b >= g_prof2.x) return 0.5 * GEO_PI;
-	return geo_from_origin(b, sigma, g_prof.w, g_prof2.x - b).x + geo_asin(b / g_prof2.x);
-}
-
-// On the fillet, the u where the sweep from u_lo is psi (0 <= psi <= the whole fillet's): the
-// weight's part inverted exactly, a Newton step on the closed forms, one on the whole (with the
-// table). Returns (u, the length from u_lo).
-vec2 geo_fillet_at(float b, float sigma, float psi) {
-	float ul = max(sigma, g_prof2.y);
-	float span = 0.5 - ul;
-	vec2 f0 = geo_F(b, ul);
-	vec2 f1 = geo_Fu(b, ul, f0);
-	float dl0 = ul - sigma;
-	float s0 = sqrt(ul), e0 = sqrt(dl0);
-	float D = s0 + e0;
-	float X = D * exp(min(psi / max(2.0 * f0.x, 1e-20), 40.0));
-	float du;               // u - u_lo
-	if (sigma > g_prof2.y) { float y = 0.5 * (X - sigma / X); du = y * y; }
-	else { float y = 0.5 * (X + sigma / X); du = y * y - ul; }
-	float v = clamp(sqrt(max(du, 0.0) / span), 0.0, 1.0);
-	vec2 val = vec2(0.0);
-	for (int i = 0; i < 2; i++) {
-		float u = ul + span * v * v;
-		float s = sqrt(u), e = sqrt(u - ul + dl0);
-		float w = 2.0 * log((s + e) / D);
-		val = f0 * w + f1 * (s * e - s0 * e0 + (0.5 * sigma - ul) * w);
-		if (i == 1) val += geo_G(sigma, v);
-		float der = geo_F(b, u).x * 2.0 * span * v / (s * e);
-		if (der > 0.0) v = clamp(v - (val.x - psi) / der, 0.0, 1.0);
-	}
-	return vec2(ul + span * v * v, val.y);
-}
-
-// |l| where the sweep from the origin is psi (>= 0), or -1 if only at infinity
-float geo_l_at(float b, float sigma, float psi) {
-	float Lc = g_prof.z, L = g_prof.w, Rout = g_prof2.x;
-	if (b >= Rout) return psi < 0.5 * GEO_PI ? b / geo_cos(psi) - Rout + L : -1.0;
-	float pc = 0.0;
-	if (sigma < g_prof2.y && Lc > 0.0) {
-		float k = sqrt(max(-2.0 * g_prof.y * sigma * (g_prof.x + b), 0.0));
-		pc = b * Lc / (g_prof.x * max(k, 1e-12));
-		if (psi <= pc) return psi * g_prof.x * k / max(b, 1e-20);
-	}
-	float ul = max(sigma, g_prof2.y);
-	float whole = 0.5 - ul > 0.0 ? geo_fillet(b, sigma, ul, ul - sigma, 0.5, 0.5 - sigma, true, true).x : 0.0;
-	if (psi > pc + whole) {
-		float a = psi - pc - whole + geo_acos(clamp(b / Rout, 0.0, 1.0));
-		return a < 0.5 * GEO_PI ? b / geo_cos(a) - Rout + L : -1.0;
-	}
-	float u = geo_fillet_at(b, sigma, psi - pc).x;
-	return Lc + g_prof.y * (2.0 * geo_asin(sqrt(u)) - g_prof2.w);
-}
-
 // ---------------------------------------------------------------- the eyes
 // The eye of the current view: the head (head_l, head_n, its frame head_f = play x, y, z as
 // tangent vectors) and its place in the room (head_pos), and the view's camera as Godot gives it.
@@ -353,8 +296,13 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 			}
 			float A1 = 0.5 * GEO_PI - cA;
 			float cT = c1 - cA;               // the turned ones' span of e
+			if (!outw && !cross_) {
+				// asin(rp / re) - asin(rmin / re) without the difference of two angles near pi/2
+				float cx = sqrt(max((dre - drp) * (re + rp), 0.0)) / re, cy = sqrt(max((dre - dr0) * (re + rmin), 0.0)) / re;
+				cT = geo_asin((drp - dr0) * (rp + rmin) / (re * re) / max((rp * cy + rmin * cx) / re, 1e-30));
+			}
 			bool two = outw ? dre > dr0 : !cross_;
-			const float WMAX = 16.0;          // the ends' distances down to 1e-7 of their span: float32's step
+			const float WMAX = 24.0;          // the ends' distances down to 4e-11 of their span (the turned ones near r_min need 1e-7)
 			int fam = two ? -1 : 0;           // -1: the ray between, 0: first crossings, 1: turned
 			float lo = -WMAX, hi = WMAX, flo = 0.0, fhi = 0.0;
 			bool have_lo = false, have_hi = false;
@@ -391,7 +339,9 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 				float bp = re * sa;
 				float sigma = geo_sigma(bmr);
 				float gap_e = re * ca * ca / (1.0 + sa);     // re - b
-				float gap_p = (drp - dre) + gap_e;           // rp - b
+				// rp - b: from the ray's own b - rho0 where the point is nearer the throat than the eye (next to
+					// its turning point the difference of the eye's gaps keeps none of its digits)
+					float gap_p = abs(drp) < abs(dre) ? drp - bmr : (drp - dre) + gap_e;
 				// its sweep and length to the point: between the two |l| on one stretch, or from its
 				// origin to each (turned, or through l = 0): one geo_between in the code, run once or twice
 				bool twice = turned || (!outw && lp < 0.0);
@@ -547,7 +497,8 @@ bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, o
 	float sL = sqrt(max(0.5 - sigma, 0.0));
 	float wL = 2.0 * log((0.70710678 + sL) / Dw);
 	// from the ray's origin (its turning point, or l = 0) to the zone's edge, and to the eye
-	vec2 SL = cylL + f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
+	vec2 SLf = f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
+	vec2 SL = cylL + SLf;
 	float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
 	vec2 se;
 	if (le >= L) {
@@ -558,7 +509,9 @@ bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, o
 		float su = eye.y, eu = sqrt(gap_e / R2);
 		float ue = su * su;
 		float w = 2.0 * log((su + eu) / Dw);
-		se = cylL + f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
+		vec2 sef = f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
+		// outward from the fillet the cylinder's part (large next to r_min) is in both: left out of both
+		if (ca >= 0.0) { SL = SLf; se = sef; } else se = cylL + sef;
 	} else {
 		se = cyl * le;
 	}

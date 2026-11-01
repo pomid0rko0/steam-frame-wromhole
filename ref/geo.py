@@ -1,6 +1,6 @@
 """
 Reference maths of the renderer, float64 (NumPy): the sweep of a ray round the throat, where a
-ray leaves the curved zone, which way an eye sees a point. The renderer's method: docs/geometry.md,
+ray leaves the curved zone. The renderer's method: docs/geometry.md,
 «Как рисуется кадр». The shaders (godot/shaders/geo.gdshaderinc) do the same in float32 with the
 table this module builds the same way as WormholeSpace.sweep_table.
 
@@ -186,25 +186,6 @@ class Space:
         self.t0, self.t1 = t0, t1
         return tab
 
-    def _column(self, b, nv, xg, wg):
-        sig = self.sigma(b)
-        ul = self.u_lo(b)
-        span = 0.5 - ul
-        col = np.zeros((nv, 2))
-        if span <= 1e-12:
-            return col
-        f0 = np.array(self.F(b, ul))
-        f1 = self.Fu(b, ul)
-        acc = np.zeros(2)
-        for j in range(1, nv):
-            va, vb = (j - 1) / (nv - 1), j / (nv - 1)
-            vv = 0.5 * (va + vb) + 0.5 * (vb - va) * xg
-            uu = ul + span * vv * vv
-            fv = np.array(self.F(b, uu)).T
-            jac = 2 * span * vv / np.sqrt(uu * (uu - sig))
-            acc = acc + 0.5 * (vb - va) * ((fv - f0 - f1 * (uu - ul)[:, None]) * (wg * jac)[:, None]).sum(0)
-            col[j] = acc
-        return col
 
     def G_table(self, b, v, hw8=True):
         """Bilinear in the table, weights rounded to 1/256 like a GPU's filtering if hw8."""
@@ -256,43 +237,6 @@ class Space:
             out += np.array([np.arctan2(q, b) - np.arctan2(qo, b), q - qo])
         return out * (np.sign(l) if passing else 1.0)
 
-    def l_at(self, b, psi, table=False, newton=3):
-        """|l| (or l, for b < r_min, with psi's sign) where the sweep from the origin is psi; inf
-        if the ray gets there only at infinity."""
-        sg = np.sign(psi) if b < self.rmin else 1.0
-        psi = abs(psi)
-        if b >= self.Rout:
-            return sg * (b / np.cos(psi) - self.Rout + self.L if psi < np.pi / 2 else np.inf)
-        pc = 0.0
-        if b < self.rmin and self.Lc > 0:
-            k = np.sqrt(self.rho0 ** 2 - b * b)
-            pc = b * self.Lc / (self.rho0 * k)
-            if psi <= pc:
-                return sg * psi * self.rho0 * k / max(b, 1e-30)
-        pf = pc + self.fillet(b, 0.5, table)[0]
-        if psi > pf:
-            a = psi - pf + np.arccos(b / self.Rout)
-            return sg * (b / np.cos(a) - self.Rout + self.L if a < np.pi / 2 else np.inf)
-        # the fillet: invert F(u_lo) W exactly, then Newton in v on the whole
-        sig = self.sigma(b)
-        ul = self.u_lo(b)
-        span = 0.5 - ul
-        f0 = self.F(b, ul)[0]
-        target = psi - pc
-        D = np.sqrt(ul) + np.sqrt(ul - sig)
-        X = D * np.exp(target / max(f0, 1e-30) / 2)
-        u = ((X + sig / X) / 2) ** 2
-        v = np.sqrt(max(u - ul, 0.0) / span) if span > 0 else 0.0
-        v = min(max(v, 0.0), 1.0)
-        for _ in range(newton):
-            u = ul + span * v * v
-            val = self.fillet(b, u, table)[0]
-            der = self.F(b, u)[0] * 2 * span * v / np.sqrt(u * (u - sig)) if v > 0 else np.inf
-            if not np.isfinite(der) or der <= 0:
-                break
-            v = min(max(v - (val - target) / der, 0.0), 1.0)
-        return sg * float(self.l_of_u(ul + span * v * v))
-
 
 # ---------- independent check: the geodesic ODE in the ray's plane ----------
 def plane_rhs(S, s, y, b):
@@ -340,69 +284,3 @@ def leave(S, el, ca, sa):
     if ca >= 0:
         return side, *(sl - se)
     return (-side if sig < S.u0 else side), *(sl + se)
-
-
-# ---------- which way an eye sees a point ----------
-def log_map(S, le, lp, delta, table=False, iters=60):
-    """The geodesic from the eye at le to the point at lp whose position angles differ by delta
-    (0 <= delta < pi): the one along which the point is seen (docs/geometry.md). Returns
-    (alpha, length): the angle to the eye's outward radial direction and the geodesic's length.
-    The rays that reach |l| = |lp| form one family along which the sweep there grows from 0 without
-    bound: q in [0, qmax) (below), solved by bisection with the false position's steps."""
-    if le < 0:
-        le, lp = -le, -lp
-    re, rp = float(S.r(le)), float(S.r(lp))
-    rmin = S.rmin
-    sw = lambda b, l: S.sweep(b, l, table)
-    if lp >= le:
-        # outward rays b = q re (q in [0, 1]), then inward ones that turn, b from re down to rmin
-        qmax = 2.0 if re > rmin * (1 + 1e-9) else 1.0
-
-        def f(q):
-            if q <= 1.0:
-                b = q * re
-                if b >= rmin and le < S.l_turn(b):
-                    se = np.zeros(2)
-                else:
-                    se = sw(b, le)
-                p = sw(b, lp)
-                return p - se, b
-            b = re - (q - 1.0) * (re - rmin)
-            return sw(b, le) + sw(b, lp), b
-        inward = lambda q: q > 1.0
-    else:
-        # inward rays straight to lp: b up to bmax; then (lp > 0 with rp > rmin) the turned ones
-        cross = lp <= 0 or rp <= rmin * (1 + 1e-9)
-        bmax = rmin if cross else rp
-        qmax = 1.0 if cross else 2.0
-
-        def f(q):
-            if q <= 1.0:
-                b = q * bmax
-                d = sw(b, le) - (sw(b, lp) if (b < rmin or abs(lp) >= S.l_turn(b)) else 0.0)
-                return d, b
-            b = rp - (q - 1.0) * (rp - rmin)
-            return sw(b, le) + sw(b, lp), b
-        inward = lambda q: True
-    lo, hi = 0.0, qmax
-    flo = -delta
-    fhi = np.inf
-    q = 0.5 * qmax
-    for _ in range(iters):
-        val = f(q)[0][0] - delta
-        if val > 0:
-            hi, fhi = q, val
-        else:
-            lo, flo = q, val
-        if np.isfinite(fhi):
-            qn = lo - flo * (hi - lo) / (fhi - flo)
-            q = qn if lo < qn < hi and min(qn - lo, hi - qn) > 0.05 * (hi - lo) else 0.5 * (lo + hi)
-        else:
-            q = 0.5 * (lo + hi)
-        if hi - lo < 1e-15:
-            break
-    d, b = f(q)
-    alpha = np.arcsin(min(b / re, 1.0))
-    if inward(q):
-        alpha = np.pi - alpha
-    return alpha, d[1]
