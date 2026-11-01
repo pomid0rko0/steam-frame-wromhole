@@ -213,16 +213,20 @@ func drag(b: Body) -> float:
 
 
 ## Where b, leaving (l, n) at velocity U, is T s later in free flight (gravity and the air's drag,
-## no contacts), with vecs carried along: [l, n, U, vecs]. What step does in DT substeps in steps
+## no contacts), with vecs carried along: [l, n, U, vecs, low]. What step does in DT substeps in steps
 ## many times longer, so that a hand can try a throw in a part of a frame (hands.gd's pull): steps
 ## at most FLIGHT_DT long and FLIGHT_STEP of the length the space bends over (WormholeSpace.bend),
 ## between half steps of drag (second order where step's splitting is first). A step that stays
 ## in a flat universe is RK4 in its chart's coordinates, where the space is flat (vecs stay as they
 ## are) and gravity is r + beta / r^2 times n_z's (docs/gravity.md); others, RK4 of dynamics_step.
-## tests/pull_test.gd compares it with step's flight.
+## The last element: the lowest b's centre went against its size over the floor (its radius, a
+## cube's half size; at the steps' ends): below 0, the flight went into the floor, which flight
+## lets through and step does not. tests/pull_test.gd compares it with step's flight.
 func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) -> Array:
 	var k := drag(b)
 	var t := 0.0
+	var size: float = (b as Cube).half if b is Cube else (b as Ball).radius
+	var low := space.height(l, n) - size
 	for _k in 100000:              # a bound against a hang
 		if t >= T - 1e-9:
 			break
@@ -251,6 +255,7 @@ func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) ->
 				v /= 1.0 + k * v.length() * 0.5 * h
 				t += h
 				went = true
+				low = minf(low, x.z - size)
 			if went:
 				var p := space.point_from_chart(side, x)
 				l = p[0]
@@ -268,7 +273,8 @@ func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) ->
 		vecs = s[3]
 		U = _air(s[2], k, 0.5 * h)
 		t += h
-	return [l, n, U, vecs]
+		low = minf(low, space.height(l, n) - size)
+	return [l, n, U, vecs, low]
 
 
 ## Gravity at chart position x of a flat universe: -g grad phi, phi = (r + beta / r^2) z / r.

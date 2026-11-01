@@ -5,7 +5,8 @@ extends SceneTree
 ##   godot --path . --fixed-fps 60 -s res://tests/pull_test.gd
 ## 1. BallWorld.flight, the throw's tries, flies as step does: a ball in universe A, a ball and a
 ##    cube into the throat, within 1 cm after the flight's time; WormholeSpace.ray ends where
-##    geodesic does and stops at the floor
+##    geodesic does and stops at the floor; a ball with neither gravity nor air flies along the
+##    geodesic of its start and direction (the beam's way), round the throat's rim and into B
 ## 2. a hand pointing at a ball far off aims at it: the ball glows and the hand turns orange;
 ##    pointing 20 degrees past it, neither; pointing through two balls, at the nearer one
 ## 3. the grip locks on it; a slow move pulls nothing, and the grip let go, nothing flies
@@ -19,6 +20,9 @@ extends SceneTree
 ##    through the throat and caught, its throw missing the hand by less than 10 cm
 ## 9. from the start, the demo's cube in the throat (seen along no straight line): aimed at,
 ##    pulled and caught
+## 11. from the start, a ball on the far side of the throat in universe A, seen round its rim:
+##    aimed at, thrown over the throat, its flight out of the curved zone, caught; a ball seen
+##    along a straight line 25 m off is not aimed at (PULL_RANGE), one 20 m off is
 ## 10. the beam (the menu's «луч прицела»): off, none; on, from the hand along its pointing geodesic
 ##    to the ball it aims at, orange, and else to the floor, pale; through the throat into universe
 ##    B; none while the hand holds a toy
@@ -107,6 +111,7 @@ func _run() -> void:
 	main.menu.visible = false
 	_clear()
 	_flight()
+	_no_gravity()
 	_ray()
 	await _aim()
 	await _lock()
@@ -117,6 +122,7 @@ func _run() -> void:
 	await _through()
 	await _throat_cube()
 	await _beam()
+	await _far_side()
 	U.finish(self, hmd, [left, right])
 
 
@@ -149,6 +155,32 @@ func _flight() -> void:
 		U.check("flight flies as the physics does: " + cs[0], gap < 0.01 and low > cs[3],
 				"%.4f m apart after %.1f s, at l %.2f (the curved zone below %.2f); lowest %.2f m up; flight took %d us"
 				% [gap, T, b.l, sp.L, low, us])
+
+
+# 1
+## dynamics_step without gravity against geodesic, 2 s at 10 m/s from 1.3 m up in front of the
+## throat: into B, and round the rim.
+func _no_gravity() -> void:
+	var sp: WormholeSpace = main.space
+	var p: Array = sp.point_from_chart(1.0, Vector3(9.7, 0.2, 1.3))
+	for dir: Vector3 in [Vector3(-1.0, 0.0, 0.0), Vector3(-1.0, 0.36, 0.0)]:
+		var D := WormholeSpace.vector_from_chart(1.0, p[1], dir.normalized())
+		var l: float = p[0]
+		var n: Vector3 = p[1]
+		var V := D * 10.0
+		var worst := 0.0
+		var lo := l
+		for k in 360:
+			var st := sp.dynamics_step(l, n, V, BallWorld.DT, 0.0)
+			l = st[0]
+			n = st[1]
+			V = st[2]
+			lo = minf(lo, l)
+			if k % 18 == 17:
+				var g := sp.geodesic(p[0], p[1], D, 10.0 * (k + 1) * BallWorld.DT, [])
+				worst = maxf(worst, (sp.embed(l, n) - sp.embed(g[0], g[1])).length())
+		U.check("with neither gravity nor air a ball flies along the geodesic (the beam's way), %s" % ("into B" if lo < -sp.L else "round the rim"),
+				worst < 1e-3 and lo < sp.L, "%.5f m apart at most over 20 m, down to l %.2f" % [worst, lo])
 
 
 # 1
@@ -524,3 +556,77 @@ func _beam() -> void:
 	main.menu.show_beam(false)
 	await _step(2)
 	U.check("off again: none", not _drawn_beam()[0])
+
+
+## The pointing direction from hand h (room) whose geodesic passes nearest C (R^4), on a grid of
+## degrees: [direction, how near].
+func _toward_geodesic(h: Hands.Hand, C: Vector4) -> Array:
+	var sp: WormholeSpace = main.space
+	var best := Vector3.ZERO
+	var nearest := INF
+	for yaw in range(-60, 61, 2):
+		for pitch in range(-20, 31, 2):
+			var d := Vector3(-sin(deg_to_rad(yaw)), sin(deg_to_rad(pitch)), -cos(deg_to_rad(yaw))).normalized()
+			var r := sp.ray(h.ball.l, h.ball.n, WormholeSpace.combine(h.room, d), Hands.PULL_RANGE)
+			var pts: Array = r[0]
+			for j in pts.size() - 1:
+				var A: Vector4 = pts[j]
+				var AB: Vector4 = pts[j + 1] - A
+				var t := clampf((C - A).dot(AB) / maxf(AB.length_squared(), 1e-12), 0.0, 1.0)
+				var dist := (C - A - t * AB).length()
+				if dist < nearest:
+					nearest = dist
+					best = d
+	return [best, nearest]
+
+
+# 11
+func _far_side() -> void:
+	_clear()
+	_away(left)
+	var sp: WormholeSpace = main.space
+	var p := Vector3(0.2, 1.3, -0.3)
+	_pose(right, p, Basis.IDENTITY)
+	await _step(2)
+	var h := _hand(1)
+	var ball := _ball_at(Vector3(-6.0, 0.5, 0.25), 0.25)
+	var way := _toward_geodesic(h, sp.embed(ball.l, ball.n))
+	_pose(right, p, _toward(way[0]))
+	await _step(AIM)
+	U.check("from the start, a ball on the far side of the throat (A, seen round its rim) is aimed at",
+			h.aimed == ball and not h.aim_chord, "aimed %s, along a chord %s, the geodesic %.2f m from its centre"
+			% [h.aimed == ball, h.aim_chord, way[1]])
+	right.set_input(&"grip", 1.0)
+	await _step(1)
+	var b0 := _toward(way[0])
+	var th := 0.0
+	var pull: Hands.Pull = null
+	var caught := false
+	var lo := INF
+	for k in 200:
+		if k < 8:
+			th += 10.0 / 60.0
+		_pose(right, p, b0 * Basis(Vector3.RIGHT, th))
+		await _step(1)
+		if h.pull:
+			pull = h.pull
+		if pull and pull.flying:
+			lo = minf(lo, absf(ball.l))
+		if h.held == ball:
+			caught = true
+			break
+	U.check("... thrown over the throat, out of the curved zone, and caught", pull != null and pull.way == "over the throat"
+			and caught and lo > sp.L, "way '%s', %d tries, missing by %.3f m, %.2f s; caught %s; |l| down to %.2f (the curved zone below %.2f)"
+			% [pull.way if pull else "", pull.tries if pull else 0, pull.miss if pull else 0.0, pull.T if pull else 0.0, caught, lo, sp.L])
+	right.set_input(&"grip", 0.0)
+	await _step(2)
+	# straight lines to the right, 25 and 20 m off
+	for d: float in [25.0, 20.0]:
+		_clear()
+		var c := Vector3(9.7 - 0.3 * d, 0.2 + 0.95 * d, 0.25)
+		var far := _ball_at(c, 0.25)
+		_pose(right, p, _toward(_play(c) - p))
+		await _step(AIM)
+		var want: bool = d < Hands.PULL_RANGE
+		U.check("a ball %.0f m off along a straight line: %s" % [d, "aimed at" if want else "not aimed at (PULL_RANGE)"],
+				(h.aimed == far) == want, "aimed %s" % [h.aimed == far])

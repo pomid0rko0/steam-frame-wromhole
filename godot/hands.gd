@@ -15,7 +15,10 @@ extends RefCounted
 ## it (_solve): BallWorld.flight, the toys' own free motion in steps much longer than the physics',
 ## from the toy held at rest meanwhile, each try's miss at the hand turning into the next by Newton's
 ## step with a Jacobian (Broyden's, probed first where the throat bends the ways); then the toy flies
-## as any toy does. A closed hand catches its toy within CATCH_REACH and draws it in. With beam on
+## as any toy does. The first try: back along the pointing geodesic, lofted against gravity; a toy
+## seen round the throat in the hand's own universe, over the throat instead (_over: along the
+## geodesic it would skirt the throat, where the ways part fast). The toy flies as the beam goes
+## but for gravity and the air: it falls, and is thrown higher to make up for it. A closed hand catches its toy within CATCH_REACH and draws it in. With beam on
 ## (the menu's «луч прицела») an empty hand's pointing geodesic is drawn (_beam, Renderer.set_beam).
 ## What it costs: tests/pull_test.gd prints the tries' count and time (also the headset's log, "pull:"
 ## lines), tests/cpu_time.gd a frame's with a hand pointing into the throat.
@@ -48,6 +51,9 @@ const PULL_TIME := 0.35          # s: the flight's time, and per metre along the
 const PULL_TIME_PER_M := 0.055   # at most PULL_TIME_MAX
 const PULL_TIME_MAX := 1.2
 const GUESS_POINTS := 6          # points of the pointing geodesic gravity is taken at for the first try
+const OVER_CLEAR := 0.3          # m: a throw over the throat keeps this far out of the shell (_over),
+const OVER_STEP := 0.05          # s: its time tried in these steps,
+const OVER_TIME_MAX := 2.5       # s: up to this
 const PROBE_MISS := 0.3          # m: a first try that misses by more has the Jacobian probed,
 const PROBE_SPEED := 0.2         # m/s: by changes of the throw this large
 const PULL_STEP := 3.0           # m/s: a try changes the best throw by this much at most
@@ -98,6 +104,7 @@ class Hand:
 	var aim_s := 0.0                   # m along the pointing geodesic to it,
 	var aim_end := 0.0                 # and to where the geodesic passes nearest it (the beam's end)
 	var aim_tan := Vector4.ZERO        # the geodesic's direction there, in R^4
+	var aim_chord := false             # it is seen along a chord of R^4 (a straight line)
 	var locked := false                # the grip closed on the toy aimed at: a flick pulls it
 	var locked_at := 0.0               # s (clock): when
 	var pull: Pull                     # the toy it throws to itself, or null
@@ -127,6 +134,7 @@ class Pull:
 	var slowest := 0                   # us: the slowest try (the headset's log)
 	var flying := false
 	var t := 0.0                       # s since it was let fly
+	var way := ""                      # how the first try goes (the log)
 
 
 func _init(p_space: WormholeSpace, p_world: BallWorld) -> void:
@@ -475,6 +483,7 @@ func _aim(h: Hand) -> void:
 	var best_s := 0.0
 	var best_end := 0.0
 	var best_tan := Vector4.ZERO
+	var best_chord := false
 	var others := []                       # candidates seen along no chord
 	for c: Array in _candidates():
 		var b: BallWorld.Body = c[0]
@@ -487,7 +496,7 @@ func _aim(h: Hand) -> void:
 			others.append(c)
 			continue
 		var s := V.dot(Dp)
-		if s <= 0.0:
+		if s <= 0.0 or dist > PULL_RANGE:
 			continue
 		var k := (AIM_STICK if b == h.aimed else 1.0) * maxf((V - s * Dp).length() - c[2], 0.0) / maxf(s, 0.1)
 		if k < best_k or (k == 0.0 and best_k == 0.0 and dist < best_s):
@@ -496,11 +505,13 @@ func _aim(h: Hand) -> void:
 			best_s = dist
 			best_end = s
 			best_tan = V / dist
+			best_chord = true
 	if not others.is_empty():
 		var path := _path(h, way)
 		var pts: Array = path[0]
 		var lens: Array = path[1]
 		var last := pts.size() - 1
+		var ranged: bool = lens[last] >= PULL_RANGE - 1e-3     # it ends at the range, not at the floor
 		for c: Array in others:
 			var C: Vector4 = c[1]
 			# the point of the path nearest the toy's centre: next to its nearest corner
@@ -520,6 +531,8 @@ func _aim(h: Hand) -> void:
 				if len2 < 1e-12:
 					continue
 				var t := clampf((C - A).dot(AB) / len2, 0.0, 1.0)
+				if ranged and j == last - 1 and t >= 1.0:
+					continue                    # past the range
 				var s: float = lens[j] + t * (lens[j + 1] - lens[j])
 				var k := (AIM_STICK if c[0] == h.aimed else 1.0) * maxf((C - A - t * AB).length() - c[2], 0.0) / maxf(s, 0.1)
 				if k < best_k or (k == 0.0 and best_k == 0.0 and s < best_s):
@@ -528,6 +541,7 @@ func _aim(h: Hand) -> void:
 					best_s = s
 					best_end = s
 					best_tan = AB / sqrt(len2)
+					best_chord = false
 	if best and best != h.aimed:
 		h.grip.trigger_haptic_pulse(&"haptic", 0.0, 0.1, 0.015, 0.0)
 	h.aimed = best
@@ -535,6 +549,7 @@ func _aim(h: Hand) -> void:
 	h.aim_s = best_s
 	h.aim_end = best_end
 	h.aim_tan = best_tan
+	h.aim_chord = best_chord
 
 
 ## Where hand h points: [the room's direction, the hand as a point of R^4, the direction there as a
@@ -698,6 +713,15 @@ func _launch(i: int) -> void:
 	if weights > 0.0:
 		g /= weights
 	p.U = v0 * back - 0.5 * p.T * BallWorld.from_body(p.axes, g)
+	p.way = "straight" if h.aim_chord else "along the geodesic"
+	if not h.aim_chord and absf(toy.l) > space.L and absf(h.ball.l) > space.L and signf(toy.l) == signf(h.ball.l):
+		# seen round the throat in the hand's own universe: over it, keeping out of the shell
+		var over := _over(toy, p.target, k)
+		if not over.is_empty():
+			p.T = over[0]
+			p.U = over[1]
+			v0 = p.U.length()
+			p.way = "over the throat"
 	# miss per throw: the time, less as the air slows it
 	var Te := p.T / (1.0 + k * v0 * p.T)
 	p.J = Basis.from_scale(Vector3(Te, Te, Te))
@@ -709,7 +733,8 @@ func _launch(i: int) -> void:
 		(toy as BallWorld.Cube).w = Vector3.ZERO
 	h.pull = p
 	h.grip.trigger_haptic_pulse(&"haptic", 0.0, 0.8, 0.05, 0.0)
-	print("pull: %s hand flicks: a %s %.2f m away to arrive in %.2f s" % [_name(i), _kind(toy), h.aim_s, p.T])
+	print("pull: %s hand flicks: a %s %.2f m away at %s to arrive in %.2f s, thrown %s" % [_name(i), _kind(toy),
+			h.aim_s, _where(toy.l, toy.n), p.T, p.way])
 
 
 ## Hand i's pull this frame. While the toy waits: tries of the throw, one and more while they have
@@ -735,19 +760,20 @@ func _fly(i: int, delta: float) -> void:
 			toy.U = p.best
 			toy.still = 0.0
 			p.flying = true
-			print("pull: the %s flies at %.2f m/s after %d tries (the slowest %.2f ms), to miss the hand by %.3f m"
-					% [_kind(toy), p.best.length(), p.tries, p.slowest / 1000.0, p.miss])
+			print("pull: the %s flies at %.2f m/s after %d tries (the slowest %.2f ms), to miss the hand (at %s) by %.3f m"
+					% [_kind(toy), p.best.length(), p.tries, p.slowest / 1000.0, _where_at(p.target), p.miss])
 		return
 	p.t += delta
 	if h.on and h.closed and _nearest(h) == toy:
 		_take(i, toy)
 	elif p.t > p.T + PULL_LATE:
 		h.pull = null
-		print("pull: the %s missed the %s hand" % [_kind(toy), _name(i)])
+		print("pull: the %s missed the %s hand: now at %s, the hand at %s" % [_kind(toy), _name(i),
+				_where(toy.l, toy.n), _where(h.ball.l, h.ball.n)])
 
 
 ## One try of pull p's throw: its miss at the hand after the flight's time, in the toy's axes
-## carried along the flight. A first try that misses by more than PROBE_MISS (through the throat,
+## carried along the flight (counted as more by as deep as the flight went into the floor). A first try that misses by more than PROBE_MISS (through the throat,
 ## which bends the ways near it as a lens does) is followed by three that change it by PROBE_SPEED
 ## along each axis: the Jacobian (miss per change of throw) from their misses. Then each try a
 ## Newton step from the best one, half as long after each that missed more, and Broyden's update of
@@ -759,6 +785,8 @@ func _solve(p: Pull) -> bool:
 	p.slowest = maxi(p.slowest, Time.get_ticks_usec() - t0)
 	var M := space.project(res[0], res[1], p.target - space.embed(res[0], res[1]))
 	var m := BallWorld.to_body(res[3], M)
+	# a try that goes into the floor misses by that much more: the toy would hit the floor
+	var miss := m.length() + maxf(-res[4], 0.0)
 	p.tries += 1
 	if p.probe >= 0:
 		p.J[p.probe] = (p.best_m - m) / PROBE_SPEED
@@ -772,10 +800,10 @@ func _solve(p: Pull) -> bool:
 			var s := p.last_s
 			var y := (p.best_m - m - p.J * s) / s.length_squared()
 			p.J = Basis(p.J.x + y * s.x, p.J.y + y * s.y, p.J.z + y * s.z)
-		if m.length() < p.miss:
+		if miss < p.miss:
 			p.best = p.U
 			p.best_m = m
-			p.miss = m.length()
+			p.miss = miss
 			p.reach = 1.0
 		else:
 			p.reach *= 0.5
@@ -794,6 +822,52 @@ func _solve(p: Pull) -> bool:
 		p.U *= PULL_MAX_SPEED / p.U.length()
 	p.last_s = BallWorld.to_body(p.axes, p.U - p.best)
 	return p.tries >= PULL_TRIES
+
+
+## The first try of a throw from toy to target (a point of R^4) in the same flat universe, over the
+## throat: the parabola in its chart under gravity at the surface's g (a throw in the flat universe
+## goes so, but for gravity's change near the throat) that keeps OVER_CLEAR out of the shell's
+## sphere, the shortest of PULL_TIME + PULL_TIME_PER_M per metre up in OVER_STEP steps to
+## OVER_TIME_MAX; its speed raised as the air's drag would slow it along its length (k: drag's).
+## [the time, the throw as a tangent vector at the toy], or [] if none keeps out.
+func _over(toy: BallWorld.Body, target: Vector4, k: float) -> Array:
+	var side := signf(toy.l)
+	var x0 := space.chart_position(toy.l, toy.n)
+	var tp: Array = space.point_of(target)
+	var x1 := space.chart_position(tp[0], tp[1])
+	var size: float = 1.7321 * (toy as BallWorld.Cube).half if toy is BallWorld.Cube else (toy as BallWorld.Ball).radius
+	var clear := space.Rout + size + OVER_CLEAR
+	var g := BallWorld.GRAVITY
+	var T := PULL_TIME + PULL_TIME_PER_M * (x1 - x0).length()
+	while T <= OVER_TIME_MAX:
+		var ok := true
+		for j in range(1, 48):
+			var t := T * j / 48.0
+			var x := x0.lerp(x1, t / T) + Vector3(0.0, 0.0, 0.5 * g * t * (T - t))
+			if x.length() < clear:
+				ok = false
+				break
+		if ok:
+			var u := (x1 - x0) / T + Vector3(0.0, 0.0, 0.5 * g * T)
+			var len := u.length() * T
+			if k * len > 1e-6:
+				u *= (exp(k * len) - 1.0) / (k * len)
+			return [T, WormholeSpace.vector_from_chart(side, toy.n, u)]
+		T += OVER_STEP
+	return []
+
+
+## Where (l, n) is, for the log: universe A's or B's chart position, else l and n.
+func _where(l: float, n: Vector3) -> String:
+	if absf(l) > space.L:
+		var x := space.chart_position(l, n)
+		return "%s (%.1f, %.1f, %.1f)" % ["A" if l > 0.0 else "B", x.x, x.y, x.z]
+	return "l %.2f, n (%.2f, %.2f, %.2f)" % [l, n.x, n.y, n.z]
+
+
+func _where_at(P: Vector4) -> String:
+	var q: Array = space.point_of(P)
+	return _where(q[0], q[1])
 
 
 ## Three orthonormal tangent vectors at the point of direction n: along l, up the sphere of
