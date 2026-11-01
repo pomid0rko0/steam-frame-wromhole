@@ -9,7 +9,9 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     length, no ray of its search coming out not finite; half of them launched within a hair to a
     third of a radian of the tangent, eyes also at the cylinder's end;
   every image (geo_see_image, the bodies' vertices): points along long rays shot by DOP853, eyes in
-    and out of the zone, a third of them launched near the tangent and a third with b next to r_min;
+    and out of the zone, a third of them launched near the tangent and a third with b next to r_min,
+    a tenth radial; a quarter of the points on the line through the eye and the centre (a turn of a
+    whole number of pi, alpha 0 or pi exactly: the zone's meshes put vertices there);
     the image a point is of is the ray's turn in its plane up to there (j = 0, 1, 2... as turns
     alpha, 2 pi - alpha, 2 pi + alpha...), and the GPU given that image must find that ray
     (direction as a tangent vector at the eye) and its length; on the app's throat up to j >= 7;
@@ -32,8 +34,10 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     moved, against the gap the shader snaps across, is printed);
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
+Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
+float32; the GPU here is given them so written.
 Exit status 1 on any failure.
-   python3 ref/test_gpu.py [profile images exit zone eye]     (all, or those checks)"""
+   python3 ref/test_gpu.py [numbers profile images exit zone eye]     (all, or those checks)"""
 import os
 import re
 import sys
@@ -52,7 +56,21 @@ TURNIP = '''
 float turnip_sin(float x) { return sin(fma(6.28318531, fract(fma(x, 0.159154943, 0.5)), -3.14159265)); }
 float turnip_cos(float x) { return cos(fma(6.28318531, fract(fma(x, 0.159154943, 0.5)), -3.14159265)); }
 '''
+# Godot writes a shader's numbers into the GLSL it compiles as String::num does: 14 decimals, fewer
+# above 10 (a smaller number comes out 0). Here the shaders' numbers are written so too, and the check
+# 'numbers' wants every number of godot/shaders to stay the same float32 so written.
+NUMBER = re.compile(r'(?<![\w.])((?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+[eE][-+]?\d+)(?![\w.])')
+
+
+def godot_number(text):
+    v = float(text)
+    t = '%.*f' % (max(14 - (int(np.floor(np.log10(abs(v)))) if abs(v) > 10 else 0), 0), v)
+    t = t.rstrip('0') if '.' in t else t + '.'
+    return t + '0' if t.endswith('.') else t
+
+
 INC = open(os.path.join(SHADERS, 'geo.gdshaderinc')).read() + open(os.path.join(SHADERS, 'zone.gdshaderinc')).read()
+INC = NUMBER.sub(lambda m: godot_number(m.group(1)), INC)
 INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
 # A GPU's bilinear filter weighs its four texels by fractions it rounds to 1/256 (as ref/geo.py's
 # G_table models it); the PC's driver doesn't: here the table is filtered so.
@@ -348,10 +366,13 @@ def image_checks(name, S, gpu, gpu_nan, rng):
         el = float(np.float32(eye_at(places, rng)))
         side = 1.0 if el >= 0 else -1.0
         kind = shots % 3
+        radial = shots % 10 == 9
         shots += 1
         alpha = launch_rmin(S, float(S.r(el)), rng) if kind == 2 else launch(rng, kind == 1)
         if alpha is None:
             alpha = launch(rng, True)
+        if radial:
+            alpha = float(rng.choice([0.0, np.pi]))
         sol = shoot(S, el, alpha, smax=IMAGE_S, events=[far], max_step=0.2)
         s_end = sol.t[-1]
         if s_end < 0.2:
@@ -360,16 +381,19 @@ def image_checks(name, S, gpu, gpu_nan, rng):
         D = np.r_[side * np.cos(alpha), np.sin(alpha) * t]
         phi0, phi1 = sol.sol(0.05)[2], sol.y[2, -1]
         j0, j1 = image_of(phi0)[0], image_of(phi1)[0]
-        for j in rng.permutation(np.arange(j0, j1 + 1))[:6]:
+        for j in rng.permutation(np.arange(j0, j1 + 1))[:6] if not radial else [0] * 4:
             k, odd = divmod(int(j), 2)
             lo, hi = max(2 * np.pi * k + np.pi * odd, phi0), min(2 * np.pi * k + np.pi * (odd + 1), phi1)
+            edge = rng.uniform() < 0.25 and lo > phi0     # a point on the axis: a turn of a whole number of pi
             if hi - lo > 1e-9:
-                target = rng.uniform(lo, hi)
+                target = lo if edge else rng.uniform(lo, hi)
                 s = optimize.brentq(lambda s: sol.sol(s)[2] - target, 0.05, s_end, xtol=1e-13)
             else:
                 s = rng.uniform(0.05, s_end)
             lp, vl, phi = sol.sol(s)
             jj, a, sg = image_of(phi)
+            if edge or radial:
+                a = 0.0 if a < 0.5 * np.pi else np.pi
             ti = sg * t
             rows.append([el, *en, lp, *(np.cos(a) * en + np.sin(a) * ti), *ti, a, jj, 0, 0, 0])
             cases.append((D, s, jj))
@@ -860,10 +884,28 @@ def rk4_eye(S, l, n, T, dist, A):
     return y[0], unit(y[1:4]), [y[8 + 4 * j:12 + 4 * j] for j in range(3)]
 
 
-def main(checks=('profile', 'images', 'exit', 'zone', 'eye')):
+def numbers_check():
+    """Every number of the shaders the same float32 as Godot writes it into GLSL."""
+    changed, count, files = [], 0, 0
+    for f in sorted(os.listdir(SHADERS)):
+        if not f.endswith(('.gdshader', '.gdshaderinc')):
+            continue
+        files += 1
+        src = open(os.path.join(SHADERS, f)).read()
+        src = re.sub(r'/\*.*?\*/', lambda m: '\n' * m.group(0).count('\n'), src, flags=re.S)
+        for n, line in enumerate(src.split('\n'), 1):
+            for m in NUMBER.finditer(line.split('//')[0]):
+                count += 1
+                if np.float32(float(m.group(1))) != np.float32(float(godot_number(m.group(1)))):
+                    changed.append(f'{f}:{n} {m.group(1)} -> {godot_number(m.group(1))}')
+    return int(not check('the shaders\' numbers as Godot writes them', not changed,
+                         f'{count} numbers in {files} files, {len(changed)} changed' + ''.join(f'\n    {c}' for c in changed)))
+
+
+def main(checks=('numbers', 'profile', 'images', 'exit', 'zone', 'eye')):
     ctx = moderngl.create_standalone_context(backend='egl', require=430)
     rng = np.random.default_rng(1)
-    fails = 0
+    fails = numbers_check() if 'numbers' in checks else 0
     for name, prof in PROFILES.items():
         S = Space(*prof)
         S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
@@ -884,4 +926,4 @@ def main(checks=('profile', 'images', 'exit', 'zone', 'eye')):
 
 
 if __name__ == '__main__':
-    sys.exit(1 if main(sys.argv[1:] or ('profile', 'images', 'exit', 'zone', 'eye')) else 0)
+    sys.exit(1 if main(sys.argv[1:] or ('numbers', 'profile', 'images', 'exit', 'zone', 'eye')) else 0)

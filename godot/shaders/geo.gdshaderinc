@@ -16,6 +16,10 @@
 // from what knows it exactly (the eye's from its angle), not from a difference of two lengths.
 
 const float GEO_PI = 3.14159265358979;
+// Godot writes a shader's numbers into the GLSL it compiles with 14 decimals: a smaller one would
+// come out 0, so the tiny ones are products (ref/test_gpu.py checks every number of the shaders).
+const float GEO_TINY = 1e-10 * 1e-10 * 1e-10;      // 1e-30
+const float GEO_TINY20 = 1e-10 * 1e-10;            // 1e-20
 
 // atan(y, x) in [-pi, pi]: a minimax polynomial in the octant's ratio (off by 4e-8 rad, 1.2e-7 in
 // float32) and the octants. Mesa's own atan takes about three times the instructions on the
@@ -23,7 +27,7 @@ const float GEO_PI = 3.14159265358979;
 // through it: Mesa's are polynomials good to only ~1e-4 rad.
 float geo_atan2(float y, float x) {
 	float ax = abs(x), ay = abs(y);
-	float a = min(ax, ay) / max(max(ax, ay), 1e-30);
+	float a = min(ax, ay) / max(max(ax, ay), GEO_TINY);
 	float s = a * a;
 	float r = a * (0.999999336 + s * (-0.333298608 + s * (0.199465655 + s * (-0.139086284 + s * (0.0964219381
 			+ s * (-0.0559122717 + s * (0.0218629158 + s * -0.00405455466)))))));
@@ -163,7 +167,7 @@ vec2 geo_between(float b, float sigma, float a1, float gap1, float a2, float gap
 		float r1 = b + g1, r2 = b + gap2;
 		float q1 = sqrt(max(g1 * (r1 + b), 0.0));
 		float q2 = sqrt(max(gap2 * (r2 + b), 0.0));
-		float dq = (gap2 - g1) * (r2 + r1) / max(q1 + q2, 1e-20);
+		float dq = (gap2 - g1) * (r2 + r1) / max(q1 + q2, GEO_TINY20);
 		out_ += vec2(geo_atan2(b * dq, b * b + q1 * q2), dq);
 	}
 	return out_;
@@ -254,7 +258,7 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 	if (straight && le >= g_prof.w && lp >= g_prof.w) {
 		vec3 xe = re * en;
 		vec3 dv = rp * pn - xe;
-		float d2 = max(dot(dv, dv), 1e-20);
+		float d2 = max(dot(dv, dv), GEO_TINY20);
 		vec3 m = xe + clamp(-dot(xe, dv) / d2, 0.0, 1.0) * dv;
 		if (dot(m, m) >= g_prof2.x * g_prof2.x) {
 			seg = true;
@@ -299,7 +303,7 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 			if (!outw && !cross_) {
 				// asin(rp / re) - asin(rmin / re) without the difference of two angles near pi/2
 				float cx = sqrt(max((dre - drp) * (re + rp), 0.0)) / re, cy = sqrt(max((dre - dr0) * (re + rmin), 0.0)) / re;
-				cT = geo_asin((drp - dr0) * (rp + rmin) / (re * re) / max((rp * cy + rmin * cx) / re, 1e-30));
+				cT = geo_asin((drp - dr0) * (rp + rmin) / (re * re) / max((rp * cy + rmin * cx) / re, GEO_TINY));
 			}
 			bool two = outw ? dre > dr0 : !cross_;
 			const float WMAX = 24.0;          // the ends' distances down to 4e-11 of their span (the turned ones near r_min need 1e-7)
@@ -354,7 +358,7 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 							to_p ? alp : le, to_p ? gap_p : gap_e, twice);
 				}
 				float val = s.x - delta;
-				if (fam == 0) val = log(max(s.x, 1e-30)) - (two ? log(max(psit - s.x, 1e-30)) + gt : log(max(delta, 1e-30)));
+				if (fam == 0) val = log(max(s.x, GEO_TINY)) - (two ? log(max(psit - s.x, GEO_TINY)) + gt : log(max(delta, GEO_TINY)));
 				// A ray whose numbers came out not finite tells nothing: the bracket stays, the next
 				// ray is a quarter of the way from it to the bracket's far end (the ray between: one
 				// a little beside it), and the ray kept is the finite one nearest the point.
@@ -376,7 +380,7 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 					// past it (if neither it nor the ones beside it is finite, they are searched as
 					// if no ray turned)
 					psit = s.x;
-					gt = log(max(delta, 1e-30) / max(psit - delta, 1e-30));
+					gt = log(max(delta, GEO_TINY) / max(psit - delta, GEO_TINY));
 					fam = ok && s.x <= delta ? 1 : 0;
 					blind = two && !ok;
 					two = ok;
@@ -424,7 +428,7 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 			// the search come out finite, which a GPU's arithmetic must never make a hole of.
 			float dl0 = lp - le, arc0 = re * delta;
 			len = sqrt(dl0 * dl0 + arc0 * arc0);
-			float cl0 = dl0 / max(len, 1e-20), sl0 = arc0 / max(len, 1e-20);
+			float cl0 = dl0 / max(len, GEO_TINY20), sl0 = arc0 / max(len, GEO_TINY20);
 			arrive = vec4(sl0 * (scd.y * t - scd.x * en), side * cl0);
 			dir = vec4(side * cl0, sl0 * t);
 		}
@@ -503,7 +507,7 @@ bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, o
 	vec2 se;
 	if (le >= L) {
 		float q2 = sqrt(max(gap_e * (re + b), 0.0));
-		float dq = (re - Rout) * (re + Rout) / max(qR + q2, 1e-20);
+		float dq = (re - Rout) * (re + Rout) / max(qR + q2, GEO_TINY20);
 		se = SL + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
 	} else if (le > Lc) {
 		float su = eye.y, eu = sqrt(gap_e / R2);
