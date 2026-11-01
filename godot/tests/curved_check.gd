@@ -37,6 +37,10 @@ const CUBES := [[Vector3(0.35, 0.15, -0.6), 0.1, Vector3(0.4, 0.6, 0.1)], [Vecto
 const WORLD_BALLS := [[0.3, Vector3(-1.0, 0.05, 0.1), 0.4], [1.5, Vector3(0.1, -0.2, 1.0), 0.3],
 		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45]]
 const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1.0, 0.35, 0.15), 0.4, 0.3]]
+# and on the line through the head and the throat's centre, where a body's images close into rings:
+# [m toward the centre from the head (l less), radius or half size, a turn about that line]
+const AXIS_BALL := [1.1, 0.1, 0.0]
+const AXIS_CUBE := [0.7, 0.12, 0.4]
 
 var main: Main
 var hmd
@@ -106,6 +110,23 @@ func _bodies() -> void:
 			var A: Vector4 = ax.x * g[2][0] + ax.y * g[2][1] + ax.z * g[2][2]
 			axes.append(sp.embed_vector(g[0], g[1], A).normalized())
 		ccol.append(Vector4(0.0, 4.0, 0.0, c[1]))
+	# on the axis, a little off it (the line still through them)
+	var hl: float = hp[0]
+	var hn: Vector3 = hp[1]
+	var side := signf(hl)
+	var off := _normal_to(hn) * 0.02
+	var ab := sp.embed(hl - side * AXIS_BALL[0], (hn + off).normalized())
+	pos.append(ab)
+	col.append(Vector4(4.0, 0.0, 0.0, AXIS_BALL[1]))
+	var al: float = hl - side * AXIS_CUBE[0]
+	var an := (hn - off).normalized()
+	var ae1 := _normal_to(an)
+	var ae2 := an.cross(ae1)
+	var aa: float = AXIS_CUBE[2]
+	axes.append(sp.embed_vector(al, an, Vector4(0.0, cos(aa) * ae1.x + sin(aa) * ae2.x, cos(aa) * ae1.y + sin(aa) * ae2.y, cos(aa) * ae1.z + sin(aa) * ae2.z)).normalized())
+	axes.append(sp.embed_vector(al, an, Vector4(0.6, 0.8 * (-sin(aa) * ae1.x + cos(aa) * ae2.x), 0.8 * (-sin(aa) * ae1.y + cos(aa) * ae2.y), 0.8 * (-sin(aa) * ae1.z + cos(aa) * ae2.z))).normalized())
+	cpos.append(sp.embed(al, an))
+	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
 	for b: Array in WORLD_BALLS:
 		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))

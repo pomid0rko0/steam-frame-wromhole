@@ -144,6 +144,14 @@ void vertex() {
 		vec3 cq = C.xyz - dot(C.xyz, m) * m;
 		al0 = geo_atan2(dot(cq, t), dot(cq, en));
 		l0 = geo_l_of(vec4(cq, C.w), nn);
+#ifdef CUBE
+		// a cube's: inside its section also near a corner
+		vec2 la;
+		if (zone_inner_cube(C, E1, E2, E3, N, size, m, en, t, la)) {
+			l0 = la.x;
+			al0 = la.y;
+		}
+#endif
 	}
 	vec2 scp = geo_sincos(phi);
 	float r0 = geo_r(abs(l0));

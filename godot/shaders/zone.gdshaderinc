@@ -90,11 +90,11 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 	}
 	vec2 p = vec2(l0 + rho * dl, al0 + rho * dal);
 	// the nearest other face: onto its edge with face f if within the points' spacing along face f
-	// (rho dphi over the line's slant to it), along the section (both slabs at their bounds:
-	// Newton on the two in (l, alpha))
+	// (rho dphi over the cosine of the line's slant to its normal: lines that graze a face meet it
+	// far apart), along the section (both slabs at their bounds: Newton on the two in (l, alpha))
 	vec4 Tp = zone_rate(p.x, p.y, en, t, dl, dal);
 	vec4 Efp = f == 0 ? E1 : (f == 1 ? E2 : E3);
-	float gap = rho * dphi / max(abs(dot(Tp, Efp)) / max(length(Tp), 1e-9), 0.3);
+	float gap = rho * dphi / max(abs(dot(Tp, Efp)) / max(length(Tp), 1e-9), 0.05);
 	vec3 left = size - abs(sv);
 	left[f] = 1e9;
 	int k = left.x <= left.y && left.x <= left.z ? 0 : (left.y <= left.z ? 1 : 2);
@@ -102,16 +102,57 @@ vec2 zone_edge_cube(float l0, float al0, float dl, float dal, float dphi, vec3 e
 		vec4 Ef = f == 0 ? E1 : (f == 1 ? E2 : E3);
 		vec4 Ek = k == 0 ? E1 : (k == 1 ? E2 : E3);
 		float gf = sign(sv[f]) * size, gk = sign(sv[k]) * size;
+		vec2 c = p;
 		for (int i = 0; i < 2; i++) {
-			vec4 qq = zone_point(p.x, p.y, en, t) - C;
-			vec4 Tl = zone_rate(p.x, p.y, en, t, 1.0, 0.0);
-			vec4 Ta = zone_rate(p.x, p.y, en, t, 0.0, 1.0);
+			vec4 qq = zone_point(c.x, c.y, en, t) - C;
+			vec4 Tl = zone_rate(c.x, c.y, en, t, 1.0, 0.0);
+			vec4 Ta = zone_rate(c.x, c.y, en, t, 0.0, 1.0);
 			float a11 = dot(Tl, Ef), a12 = dot(Ta, Ef), a21 = dot(Tl, Ek), a22 = dot(Ta, Ek);
 			float b1 = gf - dot(qq, Ef), b2 = gk - dot(qq, Ek);
 			float det = a11 * a22 - a12 * a21;
 			if (abs(det) < 1e-12) break;
-			p += vec2(b1 * a22 - a12 * b2, a11 * b2 - a21 * b1) / det;
+			c += vec2(b1 * a22 - a12 * b2, a11 * b2 - a21 * b1) / det;
 		}
+		// a corner of the section only if it is on the cube (the two faces' planes may meet beyond
+		// a third) and within the spacing of the point it replaces
+		vec4 qc = zone_point(c.x, c.y, en, t) - C;
+		vec3 sc = abs(vec3(dot(qc, E1), dot(qc, E2), dot(qc, E3)));
+		float moved = length(zone_point(c.x, c.y, en, t) - zone_point(p.x, p.y, en, t));
+		if (max(max(sc.x, sc.y), sc.z) <= size * (1.0 + 1e-4) && moved <= gap && c.y >= 0.0 && c.y <= GEO_PI) p = c;
 	}
 	return p;
+}
+
+// A point inside a cube's section by the half-surface toward t (the hyperplane through the axis with
+// normal m, R^4's xyz): the middle of where the hyperplane cuts the cube's edges, to first order (in
+// the cube's tangent space at C, then onto the space along N), as (l, alpha); false if it misses
+// them all. The centre's own place in the hyperplane is outside the small sections near a corner.
+bool zone_inner_cube(vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, vec3 m, vec3 en, vec3 t, out vec2 la) {
+	vec3 mu = vec3(dot(E1.xyz, m), dot(E2.xyz, m), dot(E3.xyz, m));
+	float c = -dot(C.xyz, m);
+	vec3 sum = vec3(0.0);
+	float count = 0.0;
+	for (int a = 0; a < 3; a++) {
+		int b = (a + 1) % 3, e = (a + 2) % 3;
+		if (abs(mu[a]) < 1e-6) continue;
+		for (int k = 0; k < 4; k++) {
+			float sb = (k & 1) == 0 ? -size : size, se = (k & 2) == 0 ? -size : size;
+			float xa = (c - mu[b] * sb - mu[e] * se) / mu[a];
+			if (abs(xa) <= size) {
+				vec3 x = vec3(0.0);
+				x[a] = xa;
+				x[b] = sb;
+				x[e] = se;
+				sum += x;
+				count += 1.0;
+			}
+		}
+	}
+	la = vec2(0.0);
+	if (count < 0.5) return false;
+	vec3 x = sum / count;
+	vec4 P = geo_onto(C + x.x * E1 + x.y * E2 + x.z * E3, N);
+	vec3 nn;
+	la = vec2(geo_l_of(P, nn), geo_atan2(dot(P.xyz, t), dot(P.xyz, en)));
+	return true;
 }
