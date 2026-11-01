@@ -153,7 +153,7 @@ func _process(delta: float) -> void:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()
 			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms; %s; pipelines compiled %d; %s"
-					% [meter.missed() - missed_before, main.foot_l, look.x, look.y,
+					% [meter.missed() - missed_before, main.viewer.l, look.x, look.y,
 					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
 					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
 					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, _before_text(),
@@ -443,7 +443,7 @@ func _log() -> void:
 		return
 	var s: Second = seconds.back()
 	var eye := xr.get_render_target_size()
-	var l: float = main.foot_l
+	var l: float = main.viewer.l
 	var edge: float = main.space.L
 	var look: Vector2 = main.look_angles()
 	var where := "feet l %.1f m (%s), looking %.0f deg from the throat, %.0f deg up, " % [l,

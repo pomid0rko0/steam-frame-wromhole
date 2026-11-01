@@ -60,14 +60,15 @@ for c in 0 1; do
 	done
 done
 # the curved zone: the throat, sideways in it, the curved zone's edge, universe B's fillet, and a
-# place in the flat universe the same way as a control (curved_check.gd's PLACES)
-for p in 0 1 2 3 4; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
-# the stereo check scene
-for c in 0 1 2 3; do
+# place in the flat universe the same way as a control; flying round the throat, over its top, high
+# above it and out of it tilted (curved_check.gd's PLACES)
+for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
+# the stereo check scene, also flying (cases 4 and 5)
+for c in 0 1 2 3 4 5; do
 	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
 # the same floor lines without the balls and the cube
-for c in 0 1 2 3; do
+for c in 0 1 2 3 4 5; do
 	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
 done
 # the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
@@ -106,13 +107,13 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
 	verdict "simulated headset, case $c: the hands' beams, each eye" python3 "$CMP/silhouettes.py" "$OUT/bea$c" 2
 done
-for p in 0 1 2 3 4; do
+for p in 0 1 2 3 4 5 6 7 8; do
 	verdict "simulated headset, curved zone, place $p: balls, cubes and the floor against traced rays, each eye" python3 "$CMP/curved.py" "$OUT/crv$p"
 done
-for c in 0 1 2 3; do
+for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
 done
-for c in 0 1 2 3; do
+for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: floor lines, without the balls" python3 "$CMP/check_scene.py" "$OUT/pln$c" --floor-only
 done
 for c in 0 1 2 3; do

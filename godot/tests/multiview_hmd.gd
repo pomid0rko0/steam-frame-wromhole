@@ -77,8 +77,8 @@ func _process(_delta: float) -> bool:
 				var radii := PackedFloat32Array()
 				for k in BEAM_POINTS:
 					var d: Vector3 = a.lerp(b, float(k) / (BEAM_POINTS - 1)) - feet
-					var T: Vector4 = d.x * main.frame[0] + d.y * main.frame[1] + d.z * main.frame[2]
-					var g: Array = sp.geodesic(main.foot_l, main.foot_n, T / T.length(), T.length(), [])
+					var T: Vector4 = d.x * main.viewer.frame[0] + d.y * main.viewer.frame[1] + d.z * main.viewer.frame[2]
+					var g: Array = sp.geodesic(main.viewer.l, main.viewer.n, T / T.length(), T.length(), [])
 					pts.append(sp.embed(g[0], g[1]))
 					radii.append(BEAM_RADIUS)
 				main.renderer.set_beam(i, pts, radii, Color(1.0, 0.0, 0.0))
@@ -103,8 +103,8 @@ func _process(_delta: float) -> bool:
 			# the place in the curved space: walk from the feet along the play-space offset, carrying
 			# the play-space axes; a cube's axes are combinations of those
 			var d := p - feet
-			var T: Vector4 = d.x * main.frame[0] + d.y * main.frame[1] + d.z * main.frame[2]
-			var g: Array = sp.geodesic(main.foot_l, main.foot_n, T / T.length(), T.length(), main.frame)
+			var T: Vector4 = d.x * main.viewer.frame[0] + d.y * main.viewer.frame[1] + d.z * main.viewer.frame[2]
+			var g: Array = sp.geodesic(main.viewer.l, main.viewer.n, T / T.length(), T.length(), main.viewer.frame)
 			pos.append(sp.embed(g[0], g[1]))
 			if cubes:
 				for ax in [turn.x, turn.y]:
@@ -120,7 +120,7 @@ func _process(_delta: float) -> bool:
 				main.renderer.set_objects(pos, col)
 	if frames == 14:
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
-		print("saved ", mode, " head ", main.camera.transform.origin, " feet l ", main.foot_l)
+		print("saved ", mode, " head ", main.camera.transform.origin, " feet l ", main.viewer.l)
 		U.finish(self, hmd)
 		return true
 	return false

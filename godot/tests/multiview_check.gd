@@ -8,7 +8,11 @@ extends SceneTree
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
-## left while walking forward (Q, W; KEYS): the overlay must follow the world. Run with
+## left while walking forward (Q, W; KEYS): the overlay must follow the world; 4: as 1, without
+## gravity in flight, then flies up (Space) and forward (W), and in the air snaps right (E), pitches
+## down (K) and rolls right (L) about the head, and hovers there (KEYS_4); 5: as 1, flying 1 m up
+## with the room's axes
+## pitched 20 degrees and rolled 15 (as a flight through the curved zone leaves them). Run with
 ## --fixed-fps 60, so every mode walks and turns the same.
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
 ## gravity, arrows: the gravity views "floor" and "floor and field lines" (Renderer.GRAVITY_VIEWS: the
@@ -27,6 +31,8 @@ const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04
 const KEYS := [[5, KEY_W, true], [5, KEY_D, true], [15, KEY_W, false], [15, KEY_D, false],
 		[16, KEY_E, true], [18, KEY_E, false], [19, KEY_TAB, true], [20, KEY_TAB, false],
 		[21, KEY_Q, true], [21, KEY_W, true], [31, KEY_Q, false], [31, KEY_W, false]]
+const KEYS_4 := [[5, KEY_SPACE, true], [5, KEY_W, true], [15, KEY_W, false], [16, KEY_E, true], [18, KEY_E, false],
+		[19, KEY_K, true], [21, KEY_K, false], [22, KEY_L, true], [24, KEY_L, false], [25, KEY_SPACE, false]]
 
 var main: Main
 var hmd
@@ -49,7 +55,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = true
-	if case == 3:
+	if case == 3 or case == 4:
 		main.smooth_turn = false
 	root.add_child(main)
 
@@ -59,6 +65,13 @@ func _process(_delta: float) -> bool:
 	if frames == 3:
 		# then back at the start, turned to the head's yaw: the view should face the throat
 		main.place(main.START_POS, main.START_FORWARD)
+		main.set_fall(false)
+		if case == 5:
+			var v: Viewer = main.viewer
+			v.take_off()
+			v.move(WormholeSpace.combine(v.frame, Vector3(0.0, 1.0, 0.0)))
+			v.frame = Viewer.tilt(v.frame, deg_to_rad(20.0), deg_to_rad(15.0), main._head_forward_xz())
+			main._update_chart_map()
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view
 		if plain:
@@ -76,11 +89,13 @@ func _process(_delta: float) -> bool:
 		print("foveation ", main.foveation.level)
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = HEAD_STEP * hmd.head
-	if case == 3:
-		for k in KEYS:
+	if case == 3 or case == 4:
+		for k in KEYS if case == 3 else KEYS_4:
 			if k[0] == frames:
 				U.key(k[1], k[2])
-	if frames == (34 if case == 3 else 24):
+	if frames == (34 if case == 3 or case == 4 else 24):
+		if case >= 4:
+			print("flying %s, the feet %.3f m over the floor" % [not main.viewer.standing, main.viewer.height()])
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
 		print("saved ", mode)
 		U.finish(self, hmd)

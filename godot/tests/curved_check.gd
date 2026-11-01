@@ -1,7 +1,7 @@
 extends SceneTree
 ## Stereo in the curved zone, where there is no Godot geometry to compare with: the simulated
-## headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced head) stands at
-## a place of PLACES with red balls and green cubes round the head, and each eye's picture is saved
+## headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced head) stands or
+## flies at a place of PLACES with red balls and green cubes round the head, and each eye's picture is saved
 ## with what tools/compare/curved.py needs to trace that eye's rays itself, independently of the
 ## shaders: the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's
 ## static objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
@@ -9,9 +9,17 @@ extends SceneTree
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
 const U := preload("res://tests/util.gd")
-# [the feet's l, degrees right of the throat (place_on_axis)]: in the throat looking along it and
-# sideways round it, at the curved zone's edge, inside universe B's fillet facing the throat
-const PLACES := [[0.0, 10.0], [0.3, 95.0], [5.0, 15.0], [-4.6, 170.0], [12.0, 40.0]]
+# [the feet's l, degrees right of the throat (place_on_axis), flights from there (main.viewer: off
+# the floor, then each a geodesic along the head's x right, y up, -z ahead, the room's axes carried
+# along), the head's pitch in degrees (util.gd's headset)]: standing in the throat looking along it
+# and sideways round it, at the curved zone's edge, inside universe B's fillet facing the throat, in
+# the flat universe the same way as a control; flying 2 m up round the throat's middle, 5.5 m up
+# round it at l 1 (past its top), high above universe A looking down into the throat, and through
+# the throat 0.5 m over the floor into universe B, looking down to B's floor (up turned about 48
+# degrees: tests/flight_test.gd)
+const PLACES := [[0.0, 10.0, [], -10.0], [0.3, 95.0, [], -10.0], [5.0, 15.0, [], -10.0], [-4.6, 170.0, [], -10.0],
+		[12.0, 40.0, [], -10.0], [0.0, 10.0, [Vector3(0.0, 2.0, 0.0)], -10.0], [1.0, 30.0, [Vector3(0.0, 5.5, 0.0)], -10.0],
+		[12.0, 0.0, [Vector3(0.0, 6.0, -9.0)], -60.0], [12.0, 0.0, [Vector3(0.0, 0.5, 0.0), Vector3(0.0, 0.0, -20.0)], -55.0]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
@@ -26,7 +34,7 @@ var place: Array
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	place = PLACES[int(args[1])]
-	hmd = U.headset(1, -10.0, Vector2i(640, 640))
+	hmd = U.headset(1, place[3], Vector2i(640, 640))
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = false
@@ -40,6 +48,16 @@ func _process(_delta: float) -> bool:
 		main.menu.visible = false
 		main.renderer.show_scene(false)
 		main.place_on_axis(place[0], place[1], 0.0)
+		var v: Viewer = main.viewer
+		var fwd := main._head_forward_xz()
+		for d: Vector3 in place[2]:
+			v.take_off()
+			v.move(WormholeSpace.combine(v.frame, Vector3(-d.x * fwd.y - d.z * fwd.x, d.y, d.x * fwd.x - d.z * fwd.y)))
+		if not place[2].is_empty():
+			var hp := v.head(hmd.head.origin.y)
+			print("flying: the feet %.2f m over the floor, the head %.2f m, up %.0f deg from the floor's normal there"
+					% [v.height(), main.space.height(hp[0], hp[1]),
+					rad_to_deg(acos(clampf((v.frame[1] as Vector4).dot(main.space.height_grad(v.l, v.n).normalized()), -1.0, 1.0)))])
 		main.hold = true
 	if frames == 5:
 		_bodies()

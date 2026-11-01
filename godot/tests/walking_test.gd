@@ -25,16 +25,16 @@ func _initialize() -> void:
 
 ## The side the feet are on (+1 universe A, -1 universe B) and their chart position there.
 func _side() -> float:
-	return signf(main.foot_l)
+	return signf(main.viewer.l)
 
 
 func _feet() -> Vector3:
-	return main.space.chart_position(main.foot_l, main.foot_n)
+	return main.space.chart_position(main.viewer.l, main.viewer.n)
 
 
 ## Which way the view points in the chart of the feet's side (horizontal).
 func _forward() -> Vector3:
-	var d := WormholeSpace.vector_to_chart(_side(), main.foot_n, -main.frame[2])    # play-space forward is -z
+	var d := WormholeSpace.vector_to_chart(_side(), main.viewer.n, -main.viewer.frame[2])    # play-space forward is -z
 	return Vector3(d.x, d.y, 0.0).normalized()
 
 
@@ -50,7 +50,7 @@ func _check_feet_kept(name: String) -> void:
 	U.check(name, absf(p.x - 8.5) < 0.03 and absf(p.y) < 0.01, "feet at (%.3f, %.3f), expected (8.5, 0)" % [p.x, p.y])
 
 
-## The speed check's view tilt (main._tilt) turns about the head's own axes, whichever way the head
+## The speed check's view tilt (Viewer.tilt) turns about the head's own axes, whichever way the head
 ## faces in the room: the look goes pitch up, the head's right turns roll about the look.
 func _check_tilt() -> void:
 	var f := [Vector4(1, 0, 0, 0), Vector4(0, 1, 0, 0), Vector4(0, 0, 1, 0)]     # play x, up, z
@@ -60,7 +60,7 @@ func _check_tilt() -> void:
 	for yaw in [0.0, 90.0, 200.0]:
 		var a := deg_to_rad(yaw)
 		var fwd := Vector2(-sin(a), -cos(a))         # the head turned yaw to the left of -z
-		var t: Array = main._tilt(f, pitch, roll, fwd)
+		var t: Array = Viewer.tilt(f, pitch, roll, fwd)
 		var look: Vector4 = fwd.x * t[0] + fwd.y * t[2]
 		var right: Vector4 = -fwd.y * t[0] + fwd.x * t[2]
 		var flat: Vector4 = fwd.x * f[0] + fwd.y * f[2]
@@ -144,7 +144,7 @@ func _process(_delta: float) -> bool:
 			var p := _feet()
 			U.check("Shift + W runs through the throat into universe B", _side() < 0.0 and absf(p.x + want_r) < 0.05 and absf(p.y) < 0.01,
 					"side %+.0f, feet at (%.3f, %.3f), expected (%.3f, 0)" % [_side(), p.x, p.y, -want_r])
-			U.check("on the floor in B", absf(main.foot_n.z) < 1e-6, "n.z %s" % main.foot_n.z)
+			U.check("on the floor in B", absf(main.viewer.n.z) < 1e-6, "n.z %s" % main.viewer.n.z)
 			U.check("still walking straight in B", _forward().distance_to(Vector3(-1, 0, 0)) < 1e-3, "forward %s" % _forward())
 			U.finish(self)
 	return false

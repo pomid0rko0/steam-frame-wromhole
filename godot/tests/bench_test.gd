@@ -42,8 +42,8 @@ func _process(_d: float) -> bool:
 	if started and frames > 3:
 		if b.running and b.step >= 0:
 			var place: Array = b.PLACES[b.plan[b.step].x]
-			if absf(main.foot_l - b._l(place[0])) > 0.3:
-				check("at the place being timed", false, "%.2f vs %.2f" % [main.foot_l, b._l(place[0])])
+			if absf(main.viewer.l - b._l(place[0])) > 0.3:
+				check("at the place being timed", false, "%.2f vs %.2f" % [main.viewer.l, b._l(place[0])])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
 			if b.near != v.near or (b.near and main.renderer.cubes.multimesh.visible_instance_count != main.toys.world.cubes.size() + 1):
