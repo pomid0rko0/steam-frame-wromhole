@@ -8,7 +8,8 @@ extends SceneTree
 ##    curved zone along the floor
 ## 2. main.move_mouth: the viewer, its way and the toys in that flat universe stay where they are in
 ##    the world, the cube in the throat goes along with it, the other universe stays; the shaders
-##    get the mouth; a toy where the new curved zone comes is pushed out past its edge
+##    get the mouth; a toy where the new curved zone comes is pushed out past its edge; flying, the
+##    head and its velocity stay as they are in the world
 ## 3. the physics with both mouths moved and turned: a ball dropped on a pillar of A and a cube on
 ##    a box of B come to rest on them, a ball rolled at A's wall comes back from 40 m off A's world
 ##    origin; the viewer walked at it stops there
@@ -45,7 +46,7 @@ func _initialize() -> void:
 	main.xr_name = "FakeHMD"
 	main.toys.demo = false
 	root.add_child(main)
-	queue = [_coordinates, _move, _move_checked, _push, _push_checked, _physics, _physics_checked,
+	queue = [_coordinates, _move, _move_checked, _push, _push_checked, _fly, _physics, _physics_checked,
 			_wall_walk, _allowed, _x, _x_checked, _farther, _farther_checked, _turned, _turned_checked,
 			_put, _put_checked, _cancel_start, _cancel, _cancel_checked, _red, _red_checked, _red_put,
 			_red_out, _zone, _zone_checked, _hold, _hold_checked, _menu, _menu_open, _menu_checked,
@@ -203,6 +204,29 @@ func _push_checked() -> int:
 			bad += 1
 	U.check("move_mouth onto toys: each pushed out past the new curved zone along the floor, straight away from its centre",
 			saved["near"].size() >= 5 and bad == 0, "%d toys there, %d not" % [saved["near"].size(), bad])
+	return 0
+
+
+func _fly() -> int:
+	var v := main.viewer
+	var h: float = main.camera.transform.origin.y
+	main.move_mouths(main.scene_mouths())
+	main.place(main.START_POS, main.START_FORWARD)
+	v.take_off()
+	v.move(WormholeSpace.combine(v.frame, Vector3(0.0, 1.5, 0.0)))
+	var hp := v.head(h)
+	var d := Vector3(1.0, -2.0, 0.5)
+	v.V = main.space.vector_from_world(1.0, hp[1], d)
+	var head := main.space.world_position(hp[0], hp[1])
+	main.hold = true
+	main.move_mouth(1.0, Vector3(-4.0, 9.0, deg_to_rad(-120.0)))
+	main.hold = false
+	hp = v.head(h)
+	var off := (main.space.world_position(hp[0], hp[1]) - head).length()
+	var dv := (main.space.vector_to_world(1.0, hp[1], v.V) - d).length()
+	U.check("move_mouth, flying: the head and its velocity stay as they are in the world", off < 1e-3 and dv < 1e-4,
+			"head off %.7f m, velocity off %.7f m/s" % [off, dv])
+	main.place(main.START_POS, main.START_FORWARD)
 	return 0
 
 

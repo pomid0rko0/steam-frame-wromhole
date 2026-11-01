@@ -435,13 +435,15 @@ func view_text() -> String:
 ## (their places are the start's).
 func move_mouth(side: float, m: Vector3) -> void:
 	var was: Vector3 = space.mouths[WormholeSpace.side_index(side)]
+	var hp := viewer.head(camera.transform.origin.y)     # V is the head's
 	space.set_mouth(side, m)
 	if viewer.l * side > space.L:
-		var r := space.rechart(was, viewer.l, viewer.n, viewer.frame + [viewer.V])
+		var r := space.rechart(was, viewer.l, viewer.n, viewer.frame)
 		viewer.l = r[0]
 		viewer.n = r[1] if not viewer.standing else Vector3(r[1].x, r[1].y, 0.0).normalized()
-		viewer.frame = WormholeSpace.orthonormalize(r[2].slice(0, 3))
-		viewer.V = r[2][3]
+		viewer.frame = WormholeSpace.orthonormalize(r[2])
+		if hp[0] * side > space.L:
+			viewer.V = space.rechart(was, hp[0], hp[1], [viewer.V])[2][0]
 	var pushed := 0
 	for b: BallWorld.Body in toys.world.balls + toys.world.cubes:
 		if b.l * side <= space.L:
