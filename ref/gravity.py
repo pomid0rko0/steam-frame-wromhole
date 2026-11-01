@@ -51,8 +51,9 @@ class Gravity:
         out_p[m] = 1.0 - 2.0 * self.beta / r ** 3
         return out_f, sg * out_p
 
-    def floor_g(self, l):
-        """Strength of gravity on the floor, in g."""
+    def side_g(self, l):
+        """Strength of gravity at l on the throat's side (n_z = 0, the equator of its sphere), in g:
+        f / r, along the sphere straight down."""
         f, _ = self.f(l)
         return f / self.W.r(np.asarray(l, dtype=float))
 

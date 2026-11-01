@@ -28,8 +28,8 @@ def check(name, ok, detail):
 for name, (rho0, h, R) in PROFILES.items():
     W = Wormhole(rho0, h, R)
     G = Gravity(W)
-    print(f'--- {name}: beta = {G.beta:+.4f} m^3, floor g at the middle {G.floor_g(0.0):.4f}, '
-          f'at the mouth (l = L) {G.floor_g(W.L):.4f}')
+    print(f'--- {name}: beta = {G.beta:+.4f} m^3, g on the throat\'s side (n_z = 0) at its middle {G.side_g(0.0):.4f}, '
+          f'at the curved zone\'s edge (l = L) {G.side_g(W.L):.4f}')
     # 1. the ODE holds: (r^2 f')' - 2 f = 0, by finite differences of the solution
     ls = np.linspace(-W.L - 6, W.L + 6, 401)
     ls = ls[np.min(np.abs(ls[:, None] - np.array([-W.L, -W.Lc, 0, W.Lc, W.L])[None]), axis=1) > 2e-3]
@@ -54,8 +54,8 @@ for name, (rho0, h, R) in PROFILES.items():
     fx = (4 * f2 - f1) / 3                       # Richardson: second-order scheme
     fo = G.f(probe)[0]
     err = np.max(np.abs(fx - fo) / W.r(probe))
-    check('2D Laplace solve agrees (floor g)', err < 2e-3,
-          f'floor g at l = {np.round(probe, 2)}: ODE {np.round(fo / W.r(probe), 4)}, 2D {np.round(fx / W.r(probe), 4)}, '
+    check('2D Laplace solve agrees (g on the side, n_z = 0)', err < 2e-3,
+          f'g on the side at l = {np.round(probe, 2)}: ODE {np.round(fo / W.r(probe), 4)}, 2D {np.round(fx / W.r(probe), 4)}, '
           f'max diff {err:.1e}; non-cos(theta) part of the 2D solution {out[1][2]:.1e} m')
     # 4. the size axiom (docs/gravity.md, «Размер»)
     Gs = Gravity(Wormhole(rho0 / 10, h / 10, R / 10))
