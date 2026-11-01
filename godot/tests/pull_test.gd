@@ -4,11 +4,12 @@ extends SceneTree
 ## test sets. Run with --fixed-fps 60 under a display; exit status 1 on any failure:
 ##   godot --path . --fixed-fps 60 -s res://tests/pull_test.gd
 ## 1. BallWorld.flight, the throw's tries, flies as step does: a ball in universe A, a ball and a
-##    cube into the throat, within 1 cm after the flight's time; WormholeSpace.ray ends where
+##    cube into the throat, within 5 mm after the flight's time; WormholeSpace.ray ends where
 ##    geodesic does and stops at the floor; a ball with neither gravity nor air flies along the
 ##    geodesic of its start and direction (the beam's way), round the throat's rim and into B
 ## 2. a hand pointing at a ball far off aims at it: the ball glows and the hand turns orange;
-##    pointing 20 degrees past it, neither; pointing through two balls, at the nearer one
+##    pointing 20 degrees past it, neither; pointing through two balls, at the nearer one (the
+##    balls behind the start, where the floor holds them: under the mouth its push rolls them)
 ## 3. the grip locks on it; a slow move pulls nothing, and the grip let go, nothing flies
 ## 4. a flick of the wrist throws the ball to the hand: let fly within PULL_TRIES frames, missing
 ##    by less than PULL_MISS, caught by the closed hand before the planned arrival, drawn in until
@@ -17,15 +18,19 @@ extends SceneTree
 ## 6. let go of the grip after the flick, the ball arrives and is not caught
 ## 7. a toy within reach is grabbed, not the one pointed at
 ## 8. from the start, a ball on universe B's floor seen through the throat: aimed at, pulled
-##    through the throat and caught, its throw missing the hand by less than 10 cm
-## 9. from the start, the demo's cube in the throat (seen along no straight line): aimed at,
-##    pulled and caught
-## 11. from the start, a ball on the far side of the throat in universe A, seen round its rim:
-##    aimed at, thrown steadily, caught; a ball seen along a straight line 25 m off is not aimed
-##    at (PULL_RANGE), one 20 m off is
-## 12. eleven pulls from the start (MANY: near, far, round the throat, from it, from universe B),
-##    the throw found as _fly finds it, then flown by the world's own physics: each within 10 cm
-##    of the hand, in PULL_FLIGHTS flights at most
+##    through the throat (out of A's mouth in the air) and caught, its throw missing the hand by
+##    less than 10 cm
+## 9. hovering in the middle of the throat, a ball on universe A's floor (seen along no straight
+##    line): aimed at, pulled up into the throat and caught
+## 11. flying on the axis over the start, a ball on A's floor beyond the mouth, behind the
+##    throat's sphere from the hand, seen round the throat's rim: aimed at, thrown steadily, caught;
+##    from the start, a ball seen along a straight line 35 m off is not aimed at (PULL_RANGE), one
+##    25 m off is
+## 12. pulls from the start (MANY: near, far, under the mouth and past it, from universe B through
+##    the throat, from inside the throat), the throw found as _fly finds it, then flown by the
+##    world's own physics: each within 10 cm of the hand, in PULL_FLIGHTS flights at most; the ball
+##    on B's floor at Toys.ring_point is aimed at (no throw along the throat's axis is steady:
+##    hands.gd's top)
 ## 10. the beam (the menu's «луч прицела»): off, none; on, from the hand along its pointing geodesic
 ##    to the ball it aims at, orange, and else to the floor, pale; through the throat into universe
 ##    B; none while the hand holds a toy
@@ -33,6 +38,7 @@ extends SceneTree
 const U := preload("res://tests/util.gd")
 const SIZE := 96
 const AIM := Hands.AIM_EVERY + 1     # frames after pointing: each hand has aimed
+const AT := Vector3(13.0, 0.4, 0.25)     # chart A: a ball 3.4 m from the hand, behind the start
 var main: Main
 var hmd
 var left: XRControllerTracker
@@ -123,7 +129,7 @@ func _run() -> void:
 	await _let_go()
 	await _near_first()
 	await _through()
-	await _throat_cube()
+	await _from_throat()
 	await _beam()
 	await _far_side()
 	_many()
@@ -135,8 +141,8 @@ func _run() -> void:
 func _flight() -> void:
 	var sp: WormholeSpace = main.space
 	var cases := [["ball in universe A", Vector3(6.0, 1.0, 0.3), Vector3(3.0, -1.0, 4.0), 0.2, false, 0.8],
-			["ball into the throat", Vector3(5.5, 0.0, 1.5), Vector3(-6.0, 0.3, 3.0), 0.25, false, 0.8],
-			["cube into the throat", Vector3(5.5, -0.5, 1.5), Vector3(-6.5, 0.6, 3.2), 0.2, true, 0.8]]
+			["ball into the throat", Vector3(6.0, 0.0, 3.0), Vector3(-6.5, 0.3, 4.0), 0.25, false, 0.8],
+			["cube into the throat", Vector3(6.0, -0.5, 3.0), Vector3(-7.0, 0.6, 4.2), 0.2, true, 0.8]]
 	for cs in cases:
 		var w := BallWorld.new(sp, main.scene)
 		var p: Array = sp.point_from_chart(1.0, cs[1])
@@ -156,17 +162,17 @@ func _flight() -> void:
 			w.step(1.0 / 60.0, [])
 			low = minf(low, sp.height(b.l, b.n))
 		var gap: float = (sp.embed(b.l, b.n) - sp.embed(res[0], res[1])).length()
-		U.check("flight flies as the physics does: " + cs[0], gap < 0.01 and low > cs[3],
+		U.check("flight flies as the physics does: " + cs[0], gap < 0.005 and low > cs[3],
 				"%.4f m apart after %.1f s, at l %.2f (the curved zone below %.2f); lowest %.2f m up; flight took %d us"
 				% [gap, T, b.l, sp.L, low, us])
 
 
 # 1
-## dynamics_step without gravity against geodesic, 2 s at 10 m/s from 1.3 m up in front of the
+## dynamics_step without gravity against geodesic, 2 s at 10 m/s from 4 m up in front of the
 ## throat: into B, and round the rim.
 func _no_gravity() -> void:
 	var sp: WormholeSpace = main.space
-	var p: Array = sp.point_from_chart(1.0, Vector3(9.7, 0.2, 1.3))
+	var p: Array = sp.point_from_chart(1.0, Vector3(9.7, 0.2, 4.0))
 	for dir: Vector3 in [Vector3(-1.0, 0.0, 0.0), Vector3(-1.0, 0.36, 0.0)]:
 		var D := WormholeSpace.vector_from_chart(1.0, p[1], dir.normalized())
 		var l: float = p[0]
@@ -190,8 +196,8 @@ func _no_gravity() -> void:
 # 1
 func _ray() -> void:
 	var sp: WormholeSpace = main.space
-	# level from 1.2 m up toward the throat: through it into universe B, as geodesic goes
-	var p: Array = sp.point_from_chart(1.0, Vector3(9.0, 0.3, 1.2))
+	# level from 4 m up toward the throat: through it into universe B, as geodesic goes
+	var p: Array = sp.point_from_chart(1.0, Vector3(9.0, 0.3, 4.0))
 	var D := WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-1.0, 0.0, 0.0))
 	var r := sp.ray(p[0], p[1], D, 20.0)
 	var pts: Array = r[0]
@@ -200,28 +206,29 @@ func _ray() -> void:
 	var end: Vector4 = pts[pts.size() - 1]
 	U.check("ray ends where geodesic does, through the throat", (end - sp.embed(g[0], g[1])).length() < 1e-4
 			and g[0] < -sp.L, "%.6f m apart, %d points, at l %.2f" % [(end - sp.embed(g[0], g[1])).length(), pts.size(), g[0]])
-	# 30 degrees down from 1.2 m in universe A: the floor 2.4 m on
+	# 30 degrees down from 1.2 m in universe A: the floor (R^4's z = -lift) 2.4 m on
+	p = sp.point_from_chart(1.0, Vector3(9.0, 0.3, 1.2))
 	var Dd := WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-cos(PI / 6.0), 0.0, -sin(PI / 6.0)))
 	r = sp.ray(p[0], p[1], Dd, 20.0)
 	lens = r[1]
 	pts = r[0]
-	U.check("ray stops at the floor", absf(lens[lens.size() - 1] - 2.4) < 1e-4 and absf(pts[pts.size() - 1].z) < 1e-5,
-			"%.4f m (2.4), height %.6f" % [lens[lens.size() - 1], pts[pts.size() - 1].z])
+	U.check("ray stops at the floor", absf(lens[lens.size() - 1] - 2.4) < 1e-4 and absf(pts[pts.size() - 1].z + sp.lift) < 1e-5,
+			"%.4f m (2.4), height %.6f" % [lens[lens.size() - 1], pts[pts.size() - 1].z + sp.lift])
 
 
 # 2
 func _aim() -> void:
 	_clear()
 	_away(left)
-	var ball := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var ball := _ball_at(AT, 0.25)
 	var own := ball.color
 	var p := Vector3(0.2, 1.2, -0.3)
-	var dir := _play(Vector3(6.5, 0.4, 0.25)) - p
+	var dir := _play(AT) - p
 	_pose(right, p, _toward(dir))
 	await _step(AIM)
 	var h := _hand(1)
 	var got := _drawn(0.25)
-	U.check("pointed at a ball 3.5 m off, the hand aims at it", h.aimed == ball, "aimed %s" % [h.aimed])
+	U.check("pointed at a ball 3.4 m off, the hand aims at it", h.aimed == ball, "aimed %s" % [h.aimed])
 	U.check("... the ball glows", Vector3(got.r - own.r, got.g - own.g, got.b - own.b).length() > 0.2,
 			"drawn %s, its own %s" % [got, own])
 	U.check("... and the hand turns orange", _hand_color(1) == Hands.COLOR_AIM, "hand %s" % _hand_color(1))
@@ -229,13 +236,13 @@ func _aim() -> void:
 	await _step(AIM)
 	U.check("pointed 20 degrees past it, neither", h.aimed == null and _drawn(0.25) == own
 			and _hand_color(1) == Hands.COLOR, "aimed %s, ball %s, hand %s" % [h.aimed, _drawn(0.25), _hand_color(1)])
-	# from 0.5 m up at the centre of a ball 4.2 m off, through one 2.2 m off on the way (the far one
+	# from 0.5 m up at the centre of a ball 4.8 m off, through one 2.8 m off on the way (the far one
 	# first in the list)
 	_clear()
-	var far := _ball_at(Vector3(5.5, 0.2, 0.25), 0.25)
-	var near := _ball_at(Vector3(7.5, 0.2, 0.25), 0.25)
+	var far := _ball_at(Vector3(14.5, 0.2, 0.25), 0.25)
+	var near := _ball_at(Vector3(12.5, 0.2, 0.25), 0.25)
 	var q := Vector3(0.2, 0.5, -0.3)
-	_pose(right, q, _toward(_play(Vector3(5.5, 0.2, 0.25)) - q))
+	_pose(right, q, _toward(_play(Vector3(14.5, 0.2, 0.25)) - q))
 	await _step(AIM)
 	U.check("pointed through two balls, the hand aims at the nearer", h.aimed == near,
 			"aimed the near one %s, the far one %s" % [h.aimed == near, h.aimed == far])
@@ -244,15 +251,15 @@ func _aim() -> void:
 # 3
 func _lock() -> void:
 	_clear()
-	var ball := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var ball := _ball_at(AT, 0.25)
 	var p := Vector3(0.2, 1.2, -0.3)
-	_pose(right, p, _toward(_play(Vector3(6.5, 0.4, 0.25)) - p))
+	_pose(right, p, _toward(_play(AT) - p))
 	await _step(AIM)
 	right.set_input(&"grip", 1.0)
 	await _step(1)
 	var h := _hand(1)
 	var locked := h.locked and h.aimed == ball
-	var b0 := _toward(_play(Vector3(6.5, 0.4, 0.25)) - p)
+	var b0 := _toward(_play(AT) - p)
 	for k in 30:
 		p += Vector3(0.0, 0.0, 0.3 / 60.0)        # back at 0.3 m/s, turning up at 1 rad/s
 		_pose(right, p, b0 * Basis(Vector3.RIGHT, k / 60.0))
@@ -302,9 +309,9 @@ func _pull(i: int, t: XRControllerTracker, p: Vector3, b0: Basis, turn: float, m
 # 4
 func _flick() -> void:
 	_clear()
-	var ball := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var ball := _ball_at(AT, 0.25)
 	var p := Vector3(0.2, 1.2, -0.3)
-	var b0 := _toward(_play(Vector3(6.5, 0.4, 0.25)) - p)
+	var b0 := _toward(_play(AT) - p)
 	_pose(right, p, b0)
 	await _step(AIM)
 	var res: Array = await _pull(1, right, p, b0, 10.0, Vector3.ZERO)
@@ -333,7 +340,7 @@ func _flick() -> void:
 func _yank() -> void:
 	_clear()
 	_away(right)
-	var cube: BallWorld.Cube = main.toys.cube_on_floor(Vector2(7.0, -0.9), 0.2, 0.3, Color(0.35, 0.8, 0.75))
+	var cube: BallWorld.Cube = main.toys.cube_on_floor(1.0, Vector2(7.0, -0.9), 0.2, 0.3, Color(0.35, 0.8, 0.75))
 	var p := Vector3(-0.25, 1.1, -0.3)
 	var b0 := _toward(_play(Vector3(7.0, -0.9, 0.2)) - p)
 	_pose(left, p, b0)
@@ -351,9 +358,9 @@ func _yank() -> void:
 # 6
 func _let_go() -> void:
 	_clear()
-	var ball := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var ball := _ball_at(AT, 0.25)
 	var p := Vector3(0.2, 1.2, -0.3)
-	var b0 := _toward(_play(Vector3(6.5, 0.4, 0.25)) - p)
+	var b0 := _toward(_play(AT) - p)
 	_pose(right, p, b0)
 	await _step(AIM)
 	var res: Array = await _pull(1, right, p, b0, 10.0, Vector3.ZERO, 3)
@@ -366,11 +373,11 @@ func _let_go() -> void:
 # 7
 func _near_first() -> void:
 	_clear()
-	var far := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var far := _ball_at(AT, 0.25)
 	var p := Vector3(0.2, 1.2, -0.3)
 	var near := _ball_at(Vector3(Main.START_POS.x + p.z, p.x, p.y - 0.29), 0.2)
 	near.held = &"test"                      # kinematic: it stays where it is put
-	_pose(right, p, _toward(_play(Vector3(6.5, 0.4, 0.25)) - p))
+	_pose(right, p, _toward(_play(AT) - p))
 	await _step(AIM)
 	near.held = &""
 	await _step(1)
@@ -392,27 +399,12 @@ func _through() -> void:
 	_pose(right, p, Basis.IDENTITY)
 	await _step(2)
 	var h := _hand(1)
-	# from 10 degrees up down, until the pointing geodesic, through the throat, reaches universe B's
-	# floor (the throat turns what is seen through it upside down: up toward it is down in B)
-	var dir := Vector3.ZERO
-	var hit := Vector4.ZERO
-	for k in 120:
-		var a := deg_to_rad(-10.0 + 0.25 * k)
-		var d := Vector3(0.0, -sin(a), -cos(a))
-		var r := sp.ray(h.ball.l, h.ball.n, WormholeSpace.combine(h.room, d), Hands.PULL_RANGE - 1.0)
-		var pts: Array = r[0]
-		var end: Vector4 = pts[pts.size() - 1]
-		if absf(end.z) < 1e-4 and sp.point_of(end)[0] < -sp.L - 0.5:
-			dir = d
-			hit = end
-			break
-	if dir == Vector3.ZERO:
-		U.check("a way through the throat to universe B's floor", false, "none")
-		return
-	var at: Array = sp.point_of(hit)
-	var c := sp.chart_position(at[0], at[1])
-	var q: Array = sp.point_from_chart(-1.0, Vector3(c.x, c.y, 0.3))
+	# 13 m out on B's floor (where the floor holds a ball), off the line from the hand through the
+	# throat's centre (along it no throw is steady: hands.gd's top), pointed at along the geodesic
+	# that passes nearest its centre
+	var q: Array = sp.point_from_chart(-1.0, Vector3(-13.0, 2.0, 0.3))
 	var ball := main.toys.world.add(q[0], q[1], Vector4.ZERO, 0.3, Color(0.75, 0.35, 0.9))
+	var dir: Vector3 = _toward_geodesic(h, sp.embed(ball.l, ball.n))[0]
 	_pose(right, p, _toward(dir))
 	await _step(AIM)
 	U.check("from the start, a ball on universe B's floor seen through the throat is aimed at",
@@ -450,44 +442,33 @@ func _through() -> void:
 
 
 # 9
-func _throat_cube() -> void:
+func _from_throat() -> void:
 	_clear()
 	_away(left)
 	var sp: WormholeSpace = main.space
-	var cube: BallWorld.Cube = main.toys.cube_in_throat(0.8, -0.45, 0.3, Color(0.6, 0.85, 0.35))
+	main.place_on_axis(0.0, 180.0)                  # facing universe A
+	main.set_fall(false)
+	var ball := _ball_at(Vector3(9.0, 1.0, 0.25), 0.25)
 	var p := Vector3(0.2, 1.3, -0.3)
 	_pose(right, p, Basis.IDENTITY)
 	await _step(2)
 	var h := _hand(1)
-	# the pointing direction whose geodesic passes nearest the cube's centre, on a grid of degrees
-	var C := sp.embed(cube.l, cube.n)
-	var dir := Vector3.ZERO
-	var nearest := INF
-	for yaw in range(-30, 31):
-		for pitch in range(-20, 21):
-			var d := Vector3(-sin(deg_to_rad(yaw)), sin(deg_to_rad(pitch)), -cos(deg_to_rad(yaw))).normalized()
-			var r := sp.ray(h.ball.l, h.ball.n, WormholeSpace.combine(h.room, d), Hands.PULL_RANGE)
-			var pts: Array = r[0]
-			for j in pts.size() - 1:
-				var A: Vector4 = pts[j]
-				var AB: Vector4 = pts[j + 1] - A
-				var t := clampf((C - A).dot(AB) / maxf(AB.length_squared(), 1e-12), 0.0, 1.0)
-				var dist := (C - A - t * AB).length()
-				if dist < nearest:
-					nearest = dist
-					dir = d
-	_pose(right, p, _toward(dir))
+	var way := _toward_geodesic(h, sp.embed(ball.l, ball.n), Vector2(-50, 10))
+	_pose(right, p, _toward(way[0]))
 	await _step(AIM)
-	U.check("from the start, the cube in the throat is aimed at", h.aimed == cube,
-			"aimed %s, %.2f m along, the geodesic %.2f m from its centre; the cube at l %.2f" % [h.aimed, h.aim_s, nearest, cube.l])
-	var res: Array = await _pull(1, right, p, _toward(dir), 10.0, Vector3.ZERO)
+	U.check("hovering in the throat, a ball on universe A's floor is aimed at", h.aimed == ball and not h.aim_chord,
+			"aimed %s, %.2f m along, the geodesic %.2f m from its centre; the hand at l %.2f" % [h.aimed, h.aim_s, way[1], h.ball.l])
+	var res: Array = await _pull(1, right, p, _toward(way[0]), 10.0, Vector3.ZERO)
 	var pull: Hands.Pull = res[1]
-	U.check("... pulled out of the throat and caught", pull != null and cube.held == &"right_hand" and h.held == cube,
+	U.check("... pulled up into the throat and caught", pull != null and ball.held == &"right_hand" and h.held == ball,
 			"%d tries, missing by %.4f m, %.2f m/s, %.2f s to fly; caught %.2f s after it flew"
 			% [pull.tries if pull else 0, pull.miss if pull else 0.0, pull.best.length() if pull else 0.0,
 			pull.T if pull else 0.0, (res[2] - res[0]) / 60.0])
 	right.set_input(&"grip", 0.0)
 	await _step(2)
+	main.place(main.START_POS, main.START_FORWARD)
+	main.set_fall(true)
+	await _step(1)
 
 
 ## Hand 1's beam as the renderer has it: [drawn, its points, colour].
@@ -503,9 +484,9 @@ func _beam() -> void:
 	_clear()
 	_away(left)
 	var sp: WormholeSpace = main.space
-	var ball := _ball_at(Vector3(6.5, 0.4, 0.25), 0.25)
+	var ball := _ball_at(AT, 0.25)
 	var p := Vector3(0.2, 1.2, -0.3)
-	var dir := _play(Vector3(6.5, 0.4, 0.25)) - p
+	var dir := _play(AT) - p
 	_pose(right, p, _toward(dir))
 	await _step(AIM)
 	var h := _hand(1)
@@ -539,10 +520,10 @@ func _beam() -> void:
 	await _step(AIM)
 	b = _drawn_beam()
 	pts = b[1]
-	U.check("... pointing past it: to the floor, pale", b[0] and h.aimed == null and absf(pts[pts.size() - 1].z) < 1e-4
-			and b[2] == Hands.BEAM_COLOR, "aimed %s, ends %.5f m up, colour %s" % [h.aimed, pts[pts.size() - 1].z, b[2]])
-	# 3 degrees down toward the throat: through it into universe B
-	_pose(right, p, _toward(Vector3(0.0, -sin(deg_to_rad(3.0)), -cos(deg_to_rad(3.0)))))
+	U.check("... pointing past it: to the floor, pale", b[0] and h.aimed == null and absf(pts[pts.size() - 1].z + sp.lift) < 1e-4
+			and b[2] == Hands.BEAM_COLOR, "aimed %s, ends %.5f m up, colour %s" % [h.aimed, pts[pts.size() - 1].z + sp.lift, b[2]])
+	# at the throat's centre: through it into universe B
+	_pose(right, p, _toward(_play(Vector3(0.0, 0.0, sp.lift)) - p))
 	await _step(2)
 	b = _drawn_beam()
 	pts = b[1]
@@ -562,14 +543,24 @@ func _beam() -> void:
 	U.check("off again: none", not _drawn_beam()[0])
 
 
-## The pointing direction from hand h (room) whose geodesic passes nearest C (R^4), on a grid of
-## degrees: [direction, how near].
-func _toward_geodesic(h: Hands.Hand, C: Vector4) -> Array:
+## The pointing direction from hand h (room) whose geodesic passes nearest C (R^4): on a grid of
+## 2 degrees, pitches from pitches.x to pitches.y, then of 0.1 degrees round the best (the throat
+## magnifies what is seen through it many times): [direction, how near].
+func _toward_geodesic(h: Hands.Hand, C: Vector4, pitches := Vector2(-20, 50)) -> Array:
+	var coarse := _grid(h, C, Vector2(-60, 60), pitches, 2.0)
+	return _grid(h, C, Vector2(coarse[2].x - 2.0, coarse[2].x + 2.0), Vector2(coarse[2].y - 2.0, coarse[2].y + 2.0), 0.1)
+
+
+## The grid's best: [direction, how near, (yaw, pitch)].
+func _grid(h: Hands.Hand, C: Vector4, yaws: Vector2, pitches: Vector2, step: float) -> Array:
 	var sp: WormholeSpace = main.space
 	var best := Vector3.ZERO
+	var best_at := Vector2.ZERO
 	var nearest := INF
-	for yaw in range(-60, 61, 2):
-		for pitch in range(-20, 31, 2):
+	for iy in roundi((yaws.y - yaws.x) / step) + 1:
+		var yaw := yaws.x + iy * step
+		for ip in roundi((pitches.y - pitches.x) / step) + 1:
+			var pitch := pitches.x + ip * step
 			var d := Vector3(-sin(deg_to_rad(yaw)), sin(deg_to_rad(pitch)), -cos(deg_to_rad(yaw))).normalized()
 			var r := sp.ray(h.ball.l, h.ball.n, WormholeSpace.combine(h.room, d), Hands.PULL_RANGE)
 			var pts: Array = r[0]
@@ -581,7 +572,8 @@ func _toward_geodesic(h: Hands.Hand, C: Vector4) -> Array:
 				if dist < nearest:
 					nearest = dist
 					best = d
-	return [best, nearest]
+					best_at = Vector2(yaw, pitch)
+	return [best, nearest, best_at]
 
 
 # 11
@@ -589,17 +581,24 @@ func _far_side() -> void:
 	_clear()
 	_away(left)
 	var sp: WormholeSpace = main.space
+	# the head on the axis 10.4 m out (chart A (10.4, 0, lift)), facing the throat
+	main.place_on_axis(12.0, 0.0)
+	main.set_fall(false)
 	var p := Vector3(0.2, 1.3, -0.3)
 	_pose(right, p, Basis.IDENTITY)
 	await _step(2)
 	var h := _hand(1)
-	var ball := _ball_at(Vector3(-6.0, 0.5, 0.25), 0.25)
-	var way := _toward_geodesic(h, sp.embed(ball.l, ball.n))
+	# behind the sphere, near its shadow's edge: deeper in, a path round the rim needs an impact
+	# parameter near r_min, where the ways part so fast that no throw is steady (hands.gd's top)
+	var ball := _ball_at(Vector3(-8.5, 5.0, 0.25), 0.25)
+	var C := sp.embed(ball.l, ball.n)
+	var behind := h.ball.l > sp.L and main.hands._behind_shell(sp.embed(h.ball.l, h.ball.n), C)
+	var way := _toward_geodesic(h, C)
 	_pose(right, p, _toward(way[0]))
 	await _step(AIM)
-	U.check("from the start, a ball on the far side of the throat (A, seen round its rim) is aimed at",
-			h.aimed == ball and not h.aim_chord, "aimed %s, along a chord %s, the geodesic %.2f m from its centre"
-			% [h.aimed == ball, h.aim_chord, way[1]])
+	U.check("flying over the start, a ball on A's floor behind the throat's sphere, seen round its rim, is aimed at",
+			behind and h.aimed == ball and not h.aim_chord, "behind the sphere %s, aimed %s, along a chord %s, the geodesic %.2f m from its centre"
+			% [behind, h.aimed == ball, h.aim_chord, way[1]])
 	right.set_input(&"grip", 1.0)
 	await _step(1)
 	var b0 := _toward(way[0])
@@ -625,8 +624,11 @@ func _far_side() -> void:
 			pull.T if pull else 0.0, lo, sp.L])
 	right.set_input(&"grip", 0.0)
 	await _step(2)
-	# straight lines to the right, 25 and 20 m off
-	for d: float in [25.0, 20.0]:
+	main.place(main.START_POS, main.START_FORWARD)
+	main.set_fall(true)
+	await _step(1)
+	# straight lines to the right, 35 and 25 m off
+	for d: float in [35.0, 25.0]:
 		_clear()
 		var c := Vector3(9.7 - 0.3 * d, 0.2 + 0.95 * d, 0.25)
 		var far := _ball_at(c, 0.25)
@@ -638,11 +640,12 @@ func _far_side() -> void:
 
 
 # 12
-# [universe: A, B or T (the throat: l, azimuth, height), place, radius]
+# [universe: A, B (chart), R (Toys.ring_point, B) or T (the throat: l, azimuth, elevation of n in
+# radians), place, radius]
 const MANY := [["A", Vector3(6.5, 0.4, 0.25), 0.25], ["A", Vector3(4.6, -2.0, 0.25), 0.25],
 		["A", Vector3(0.5, 4.6, 0.25), 0.25], ["A", Vector3(-6.0, 0.5, 0.25), 0.25], ["A", Vector3(-5.0, 2.5, 0.25), 0.25],
-		["A", Vector3(-4.5, -1.0, 0.25), 0.25], ["A", Vector3(-8.0, 3.0, 0.25), 0.25], ["B", Vector3(4.7, 0.0, 0.3), 0.3],
-		["B", Vector3(4.5, 3.0, 0.3), 0.3], ["B", Vector3(6.4, 0.6, 0.3), 0.3], ["T", Vector3(0.8, -0.45, 0.3), 0.3]]
+		["A", Vector3(-4.5, -1.0, 0.25), 0.25], ["A", Vector3(-8.0, 3.0, 0.25), 0.25], ["B", Vector3(-10.0, 2.0, 0.3), 0.3],
+		["B", Vector3(-12.0, -2.5, 0.3), 0.3], ["T", Vector3(0.8, -0.45, 0.0), 0.3], ["R", Vector3.ZERO, 0.4]]
 
 
 ## Off the scene: a world and a hand of their own, the hand 1.3 m up at the start (chart A
@@ -664,8 +667,11 @@ func _many() -> void:
 		var at: Vector3 = cs[1]
 		var ball: BallWorld.Ball
 		if cs[0] == "T":
-			var z: float = at.z / sp.r(at.x)
-			ball = w.add(at.x, Vector3(cos(at.y) * sqrt(1.0 - z * z), sin(at.y) * sqrt(1.0 - z * z), z), Vector4.ZERO, cs[2], Color.WHITE)
+			ball = w.add(at.x, Vector3(cos(at.y) * cos(at.z), sin(at.y) * cos(at.z), sin(at.z)), Vector4.ZERO, cs[2], Color.WHITE)
+		elif cs[0] == "R":
+			at = main.toys.ring_point()
+			var q: Array = sp.point_from_chart(-1.0, at)
+			ball = w.add(q[0], q[1], Vector4.ZERO, cs[2], Color.WHITE)
 		else:
 			var q: Array = sp.point_from_chart(1.0 if cs[0] == "A" else -1.0, at)
 			ball = w.add(q[0], q[1], Vector4.ZERO, cs[2], Color.WHITE)
@@ -674,8 +680,8 @@ func _many() -> void:
 		hands.clock += 1.0
 		hands._aim(h)
 		var name := "%s %s" % [cs[0], at]
-		if h.aimed != ball:
-			U.check("pull from %s: aimed at" % name, false, "the geodesic %.2f m from its centre" % way[1])
+		if h.aimed != ball or cs[0] == "R":
+			U.check("pull from %s: aimed at" % name, h.aimed == ball, "%.1f m along, the geodesic %.2f m from its centre" % [h.aim_s, way[1]])
 			continue
 		h.locked = true
 		hands._launch(0)

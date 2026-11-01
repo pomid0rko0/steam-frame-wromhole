@@ -168,10 +168,11 @@ func step(delta: float, hands: Array[Ball]) -> void:
 			if asleep(b):
 				continue
 			var before: Array = [b.l, b.n, b.U, b.still]
-			var s := space.dynamics_step(b.l, b.n, b.U, DT, GRAVITY)
+			var k := drag(b)
+			var s := space.dynamics_step(b.l, b.n, _air(b.U, k, 0.5 * DT), DT, GRAVITY)
 			b.l = s[0]
 			b.n = s[1]
-			b.U = _air(s[2], drag(b))
+			b.U = _air(s[2], k, 0.5 * DT)
 			_floor(b, before)
 			_statics(b)
 		for c in cubes:
@@ -198,7 +199,8 @@ static func asleep(b: Body) -> bool:
 
 
 ## A step of air drag, -k |U| U (k: drag / mass per metre, drag), integrated implicitly: stable at
-## any speed (and exact for drag alone along a line).
+## any speed (and exact for drag alone along a line). step and flight take it in half steps on
+## either side of the motion's (second order).
 static func _air(U: Vector4, k: float, dt := DT) -> Vector4:
 	return U / (1.0 + k * U.length() * dt)
 
@@ -508,10 +510,11 @@ func box4(c: Cube) -> Array:
 
 ## Free motion: the centre moves as a ball does, the axes are transported along and turn by w.
 func _integrate_cube(c: Cube) -> void:
-	var s := space.dynamics_step(c.l, c.n, c.U, DT, GRAVITY, c.F)
+	var k := drag(c)
+	var s := space.dynamics_step(c.l, c.n, _air(c.U, k, 0.5 * DT), DT, GRAVITY, c.F)
 	c.l = s[0]
 	c.n = s[1]
-	c.U = _air(s[2], drag(c))
+	c.U = _air(s[2], k, 0.5 * DT)
 	var F: Array = s[3]
 	var w: Vector3 = c.w
 	var rate := w.length()

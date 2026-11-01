@@ -13,10 +13,12 @@ extends RefCounted
 ## hand back or up (_flicked, in the room, since the lock), throws it to where the hand is then.
 ## The throw is found by trying it (_solve) while the toy waits at rest: BallWorld.flight, the toys'
 ## own free motion in steps much longer than the physics'. First tries go back along the pointing
-## geodesic and along the chord of R^4 to the hand, each in more times than one (higher, _launch);
-## the first steady enough is taken (near the throat's rim the ways part fast: a slip of
-## centimetres per second there misses by metres), and brought to the hand by Newton's steps with
-## a probed Jacobian. Then the toy flies as any toy does: as the beam goes but for gravity and the
+## geodesic and along the chord of R^4 to the hand, each in more times than one (higher; in the
+## hand's own universe also flatter, which keeps an arc from under the mouth out of the curved zone:
+## _launch); the first steady enough is taken (near the throat's rim the ways part fast: a slip of
+## centimetres per second there misses by metres; through the throat's middle along its axis from
+## the hand, as to Toys.ring_point's ball from the start, no throw is steady), and brought to the
+## hand by Newton's steps with a probed Jacobian. Then the toy flies as any toy does: as the beam goes but for gravity and the
 ## air (tests/pull_test.gd: without them it keeps to the geodesic); it falls, and is thrown higher
 ## to make up for it. A closed hand catches its toy within CATCH_REACH and draws it in. With beam
 ## on (the menu's «луч прицела») an empty hand's pointing geodesic is drawn (_beam,
@@ -40,7 +42,7 @@ const SET_DOWN_SPIN := 1.0       # this, sets its toy down at rest
 const NEW_BALL_RADIUS := 0.2     # m: a new ball in the right hand (its button: README.md)
 const NEW_CUBE_HALF := 0.15      # m: a new cube in the left hand
 # pulling (this file's top)
-const PULL_RANGE := 24.0         # m along the pointing geodesic: from the start to universe B's floor
+const PULL_RANGE := 30.0         # m along the pointing geodesic: from the start through the throat to Toys.ring_point
 const AIM_ANGLE := deg_to_rad(8.0)   # a toy's surface this far off the geodesic at most, seen from the hand
 const AIM_STICK := 0.6           # the toy aimed at counts as this much as far off (no flicker between two)
 const AIM_EVERY := 4             # frames: how often a hand aims (the hands by turns)
@@ -51,19 +53,21 @@ const FLICK_SPEED := 1.2         # m/s: and the hand moving back toward the toy,
 const PULL_TIME := 0.35          # s: the flight's time, and per metre along the pointing geodesic,
 const PULL_TIME_PER_M := 0.055   # at most PULL_TIME_MAX;
 const PULL_TIME_MAX := 1.2
-const LOFTS := [1.0, 1.5, 2.0]   # the first tries' times this many times that (higher throws),
+const LOFTS := [1.0, 1.5, 2.0, 0.6]   # the first tries' times this many times that (higher throws; a flatter
+                                 # one in the hand's own universe, under the mouth),
 const PULL_TIME_LOFTED := 2.5    # s: at most this
 const CHORD_APART := deg_to_rad(5.0)   # first tries along the chord too, if it parts from the geodesic by more
 const GUESS_POINTS := 6          # points of the pointing geodesic gravity is taken at for a first try
 const PROBE_SPEED := 0.2         # m/s: a first try's changes that probe how steady it is
 const GOOD_START := 0.1          # a first try that misses by less of the way is probed before the others
 const STEADY := 10.0             # s (m of miss per m/s): a first try steady enough to take at once:
-                                 # BallWorld.flight and step part by 1 cm in 0.8 s at most
+                                 # BallWorld.flight and step part by 2.3 mm in 0.8 s at most
                                  # (tests/pull_test.gd), and a throw this unsteady misses by
-                                 # about 10 cm for that
+                                 # about 3 cm for that
 const UNSTEADY := 25.0           # s: one that is no good (a probe that shows it ends the probing)
 const PULL_STEP := 3.0           # m/s: a try changes the best throw by this much at most
-const PULL_MAX_SPEED := 30.0     # m/s: the fastest throw tried
+const PULL_MAX_SPEED := 40.0     # m/s: the fastest throw tried (from universe B's floor through the throat
+                                 # to the start, 25 m in PULL_TIME_MAX against the air, takes over 30)
 const PULL_MISS := 0.03          # m: a throw that misses the hand's centre by less is taken,
 const PULL_TRIES := 10           # Newton's tries on a first try at most,
 const SETTLE_STEPS := 4          # and after this many its miss must be half what it was
@@ -700,7 +704,8 @@ func _flicked(h: Hand) -> bool:
 ## Hand i throws the toy it is locked on to where the hand is. First tries, in this order: back along
 ## the pointing geodesic and along the chord of R^4 to the hand (if it parts from the geodesic by
 ## more than CHORD_APART), each with the flight's time PULL_TIME + PULL_TIME_PER_M per metre (at
-## most PULL_TIME_MAX), and LOFTS times as long (higher: at most PULL_TIME_LOFTED), each _guess's;
+## most PULL_TIME_MAX), and LOFTS times as long (higher: at most PULL_TIME_LOFTED; shorter only with
+## the toy in the hand's own flat universe), each _guess's;
 ## _solve takes the first of them that is steady enough. The toy waits at rest, held by none,
 ## meanwhile.
 func _launch(i: int) -> void:
@@ -730,13 +735,15 @@ func _launch(i: int) -> void:
 	var here := [[0.0, BallWorld.to_body(p.axes, -BallWorld.GRAVITY * space.potential_grad(toy.l, toy.n))]]
 	var apart: bool = chord.length() > 1e-6 and back.dot(chord.normalized()) < cos(CHORD_APART)
 	var T0 := minf(PULL_TIME + PULL_TIME_PER_M * h.aim_s, PULL_TIME_MAX)
+	# flatter only in the hand's own universe: through the throat a throw is not shorter than T0
+	var own := absf(toy.l) > space.L and absf(h.ball.l) > space.L and signf(toy.l) == signf(h.ball.l)
 	var times := []
 	for f: float in LOFTS:
 		var T := minf(T0 * f, maxf(PULL_TIME_LOFTED, T0))
-		if times.is_empty() or T > times[times.size() - 1] + 1e-3:
+		if (f >= 1.0 or own) and not times.any(func(u: float) -> bool: return absf(u - T) < 1e-3):
 			times.append(T)
 	for T: float in times:
-		var lofted := " lofted" if T > T0 + 1e-3 else ""
+		var lofted := " lofted" if T > T0 + 1e-3 else (" flat" if T < T0 - 1e-3 else "")
 		p.cands.append([_guess(p, back, h.aim_s, along, T, k), T, "along the geodesic" + lofted])
 		if apart:
 			p.cands.append([_guess(p, chord.normalized(), (p.target - C).length(), here, T, k), T, "along the chord" + lofted])
