@@ -108,6 +108,10 @@ var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n,
 
 
 func _ready() -> void:
+	# which build this is (tools/export.sh writes it into the export)
+	var build: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://build.json")) \
+			if FileAccess.file_exists("res://build.json") else null
+	print("build: ", build.get("commit", "?") if build is Dictionary else "the source, not an export")
 	xr = XRServer.find_interface(xr_name)
 	var host: Node = self
 	if xr and xr.is_initialized():
