@@ -13,10 +13,10 @@ extends Node3D
 ## view's own matrices (shaders/geo.gdshaderinc, geo_eye).
 ##
 ## The parts: the space's geometry (wormhole_space.gd), the renderer (renderer.gd), the demo's
-## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab
-## and throw them (hands.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
-## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd),
-## the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
+## balls and cubes in gravity through the wormhole (toys.gd, ball_world.gd), the hands that grab,
+## throw and pull them (hands.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd),
+## the menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd,
+## rate_meter.gd), the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
 ## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
 ## button, the walk, the free toys (pushed by the hands where they were), the hands and what they
 ## hold, and last the toys and the head to the renderer: a toy let go now starts from the hand.
@@ -194,7 +194,7 @@ func _add_controllers() -> void:
 		g.tracker = t
 		g.pose = &"grip"           # where the hand holds the controller: what it grabs with
 		origin.add_child(g)
-		hands.add(g)
+		hands.add(g, c)
 		if t == &"left_hand":
 			left_hand = c
 		else:
@@ -313,7 +313,7 @@ func _process(delta: float) -> void:
 
 
 func draw_toys() -> void:
-	toys.draw(renderer, hands.drawn(), bench.near_cube(_head_pose, camera.transform.basis))
+	toys.draw(renderer, hands.drawn(), bench.near_cube(_head_pose, camera.transform.basis), hands.lit())
 
 
 ## Put the feet at chart A position pos (z = 0), looking along forward.

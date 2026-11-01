@@ -77,7 +77,10 @@ func dr(l: float) -> float:
 ## geodesic (the space's mirror image in the plane leaves it in place), so a transported vector keeps
 ## its part along the plane's normal, and its part in the plane, (U_l, the part toward growing psi),
 ## keeps its angle to the geodesic's direction, which is (vl, b / r) there.
-func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> Array:
+## With trace ([points of R^4, their lengths along], Arrays: ray's), it also notes points of the path
+## (_trace), stops where it goes through the floor and finds a fillet's end coarser (_cross); step: a
+## fillet's RK4 steps, in fillet radii.
+func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array, trace = null, step := STEP) -> Array:
 	if dist <= 0.0:
 		return [l, n, frame.duplicate()]
 	# the direction's tangential part and its length in float64 (Vector3 math is single precision):
@@ -120,6 +123,8 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 			vl = sg * (x * rd + y * bt) / r1
 			l = sg * L if s == s_in else sg * (r1 - Rout + L)
 			left -= s
+			if trace != null and _trace(trace, l, psi, n, e, dist - left):
+				break
 		elif Lc > 0.0 and (al < Lc or (al == Lc and sg * vl <= 0.0)):
 			# the cylinder: l and psi at constant rates until an end
 			var s_out := INF
@@ -128,14 +133,27 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 			elif vl < 0.0:
 				s_out = (Lc + l) / -vl
 			var s := minf(left, s_out)
+			if trace != null:
+				# a helix in R^4, of curvature b^2 / rho0^3: points RAY_TOL off its chords at most
+				var parts := ceili(s * b / sqrt(8.0 * RAY_TOL * rho0 * rho0 * rho0) - 1e-9)
+				var hit := false
+				for k in range(1, parts):
+					var f := float(k) / parts
+					if _trace(trace, l + vl * s * f, psi + b / (rho0 * rho0) * s * f, n, e, dist - left + s * f):
+						hit = true
+						break
+				if hit:
+					break
 			l = (Lc if vl > 0.0 else -Lc) if s == s_out else l + vl * s
 			psi += b / (rho0 * rho0) * s
 			left -= s
+			if trace != null and _trace(trace, l, psi, n, e, dist - left):
+				break
 		else:
 			# a fillet, on side sg (at l = 0, where fillets meet with no cylinder: the side it goes to)
 			if sg == 0.0:
 				sg = signf(vl)
-			var hs := minf(left, STEP * fillet)
+			var hs := minf(left, step * fillet)
 			var y1 := _fillet_step(l, vl, psi, b, hs, sg)
 			# Past a crease (h < fillet: the fillets meet at l = 0 at an angle) the circle's
 			# continuation narrows below r_min, down to rho0: a path with rho0 < b < r_min, which
@@ -150,7 +168,8 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 				# crosses at a grazing angle is sensitive to the rate)
 				var out := sg * y1[0] > L and not bounced
 				var target := sg * L if out else sg * Lc
-				hs *= _cross(l, vl * hs, y1[0], y1[1] * hs, target, (sg > 0.0) == out)
+				hs *= _cross(l, vl * hs, y1[0], y1[1] * hs, target, (sg > 0.0) == out, 32 if trace == null else 8,
+						30 if trace == null else 10)
 				y1 = _fillet_step(l, vl, psi, b, hs, sg)
 				var bt := b / r(target)
 				y1[0] = target
@@ -159,6 +178,8 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array) -> 
 			vl = y1[1]
 			psi = y1[2]
 			left -= hs
+			if trace != null and _trace(trace, l, psi, n, e, dist - left):
+				break
 	var d := atan2(b / r(l), vl) - chi0       # the in-plane turn of the direction
 	var c := cos(d)
 	var s := sin(d)
@@ -201,17 +222,37 @@ func _fillet_rate(l: float, b: float, sg: float) -> PackedFloat64Array:
 	return PackedFloat64Array([sg * sin(th) * b * b * ip2 / p, b * ip2])
 
 
+## A point of a traced geodesic (ray): at (l, psi) of the plane of n and e, s along, appended to
+## trace; true if the path went through the floor on its way there, where it is cut instead (on a
+## straight piece exactly).
+func _trace(trace: Array, l: float, psi: float, n: Vector3, e: Vector3, s: float) -> bool:
+	var pts: Array = trace[0]
+	var lens: Array = trace[1]
+	var Q := embed(l, (cos(psi) * n + sin(psi) * e).normalized())
+	if Q.z < 0.0:
+		var P: Vector4 = pts[pts.size() - 1]
+		var s0: float = lens[lens.size() - 1]
+		var f := P.z / (P.z - Q.z)
+		pts.append(P.lerp(Q, f))
+		lens.append(s0 + f * (s - s0))
+		return true
+	pts.append(Q)
+	lens.append(s)
+	return false
+
+
 ## Where on a step the cubic with values y0, y1 and slopes d0, d1 (per step) at its ends first
 ## crosses target, going up (up) or down: the step's fraction (y0 may lie on target: a path that
-## has just come in there). Its first sample past target of 32, then bisection; where none is, the
-## sample nearest to target (a dip the samples miss).
-static func _cross(y0: float, d0: float, y1: float, d1: float, target: float, up: bool) -> float:
+## has just come in there). Its first sample past target of samples, then iters bisections; where
+## none is, the sample nearest to target (a dip the samples miss).
+static func _cross(y0: float, d0: float, y1: float, d1: float, target: float, up: bool, samples := 32,
+		iters := 30) -> float:
 	var a := 0.0
 	var z := 1.0
 	var nearest := 1.0
 	var gap := INF
-	for k in range(1, 33):
-		var t := k / 32.0
+	for k in range(1, samples + 1):
+		var t := float(k) / samples
 		var y := _cubic(y0, d0, y1, d1, t)
 		if (y > target) == up and y != target:
 			z = t
@@ -222,7 +263,7 @@ static func _cross(y0: float, d0: float, y1: float, d1: float, target: float, up
 			nearest = t
 	if a == 1.0:
 		return nearest
-	for _it in 30:
+	for _it in iters:
 		var t := 0.5 * (a + z)
 		var y := _cubic(y0, d0, y1, d1, t)
 		if (y > target) == up and y != target:
@@ -294,6 +335,31 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 		var res := geodesic(l, n, D.normalized(), D.length(), [])
 		D += project(l, n, T - embed(res[0], res[1]))
 	return D
+
+
+## The geodesic from (l, n) along the unit vector dir, for up to dist, cut where it reaches the
+## floor (height 0, R^4's z): as points of R^4 and their lengths along it, [Array of Vector4, Array
+## of float], the first at (l, n). In a flat universe a geodesic is a straight line of R^4, given by
+## its ends; on the cylinder a helix, by points RAY_TOL off its chords at most; on a fillet by the
+## ends of RK4 steps of RAY_STEP fillet radii. What a hand points at (hands.gd).
+func ray(l: float, n: Vector3, dir: Vector4, dist: float) -> Array:
+	var trace := [[embed(l, n)], [0.0]]
+	if trace[0][0].z > 0.0:
+		geodesic(l, n, dir, dist, [], trace, RAY_STEP)
+	return trace
+
+
+const RAY_STEP := 0.5           # fillet radii: ray's RK4 steps on a fillet
+const RAY_TOL := 0.01           # m: how far a ray's helix on the cylinder strays from its points' chords
+
+
+## The length the space bends over at l: r(l) in a flat universe, the throat's radius on its
+## cylinder, the fillet's radius on a fillet (BallWorld.flight's steps).
+func bend(l: float) -> float:
+	var al := absf(l)
+	if al >= L:
+		return r(l)
+	return rho0 if al <= Lc else fillet
 
 
 ## A chart position of the flat region on one side to a manifold point. Chart A is R^4's xyz in
@@ -500,36 +566,62 @@ func gravity_table() -> Dictionary:
 
 ## One RK4 step of free motion under gravity, -grav * potential_grad (geodesic + force).
 ## The vectors in frame (a body's axes) are parallel-transported along the step.
-## Returns [l, n, U, frame].
+## Returns [l, n, U, frame]. The stages written out (no lambdas: GDScript calls them slowly).
 func dynamics_step(l: float, n: Vector3, U: Vector4, dt: float, grav: float, frame: Array = []) -> Array:
-	var f := func(ll: float, nn: Vector3, UU: Vector4, FF: Array) -> Array:
-		var rr := r(ll)
-		var k := dr(ll) / rr
-		var v := Vector3(UU.y, UU.z, UU.w)
-		var du := -k * UU.x * v - (v.dot(v) / rr) * nn
-		var a := Vector4(k * v.dot(v), du.x, du.y, du.z) - grav * potential_grad(ll, nn)
-		var dF := []
-		for A: Vector4 in FF:
-			var au := Vector3(A.y, A.z, A.w)
-			var da := -k * A.x * v - (au.dot(v) / rr) * nn
-			dF.append(Vector4(k * v.dot(au), da.x, da.y, da.z))
-		return [UU.x, v / rr, a, dF]
-	var shift := func(FF: Array, dF: Array, hh: float) -> Array:
-		var out := []
-		for i in FF.size():
-			out.append(FF[i] + hh * dF[i])
-		return out
-	var k1: Array = f.call(l, n, U, frame)
-	var k2: Array = f.call(l + 0.5 * dt * k1[0], n + 0.5 * dt * k1[1], U + 0.5 * dt * k1[2], shift.call(frame, k1[3], 0.5 * dt))
-	var k3: Array = f.call(l + 0.5 * dt * k2[0], n + 0.5 * dt * k2[1], U + 0.5 * dt * k2[2], shift.call(frame, k2[3], 0.5 * dt))
-	var k4: Array = f.call(l + dt * k3[0], n + dt * k3[1], U + dt * k3[2], shift.call(frame, k3[3], dt))
-	var nl: float = l + dt / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0])
-	var nn: Vector3 = (n + dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1])).normalized()
-	var nU: Vector4 = U + dt / 6.0 * (k1[2] + 2.0 * k2[2] + 2.0 * k3[2] + k4[2])
+	var h2 := 0.5 * dt
+	var r1 := r(l)
+	var k1 := dr(l) / r1
+	var a1 := _accel(n, U, r1, k1, l, grav)
+	var m1 := Vector3(U.y, U.z, U.w) / r1
+	var l2 := l + h2 * U.x
+	var n2 := n + h2 * m1
+	var U2 := U + h2 * a1
+	var r2 := r(l2)
+	var k2 := dr(l2) / r2
+	var a2 := _accel(n2, U2, r2, k2, l2, grav)
+	var m2 := Vector3(U2.y, U2.z, U2.w) / r2
+	var l3 := l + h2 * U2.x
+	var n3 := n + h2 * m2
+	var U3 := U + h2 * a2
+	var r3 := r(l3)
+	var k3 := dr(l3) / r3
+	var a3 := _accel(n3, U3, r3, k3, l3, grav)
+	var m3 := Vector3(U3.y, U3.z, U3.w) / r3
+	var l4 := l + dt * U3.x
+	var n4 := n + dt * m3
+	var U4 := U + dt * a3
+	var r4 := r(l4)
+	var k4 := dr(l4) / r4
+	var a4 := _accel(n4, U4, r4, k4, l4, grav)
+	var m4 := Vector3(U4.y, U4.z, U4.w) / r4
+	var nl := l + dt / 6.0 * (U.x + 2.0 * U2.x + 2.0 * U3.x + U4.x)
+	var nn := (n + dt / 6.0 * (m1 + 2.0 * m2 + 2.0 * m3 + m4)).normalized()
+	var nU := U + dt / 6.0 * (a1 + 2.0 * a2 + 2.0 * a3 + a4)
 	var nF := []
-	for i in frame.size():
-		nF.append(tangent(nn, frame[i] + dt / 6.0 * (k1[3][i] + 2.0 * k2[3][i] + 2.0 * k3[3][i] + k4[3][i])))
+	for A: Vector4 in frame:
+		var b1 := _transport_rate(A, n, U, r1, k1)
+		var b2 := _transport_rate(A + h2 * b1, n2, U2, r2, k2)
+		var b3 := _transport_rate(A + h2 * b2, n3, U3, r3, k3)
+		var b4 := _transport_rate(A + dt * b3, n4, U4, r4, k4)
+		nF.append(tangent(nn, A + dt / 6.0 * (b1 + 2.0 * b2 + 2.0 * b3 + b4)))
 	return [nl, nn, tangent(nn, nU), nF]
+
+
+## dynamics_step's U' at a stage (nn, UU; rr = r(l), k = r'(l) / rr there): the geodesic's terms
+## and gravity.
+func _accel(nn: Vector3, UU: Vector4, rr: float, k: float, ll: float, grav: float) -> Vector4:
+	var v := Vector3(UU.y, UU.z, UU.w)
+	var vv := v.dot(v)
+	var du := -k * UU.x * v - (vv / rr) * nn
+	return Vector4(k * vv, du.x, du.y, du.z) - grav * potential_grad(ll, nn)
+
+
+## The rate of a vector A parallel-transported at a stage of dynamics_step.
+static func _transport_rate(A: Vector4, nn: Vector3, UU: Vector4, rr: float, k: float) -> Vector4:
+	var v := Vector3(UU.y, UU.z, UU.w)
+	var au := Vector3(A.y, A.z, A.w)
+	var da := -k * A.x * v - (au.dot(v) / rr) * nn
+	return Vector4(k * v.dot(au), da.x, da.y, da.z)
 
 
 ## Chart direction of a tangent vector at (l, n) in a flat region (the inverse of vector_from_chart).

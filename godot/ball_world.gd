@@ -45,6 +45,8 @@ const RESTITUTION_CUBE := 0.15       # cubes land with a small bounce
 const FRICTION_CUBE := 0.5           # sliding friction: a sliding cube decelerates by this times the floor's push
 const BOUNCE_SPEED := 0.4            # m/s: slower cube impacts do not bounce (no endless micro-bounces)
 const ITERATIONS := 6                # velocity iterations of the contact solver
+const FLIGHT_DT := 0.05              # s: flight's longest step
+const FLIGHT_STEP := 0.3             # and its longest in lengths the space bends over
 const KINEMATIC := 1e9               # a held ball's mass against a free one (_pair; hands push without one: _push)
 # a hand or a held ball against a free ball (_push, _pair): it moves on regardless, so with
 # RESTITUTION_BALL a ball it meets would fly off at 1 + RESTITUTION_BALL times the hand's speed, and one
@@ -169,7 +171,7 @@ func step(delta: float, hands: Array[Ball]) -> void:
 			var s := space.dynamics_step(b.l, b.n, b.U, DT, GRAVITY)
 			b.l = s[0]
 			b.n = s[1]
-			b.U = _air(s[2], 3.0 * AIR_DENSITY * DRAG_BALL / (8.0 * TOY_DENSITY * b.radius))
+			b.U = _air(s[2], drag(b))
 			_floor(b, before)
 			_statics(b)
 		for c in cubes:
@@ -195,9 +197,88 @@ static func asleep(b: Body) -> bool:
 	return b.held == &"" and b.still > SLEEP_TIME and b.U == Vector4.ZERO
 
 
-## A step of air drag, -k |U| U (k: drag / mass per metre), integrated implicitly: stable at any speed.
-func _air(U: Vector4, k: float) -> Vector4:
-	return U / (1.0 + k * U.length() * DT) if air else U
+## A step of air drag, -k |U| U (k: drag / mass per metre, drag), integrated implicitly: stable at
+## any speed (and exact for drag alone along a line).
+static func _air(U: Vector4, k: float, dt := DT) -> Vector4:
+	return U / (1.0 + k * U.length() * dt)
+
+
+## The air's k for b (_air): its drag over its mass, per metre; 0 without air.
+func drag(b: Body) -> float:
+	if not air:
+		return 0.0
+	if b is Cube:
+		return AIR_DENSITY * DRAG_CUBE / (4.0 * TOY_DENSITY * (b as Cube).half)
+	return 3.0 * AIR_DENSITY * DRAG_BALL / (8.0 * TOY_DENSITY * (b as Ball).radius)
+
+
+## Where b, leaving (l, n) at velocity U, is T s later in free flight (gravity and the air's drag,
+## no contacts), with vecs carried along: [l, n, U, vecs]. What step does in DT substeps in steps
+## many times longer, so that a hand can try a throw in a part of a frame (hands.gd's pull): steps
+## at most FLIGHT_DT long and FLIGHT_STEP of the length the space bends over (WormholeSpace.bend),
+## between half steps of drag (second order where step's splitting is first). A step that stays
+## in a flat universe is RK4 in its chart's coordinates, where the space is flat (vecs stay as they
+## are) and gravity is r + beta / r^2 times n_z's (docs/gravity.md); others, RK4 of dynamics_step.
+## tests/pull_test.gd compares it with step's flight.
+func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) -> Array:
+	var k := drag(b)
+	var t := 0.0
+	for _k in 100000:              # a bound against a hang
+		if t >= T - 1e-9:
+			break
+		var al := absf(l)
+		if al > space.L:
+			# a flat universe: on in its chart while the steps keep out of the shell
+			var side := signf(l)
+			var x := space.chart_position(l, n)
+			var v := WormholeSpace.vector_to_chart(side, n, U)
+			var cv := []
+			for A: Vector4 in vecs:
+				cv.append(WormholeSpace.vector_to_chart(side, n, A))
+			var went := false
+			for _j in 100000:
+				var r := x.length()
+				var h := minf(minf(FLIGHT_DT, FLIGHT_STEP * r / maxf(v.length(), 0.1)), T - t)
+				if t >= T - 1e-9 or r - v.length() * h - GRAVITY * h * h <= space.Rout:
+					break
+				v /= 1.0 + k * v.length() * 0.5 * h
+				var a1 := _chart_gravity(x)
+				var a2 := _chart_gravity(x + 0.5 * h * v)
+				var a3 := _chart_gravity(x + 0.5 * h * v + 0.25 * h * h * a1)
+				var a4 := _chart_gravity(x + h * v + 0.5 * h * h * a2)
+				x += h * v + h * h / 6.0 * (a1 + a2 + a3)
+				v += h / 6.0 * (a1 + 2.0 * a2 + 2.0 * a3 + a4)
+				v /= 1.0 + k * v.length() * 0.5 * h
+				t += h
+				went = true
+			if went:
+				var p := space.point_from_chart(side, x)
+				l = p[0]
+				n = p[1]
+				U = WormholeSpace.vector_from_chart(side, n, v)
+				vecs = []
+				for c: Vector3 in cv:
+					vecs.append(WormholeSpace.vector_from_chart(side, n, c))
+				continue
+		var h := minf(minf(FLIGHT_DT, FLIGHT_STEP * space.bend(l) / maxf(U.length(), 0.1)), T - t)
+		U = _air(U, k, 0.5 * h)
+		var s := space.dynamics_step(l, n, U, h, GRAVITY, vecs)
+		l = s[0]
+		n = s[1]
+		vecs = s[3]
+		U = _air(s[2], k, 0.5 * h)
+		t += h
+	return [l, n, U, vecs]
+
+
+## Gravity at chart position x of a flat universe: -g grad phi, phi = (r + beta / r^2) z / r.
+func _chart_gravity(x: Vector3) -> Vector3:
+	var r := x.length()
+	var nn := x / r
+	var beta := space.grav_beta
+	var f := r + beta / (r * r)
+	var fp := 1.0 - 2.0 * beta / (r * r * r)
+	return -GRAVITY * (fp * nn.z * nn + f / r * (Vector3(0.0, 0.0, 1.0) - nn.z * nn))
 
 
 ## Bounce, rolling friction and the floor's push; a ball the friction holds counts toward its sleep.
@@ -419,7 +500,7 @@ func _integrate_cube(c: Cube) -> void:
 	var s := space.dynamics_step(c.l, c.n, c.U, DT, GRAVITY, c.F)
 	c.l = s[0]
 	c.n = s[1]
-	c.U = _air(s[2], AIR_DENSITY * DRAG_CUBE / (4.0 * TOY_DENSITY * c.half))
+	c.U = _air(s[2], drag(c))
 	var F: Array = s[3]
 	var w: Vector3 = c.w
 	var rate := w.length()
