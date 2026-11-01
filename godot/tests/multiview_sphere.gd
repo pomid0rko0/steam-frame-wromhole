@@ -40,7 +40,7 @@ func _process(_delta: float) -> bool:
 		# chart +y, play +y -> chart +z, play +z -> chart +x. So chart (cx, cy, cz) is play
 		# (cy, cz, cx - START_POS.x).
 		if mode == "app":
-			var p := Vector4(CHART.x, CHART.y, CHART.z, main.space.h)     # point of R^4 in sheet A
+			var p := Vector4(CHART.x, CHART.y, CHART.z - main.space.lift, main.space.h)     # point of R^4 in sheet A
 			main.renderer.set_objects(PackedVector4Array([p]), PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))

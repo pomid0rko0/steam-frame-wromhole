@@ -1,12 +1,18 @@
-// Bodies: meshes drawn by Godot's rasterizer, each vertex put where the eye of this view sees it
-// (geo_see: the one geodesic to it, docs/geometry.md), at the geodesic's length along that
-// direction, so depth orders bodies by how far light goes. The pixel then only shades.
-//   TOY (toy.gdshader): balls (BALL) and cubes (CUBE) of the physics (ball_world.gd), one
-//     MultiMesh each. An instance: its centre C (a point of R^4) and body axes E1, E2 packed in the
-//     transform's 12 numbers (Renderer.pack), E3 from them and the space's normal; INSTANCE_CUSTOM =
-//     (colour, radius or half size). A ball's mesh is the unit sphere: the point of the space at
-//     chord distance radius from C in that direction (BallWorld's ball). A cube's is the cube
-//     [-1, 1]^3: its 4D box cut by the space, each point taken along the space's normal at C.
+// Bodies: meshes drawn by Godot's rasterizer, each vertex put where the eye of this view sees it,
+// at the length of the light's way there along that direction, so depth orders bodies by how far
+// light goes. The pixel then only shades. docs/geometry.md, «Как рисуется кадр».
+//   DIRECT (toy_ball.gdshader, toy_cube.gdshader) and STATIC: bodies out in a flat universe, seen
+//     straight: only from an eye out in the same universe, by the straight line from it (an
+//     ordinary camera); a fragment whose line of sight goes through the curved zone's ball is
+//     dropped: that part of the view is the lens's (floor.gdshaderinc, which draws these bodies
+//     there along the rays that come out of the zone).
+//   Else: bodies in the curved zone, each vertex along its geodesic (geo_see).
+//   TOY: balls (BALL) and cubes (CUBE) of the physics (ball_world.gd), one MultiMesh each. An
+//     instance: its centre C (a point of R^4) and body axes E1, E2 packed in the transform's 12
+//     numbers (Renderer.pack), E3 from them and the space's normal; INSTANCE_CUSTOM = (colour,
+//     radius or half size). A ball's mesh is the unit sphere: the point of the space at chord
+//     distance radius from C in that direction (BallWorld's ball). A cube's is the cube [-1, 1]^3:
+//     its 4D box cut by the space, each point taken along the space's normal at C.
 //     Below the floor they are hidden: the floor hides whatever is below it.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
@@ -19,6 +25,9 @@
 //     up (R^4's z, else x, made orthogonal to the line and the space's normal). Unlit, in beam_col;
 //     below the floor hidden.
 // Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point.
+#if defined(STATIC) && !defined(DIRECT)
+#define DIRECT
+#endif
 #if defined(ARROWS) || defined(BEAM)
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 #else
@@ -45,8 +54,12 @@ varying vec4 v_sun;     // toward the sun (R^4, tangent there)
 varying vec4 v_up;      // up (R^4, tangent there)
 varying vec4 v_ray;     // the light's way in (R^4)
 varying float v_l;
-varying float v_h;      // height above the floor (R^4's z)
+varying float v_h;      // height above the floor
 varying vec3 v_col;
+#ifdef DIRECT
+varying vec3 v_p;       // the point (R^4's xyz)
+varying flat vec3 v_eye;     // the eye (R^4's xyz)
+#endif
 #ifdef TOY
 varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
 #endif
@@ -97,7 +110,7 @@ void vertex() {
 	P = geo_onto(C + beam_r[i] * (cos(VERTEX.y) * e1 + sin(VERTEX.y) * e2), N);
 	nrm = vec4(0.0);
 #else
-	vec3 xc = VERTEX;
+	vec3 xc = VERTEX - vec3(0.0, 0.0, g_lift);
 	float h = g_prof.z - g_prof.y * geo_sin(g_prof2.w) + g_prof.y;
 	P = sheet > 0.0 ? vec4(xc, h) : vec4(-xc.x, xc.yz, -h);
 	nrm = vec4(sheet > 0.0 ? NORMAL.x : -NORMAL.x, NORMAL.yz, 0.0);
@@ -115,13 +128,31 @@ void vertex() {
 	vec3 en;
 	vec4 ex, ey, ez;
 	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
-	float len, fell;
 	vec4 arrive;
+#ifdef DIRECT
+	// straight from an eye out in the same flat universe; from anywhere else not at all (all its
+	// corners off the view's right edge)
+	float side = el < 0.0 ? -1.0 : 1.0;
+	vec3 xe = geo_r(abs(el)) * en;
+	vec3 d3 = P.xyz - xe;
+	v_p = P.xyz;
+	v_eye = xe;
+	float fell = 0.0;
+	arrive = vec4(normalize(d3), 0.0);
+	if (abs(el) >= g_prof.w && P.w * side > 0.0) {
+		vec4 Dv = vec4(side * dot(d3, en), d3 - dot(d3, en) * en);
+		POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + vec3(dot(Dv, ex), dot(Dv, ey), dot(Dv, ez)), 1.0);
+	} else {
+		POSITION = vec4(2.0, 0.0, 0.5, 1.0);
+	}
+#else
+	float len, fell;
 	vec4 dir = geo_see(el, en, pl, pn, len, arrive, fell);
 #ifdef ARROWS
 	len *= 1.0 - 1e-3 * COLOR.a;
 #endif
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+#endif
 	v_ray = arrive;
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
@@ -145,7 +176,7 @@ void vertex() {
 	v_sun = s4 - dot(s4, Np) * Np;
 	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
 	v_l = pl;
-	v_h = P.z;
+	v_h = P.z + g_lift;
 	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
 	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
@@ -154,6 +185,13 @@ void vertex() {
 void fragment() {
 #if defined(TOY) || defined(BEAM)
 	if (v_h < 0.0) discard;
+#endif
+#ifdef DIRECT
+	// the line of sight through the curved zone's ball: the lens's
+	vec3 d = v_p - v_eye;
+	float t = clamp(-dot(v_eye, d) / dot(d, d), 0.0, 1.0);
+	vec3 m = v_eye + t * d;
+	if (dot(m, m) < g_prof2.x * g_prof2.x) discard;
 #endif
 #if defined(ARROWS) || defined(BEAM)
 	ALBEDO = v_col;
@@ -165,9 +203,7 @@ void fragment() {
 	vec3 col = look_body(v_col, nl, up, nv, v_l);
 #ifdef CUBE
 	// dark edges: the distance to the face's nearest edge in pixels
-	vec3 a = abs(v_box);
-	float mid = a.x + a.y + a.z - max(max(a.x, a.y), a.z) - min(min(a.x, a.y), a.z);
-	float e = 1.0 - mid;
+	float e = look_box_edge(v_box);
 	float fw = max(fwidth(e), 1e-5);
 	col *= mix(0.45, 1.0, clamp((e - 0.04) / fw + 0.5, 0.0, 1.0));
 #endif

@@ -1,6 +1,7 @@
-// The floor and the sky for our own foveation (floor_fov.gd): a compute shader's body, not a Godot
-// shader's; floor_fov.gd puts the header (the version, these bindings, EYES or GRAVITY) and
-// geo.gdshaderinc and look.gdshaderinc before it.
+// The floor, the sky and what is seen through the curved zone, for our own foveation
+// (floor_fov.gd): a compute shader's body, not a Godot shader's; floor_fov.gd puts the header (the
+// version, EYES or GRAVITY) before it and geo.gdshaderinc, look.gdshaderinc and lens.gdshaderinc
+// where it says.
 //
 // Each eye's picture in a texture whose texels are thin round where the eye looks and thicker away
 // from it, in each direction alike: along x, the texel coordinate t in [0, 1] is the clip
@@ -14,7 +15,10 @@
 // eye (geo_eye; r, the root of u and r - rho0 there), from the camera Godot renders with.
 
 layout(set = 0, binding = 0) uniform sampler2D g_tab;
-layout(set = 0, binding = 1) uniform sampler2D g_grav;
+layout(set = 0, binding = 1, std140) uniform Lens {
+	vec4 body[160];     // lens_body (4 LENS_MAX)
+	vec4 n;             // lens_n
+} lensp;
 layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 prof;          // g_prof
 	vec4 prof2;         // g_prof2
@@ -22,7 +26,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 head_nl;       // head_n, head_l
 	vec4 head_p;        // head_pos
 	vec4 head_fr[3];    // head_f
-	vec4 gravx;         // g_gravx
+	vec4 floor_;        // (g_lift, g_beta)
 	mat4 inv_view;      // INV_VIEW_MATRIX
 	mat4 inv_proj[2];   // each eye's inverse(PROJECTION_MATRIX)
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
@@ -42,7 +46,10 @@ layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2DArray ou
 #define head_n fovp.head_nl.xyz
 #define head_f fovp.head_fr
 #define head_pos fovp.head_p.xyz
-#define g_gravx fovp.gravx.xy
+#define g_lift fovp.floor_.x
+#define g_beta fovp.floor_.y
+#define lens_body lensp.body
+#define lens_n lensp.n.xy
 
 #include_geo_and_look
 
@@ -64,7 +71,7 @@ void main() {
 }
 #else
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-shared vec3 s_a[64];
+shared vec4 s_a[64];
 void main() {
 	uvec3 id = gl_GlobalInvocationID;
 	uint v = id.z;
@@ -81,25 +88,20 @@ void main() {
 	vec3 d = normalize(p.xyz / p.w - fovp.eye_off[v].xyz);
 	vec4 e = eyes[5u * v];
 	vec4 D = d.x * eyes[5u * v + 1u] + d.y * eyes[5u * v + 2u] + d.z * eyes[5u * v + 3u];
-	float lh, way, skys;
-	vec2 nh;
-	vec3 skyd;
-	bool hit = geo_floor(e.x, eyes[5u * v + 4u].xyz, e.yzw, D, lh, nh, way, skyd, skys);
-	vec3 a = hit ? look_ground_at(lh, nh) : vec3(0.0);
+	vec3 pos, dir;
+	float sheet, way;
+	bool lensed = geo_exit(e.x, eyes[5u * v + 4u].xyz, e.yzw, D, pos, dir, sheet, way);
+	LensSeen sn = lens_trace(pos, dir, sheet, way, lensed);
+	vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
+	float edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;
 	// a fragment shader's dFdx and dFdy: the differences within each 2 x 2 square of texels
 	uvec2 q = gl_LocalInvocationID.xy;
-	s_a[q.y * 8u + q.x] = a;
+	s_a[q.y * 8u + q.x] = vec4(a, edge);
 	barrier();
 	uint row = q.y * 8u + (q.x & ~1u), col = (q.y & ~1u) * 8u + q.x;
-	vec3 dx = s_a[row + 1u] - s_a[row];
-	vec3 dy = s_a[col + 8u] - s_a[col];
-	vec3 c;
-	if (hit) {
-		c = look_ground(a, dx, dy, sqrt(px2.x * px2.y), lh, way);
-	} else {
-		if (skys < 0.0) skyd.x = -skyd.x;
-		c = look_sky(normalize(skyd), skys);
-	}
+	vec4 dx = s_a[row + 1u] - s_a[row];
+	vec4 dy = s_a[col + 8u] - s_a[col];
+	vec3 c = lens_colour(sn, a, dx.xyz, dy.xyz, vec2(edge, abs(dx.w) + abs(dy.w)), sqrt(px2.x * px2.y));
 	if (id.x < uint(n) && id.y < uint(n)) imageStore(out_img, ivec3(id), vec4(c, 1.0));
 }
 #endif

@@ -1,24 +1,25 @@
-// The floor and the sky, per pixel (floor.gdshader; floor_gravity.gdshader defines GRAVITY: the
-// floor coloured by gravity, docs/gravity.md «Показ»). A quad over the whole view behind
-// everything: the bodies (body.gdshader) are drawn first, and where they are this never runs.
-// The floor never hides a body (docs/geometry.md), so its depth is the far plane's: it writes
-// nothing new. Opaque (Godot puts depth_draw_never into the transparent pass, after the stereo
-// check's overlay), drawn after the bodies (Renderer.FLOOR_PRIORITY).
+// The floor, the sky and what is seen through the curved zone, per pixel (floor.gdshader;
+// floor_gravity.gdshader defines GRAVITY: the floor coloured by gravity, docs/gravity.md «Показ»).
+// A quad over the whole view behind everything: the bodies seen straight and those in the curved
+// zone (body.gdshader) are drawn first, and where they are this never runs. Nothing it draws hides
+// one of them: a body seen straight is before the zone along its ray, a body in the zone before the
+// way out of it, and the floor never hides what stands on it. So its depth is the far plane's: it
+// writes nothing new. Opaque (Godot puts depth_draw_never into the transparent pass, after the
+// stereo check's overlay), drawn after the bodies (Renderer.FLOOR_PRIORITY).
 //
-// Per pixel: where its ray ends, on the floor or in the sky (geo_floor, geo.gdshaderinc), then the
-// colour there. Each eye (geo_eye) is worked out per corner in vertex() and handed on flat.
+// Per pixel: the ray's way out of the zone (geo_exit, geo.gdshaderinc), then along the straight line
+// what it meets (lens_trace, lens.gdshaderinc) and its colour. Each eye (geo_eye) is worked out per
+// corner in vertex() and handed on flat.
 // fov_on (our own foveation, floor_fov.gd): the colours were worked out already, into fov_tex, a
 // texel per pixel where the eye looks and coarser away from it (shaders/floor_fov.gdshaderinc);
 // each pixel takes its place there by the same warp, with the numbers fov_warp holds for its eye.
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
 #include "res://shaders/geo_uniforms.gdshaderinc"
-#ifdef GRAVITY
-uniform sampler2D g_grav : filter_linear, repeat_disable;  // floor gravity in g at |l| in [0, g_gravx.x]
-uniform vec2 g_gravx;                                       // (that end, beta: f = r + beta / r^2 beyond)
-#endif
+#include "res://shaders/lens_uniforms.gdshaderinc"
 #include "res://shaders/geo.gdshaderinc"
 #include "res://shaders/look.gdshaderinc"
+#include "res://shaders/lens.gdshaderinc"
 
 varying flat float v_el;
 varying flat vec3 v_eye;      // the eye's r, the root of its u on the fillet, r - rho0 (geo_r, geo_u, geo_dr)
@@ -60,18 +61,13 @@ void fragment() {
 	} else {
 		vec3 d = normalize(v_ray);
 		vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
-		float lh, way, skys;
-		vec2 nh;
-		vec3 skyd;
-		bool hit = geo_floor(v_el, v_eye, v_en, D, lh, nh, way, skyd, skys);
-		vec3 col;
-		if (hit) {
-			vec3 a = look_ground_at(lh, nh);
-			col = look_ground(a, dFdx(a), dFdy(a), 1.0, lh, way);
-		} else {
-			if (skys < 0.0) skyd.x = -skyd.x;
-			col = look_sky(normalize(skyd), skys);
-		}
-		ALBEDO = col;
+		vec3 pos, dir;
+		float sheet, way;
+		bool lensed = geo_exit(v_el, v_eye, v_en, D, pos, dir, sheet, way);
+		LensSeen s = lens_trace(pos, dir, sheet, way, lensed);
+		// the floor's pattern and a cube's edges from their neighbours' (outside any branch)
+		vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
+		float e = dot(s.box, s.box) > 0.0 ? look_box_edge(s.box) : -1.0;
+		ALBEDO = lens_colour(s, a, dFdx(a), dFdy(a), vec2(e, fwidth(e)), 1.0);
 	}
 }

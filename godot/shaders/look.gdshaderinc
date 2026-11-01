@@ -22,17 +22,9 @@ float look_checker(vec2 p, vec2 w, vec2 iw) {
 	return 0.5 - 0.5 * i.x * i.y;
 }
 
-// the floor's pattern coordinates at (l, n) (n.z = 0): rings at whole metres of |l|, 24 sectors of
-// the chart's azimuth (chart B is mirrored in x); the check scene's green lines follow the same
-// (check_grid.gdshader). Returns (|l|, sector).
-vec2 look_floor_coords(float l, vec3 n) {
-	float x = l < 0.0 ? -n.x : n.x;
-	return vec2(abs(l), geo_atan2(n.y, x) * (24.0 / (2.0 * GEO_PI)));
-}
-
-// the floor's colour from its pattern coordinates c (look_floor_coords) and their footprints fw (per
-// pixel), the pixel px of the picture's pixels across (1 but in floor_fov's coarser texels); base:
-// the checker's two colours
+// the floor's colour from its pattern coordinates q (a chart's x, y: a checker of metre cells with
+// white lines) and their footprints fw (per pixel), the pixel px of the picture's pixels across (1
+// but in floor_fov's coarser texels); base: the checker's two colours
 vec3 look_floor(vec2 q, vec2 fw, float px, vec3 lightc, vec3 darkc) {
 	fw = max(fw, vec2(1e-4));
 	vec2 iw = 1.0 / fw;
@@ -121,35 +113,45 @@ vec3 look_body(vec3 albedo, float nl, float up, float nv, float l) {
 	return albedo * (look_ambient(l, up) + 0.75 * LOOK_SUN * max(nl, 0.0) + 0.25 * rim * rim * rim);
 }
 
-// The floor at l = lh, n's x and y nh (look_floor_coords), and with GRAVITY the gravity's level
-// there (look_grav_level): (|l|, sector, level). With GRAVITY the includer declares g_grav (the
-// floor's gravity in g at |l| up to g_gravx.x) and g_gravx (that end, beta: 1 + beta / r^3 beyond).
-vec3 look_ground_at(float lh, vec2 nh) {
-	vec2 c = look_floor_coords(lh, vec3(nh, 0.0));
+// gravity on the floor (in g) rho metres along it from the point under the throat's centre:
+// WormholeSpace.floor_gravity, from g_lift and g_beta
+float look_grav_floor(float rho) {
+	float r2 = rho * rho + g_lift * g_lift;
+	float r1 = sqrt(r2);
+	float r5 = r2 * r2 * r1;
+	float along = 3.0 * g_beta * g_lift * rho / r5;
+	float up = 1.0 + g_beta / (r2 * r1) - 3.0 * g_beta * g_lift * g_lift / r5;
+	return length(vec2(along, up));
+}
+
+// The floor at chart point xy (the throat's centre over (0, 0)): (x, y, and with GRAVITY the
+// gravity's level there, look_grav_level).
+vec3 look_ground_at(vec2 xy) {
 #ifdef GRAVITY
-	float al = abs(lh);
-	float g;
-	if (al < g_gravx.x) g = textureLod(g_grav, vec2(al / g_gravx.x, 0.5), 0.0).r;
-	else { float r = geo_r(al); g = 1.0 + g_gravx.y / (r * r * r); }
-	return vec3(c, look_grav_level(g));
+	return vec3(xy, look_grav_level(look_grav_floor(length(xy))));
 #else
-	return vec3(c, 0.0);
+	return vec3(xy, 0.0);
 #endif
 }
 
-// The floor's colour at a = look_ground_at(lh, ...), way metres away, from its differences to the
-// next pixel along x and along y (dx, dy: what dFdx and dFdy give); the pixel px of the picture's
-// pixels across (look_floor)
-vec3 look_ground(vec3 a, vec3 dx, vec3 dy, float px, float lh, float way) {
-	// across the sectors' seam at the chart's -x the angle jumps by 24: taken out
-	dx.y -= 24.0 * round(dx.y / 24.0);
-	dy.y -= 24.0 * round(dy.y / 24.0);
+// The floor's colour at a = look_ground_at(...) in universe sheet (+1 A, -1 B), way metres away,
+// from its differences to the next pixel along x and along y (dx, dy: what dFdx and dFdy give); the
+// pixel px of the picture's pixels across (look_floor)
+vec3 look_ground(vec3 a, vec3 dx, vec3 dy, float px, float sheet, float way) {
 	vec3 fw = abs(dx) + abs(dy);
 #ifdef GRAVITY
 	vec3 base = look_grav_colour(a.z);
 	vec3 col = look_grav_contours(look_floor(a.xy, fw.xy, px, base, base * 0.85), a.z, fw.z, px);   // the checker as brightness
 #else
-	vec3 col = look_floor(a.xy, fw.xy, px, lh >= 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], lh >= 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
+	vec3 col = look_floor(a.xy, fw.xy, px, sheet > 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], sheet > 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
 #endif
-	return mix(col, lh >= 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B, 1.0 - exp(-way / LOOK_HAZE));
+	return mix(col, sheet > 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B, 1.0 - exp(-way / LOOK_HAZE));
+}
+
+// a toy cube's point in its own [-1, 1]^3 to 1 - its distance to the face's nearest edge (the
+// cube's dark edges, body.gdshaderinc and look_seen)
+float look_box_edge(vec3 box) {
+	vec3 a = abs(box);
+	float mid = a.x + a.y + a.z - max(max(a.x, a.y), a.z) - min(min(a.x, a.y), a.z);
+	return 1.0 - mid;
 }

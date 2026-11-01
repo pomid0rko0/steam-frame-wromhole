@@ -1,18 +1,28 @@
 class_name Renderer
 extends Node3D
-## How a frame is drawn (docs/geometry.md, «Как рисуется кадр»): every body is a mesh that
-## Godot's rasterizer draws, each of its vertices put where this view's eye sees it along the one
-## geodesic to it (shaders/body.gdshaderinc); then the floor and the sky, per pixel, behind them
-## (shaders/floor.gdshaderinc). A body costs its vertices, a few thousand per frame, and one cheap
-## shading per pixel it covers, wherever it is and however close: the pixels behind it never run
-## the floor's shader. Each view's own eye is worked out in the shaders from the head this gets
-## each frame (set_head) and the view's matrices.
+## How a frame is drawn (docs/geometry.md, «Как рисуется кадр»). The floor and everything else
+## stands out of the curved zone, where light goes straight, and the zone is a lens: a ray that
+## enters its ball comes out straight into universe A or B, turned in its plane through the centre
+## by what its impact parameter gives (however many times round the throat).
+## - Bodies out in a flat universe seen straight: meshes Godot's rasterizer draws with an ordinary
+##   camera from each eye out in that universe (shaders/body.gdshaderinc, DIRECT; the scene's static
+##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
+##   the zone's ball is dropped.
+## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
+##   geodesic (body.gdshaderinc).
+## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
+##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
+##   image of them (shaders/floor.gdshaderinc).
+## A body costs its vertices and one cheap shading per pixel it covers where it is seen straight or
+## in the zone; through the lens a few dot products a pixel (a test of the ray's plane) and its
+## intersection where that passes. Each view's own eye is worked out in the shaders from the head
+## this gets each frame (set_head) and the view's matrices.
 ##
 ## What it draws: the physics' balls and cubes, the hands' balls (set_objects), the hands' pointing
 ## beams (set_beam), the scene's static objects (scene.json), the gravity view's floor and arrows
-## (set_gravity_view), the floor and the sky. The floor quad hangs under the camera (its parent); the bodies go into the play space, the
-## camera's parent's parent (the origin, which never moves: their shader reads their numbers from the
-## instance transform, which must stay theirs).
+## (set_gravity_view), the floor and the sky. The floor quad hangs under the camera (its parent); the
+## bodies go into the play space, the camera's parent's parent (the origin, which never moves: their
+## shader reads their numbers from the instance transform, which must stay theirs).
 ##
 ## A MeshInstance3D whose ShaderMaterial has no shader yet is drawn with Godot's default lit
 ## material, a huge program: a node is made only with its shader.
@@ -23,6 +33,9 @@ extends Node3D
 const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
+const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
+const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
+const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
 const BEAM_SHADER := preload("res://shaders/beam.gdshader")
@@ -67,11 +80,15 @@ var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
 var floor_mat: ShaderMaterial   # the one drawn (gravity_view)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
+var zone_ball_mat := ShaderMaterial.new()
+var zone_cube_mat := ShaderMaterial.new()
 var scene_mats: Array[ShaderMaterial] = []
 var arrow_mat := ShaderMaterial.new()
 var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's
-var balls: MultiMeshInstance3D
+var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
+var zone_balls: MultiMeshInstance3D     # in the curved zone (or reaching into it)
+var zone_cubes: MultiMeshInstance3D
 var statics: Array[MeshInstance3D] = []
 var arrows: MeshInstance3D
 var beams: Array[MeshInstance3D] = []
@@ -81,6 +98,8 @@ var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also
 var toy_count := 0              # balls and cubes drawn (set_objects)
 var ball_col := PackedVector4Array()   # the balls' (colour, radius) as set_objects got them
 var bodies: Array = []          # what set_objects drew: [kind ("ball", "cube"), centre (R^4), radius or half size]
+var lens_static := PackedVector4Array()   # the scene's static objects in the lens list, A's then B's
+var lens_static_n := Vector2.ZERO
 
 
 func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_view: SubViewport) -> void:
@@ -97,6 +116,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	floor_fov.floor_mats = floor_mats
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
+	zone_ball_mat.shader = ZONE_BALL_SHADER
+	zone_cube_mat.shader = ZONE_CUBE_SHADER
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
@@ -120,8 +141,12 @@ func _ready() -> void:
 	add_child(floor_quad)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
-	play.add_child(balls)
-	play.add_child(cubes)
+	zone_balls = _multimesh(_ball_mesh(), zone_ball_mat, MAX_BALLS)
+	zone_cubes = _multimesh(_cube_mesh(), zone_cube_mat, MAX_CUBES)
+	for mm in [balls, cubes, zone_balls, zone_cubes]:
+		play.add_child(mm)
+	_lens_statics()
+	_upload_lens(PackedVector4Array(), PackedVector4Array())
 	for k in 2:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
@@ -133,7 +158,7 @@ func _ready() -> void:
 	for m in beam_mats:
 		var b := _body(tube, m)
 		# below the floor at the start, where nothing of it is seen, until a hand points
-		var under := PackedVector4Array([Vector4(10.0, 0.0, -1.0, space.h), Vector4(11.0, 0.0, -1.0, space.h)])
+		var under := PackedVector4Array([Vector4(10.0, 0.0, -space.lift - 1.0, space.h), Vector4(11.0, 0.0, -space.lift - 1.0, space.h)])
 		m.set_shader_parameter("beam_p", under)
 		m.set_shader_parameter("beam_r", PackedFloat32Array([0.01, 0.01]))
 		m.set_shader_parameter("beam_n", 2)
@@ -160,7 +185,7 @@ var _beam_on: Array[bool] = [false, false]
 
 ## Every material that reads geo_uniforms.gdshaderinc.
 func materials() -> Array[ShaderMaterial]:
-	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]
+	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, zone_ball_mat, zone_cube_mat, arrow_mat]
 	out.append_array(beam_mats)
 	out.append_array(floor_mats)
 	out.append_array(scene_mats)
@@ -168,26 +193,18 @@ func materials() -> Array[ShaderMaterial]:
 
 
 ## The throat's shape and what is built for it (WormholeSpace.set_profile's list): the profile,
-## the sweep table, gravity on the floor. Slow in GDScript: not per frame.
+## the sweep table, the floor's lift and gravity there. Slow in GDScript: not per frame.
 func upload_space() -> void:
 	var tab := space.sweep_table()
 	var tex := ImageTexture.create_from_image(tab.image)
-	# the floor's gravity by the distance along it from under the throat's centre (temporary)
-	var gdata := PackedFloat32Array()
-	for i in 512:
-		gdata.append(space.floor_gravity(60.0 * i / 511.0))
-	var grav := {"image": Image.create_from_data(512, 1, false, Image.FORMAT_RF, gdata.to_byte_array()),
-			"axes": Vector2(60.0, space.grav_beta)}
-	var gtex := ImageTexture.create_from_image(grav.image)
 	_sweep_tex = tex
 	_sweep_axes = tab.axes
 	for m in materials():
 		_space_params(m)
-	floor_mats[1].set_shader_parameter("g_grav", gtex)
-	floor_mats[1].set_shader_parameter("g_gravx", grav.axes)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
 	floor_fov.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
-			Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex, gtex, grav.axes)
+			Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
+			Vector2(space.lift, space.grav_beta))
 
 
 var _sweep_tex: Texture2D
@@ -200,6 +217,8 @@ func _space_params(m: ShaderMaterial) -> void:
 	m.set_shader_parameter("g_prof2", Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0))
 	m.set_shader_parameter("g_tabx", _sweep_axes)
 	m.set_shader_parameter("g_tab", _sweep_tex)
+	m.set_shader_parameter("g_lift", space.lift)
+	m.set_shader_parameter("g_beta", space.grav_beta)
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there (the play
@@ -220,23 +239,62 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 ## The movable balls and cubes: balls by their centres (points of R^4) and (colour, radius), cubes
 ## by their centres, two body axes each (unit vectors of R^4, tangent at the centre: cube_axes holds
 ## E1, E2 of the first cube, then the second's...; the third follows from them) and (colour, half
-## size). Colours as Godot's Color takes them (sRGB). At most MAX_BALLS and MAX_CUBES.
+## size). Colours as Godot's Color takes them (sRGB). At most MAX_BALLS and MAX_CUBES. Each is drawn
+## as a body out in a flat universe (seen straight, and in the lens list) or, reaching into the
+## curved zone, as one in it (out_of_zone).
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		cube_axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:
 	var n := mini(pos.size(), MAX_BALLS)
 	var nc := mini(cpos.size(), MAX_CUBES)
-	var mm := balls.multimesh
+	var flat := [0, 0]          # instances out in a flat universe, in the zone
+	var zone := [0, 0]
+	var lens_a := PackedVector4Array()
+	var lens_b := PackedVector4Array()
 	for i in n:
 		var C := pos[i]
 		var e := _tangent_pair(C)
-		mm.set_instance_transform(i, pack(C, e[0], e[1]))
-		mm.set_instance_custom_data(i, _linear(col[i]))
-	mm.visible_instance_count = n
-	mm = cubes.multimesh
+		var c := _linear(col[i])
+		var out := out_of_zone(C, col[i].w)
+		var mm := (balls if out else zone_balls).multimesh
+		var k: int = flat[0] if out else zone[0]
+		mm.set_instance_transform(k, pack(C, e[0], e[1]))
+		mm.set_instance_custom_data(k, c)
+		if out:
+			flat[0] += 1
+			var rows := [Vector4(C.x, C.y, C.z, 0.0), Vector4(1.0, 0.0, 0.0, col[i].w),
+					Vector4(0.0, 1.0, 0.0, 0.0), Vector4(c.r, c.g, c.b, 0.0)]
+			if C.w > 0.0:
+				lens_a.append_array(rows)
+			else:
+				lens_b.append_array(rows)
+		else:
+			zone[0] += 1
 	for i in nc:
-		mm.set_instance_transform(i, pack(cpos[i], cube_axes[2 * i], cube_axes[2 * i + 1]))
-		mm.set_instance_custom_data(i, _linear(ccol[i]))
-	mm.visible_instance_count = nc
+		var C := cpos[i]
+		var E1 := cube_axes[2 * i]
+		var E2 := cube_axes[2 * i + 1]
+		var c := _linear(ccol[i])
+		var half := ccol[i].w
+		var out := out_of_zone(C, half * sqrt(3.0))
+		var mm := (cubes if out else zone_cubes).multimesh
+		var k: int = flat[1] if out else zone[1]
+		mm.set_instance_transform(k, pack(C, E1, E2))
+		mm.set_instance_custom_data(k, c)
+		if out:
+			flat[1] += 1
+			var rows := [Vector4(C.x, C.y, C.z, 2.0), Vector4(E1.x, E1.y, E1.z, half),
+					Vector4(E2.x, E2.y, E2.z, half), Vector4(c.r, c.g, c.b, half)]
+			if C.w > 0.0:
+				lens_a.append_array(rows)
+			else:
+				lens_b.append_array(rows)
+		else:
+			zone[1] += 1
+	balls.multimesh.visible_instance_count = flat[0]
+	cubes.multimesh.visible_instance_count = flat[1]
+	zone_balls.multimesh.visible_instance_count = zone[0]
+	zone_cubes.multimesh.visible_instance_count = zone[1]
+	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
 	ball_col = col.slice(0, n)
 	bodies.clear()
@@ -244,6 +302,67 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		bodies.append(["ball", pos[i], col[i].w])
 	for i in nc:
 		bodies.append(["cube", cpos[i], ccol[i].w])
+
+
+## A body round C (a point of R^4) reaching reach (chord) stays out of the curved zone's ball, in a
+## flat universe.
+func out_of_zone(C: Vector4, reach: float) -> bool:
+	return absf(absf(C.w) - space.h) < 1e-6 and Vector3(C.x, C.y, C.z).length() >= space.Rout + reach
+
+
+## The scene's static objects as the lens list has them (lens.gdshaderinc), A's then B's, in R^4's
+## xyz of their universe (chart B is mirrored in x).
+func _lens_statics() -> void:
+	var counts := [0, 0]
+	lens_static = PackedVector4Array()
+	for k in 2:
+		var key := "A" if k == 0 else "B"
+		var mx := 1.0 if k == 0 else -1.0
+		var spheres: Array = scene["spheres_" + key]
+		for i in spheres.size():
+			var p: Array = spheres[i]
+			var c: Color = SPHERE_COLORS[(i + (0 if k == 0 else spheres.size())) % SPHERE_COLORS.size()]
+			lens_static.append_array([Vector4(mx * p[0], p[1], p[2] - space.lift, 0.0), Vector4(1, 0, 0, p[3]),
+					Vector4(0, 1, 0, 0), Vector4(c.r, c.g, c.b, 0)])
+			counts[k] += 1
+		for p: Array in scene.get("pillars_" + key, []):
+			var c := PILLAR_COLOR
+			lens_static.append_array([Vector4(mx * p[0], p[1], 0.5 * p[3] - space.lift, 3.0), Vector4(1, 0, 0, p[2]),
+					Vector4(0, 1, 0, 0), Vector4(c.r, c.g, c.b, 0.5 * p[3])])
+			counts[k] += 1
+		for p: Array in scene.get("boxes_" + key, []):
+			var c := BOX_COLOR
+			lens_static.append_array([Vector4(mx * p[0], p[1], p[2] - space.lift, 1.0), Vector4(1, 0, 0, p[3]),
+					Vector4(0, 1, 0, p[3]), Vector4(c.r, c.g, c.b, p[3])])
+			counts[k] += 1
+	lens_static_n = Vector2(counts[0], counts[1])
+
+
+## The lens list: the static objects shown (show_scene) and the toys out in each universe (rows of
+## four as lens.gdshaderinc takes them), A's then B's.
+func _upload_lens(toys_a: PackedVector4Array, toys_b: PackedVector4Array) -> void:
+	var na := int(lens_static_n.x)
+	var on := statics.is_empty() or statics[0].visible
+	var rows := PackedVector4Array()
+	if on:
+		rows.append_array(lens_static.slice(0, 4 * na))
+	rows.append_array(toys_a)
+	var ca := rows.size() / 4
+	if on:
+		rows.append_array(lens_static.slice(4 * na))
+	rows.append_array(toys_b)
+	var total := mini(rows.size() / 4, LENS_MAX)
+	var cb := total - mini(ca, LENS_MAX)
+	ca = mini(ca, LENS_MAX)
+	rows.resize(4 * LENS_MAX)
+	_lens_toys = [toys_a, toys_b]
+	for m in floor_mats:
+		m.set_shader_parameter("lens_body", rows)
+		m.set_shader_parameter("lens_n", Vector2(ca, cb))
+	floor_fov.set_lens(rows, Vector2(ca, cb))
+
+
+var _lens_toys := [PackedVector4Array(), PackedVector4Array()]
 
 
 ## Hand i's beam (0 left, 1 right): a tube round the line through points of R^4 (pts, at most
@@ -302,6 +421,7 @@ func set_gravity_view(view: int) -> void:
 func show_scene(on: bool) -> void:
 	for s in statics:
 		s.visible = on
+	_upload_lens(_lens_toys[0], _lens_toys[1])
 
 
 ## Eye v's frustum by the runtime's projection: the tangents of its sides' angles off the view

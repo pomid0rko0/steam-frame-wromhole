@@ -5,6 +5,7 @@
 //   g_prof2 = (Rout, u0, rmin, th0)     u0 = sin^2(th0 / 2): where the fillet starts
 //   g_tabx  = (t0, 1 / (t1 - t0), nb, nv)   the table's axes (WormholeSpace.sweep_table)
 //   g_tab   the table G(b, v): psi in .r, length in .g
+//   g_lift  the throat's centre above the floor (WormholeSpace.lift)
 // A point is (l, n), n a unit vector of the shared angular sphere; a tangent vector is
 // vec4(U_l, u) with u . n = 0 (WormholeSpace's top). A ray lies in the plane through the centre
 // spanned by n and its direction; b is its impact parameter, and on the way from |l| = a1 to a2
@@ -480,161 +481,79 @@ vec4 geo_see(float el, vec3 en, float pl, vec3 pn, out float len, out vec4 arriv
 }
 
 
-// ---------------------------------------------------------------- the floor and the sky
-// Where the ray D (a tangent vector at the eye, any length) of the eye at (el, en) ends: true if on
-// the floor, at lh (its l), nh (its n's x and y, any length) after way metres; else in the sky of
-// universe skys (+1 A, -1 B), toward skyd (its chart direction, any length). eye = (r, the root of
-// u, r - rho0) there (geo_r, geo_u, geo_dr), worked out once per eye.
-// The ray's plane and impact b, where in that plane the floor is (the angle phif from the eye), and
-// from the sweep where the ray turns that far, or that it reaches the sky first. Rays of an eye in a
-// flat universe that never come near the throat go straight; rays of an eye in the throat's cylinder
-// that meet the floor before they leave it go straight on the cylinder unrolled.
-bool geo_floor(float el, vec3 eye, vec3 en, vec4 D, out float lh, out vec2 nh, out float way, out vec3 skyd, out float skys) {
+// ---------------------------------------------------------------- a ray's way out of the zone
+// Outside the curved zone a ray is straight, and a straight ray that leaves the zone's ball never
+// comes back; the floor and the sky are out there. So a ray goes straight from an eye outside until
+// the ball (or for ever), turns in its plane through the centre across the zone, and leaves it
+// straight into universe A or B (into the other one only with b < r_min): all its turns round the
+// throat are in between, however many.
+// The ray D (a tangent vector at the eye, any length) of the eye at (el, en), eye = (r, the root of
+// u, r - rho0) there (geo_r, geo_u, geo_dr, worked out once per eye). False for a ray that never
+// enters the zone (the eye outside): then pos is the eye's place, dir the ray's direction, sheet the
+// eye's universe (+1 A, -1 B), all in R^4's xyz. Else true: pos is where it leaves the zone (|pos| =
+// Rout), dir its direction there, sheet the universe it goes on in, way the length up to there.
+bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, out float sheet, out float way) {
 	float side = el < 0.0 ? -1.0 : 1.0;
 	float le = abs(el);
 	float re = eye.x;
 	float L = g_prof.w, Rout = g_prof2.x;
 	float ca = side * D.x;                  // along the outward radial direction
 	float sa = length(D.yzw);
-	vec3 t = sa > 1e-7 ? D.yzw / sa : normalize(cross(en, vec3(0.0, 1.0, 0.0)));
-	float nrm = 1.0 / sqrt(ca * ca + sa * sa);
+	vec3 t = sa > 1e-7 ? D.yzw / sa : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	float nrm = inversesqrt(ca * ca + sa * sa);
 	ca *= nrm;
 	sa *= nrm;
 	float b = re * sa;
-	// where the floor is in the ray's plane: the angle from the eye (0, pi), the eye above it
-	float phif = geo_atan2(en.z, -t.z);
-	bool hit = false;
-	lh = 0.0;
-	nh = vec2(1.0, 0.0);
+	sheet = side;
 	way = 0.0;
-	skyd = vec3(0.0, 0.0, 1.0);
-	skys = side;
-	// in the throat's cylinder the ray is straight on it unrolled: where it gets to the floor's angle
-	float isa = 1.0 / max(sa, 1e-20);
-	float lf = le + re * phif * ca * isa;
-	if (le >= L && (ca >= 0.0 || b >= Rout)) {
-		// straight: in the eye's sheet (R^4's xyz there)
-		vec3 xe = re * en;
-		vec3 dc = ca * en + sa * t;
-		if (dc.z < 0.0) {
-			way = -xe.z / dc.z;
-			vec2 p = xe.xy + way * dc.xy;
-			float rp = length(p);
-			hit = true;
-			lh = side * (L + rp - Rout);
-			nh = p;
-		} else {
-			skyd = dc;
-		}
-	} else if (max(le, abs(lf)) <= g_prof.z) {
-		// the eye in the cylinder and the floor met before the ray leaves it (the sweep's rates below
-		// divide by the ray's dl/ds, nothing for a ray round the cylinder)
-		hit = true;
-		lh = side * lf;
-		vec2 scf = geo_sincos_dir(phif);
-		nh = (scf.y * en + scf.x * t).xy;
-		way = re * phif * isa;
+	pos = re * en;
+	dir = ca * en + sa * t;
+	if (le >= L && (ca >= 0.0 || b >= Rout)) return false;
+	// what the ray's sweeps share: its impact, the cylinder's rates, the fillet's closed forms
+	float oms = ca * ca / (1.0 + sa);   // 1 - sin: exact for rays along the sphere of the eye
+	float gap_e = re * oms;             // r - b at the eye
+	float sigma = geo_sigma(eye.z - gap_e);
+	float R2 = 2.0 * g_prof.y;
+	float Lc = g_prof.z;
+	bool pass = sigma < g_prof2.y;      // b < r_min, known from sigma (geo_sigma)
+	float k = sqrt(max(-R2 * sigma * (g_prof.x + b), 0.0));
+	vec2 cyl = pass ? vec2(b / g_prof.x, g_prof.x) / max(k, 1e-12) : vec2(0.0);   // per metre of l
+	vec2 cylL = cyl * Lc;
+	float ul = max(sigma, g_prof2.y);
+	float span = 0.5 - ul;
+	vec2 f0 = geo_F(b, ul);
+	vec2 f1 = geo_Fu(b, ul, f0);
+	float s0 = sqrt(ul), e0 = sqrt(ul - sigma);
+	float Dw = s0 + e0, P0 = s0 * e0;
+	float sL = sqrt(max(0.5 - sigma, 0.0));
+	float wL = 2.0 * log((0.70710678 + sL) / Dw);
+	// from the ray's origin (its turning point, or l = 0) to the zone's edge, and to the eye
+	vec2 SL = cylL + f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
+	float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
+	vec2 se;
+	if (le >= L) {
+		float q2 = sqrt(max(gap_e * (re + b), 0.0));
+		float dq = (re - Rout) * (re + Rout) / max(qR + q2, 1e-20);
+		se = SL + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
+	} else if (le > Lc) {
+		float su = eye.y, eu = sqrt(gap_e / R2);
+		float ue = su * su;
+		float w = 2.0 * log((su + eu) / Dw);
+		se = cylL + f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
 	} else {
-		// what the ray's sweeps share: its impact, the cylinder's rates, the fillet's closed forms
-		float oms = ca * ca / (1.0 + sa);   // 1 - sin: exact for rays along the sphere of the eye
-		float gap_e = re * oms;
-		float sigma = geo_sigma(eye.z - gap_e);
-		float R2 = 2.0 * g_prof.y;
-		float Lc = g_prof.z;
-		bool pass = sigma < g_prof2.y;      // b < r_min, known from sigma (geo_sigma)
-		float k = sqrt(max(-R2 * sigma * (g_prof.x + b), 0.0));
-		vec2 cyl = pass ? vec2(b / g_prof.x, g_prof.x) / max(k, 1e-12) : vec2(0.0);   // per metre of l
-		vec2 cylL = cyl * Lc;
-		float ul = max(sigma, g_prof2.y);
-		float span = 0.5 - ul;
-		vec2 f0 = geo_F(b, ul);
-		vec2 f1 = geo_Fu(b, ul, f0);
-		float s0 = sqrt(ul), e0 = sqrt(ul - sigma);
-		float Dw = s0 + e0, P0 = s0 * e0;
-		float sL = sqrt(max(0.5 - sigma, 0.0));
-		float wL = 2.0 * log((0.70710678 + sL) / Dw);
-		// from the ray's origin to the curved zone's edge, and to the eye
-		vec2 SL = cylL + f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
-		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
-		vec2 se;
-		if (le >= L) {
-			float q2 = sqrt(max(gap_e * (re + b), 0.0));
-			float dq = (re - Rout) * (re + Rout) / max(qR + q2, 1e-20);
-			se = SL + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
-		} else if (le > Lc) {
-			float su = eye.y, eu = sqrt(gap_e / R2);
-			float ue = su * su;
-			float w = 2.0 * log((su + eu) / Dw);
-			se = cylL + f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
-		} else {
-			se = cyl * le;
-		}
-		float ab = geo_atan2(b, qR);        // asin(b / Rout)
-		float pinf = SL.x + ab;             // to infinity
-		float target = 0.0;                 // the sweep from the ray's origin to the floor point
-		float far = 1.0;                    // +1: the point's |l| on the eye's side, -1 the other
-		float sgnw = 1.0;                   // the way: se.y + sgnw * (length from the origin)
-		float tot = 0.0;
-		if (ca >= 0.0) {
-			tot = pinf - se.x;
-			target = se.x + phif;
-		} else {
-			tot = se.x + pinf;
-			target = abs(se.x - phif);
-			sgnw = phif <= se.x ? -1.0 : 1.0;
-			if (pass) {
-				// through the throat
-				far = phif <= se.x ? 1.0 : -1.0;
-				sgnw = -far;
-				skys = -side;
-			}
-		}
-		// t is done with before the fillet's inversion (it costs registers there): where it ends, the
-		// sky's direction, and the floor point's
-		hit = phif < tot;
-		vec2 sct = geo_sincos_dir(tot);
-		if (!hit) {
-			skyd = sct.y * en + sct.x * t;
-		} else {
-			vec2 scf = geo_sincos_dir(phif);
-			nh = (scf.y * en + scf.x * t).xy;
-			vec2 at;                        // (|l|, length from the origin)
-			if (target >= SL.x) {
-				// beyond the curved zone: straight
-				float a = target - SL.x + 0.5 * GEO_PI - ab;
-				hit = a < 0.5 * GEO_PI;
-				if (!hit) skyd = sct.y * en + sct.x * t;
-				float r = b / max(geo_sincos_dir(a).y, 1e-6);         // at the horizon: haze
-				at = vec2(L + r - Rout, SL.y + sqrt(max((r - b) * (r + b), 0.0)) - qR);
-			} else if (pass && target <= cylL.x) {
-				at = vec2(target / max(cyl.x, 1e-20), 0.0);
-				at.y = cyl.y * at.x;
-			} else {
-				// the fillet: the weight inverted exactly, a Newton step on the closed forms, one with the table
-				float pf = target - cylL.x;
-				float X = Dw * exp(min(pf / max(2.0 * f0.x, 1e-20), 40.0));
-				float du;
-				if (sigma > g_prof2.y) { float y = 0.5 * (X - sigma / X); du = y * y; }
-				else { float y = 0.5 * (X + sigma / X); du = y * y - ul; }
-				float v = clamp(sqrt(max(du, 0.0) / span), 0.0, 1.0);
-				vec2 val = vec2(0.0);
-				for (int i = 0; i < 2; i++) {
-					float u = ul + span * v * v;
-					float su = sqrt(u), eu = sqrt(u - ul + e0 * e0);
-					float w = 2.0 * log((su + eu) / Dw);
-					val = f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w);
-					if (i == 1) val += geo_G(sigma, v);
-					float der = geo_F(b, u).x * 2.0 * span * v / (su * eu);
-					if (der > 0.0) v = clamp(v - (val.x - pf) / der, 0.0, 1.0);
-				}
-				float u = ul + span * v * v;
-				at = vec2(Lc + g_prof.y * (2.0 * geo_asin(sqrt(u)) - g_prof2.w), cylL.y + val.y);
-			}
-			lh = side * far * at.x;
-			way = ca >= 0.0 ? at.y - se.y : se.y + sgnw * at.y;
-		}
+		se = cyl * le;
 	}
-	return hit;
+	// out along its way from the eye: outward straight to the edge; inward through the origin (to
+	// the other universe if it passes the throat)
+	vec2 dw = ca >= 0.0 ? SL - se : SL + se;
+	if (ca < 0.0 && pass) sheet = -side;
+	vec2 sc = geo_sincos(dw.x);
+	vec3 nx = sc.y * en + sc.x * t;
+	vec3 tx = sc.y * t - sc.x * en;
+	pos = Rout * nx;
+	dir = (qR * nx + b * tx) / Rout;    // b = Rout sin of its angle off the outward radial
+	way = dw.y;
+	return true;
 }
 
 // ---------------------------------------------------------------- points of R^4

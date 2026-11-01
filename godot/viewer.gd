@@ -62,7 +62,7 @@ func _init(p_space: WormholeSpace) -> void:
 ## Stand at (pl, pn) of the floor with the room's axes f (up along the floor's normal).
 func stand(pl: float, pn: Vector3, f: Array) -> void:
 	l = pl
-	n = Vector3(pn.x, pn.y, 0.0).normalized()
+	n = pn.normalized()
 	frame = f.duplicate()
 	V = Vector4.ZERO
 	standing = true
@@ -130,10 +130,16 @@ func move(T: Vector4) -> void:
 	var res := space.geodesic(l, n, T / dist, dist, frame)
 	l = res[0]
 	if standing:
-		n = Vector3(res[1].x, res[1].y, 0.0).normalized()
-		var fx: Vector4 = WormholeSpace.tangent(n, Vector4(res[2][0].x, res[2][0].y, res[2][0].z, 0.0))
-		var fz: Vector4 = WormholeSpace.tangent(n, Vector4(res[2][2].x, res[2][2].y, res[2][2].z, 0.0))
-		frame = WormholeSpace.orthonormalize([fx, Vector4(0.0, 0.0, 0.0, 1.0), fz])
+		# (provisional, for the renderer's pictures: the body branch does this properly)
+		var side := signf(l)
+		var x := space.chart_position(l, res[1])
+		var p := space.point_from_chart(side, Vector3(x.x, x.y, 0.0))
+		l = p[0]
+		n = p[1]
+		var up := WormholeSpace.vector_from_chart(side, n, Vector3(0.0, 0.0, 1.0))
+		var fx: Vector4 = WormholeSpace.tangent(n, res[2][0])
+		var fz: Vector4 = WormholeSpace.tangent(n, res[2][2])
+		frame = WormholeSpace.orthonormalize([fx - fx.dot(up) * up, up, fz - fz.dot(up) * up])
 		return
 	n = res[1]
 	frame = WormholeSpace.orthonormalize(res[2])
