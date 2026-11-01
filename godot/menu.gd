@@ -69,6 +69,7 @@ var scale_chosen := false       # chosen in the menu, now or before (kept): else
 var foveation_chosen := false
 var runtime_eye := Vector2.ZERO # each eye's picture as the runtime recommends it (SteamVR: its resolution setting for the app)
 var full_eye := 0               # pixels a side at 100%: the Frame's screen under SteamVR, else the runtime's own
+var eye_share := 1.0            # the share of full_eye set_eye was last asked for (from the next frame on)
 var text := ""                  # the head's lines
 var open := false               # the menu is shown
 var strip_on := true            # the line below is shown while the menu is closed
@@ -608,15 +609,25 @@ func set_render_scale(s: float) -> void:
 	set_eye(render_scale)
 
 
-## Each eye's picture at share s of full_eye, not kept (the speed check's 100%). The images the
-## runtime takes are made that size (OpenXR's render target multiplier on what it recommends; Godot
-## makes them again when the size changes), not a 3D render scale inside them: no upscale of
-## Godot's own before the runtime fits the picture to the lens, and the density map's offsets,
-## which Godot gives in their pixels, fall where one looks (foveation.gd).
+## Each eye's picture at share s of full_eye from the next frame on, not kept (the speed check's
+## 100%). The images the runtime takes are made that size (OpenXR's render target multiplier on what
+## it recommends; Godot makes them again when the size changes), not a 3D render scale inside them:
+## no upscale of Godot's own before the runtime fits the picture to the lens, and the density map's
+## offsets, which Godot gives in their pixels, fall where one looks (foveation.gd).
+## The size changes at a frame's start (SceneTree.process_frame), before the XR viewport takes it
+## (Viewport's internal process): changed after, the frame's images would be the new size and the
+## viewport's buffers the old, and Godot would draw nothing into them ("All textures in a
+## framebuffer should be the same size", in the headset's log).
 func set_eye(s: float) -> void:
 	if xr == null or runtime_eye.x <= 0.0:
 		return
-	xr.render_target_size_multiplier = _multiplier(s)
+	eye_share = s
+	if not get_tree().process_frame.is_connected(_apply_eye):
+		get_tree().process_frame.connect(_apply_eye, CONNECT_ONE_SHOT)
+
+
+func _apply_eye() -> void:
+	xr.render_target_size_multiplier = _multiplier(eye_share)
 	main.foveation.resize()
 
 

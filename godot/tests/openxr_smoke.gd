@@ -7,12 +7,13 @@ extends SceneTree
 ## a restart (a display that follows is answered too); choices made while vrcmd runs end with the
 ## last one written; settings written before the eye's size was the app's own go, and the eye
 ## starts at its full size (under Monado the runtime's own), foveation with our own, narrow, neither
-## written till chosen; the resolution row sets the size of the images OpenXR takes, the XR
-## viewport follows, and keeps it; the foveation row turns foveated rendering on at its level
-## (SteamVR's: the XR viewport's density map, the 3D pass split, Godot's own map under Monado, which
-## has no XR_FB_foveation; our own: no density map, no split, the floor from floor_fov.gd's texture,
-## made for the picture's size) and keeps it, at any size; the gaze dot shows and hides; the gravity
-## row
+## written till chosen; the resolution row sets the size of the images OpenXR takes from the next
+## frame on, the XR viewport follows, also when the menu takes a value by itself, and keeps it, and
+## every frame the XR viewport is as big as those images; the foveation row turns foveated
+## rendering on at its level (SteamVR's: the XR viewport's density map, the 3D pass split, Godot's
+## own map under Monado, which has no XR_FB_foveation; our own: no density map, no split, the floor
+## from floor_fov.gd's texture, made for the picture's size) and keeps it, at any size; the gaze dot
+## shows and hides; the gravity row
 ## switches the gravity view (the floor, the arrows, off: A steps round);
 ## frames made too slow for the display turn the head and the line below red; and the speed
 ## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
@@ -31,6 +32,8 @@ var fake: String
 var bench_stored := 0.0
 var judged := 0                 # the frame the green verdict was seen, or the wait for it ended (0: waiting)
 var green := false
+var mismatched := []            # frames drawn with the XR viewport not the size of the images OpenXR takes
+var full_n := 0                 # floor_fov's texels a side at 100%
 const GREEN_WAIT := 400         # frames (20 s at Monado's 20 Hz) to see the frames judged green
 
 
@@ -51,6 +54,9 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
+	# the frame before was drawn at these sizes (Menu.set_eye changes them at a frame's start)
+	if frames > 2 and main.in_xr and Vector2i(main.xr.get_render_target_size()) != main.xr_view.size:
+		mismatched.append([frames - 1, Vector2i(main.xr.get_render_target_size()), main.xr_view.size])
 	var p: Menu = main.menu
 	var r: FrameRate = main.rate
 	if frames == 2:
@@ -139,20 +145,32 @@ func _process(_delta: float) -> bool:
 		p.move(1)       # another row: what was picked takes effect
 		var cfg := ConfigFile.new()
 		cfg.load("user://settings.cfg")
-		U.check("on to the next row: the images OpenXR takes 141×141, kept, the foveation as it was",
-				_eye() == Vector2i(141, 141) and cfg.get_value("render", "eye", 0.0) == 1.1 and p.picked() == "fov"
-				and main.foveation.level == p.DEFAULT_FOVEATION and main.renderer.floor_fov._size == 141,
-				"%s, floor_fov made for %d" % [_eye(), main.renderer.floor_fov._size])
+		U.check("on to the next row: 110% chosen, kept, the foveation as it was; the size from the next frame on",
+				p.render_scale == 1.1 and cfg.get_value("render", "eye", 0.0) == 1.1 and p.picked() == "fov"
+				and main.foveation.level == p.DEFAULT_FOVEATION and _eye() == Vector2i(128, 128))
 		U.check("the old settings gone from the file, the foveation not written till chosen",
 				not cfg.has_section_key("render", "scale") and not cfg.has_section_key("render", "foveation"))
 		U.check("the row shows it", _value(p, "scale") == "110% (141×141)" and _color(p, "scale") == p.COLOR_TEXT)
 	if j == 2:
-		U.check("the XR viewport follows: 141×141", main.xr_view.size == Vector2i(141, 141), str(main.xr_view.size))
-		main.menu.choose_scale(0.7)
-		U.check("the least: 70%, 90×90", _eye() == Vector2i(90, 90) and _value(main.menu, "scale") == "70% (90×90)")
-		main.menu.choose_scale(1.0)
-		U.check("back to 100%", _eye() == Vector2i(128, 128))
-		_foveation(main.menu)
+		var fov := main.renderer.floor_fov
+		U.check("the next frame: the images OpenXR takes 141×141, the XR viewport too, floor_fov made for them",
+				_eye() == Vector2i(141, 141) and main.xr_view.size == Vector2i(141, 141) and fov._size == 141,
+				"%s, viewport %s, floor_fov %d" % [_eye(), main.xr_view.size, fov._size])
+		# the menu takes a value by itself after SETTLE, in its own _process: after the XR viewport's
+		# (the size changing there was the headset's lost frames)
+		p.select("scale")
+		p.change(-1)
+	if j == 20:
+		U.check("left, then nothing: the menu took 100% by itself, the images and the XR viewport 128×128",
+				p.pending == -1 and p.render_scale == 1.0 and _eye() == Vector2i(128, 128)
+				and main.xr_view.size == Vector2i(128, 128), "%s, viewport %s" % [_eye(), main.xr_view.size])
+		_foveation(p, 0)
+	if j == 22:
+		_foveation(p, 1)
+	if j == 24:
+		_foveation(p, 2)
+	if j == 26:
+		_foveation(p, 3)
 	if j > 0 and j <= 60:
 		OS.delay_msec(70)           # longer than a 50 ms refresh: every frame misses one
 	if j == 60:
@@ -188,6 +206,7 @@ func _process(_delta: float) -> bool:
 		p.set_open(true)
 		U.check("... and in the menu, under its row", p.bench_label.visible and p.bench_label.text == p.bench_text
 				and not p.strip_label.text.contains(p.bench_text))
+		U.check("every frame: the XR viewport as big as the images OpenXR takes", mismatched.is_empty(), str(mismatched))
 		U.finish(self)
 		return true
 	if Time.get_ticks_msec() > 500_000:
@@ -197,61 +216,70 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-## The foveation rows: off; the right hand presses "сильная" with the eye at 80%: both stay, also
-## at another size.
-func _foveation(p: Menu) -> void:
+## The foveation rows, a step every other frame (a size chosen takes effect at the next frame):
+## 0, off; the right hand presses "сильная" with the eye at 80%; 1, both stay, also at another size;
+## our own, narrow, at 100%; 2, its texture for the picture, made again at 80%; 3, made again,
+## then off, the gaze dot and the gravity row.
+func _foveation(p: Menu, step: int) -> void:
 	var oxr := main.xr as OpenXRInterface
-	p.choose_foveation(0)
-	U.check("выкл: no density map, no split", main.foveation.level == 0 and _value(p, "fov") == "выкл"
-			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled)
-	U.check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported()
-			and _row(p, "fov").name_label.text == "фовеация · без SteamVR")
-	p.choose_scale(0.8)
-	p.select("fov")
-	p.change(1)
-	p.change(1)
-	p.press()
-	var cfg := ConfigFile.new()
-	cfg.load("user://settings.cfg")
-	U.check("the foveation row, right twice, A: сильная, foveation 3, density map on, 3D pass split", main.foveation.level == 3
-			and main.xr_view.vrs_mode == Viewport.VRS_XR and main.foveation.split_pass.enabled and _value(p, "fov") == "SteamVR сильная")
-	U.check("Godot's own map at the strongest", is_equal_approx(oxr.vrs_strength, Foveation.OWN_MAP_STRENGTH[2]))
-	U.check("foveation on: the eye stays at 80%, both kept", _eye() == Vector2i(102, 102)
-			and cfg.get_value("render", "foveation", -1) == 3 and cfg.get_value("render", "eye", 0.0) == 0.8)
-	p.choose_scale(0.9)
-	cfg.load("user://settings.cfg")
-	U.check("another size: the foveation stays, kept", main.foveation.level == 3 and main.xr_view.vrs_mode == Viewport.VRS_XR
-			and main.foveation.split_pass.enabled and cfg.get_value("render", "foveation", -1) == 3)
-	p.choose_scale(1.0)
-	# our own: no density map, no split; the floor from its texture, a quarter of the picture's
-	# pixels or so at the narrow level
-	for k in 2:
-		p.change(1)
-	p.press()
 	var fov := main.renderer.floor_fov
-	var size := main.xr.get_render_target_size()
-	U.check("узкая: our own, no density map, no split, the floor from floor_fov's texture", main.foveation.level == 5
-			and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled
-			and fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == true
-			and _value(p, "fov") == "плавная узкая")
-	U.check("its texture: smaller than the picture", fov.fov_tex.get_width() < size.x and fov.fov_tex.get_layers() == 2,
-			"%d of %d" % [fov.fov_tex.get_width(), size.x])
-	var full_n := fov.fov_tex.get_width()
-	p.choose_scale(0.8)
-	U.check("at 80%: its texture made again for the picture's 102 pixels", fov._size == 102
-			and fov.fov_tex.get_width() < full_n and fov.enabled, "%d, %d texels" % [fov._size, fov.fov_tex.get_width()])
-	p.choose_scale(1.0)
-	p.choose_foveation(0)
-	U.check("off again: no density map, no split, the floor per pixel", main.xr_view.vrs_mode == Viewport.VRS_DISABLED
-			and not main.foveation.split_pass.enabled and not fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == false)
-	# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides
-	p.move(1)
-	p.press()
-	U.check("точка взгляда, A: the gaze dot shows; Monado: no gaze", p.picked() == "gaze" and main.gaze_dot.visible
-			and _value(p, "gaze") == "вкл" and main.gaze_angles() == null)
-	p.show_gaze(false)
-	U.check("the gaze dot hides", not main.gaze_dot.visible)
-	_gravity(p)
+	var cfg := ConfigFile.new()
+	if step == 0:
+		p.choose_foveation(0)
+		U.check("выкл: no density map, no split", main.foveation.level == 0 and _value(p, "fov") == "выкл"
+				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled)
+		U.check("Monado: no runtime density map, Godot's own", not oxr.is_foveation_supported()
+				and _row(p, "fov").name_label.text == "фовеация · без SteamVR")
+		p.choose_scale(0.8)
+		p.select("fov")
+		p.change(1)
+		p.change(1)
+		p.press()
+		cfg.load("user://settings.cfg")
+		U.check("the foveation row, right twice, A: сильная, foveation 3, density map on, 3D pass split", main.foveation.level == 3
+				and main.xr_view.vrs_mode == Viewport.VRS_XR and main.foveation.split_pass.enabled and _value(p, "fov") == "SteamVR сильная")
+		U.check("Godot's own map at the strongest", is_equal_approx(oxr.vrs_strength, Foveation.OWN_MAP_STRENGTH[2]))
+		U.check("foveation on: the eye stays at 80%, both kept", p.render_scale == 0.8
+				and cfg.get_value("render", "foveation", -1) == 3 and cfg.get_value("render", "eye", 0.0) == 0.8)
+	elif step == 1:
+		U.check("... the images 102×102", _eye() == Vector2i(102, 102) and main.xr_view.size == Vector2i(102, 102), str(_eye()))
+		p.choose_scale(0.9)
+		cfg.load("user://settings.cfg")
+		U.check("another size: the foveation stays, kept", main.foveation.level == 3 and main.xr_view.vrs_mode == Viewport.VRS_XR
+				and main.foveation.split_pass.enabled and cfg.get_value("render", "foveation", -1) == 3)
+		p.choose_scale(1.0)
+		# our own: no density map, no split; the floor from its texture, a quarter of the picture's
+		# pixels or so at the narrow level
+		for k in 2:
+			p.change(1)
+		p.press()
+		U.check("узкая: our own, no density map, no split, the floor from floor_fov's texture", main.foveation.level == 5
+				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled
+				and fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == true
+				and _value(p, "fov") == "плавная узкая")
+	elif step == 2:
+		var size := main.xr.get_render_target_size()
+		U.check("its texture: made for the picture's 128 pixels, smaller than it", fov._size == 128
+				and fov.fov_tex.get_width() < size.x and fov.fov_tex.get_layers() == 2,
+				"%d, %d of %d" % [fov._size, fov.fov_tex.get_width(), size.x])
+		full_n = fov.fov_tex.get_width()
+		p.choose_scale(0.8)
+	else:
+		U.check("at 80%: its texture made again for the picture's 102 pixels", fov._size == 102
+				and fov.fov_tex.get_width() < full_n and fov.enabled,
+				"%d, %d texels" % [fov._size, fov.fov_tex.get_width()])
+		p.choose_scale(1.0)
+		p.choose_foveation(0)
+		U.check("off again: no density map, no split, the floor per pixel", main.xr_view.vrs_mode == Viewport.VRS_DISABLED
+				and not main.foveation.split_pass.enabled and not fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == false)
+		# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides
+		p.move(1)
+		p.press()
+		U.check("точка взгляда, A: the gaze dot shows; Monado: no gaze", p.picked() == "gaze" and main.gaze_dot.visible
+				and _value(p, "gaze") == "вкл" and main.gaze_angles() == null)
+		p.show_gaze(false)
+		U.check("the gaze dot hides", not main.gaze_dot.visible)
+		_gravity(p)
 
 
 ## The gravity row: right and A, right and A, then A alone steps round (its values: Menu.GRAVITY_NAMES).
