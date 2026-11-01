@@ -9,8 +9,9 @@ extends SceneTree
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
 ## left while walking forward (Q, W; KEYS): the overlay must follow the world; 4: as 1, without
-## gravity in flight, then flies up (Space) and along the look (W, the head looking down), snaps
-## right (E) in the air and hovers there (KEYS_4); 5: as 1, flying 1 m up with the room's axes
+## gravity in flight, then flies up (Space) and forward (W), and in the air snaps right (E), pitches
+## down (K) and rolls right (L) about the head, and hovers there (KEYS_4); 5: as 1, flying 1 m up
+## with the room's axes
 ## pitched 20 degrees and rolled 15 (as a flight through the curved zone leaves them). Run with
 ## --fixed-fps 60, so every mode walks and turns the same.
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
@@ -31,7 +32,7 @@ const KEYS := [[5, KEY_W, true], [5, KEY_D, true], [15, KEY_W, false], [15, KEY_
 		[16, KEY_E, true], [18, KEY_E, false], [19, KEY_TAB, true], [20, KEY_TAB, false],
 		[21, KEY_Q, true], [21, KEY_W, true], [31, KEY_Q, false], [31, KEY_W, false]]
 const KEYS_4 := [[5, KEY_SPACE, true], [5, KEY_W, true], [15, KEY_W, false], [16, KEY_E, true], [18, KEY_E, false],
-		[25, KEY_SPACE, false]]
+		[19, KEY_K, true], [21, KEY_K, false], [22, KEY_L, true], [24, KEY_L, false], [25, KEY_SPACE, false]]
 
 var main: Main
 var hmd
@@ -69,7 +70,7 @@ func _process(_delta: float) -> bool:
 			var v: Viewer = main.viewer
 			v.take_off()
 			v.move(WormholeSpace.combine(v.frame, Vector3(0.0, 1.0, 0.0)))
-			v.frame = Main._tilt(v.frame, deg_to_rad(20.0), deg_to_rad(15.0), main._head_forward_xz())
+			v.frame = Viewer.tilt(v.frame, deg_to_rad(20.0), deg_to_rad(15.0), main._head_forward_xz())
 			main._update_chart_map()
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view

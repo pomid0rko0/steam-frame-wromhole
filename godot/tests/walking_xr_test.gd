@@ -22,8 +22,10 @@ extends SceneTree
 ##    right show gravity (the floor, the arrows, off)
 ## 7. while the speed check holds the viewer (main.hold), the sticks and A do nothing; then
 ##    left Y (generic: secondary/click) shows gravity: the floor, the arrows, off
-## 8. the right stick up (and a little right) flies up and turns nothing; let go, the body falls
-##    back onto the floor where it took off; held by the speed check, it does not fly
+## 8. standing, the right stick up does nothing; the right trigger flies up; flying (without
+##    gravity: the right stick's click), the right stick up pitches and the right bumper rolls,
+##    each about the head; with gravity again, let go, the body turns upright, falls and lands; held
+##    by the speed check, the trigger does not fly
 
 const U := preload("res://tests/util.gd")
 
@@ -33,6 +35,7 @@ var left: XRControllerTracker
 var right: XRControllerTracker
 var frames := 0
 var gravity_seen := []
+var saved := []
 var grav_frame := []
 
 
@@ -246,29 +249,67 @@ func _process(_delta: float) -> bool:
 			gravity_seen.append(main.renderer.gravity_view)
 		470:
 			U.check("left Y shows gravity: the floor, the arrows, off", gravity_seen == [1, 2, 0], "views %s" % [gravity_seen])
-			# up, a little to the right: the main axis climbs, nothing turns
-			right.set_input(&"primary", Vector2(0.3, 1.0))
-		500:
-			right.set_input(&"primary", Vector2.ZERO)
-			var hgt: float = main.viewer.height()
-			U.check("the right stick up for half a second flies 0.75 m up", not main.viewer.standing and absf(hgt - 0.75) < 0.03,
-					"standing %s, the feet %.3f m over the floor" % [main.viewer.standing, hgt])
-			_check_turn("... and turns nothing", 0.0)
-		540:
-			# from 0.75 m at 1.5 m/s up (the climb's speed, kept): on the floor 0.57 s later
-			U.check("let go, it falls back onto the floor", main.viewer.standing and absf(main.viewer.n.z) < 1e-6,
-					"standing %s, n.z %s" % [main.viewer.standing, main.viewer.n.z])
-			_check_feet("... where it took off", 8.5)
-			main.hold = true
 			right.set_input(&"primary", Vector2(0.0, 1.0))
-		555:
+		480:
 			right.set_input(&"primary", Vector2.ZERO)
-		557:
-			U.check("while the speed check holds the viewer, the right stick does not fly", main.viewer.standing
+			U.check("standing, the right stick up does nothing", main.viewer.standing and main.viewer.height() == 0.0)
+			_check_turn("... nor turns", 0.0)
+			right.set_input(&"primary_click", true)
+		482:
+			right.set_input(&"primary_click", false)
+			U.check("flight without gravity", not main.viewer.gravity)
+			right.set_input(&"trigger", 1.0)
+		497:
+			right.set_input(&"trigger", 0.0)
+		499:
+			var hgt: float = main.viewer.height()
+			U.check("the right trigger for a quarter second flies 1 m up", not main.viewer.standing and absf(hgt - 1.0) < 0.02,
+					"standing %s, the feet %.3f m over the floor" % [main.viewer.standing, hgt])
+			saved = [_head()]
+			right.set_input(&"primary", Vector2(0.0, 1.0))
+		529:
+			right.set_input(&"primary", Vector2.ZERO)
+		531:
+			var f := WormholeSpace.vector_to_chart(1.0, main.viewer.n, -main.viewer.frame[2])
+			U.check("flying, the right stick up for half a second pitches 30 degrees up about the head",
+					_head().distance_to(saved[0]) < 1e-4 and absf(rad_to_deg(asin(f.z)) - 30.0) < 0.01,
+					"the head moved %.6f m, forward %.3f deg up" % [_head().distance_to(saved[0]), rad_to_deg(asin(f.z))])
+			saved = [_head(), _chart(1)]
+			right.set_input(&"bumper", true)
+		561:
+			right.set_input(&"bumper", false)
+		563:
+			var turned := rad_to_deg(acos(clampf(_chart(1).dot(saved[1]), -1.0, 1.0)))
+			U.check("the right bumper for half a second rolls 30 degrees about the head", _head().distance_to(saved[0]) < 1e-4
+					and absf(turned - 30.0) < 0.01, "the head moved %.6f m, up turned %.3f deg" % [_head().distance_to(saved[0]), turned])
+			right.set_input(&"primary_click", true)
+		565:
+			right.set_input(&"primary_click", false)
+			U.check("flight with gravity again", main.viewer.gravity)
+		640:
+			U.check("let go, it turns upright, falls and lands", main.viewer.standing
+					and (main.viewer.frame[1] as Vector4).distance_to(Vector4(0.0, 0.0, 0.0, 1.0)) < 1e-6, "standing %s" % main.viewer.standing)
+			main.hold = true
+			right.set_input(&"trigger", 1.0)
+		655:
+			right.set_input(&"trigger", 0.0)
+		657:
+			U.check("while the speed check holds the viewer, the right trigger does not fly", main.viewer.standing
 					and main.viewer.height() == 0.0, "standing %s" % main.viewer.standing)
 			main.hold = false
 			U.finish(self, hmd, [left, right])
 	return false
+
+
+## The head's chart A position.
+func _head() -> Vector3:
+	var hp: Array = main.viewer.head(main.camera.transform.origin.y)
+	return main.space.chart_position(hp[0], hp[1])
+
+
+## The room's axis k in chart A.
+func _chart(k: int) -> Vector3:
+	return WormholeSpace.vector_to_chart(1.0, main.viewer.n, main.viewer.frame[k])
 
 
 func _check_feet(name: String, x: float) -> void:

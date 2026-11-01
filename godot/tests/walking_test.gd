@@ -50,7 +50,7 @@ func _check_feet_kept(name: String) -> void:
 	U.check(name, absf(p.x - 8.5) < 0.03 and absf(p.y) < 0.01, "feet at (%.3f, %.3f), expected (8.5, 0)" % [p.x, p.y])
 
 
-## The speed check's view tilt (main._tilt) turns about the head's own axes, whichever way the head
+## The speed check's view tilt (Viewer.tilt) turns about the head's own axes, whichever way the head
 ## faces in the room: the look goes pitch up, the head's right turns roll about the look.
 func _check_tilt() -> void:
 	var f := [Vector4(1, 0, 0, 0), Vector4(0, 1, 0, 0), Vector4(0, 0, 1, 0)]     # play x, up, z
@@ -60,7 +60,7 @@ func _check_tilt() -> void:
 	for yaw in [0.0, 90.0, 200.0]:
 		var a := deg_to_rad(yaw)
 		var fwd := Vector2(-sin(a), -cos(a))         # the head turned yaw to the left of -z
-		var t: Array = main._tilt(f, pitch, roll, fwd)
+		var t: Array = Viewer.tilt(f, pitch, roll, fwd)
 		var look: Vector4 = fwd.x * t[0] + fwd.y * t[2]
 		var right: Vector4 = -fwd.y * t[0] + fwd.x * t[2]
 		var flat: Vector4 = fwd.x * f[0] + fwd.y * f[2]

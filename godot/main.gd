@@ -3,12 +3,14 @@ extends Node3D
 ## Real-time wormhole for VR (README.md, docs/). The renderer (renderer.gd) draws each body where
 ## the eye sees it along a geodesic of the wormhole space, and the floor and the sky per pixel;
 ## this script builds the scene and moves the viewer through that curved space: walking in the room,
-## with the sticks along the floor and flying off it (the buttons: README.md, «Управление»).
+## with the sticks along the floor and flying off it as a ship (the buttons: README.md,
+## «Управление»).
 ##
 ## The viewer's body (viewer.gd): the room's floor under the head and the room's axes there, on the
-## floor or flying; physical movement in the room and the sticks move it along geodesics, carrying
-## the axes; stick turns rotate them about up; the head is its height in the room along up. Each eye
-## is derived in the shaders from that view's own matrices (shaders/geo.gdshaderinc, geo_eye).
+## floor or flying; physical movement in the room, the sticks and the triggers move it along
+## geodesics, carrying the axes; stick turns rotate them about up, and flying pitch and roll them
+## about the head; the head is its height in the room along up. Each eye is derived in the shaders
+## from that view's own matrices (shaders/geo.gdshaderinc, geo_eye).
 ##
 ## The parts: the space's geometry (wormhole_space.gd), the viewer's body (viewer.gd), the renderer
 ## (renderer.gd), the demo's balls and cubes in gravity through the wormhole (toys.gd,
@@ -41,11 +43,13 @@ extends Node3D
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
-const WALK_SPEED := 1.5             # metres per second at full stick, walking and flying
+const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
+const FLY_SPEED := 4.0              # flying: metres per second at full stick or trigger
 const STICK_DEAD_ZONE := 0.15
 const SNAP_ANGLE := deg_to_rad(30.0)
 const SMOOTH_TURN_SPEED := deg_to_rad(90.0)   # per second at full stick
+const TILT_SPEED := deg_to_rad(60.0)   # flying: pitch per second at full stick, roll with a bumper held
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const NEAR := 0.01                  # m: the camera's near plane: what comes closer to an eye is cut
@@ -86,7 +90,9 @@ var desktop_yaw := 0.0
 var desktop_pitch := 0.0
 var smooth_turn := true         # false: snaps of SNAP_ANGLE
 var snap_armed := true          # the right stick went back to the middle since the last turn
+var roll_armed := true          # the bumpers let go since the last roll in snaps
 var menu_active := false        # the menu was open this frame: its buttons are its (Menu.handle_input)
+var tilting := false            # flying, pitched or rolled this frame (_turns_and_reset)
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
 var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lines about late frames)
@@ -231,7 +237,7 @@ func _process(delta: float) -> void:
 	# stick motion over at most 0.1 s: a long frame (back from the SteamVR dashboard) is no leap
 	var dt := minf(delta, 0.1)
 	menu_active = menu.handle_input(dt)
-	var moved := false if hold else _turn_and_reset(dt)
+	var moved := false if hold else _turns_and_reset(dt, camera.transform.origin.y)
 	# its button (README.md, «Управление») / G: the next gravity view (not during the speed check:
 	# it times what it set up)
 	var grav_down := Input.is_key_pressed(KEY_G)
@@ -276,7 +282,7 @@ func _process(delta: float) -> void:
 		overlay.visible = shown
 	var hf: Array = hp[2]
 	if view_pitch != 0.0 or view_roll != 0.0:
-		hf = _tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll), _head_forward_xz())
+		hf = Viewer.tilt(hf, deg_to_rad(view_pitch), deg_to_rad(view_roll), _head_forward_xz())
 	_head_pose = [hp[0], hp[1], hf]
 	# in the order the top of this file gives; nothing during the speed check: it times the same
 	# scene at every pose
@@ -492,34 +498,40 @@ func _move_input() -> Vector2:
 	return v.limit_length(1.0)
 
 
-## Right stick up and down / Space and C: up and down along the room's up (the stick's main axis
-## only: across, it turns).
+## Right trigger up, left down / Space and C: along the room's up.
 func _climb_input() -> float:
 	var c := float(Input.is_key_pressed(KEY_SPACE)) - float(Input.is_key_pressed(KEY_C))
 	if in_xr:
-		var s := right_hand.get_vector2(&"primary")
-		if absf(s.y) > absf(s.x):
-			c += s.y
+		c += right_hand.get_float(&"trigger") - left_hand.get_float(&"trigger")
 	return clampf(c, -1.0, 1.0)
 
 
-## Left trigger / Shift.
+## Left trigger / Shift (walking only: flying, the left trigger goes down).
 func _run_pressed() -> bool:
 	if Input.is_key_pressed(KEY_SHIFT):
 		return true
 	return in_xr and left_hand.get_float(&"trigger") > 0.5
 
 
-## The turns and the reset (README.md, «Управление»). True if a turn moved the view against the
-## room (the reset redoes the chart map itself).
-func _turn_and_reset(delta: float) -> bool:
-	var turn := 0.0
+## The turns and the reset (README.md, «Управление»): the right stick across turns (yaw); flying, the
+## room also pitches (the right stick up and down) and rolls (the bumpers) about the head (Viewer.
+## tilt_at_head; height: the head's in the room), smoothly or in snaps as the turns go. True if a
+## turn moved the view against the room (the reset redoes the chart map itself); tilting: pitched or
+## rolled this frame (no turning upright then).
+func _turns_and_reset(delta: float, height: float) -> bool:
+	var s := Vector2.ZERO           # right stick: x yaw, y pitch
+	var roll := float(Input.is_key_pressed(KEY_L)) - float(Input.is_key_pressed(KEY_J))   # to the right
 	var fall_down := Input.is_key_pressed(KEY_F)
 	if in_xr:
-		var s := right_hand.get_vector2(&"primary")
-		turn = s.x if absf(s.x) >= absf(s.y) else 0.0     # the stick's main axis: up and down climbs
+		s = right_hand.get_vector2(&"primary")
+		roll += float(right_hand.is_button_pressed(&"bumper")) - float(left_hand.is_button_pressed(&"bumper"))
 		fall_down = fall_down or right_hand.is_button_pressed(&"primary_click")
-	turn = clampf(turn + float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)), -1.0, 1.0)
+	s.x = clampf(s.x + float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)), -1.0, 1.0)
+	s.y = clampf(s.y + float(Input.is_key_pressed(KEY_I)) - float(Input.is_key_pressed(KEY_K)), -1.0, 1.0)
+	roll = clampf(roll, -1.0, 1.0)
+	if viewer.standing:
+		s.y = 0.0
+		roll = 0.0
 	if _pressed("turn_mode", Input.is_key_pressed(KEY_TAB)):
 		set_smooth_turn(not smooth_turn)
 	if _pressed("fall", fall_down):
@@ -527,21 +539,42 @@ func _turn_and_reset(delta: float) -> bool:
 		if in_xr:
 			Menu._tick(right_hand)
 	var moved := false
+	tilting = false
+	var fwd := _head_forward_xz()
 	if smooth_turn:
-		if absf(turn) > STICK_DEAD_ZONE:
-			# from zero at the dead zone's edge to full speed at full stick
-			var amount := (absf(turn) - STICK_DEAD_ZONE) / (1.0 - STICK_DEAD_ZONE)
-			viewer.turn(signf(turn) * amount * SMOOTH_TURN_SPEED * delta)
+		# from zero at the dead zone's edge to full speed at full stick
+		var a := Vector2(maxf(absf(s.x) - STICK_DEAD_ZONE, 0.0), maxf(absf(s.y) - STICK_DEAD_ZONE, 0.0)) / (1.0 - STICK_DEAD_ZONE)
+		if a.x > 0.0:
+			viewer.turn(signf(s.x) * a.x * SMOOTH_TURN_SPEED * delta)
 			moved = true
+		if a.y > 0.0 or roll != 0.0:
+			viewer.tilt_at_head(height, signf(s.y) * a.y * TILT_SPEED * delta, -roll * TILT_SPEED * delta, fwd)
+			moved = true
+			tilting = true
 		# a switch to snaps while the stick is out waits for it to come back first
-		snap_armed = absf(turn) < 0.3
-	elif absf(turn) > 0.7 and snap_armed:
-		viewer.turn(signf(turn) * SNAP_ANGLE)
-		hands.forget_motion()           # the hands jump with the world: no throw
-		snap_armed = false
-		moved = true
-	elif absf(turn) < 0.3:
-		snap_armed = true
+		snap_armed = s.length() < 0.3
+		roll_armed = roll == 0.0
+	else:
+		# the stick's main axis: one snap per push
+		if snap_armed and s.length() > 0.7:
+			if absf(s.x) >= absf(s.y):
+				viewer.turn(signf(s.x) * SNAP_ANGLE)
+			else:
+				viewer.tilt_at_head(height, signf(s.y) * SNAP_ANGLE, 0.0, fwd)
+				tilting = true
+			hands.forget_motion()           # the hands jump with the world: no throw
+			snap_armed = false
+			moved = true
+		elif s.length() < 0.3:
+			snap_armed = true
+		if roll_armed and roll != 0.0:
+			viewer.tilt_at_head(height, 0.0, -roll * SNAP_ANGLE, fwd)
+			hands.forget_motion()
+			roll_armed = false
+			moved = true
+			tilting = true
+		elif roll == 0.0:
+			roll_armed = true
 	if _pressed("reset", Input.is_key_pressed(KEY_R) or (in_xr and right_hand.is_button_pressed(&"ax_button"))) and not menu_active:
 		place(START_POS, START_FORWARD)    # also redoes the chart -> play map
 		if toys.enabled:
@@ -552,55 +585,39 @@ func _turn_and_reset(delta: float) -> bool:
 
 
 ## The body's motion this frame (viewer.gd): the head's step in the room (x, z), then the sticks
-## (README.md, «Управление»). Standing, the left stick walks along the floor where the head looks
-## and the right stick up takes off; flying, the left stick flies where the head looks, up and down
-## too, and the right stick along the room's up; nothing pushed, the body coasts (falls or hovers).
-## height: the head's in the room. True if the sticks, a fall or a landing moved the world against
-## the room.
+## and triggers (README.md, «Управление»): the left stick along the room's floor where the head
+## looks (walking or flying), the triggers along the room's up (the right one up takes off); nothing
+## pushed, flying, the body coasts (falls or hovers); with gravity it turns upright unless the turns
+## tilted it (tilting); the head is kept out of the floor and the feet land on it. height: the head's
+## in the room. True if the sticks, a fall or a landing moved the world against the room.
 func _locomotion(step: Vector2, dt: float, height: float) -> bool:
-	viewer.move(step.x * viewer.frame[0] + step.y * viewer.frame[2])
+	viewer.step_room(step, height)
 	var stick := Vector2.ZERO if menu_active else _move_input()
 	var climb := _climb_input()     # not the menu's (as the turns)
-	var speed := RUN_SPEED if _run_pressed() else WALK_SPEED
+	var speed := FLY_SPEED if not viewer.standing else (RUN_SPEED if _run_pressed() else WALK_SPEED)
 	var v := Vector3.ZERO           # in the room
 	if stick.length() > STICK_DEAD_ZONE:
 		var fwd := _head_forward_xz()
-		var ahead := Vector3(fwd.x, 0.0, fwd.y) if viewer.standing else -camera.transform.basis.z
-		v += (stick.y * ahead + stick.x * Vector3(-fwd.y, 0.0, fwd.x)) * speed
+		v += (stick.y * Vector3(fwd.x, 0.0, fwd.y) + stick.x * Vector3(-fwd.y, 0.0, fwd.x)) * speed
 	if absf(climb) > STICK_DEAD_ZONE:
-		v.y += climb * speed
-	var moved := true
+		v.y += climb * FLY_SPEED
+	var moved := not viewer.standing
+	if viewer.standing and v.y > 0.0:
+		viewer.take_off()
+		print("flying: off the floor at l %.2f" % viewer.l)
 	if v != Vector3.ZERO:
-		if viewer.standing and v.y > 0.0:
-			viewer.take_off()
-			print("flying: off the floor at l %.2f" % viewer.l)
-		viewer.push(WormholeSpace.combine(viewer.frame, v), dt)
+		viewer.push(v, dt, height)
+		moved = true
 	else:
-		moved = viewer.coast(dt)
-	if viewer.touch_down(height):
+		viewer.coast(dt, height)
+	if not tilting:
+		viewer.right_up(dt, height)
+	viewer.keep_head_up(height)
+	if viewer.touch_down():
 		hands.forget_motion()           # the hands jump with the view: no throw
 		print("flying: landed at l %.2f" % viewer.l)
 		moved = true
 	return moved
-
-
-## The play space's axes in the curved space, f = [x, up, z], turned so that a head looking along
-## fwd (play x, z) looks pitch higher and is rolled about its line of sight (right side up): about
-## the head's own right and back, not the play space's x and z.
-static func _tilt(f: Array, pitch: float, roll: float, fwd: Vector2) -> Array:
-	var r := Vector2(-fwd.y, fwd.x)                  # the head's right in the play space (x, z)
-	var right: Vector4 = r.x * f[0] + r.y * f[2]
-	var back: Vector4 = -fwd.x * f[0] - fwd.y * f[2]
-	var c := cos(pitch)
-	var s := sin(pitch)
-	var up: Vector4 = c * f[1] + s * back
-	back = c * back - s * f[1]
-	var cr := cos(roll)
-	var sr := sin(roll)
-	var right2: Vector4 = cr * right + sr * up
-	up = cr * up - sr * right
-	# back from the head's axes to the play space's: x = r.x right - fwd.x back, z = r.y right - fwd.y back
-	return [r.x * right2 - fwd.x * back, up, r.y * right2 - fwd.y * back]
 
 
 func _head_forward_xz() -> Vector2:

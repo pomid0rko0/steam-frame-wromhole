@@ -27,10 +27,11 @@ var stamps := {"t0": 0, "t1": 0}
 var times: Array[float] = []
 var parts: Array = []           # per frame, Main.parts_ms
 # [label, l to put the feet at (Main.place_on_axis), m to fly up from there]; the first is where main
-# puts them at the start; the last flies round the throat to its top, where gravity is zero: it
-# falls freely there (viewer.gd), staying put
+# puts them at the start; the last flies round the throat until the head (U.HEAD_0 up) is on its
+# top, where gravity pulls along the throat: it falls freely there (viewer.gd), swinging along the
+# top and turning upright, the feet off the floor
 var places := [["start (flat)", null, 0.0], ["fillet (l 5)", 5.0, 0.0],
-		["flying, falling freely (the throat's top, l 0)", 0.0, PI / 2.0 * Main.THROAT_RADIUS]]
+		["flying, falling freely (the throat's top, l 2)", 2.0, PI / 2.0 * Main.THROAT_RADIUS - U.HEAD_0.y]]
 var place := 0
 var place_frame := 0
 
