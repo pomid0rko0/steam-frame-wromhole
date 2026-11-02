@@ -5,8 +5,9 @@ extends CompositorEffect
 ## bodies seen straight and in the zone are geometry. So before the bodies are drawn, a compute
 ## shader works out what the quad would draw into a texture per eye whose texels are as fine as the picture's
 ## pixels where the eye looks and grow smoothly away from it (shaders/floor_fov.gdshaderinc), and the
-## floor's quad then only takes each pixel's colour from there, filtered (floor.gdshaderinc,
-## fov_on). The bodies stay at the picture's full resolution. No density map: no tiles of coarse
+## floor's quad then only takes each pixel's colour from there, filtered, with a program of its own
+## (shaders/floor_sample.gdshader, sample_mat: Renderer draws the quad with it while this is on).
+## The bodies stay at the picture's full resolution. No density map: no tiles of coarse
 ## pixels, no edge where the density changes; away from the gaze the floor is softer, not blocky.
 ##
 ## On the XR camera's compositor, before the opaque pass (which it does not split). Renderer hands
@@ -20,9 +21,11 @@ extends CompositorEffect
 const STRENGTH := {4: 2.0, 5: 4.0}
 const GAZE_REACH := 0.9             # the warp's middle kept this far inside the picture (clip space)
 
+signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
+
 var level := 0                      # 0: off
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
-var floor_mats: Array[ShaderMaterial] = []   # the floor's materials, which sample the texture
+var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
 var fov_tex := Texture2DArrayRD.new()
 var warp_tex := Texture2DRD.new()
 
@@ -99,9 +102,10 @@ func set_gaze(point: Vector3, on: bool) -> void:
 ## The level (0, 4 or 5) and the picture's pixels a side; the texture is made again when they change.
 func set_level(p_level: int, size: int) -> void:
 	level = p_level if STRENGTH.has(p_level) else 0
+	var was := enabled
 	enabled = level > 0
-	for m in floor_mats:
-		m.set_shader_parameter("fov_on", enabled)
+	if enabled != was:
+		toggled.emit()
 	if not enabled:
 		return
 	_k = STRENGTH[level]
@@ -140,9 +144,8 @@ func _make(n: int) -> void:
 	_mutex.unlock()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
-	for m in floor_mats:
-		m.set_shader_parameter("fov_tex", fov_tex)
-		m.set_shader_parameter("fov_warp", warp_tex)
+	sample_mat.set_shader_parameter("fov_tex", fov_tex)
+	sample_mat.set_shader_parameter("fov_warp", warp_tex)
 
 
 ## The compute pipelines: the eyes, then the floor, plain or coloured by gravity.

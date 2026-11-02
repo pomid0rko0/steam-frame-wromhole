@@ -9,10 +9,8 @@
 //
 // Per pixel: the ray's way out of the zone (geo_exit, geo.gdshaderinc), then along the straight line
 // what it meets (lens_trace, lens.gdshaderinc) and its colour. Each eye (geo_eye) is worked out per
-// corner in vertex() and handed on flat.
-// fov_on (our own foveation, floor_fov.gd): the colours were worked out already, into fov_tex, a
-// texel per pixel where the eye looks and coarser away from it (shaders/floor_fov.gdshaderinc);
-// each pixel takes its place there by the same warp, with the numbers fov_warp holds for its eye.
+// corner in vertex() and handed on flat. Under our own foveation (floor_fov.gd) the same per texel
+// of its texture (floor_fov.gdshaderinc), and the quad is drawn with floor_sample.gdshader instead.
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
 #include "res://shaders/geo_uniforms.gdshaderinc"
@@ -28,17 +26,12 @@ varying flat vec4 v_ex;
 varying flat vec4 v_ey;
 varying flat vec4 v_ez;
 varying vec3 v_ray;
-varying vec2 v_clip;
-uniform bool fov_on = false;
 uniform bool lens_mark = false;    // tests: blue where the ray goes through the curved zone, else black
-uniform sampler2DArray fov_tex : filter_linear, repeat_disable;
-uniform sampler2D fov_warp : filter_nearest, repeat_disable;   // per eye (row): (gaze x, y, k, n), (A0, A1 along x, then y)
 
 void vertex() {
 	// a quad over the whole view at the far plane (reversed depth: 0), so that any body's depth wins;
 	// each corner's ray from the eye (geo_eye: in multiview not from the camera's origin)
 	POSITION = vec4(VERTEX.xy, 0.0, 1.0);
-	v_clip = VERTEX.xy;
 	vec4 p = inverse(PROJECTION_MATRIX) * vec4(VERTEX.xy, 0.5, 1.0);
 	v_ray = p.xyz / p.w - EYE_OFFSET;
 	float el;
@@ -54,22 +47,15 @@ void vertex() {
 }
 
 void fragment() {
-	if (fov_on) {
-		int v = int(VIEW_INDEX);
-		vec4 wg = texelFetch(fov_warp, ivec2(0, v), 0), wa = texelFetch(fov_warp, ivec2(1, v), 0);
-		vec2 t = (asinh(wg.z * (v_clip - wg.xy)) / wg.z - wa.xz) / (wa.yw - wa.xz);
-		ALBEDO = textureLod(fov_tex, vec3(t, float(v)), 0.0).rgb;
-	} else {
-		vec3 d = normalize(v_ray);
-		vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
-		vec3 pos, dir;
-		float sheet, way;
-		bool lensed = geo_exit(v_el, v_eye, v_en, D, pos, dir, sheet, way);
-		LensSeen s = lens_trace(pos, dir, sheet, way, lensed);
-		// the floor's pattern and a cube's edges from their neighbours' (outside any branch)
-		vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
-		float e = dot(s.box, s.box) > 0.0 ? look_box_edge(s.box) : -1.0;
-		ALBEDO = lens_colour(s, a, dFdx(a), dFdy(a), vec2(e, fwidth(e)), 1.0);
-		if (lens_mark) ALBEDO = lensed ? vec3(0.0, 0.0, 1.0) : vec3(0.0);
-	}
+	vec3 d = normalize(v_ray);
+	vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
+	vec3 pos, dir;
+	float sheet, way;
+	bool lensed = geo_exit(v_el, v_eye, v_en, D, pos, dir, sheet, way);
+	LensSeen s = lens_trace(pos, dir, sheet, way, lensed);
+	// the floor's pattern and a cube's edges from their neighbours' (outside any branch)
+	vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
+	float e = dot(s.box, s.box) > 0.0 ? look_box_edge(s.box) : -1.0;
+	ALBEDO = lens_colour(s, a, dFdx(a), dFdy(a), vec2(e, fwidth(e)), 1.0);
+	if (lens_mark) ALBEDO = lensed ? vec3(0.0, 0.0, 1.0) : vec3(0.0);
 }
