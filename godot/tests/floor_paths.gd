@@ -12,7 +12,7 @@ extends SceneTree
 const START := 4.0
 const WAIT := 1.5
 # the branches' conditions, as written there
-const STRAIGHT := "if (le >= L && (ca >= 0.0 || b >= Rout)) return false;"
+const STRAIGHT := "if (!in_) return false;"
 const EYE_FLAT := "if (le >= L) {"
 const EYE_FILLET := "} else if (le > Lc) {"
 const FLOOR := "if (dir.z < 0.0) {"

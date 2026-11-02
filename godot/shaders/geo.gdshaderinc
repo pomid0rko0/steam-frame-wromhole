@@ -510,23 +510,26 @@ vec2 geo_exit_rest(float le, vec3 eye, float b, float sigma, float gap_e, bool o
 	float wL = 2.0 * log((0.70710678 + sL) / Dw);
 	// on the fillet from the ray's origin (its turning point, or the cylinder's end) to the zone's edge
 	vec2 SLf = f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
+	float Lc = g_prof.z;
+	vec2 rest;
 	if (le >= L) {
 		// from the edge in to the origin and out again, and straight from the eye to the edge
 		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
 		float q2 = sqrt(max(gap_e * (re + b), 0.0));
 		float dq = (re - Rout) * (re + Rout) / max(qR + q2, GEO_TINY20);
-		return 2.0 * SLf + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
-	}
-	if (le > g_prof.z) {
+		rest = 2.0 * SLf + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
+	} else if (le > Lc) {
 		// on the fillet from the origin to the eye
 		float su = eye.y, eu = sqrt(gap_e / R2);
 		float ue = su * su;
 		float w = 2.0 * log((su + eu) / Dw);
 		vec2 sef = f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
 		// outward from the eye to the edge; inward to the origin and out to the edge
-		return outward ? SLf - sef : SLf + sef;
+		rest = outward ? SLf - sef : SLf + sef;
+	} else {
+		rest = SLf;
 	}
-	return SLf;
+	return rest;
 }
 
 // A ray's way across the zone, as geo_exit_rest takes it: (its turn in its plane, its length, 1 if
