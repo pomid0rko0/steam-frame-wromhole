@@ -40,7 +40,11 @@
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
 //     up (R^4's z, else x, made orthogonal to the line and the space's normal). Unlit, in beam_col;
 //     below the floor hidden.
-// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point.
+// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point. A
+// cube is lit by the face each pixel is on (its largest box coordinate): a vertex on an edge is on
+// two faces, and a normal of either in it would be spread over the other's triangles (along every
+// edge of a cube seen straight, and in the zone's meshes, which share their vertices round the
+// section, column by column, in wedges).
 #if defined(STATIC) && !defined(DIRECT)
 #define DIRECT
 #endif
@@ -71,10 +75,18 @@ uniform int beam_n = 0;
 uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 
+#ifdef CUBE
+// each face axis's normal (the axis, tangent at the point, unit) against the sun, up and the
+// light's way in (n . sun, n . up, -n . ray): the fragment takes its face's
+varying vec3 v_lit1;
+varying vec3 v_lit2;
+varying vec3 v_lit3;
+#else
 varying vec4 v_n;       // the surface's normal (R^4)
 varying vec4 v_sun;     // toward the sun (R^4, tangent there)
 varying vec4 v_up;      // up (R^4, tangent there)
 varying vec4 v_ray;     // the light's way in (R^4)
+#endif
 varying float v_l;
 varying float v_h;      // height above the floor
 varying vec3 v_col;
@@ -92,7 +104,9 @@ varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
 
 void vertex() {
 	vec4 P;
+#ifndef CUBE
 	vec4 nrm;
+#endif
 #ifdef ZONE
 	float el;
 	vec3 en;
@@ -120,10 +134,7 @@ void vertex() {
 #ifdef BALL
 	nrm = q;
 #else
-	vec3 sv = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
-	vec3 av = abs(sv);
-	nrm = av.x >= av.y && av.x >= av.z ? sign(sv.x) * E1 : (av.y >= av.z ? sign(sv.y) * E2 : sign(sv.z) * E3);
-	v_box = sv;
+	v_box = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
 #endif
 	float len, fell;
 	vec4 arrive;
@@ -148,8 +159,6 @@ void vertex() {
 		P = geo_onto(C + x * (sqrt(max(size * size - c * c, 0.0)) / size), N);
 	}
 	nrm = P - C;
-#else
-	nrm = abs(VERTEX.x) > 0.999 ? sign(VERTEX.x) * E1 : (abs(VERTEX.y) > 0.999 ? sign(VERTEX.y) * E2 : sign(VERTEX.z) * E3);
 #endif
 #elif defined(ARROWS)
 	P = vec4(0.0);
@@ -222,7 +231,6 @@ void vertex() {
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
 #endif
 #endif
-	v_ray = arrive;
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
 	v_col = COLOR.rgb;
@@ -240,10 +248,27 @@ void vertex() {
 	v_col = COLOR.rgb;
 #endif
 #endif
-	v_n = nrm - dot(nrm, Np) * Np;
 	vec4 s4 = look_sun4(pl);
-	v_sun = s4 - dot(s4, Np) * Np;
-	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
+	vec4 sun = s4 - dot(s4, Np) * Np;
+	vec4 up4 = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
+#ifdef CUBE
+	// unit vectors here (up is none where the space's normal is up: nought, as is its light)
+	vec4 sh = sun * inversesqrt(max(dot(sun, sun), 1e-12));
+	vec4 uh = up4 * inversesqrt(max(dot(up4, up4), 1e-12));
+	vec4 rh = arrive * inversesqrt(max(dot(arrive, arrive), 1e-12));
+	vec4 a1 = E1 - dot(E1, Np) * Np, a2 = E2 - dot(E2, Np) * Np, a3 = E3 - dot(E3, Np) * Np;
+	a1 *= inversesqrt(max(dot(a1, a1), 1e-12));
+	a2 *= inversesqrt(max(dot(a2, a2), 1e-12));
+	a3 *= inversesqrt(max(dot(a3, a3), 1e-12));
+	v_lit1 = vec3(dot(a1, sh), dot(a1, uh), -dot(a1, rh));
+	v_lit2 = vec3(dot(a2, sh), dot(a2, uh), -dot(a2, rh));
+	v_lit3 = vec3(dot(a3, sh), dot(a3, uh), -dot(a3, rh));
+#else
+	v_n = nrm - dot(nrm, Np) * Np;
+	v_sun = sun;
+	v_up = up4;
+	v_ray = arrive;
+#endif
 	v_l = pl;
 	v_h = P.z + g_lift;
 	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
@@ -265,16 +290,29 @@ void fragment() {
 #if defined(ARROWS) || defined(BEAM)
 	ALBEDO = v_col;
 #else
+#ifdef CUBE
+	// the face this pixel is on: its largest box coordinate
+	vec3 ab = abs(v_box);
+	vec3 lit = ab.x >= ab.y && ab.x >= ab.z ? sign(v_box.x) * v_lit1 : (ab.y >= ab.z ? sign(v_box.y) * v_lit2 : sign(v_box.z) * v_lit3);
+	vec3 col = look_body(v_col, lit.x, lit.y, lit.z, v_l);
+	// dark edges: the distance to the face's nearest edge in pixels
+	float e = look_box_edge(v_box);
+	float fw = max(fwidth(e), 1e-5);
+	col *= mix(0.45, 1.0, clamp((e - 0.04) / fw + 0.5, 0.0, 1.0));
+#else
 	vec4 n = normalize(v_n);
 	float nl = dot(n, normalize(v_sun));
 	float up = dot(n, normalize(v_up));
 	float nv = -dot(n, normalize(v_ray));
 	vec3 col = look_body(v_col, nl, up, nv, v_l);
-#ifdef CUBE
-	// dark edges: the distance to the face's nearest edge in pixels
-	float e = look_box_edge(v_box);
-	float fw = max(fwidth(e), 1e-5);
-	col *= mix(0.45, 1.0, clamp((e - 0.04) / fw + 0.5, 0.0, 1.0));
+#endif
+#ifdef ZONE
+	// a pixel whose numbers came out none is no part of the surface: a triangle of next to no area
+	// (a cube's strip between two columns on one corner's azimuth, zone_cube_azimuth: its vertices
+	// all on that azimuth's line in the view, each placed by its own search) gets one now and then,
+	// its varyings no numbers. Dropped after the derivatives, which take its neighbours; by the bits
+	// (geo_finite): a compiler may take a comparison as if no number were NaN
+	if (!geo_finite(col.r + col.g + col.b)) discard;
 #endif
 	ALBEDO = col;
 #endif
