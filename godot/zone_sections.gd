@@ -10,6 +10,10 @@ extends CompositorEffect
 ## not once per vertex of each of the 20 images. A cube's section is the dear part (its corners on
 ## the space, the edges its half-surface cuts, Newton's steps onto each corner and face).
 ##
+## And which images of each body are drawn at all (zone_sections.gdshaderinc, IMAGES): one thinner
+## across than CULL_PX of a pixel is not, its vertices go out of the picture at once (cull_tex),
+## and so is none whose body is not the one the pass took (a slot not worked out this frame).
+##
 ## On the XR camera's compositor (on the desktop the window's camera's), before the opaque pass,
 ## every frame whatever the foveation. Renderer hands it the space's numbers, the head each frame
 ## and the bodies in the zone (set_bodies: the same frame's as their instances); the eyes are
@@ -17,8 +21,10 @@ extends CompositorEffect
 ## renders with.
 
 const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a slot
+const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
+var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
 
 var _rd: RenderingDevice
 var _shaders := {}                  # "ball", "cube" -> RID
@@ -27,6 +33,8 @@ var _sets := {}
 var _ubo: RID                       # Params
 var _bodies: RID                    # Bodies
 var _tex: RID
+var _cull: RID                      # images x slots, a layer per eye
+var _images := 0                    # images a body (Renderer.ZONE_IMAGES)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture (named by geo.gdshaderinc, not read)
 var _grid := Vector4.ZERO           # columns, the fine mesh's rows, the coarse mesh's, a slot's rows
@@ -46,8 +54,8 @@ func _init() -> void:
 
 
 ## The meshes (Renderer._zone_mesh): columns, the fine and the coarse mesh's rows (the same for
-## balls and cubes), and the slots: balls, then cubes. Once, before the first frame.
-func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: int) -> void:
+## balls and cubes), the slots: balls, then cubes, and the images a body. Once, before the first frame.
+func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: int, images: int) -> void:
 	var slot_rows := fine_rows + coarse_rows + 2
 	assert(4 * (balls + cubes) <= BODY_ROWS)
 	_grid = Vector4(columns, fine_rows, coarse_rows, slot_rows)
@@ -66,6 +74,19 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	_tex = _rd.texture_create(f, RDTextureView.new())
 	tex.texture_rd_rid = _tex
+	# no image drawn until the pass has said which: a texel of noughts is no body's
+	_images = images
+	var c := RDTextureFormat.new()
+	c.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+	c.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	c.width = images
+	c.height = _slots
+	c.array_layers = 2
+	c.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
+	var zero := PackedByteArray()
+	zero.resize(16 * images * _slots)
+	_cull = _rd.texture_create(c, RDTextureView.new(), [zero, zero])
+	cull_tex.texture_rd_rid = _cull
 
 
 ## The space and its table (Renderer.upload_space), as FloorFov.set_space takes them.
@@ -112,7 +133,7 @@ func _build() -> void:
 	var zone: String = (load("res://shaders/zone.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/zone_sections.gdshaderinc") as ShaderInclude).code
 	body = body.replace("#include_geo_and_zone", geo + "\n" + zone)
-	for kind in ["ball", "cube"]:
+	for kind in ["ball", "cube", "images"]:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -123,7 +144,7 @@ func _build() -> void:
 		_pipes[kind] = _rd.compute_pipeline_create(_shaders[kind])
 	var s := RDSamplerState.new()
 	_sampler = _rd.sampler_create(s)
-	_ubo = _rd.uniform_buffer_create(240)
+	_ubo = _rd.uniform_buffer_create(256)
 	_bodies = _rd.uniform_buffer_create(16 * BODY_ROWS)
 
 
@@ -131,7 +152,7 @@ func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 4:
+	for b in 5:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
@@ -148,13 +169,16 @@ func _uniform_set(kind: String) -> RID:
 			3:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 				u.add_id(_tex)
+			4:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+				u.add_id(_cull)
 		us.append(u)
 	_sets[kind] = _rd.uniform_set_create(us, _shaders[kind], 0)
 	return _sets[kind]
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("cube"):
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("images"):
 		return
 	_mutex.lock()
 	var counts := _counts
@@ -180,6 +204,13 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	for v in 2:
 		var eo := data.get_view_eye_offset(mini(v, views - 1))
 		p.append_array([eo.x, eo.y, eo.z, 0.0])
+	# a pixel's angle at the middle of each eye's picture: the frustum's tangents across over its pixels
+	var size := Vector2(buffers.get_internal_size())
+	var px := PackedFloat32Array()
+	for v in 2:
+		var proj := data.get_view_projection(mini(v, views - 1))
+		px.append(minf(absf(2.0 / (proj.x.x * size.x)), absf(2.0 / (proj.y.y * size.y))))   # y may be flipped
+	p.append_array([px[0], px[1], CULL_PX, 0.0])
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	var nodes := int(_grid.x + 1.0) * int(_grid.y + _grid.z + 2.0)
@@ -195,4 +226,10 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		pc.append_array(PackedInt32Array([0 if k == 0 else _cube0, 0, 0, 0]).to_byte_array())
 		_rd.compute_list_set_push_constant(cl, pc, pc.size())
 		_rd.compute_list_dispatch(cl, int(ceil(nodes / 64.0)), n, views)
+	_rd.compute_list_bind_compute_pipeline(cl, _pipes["images"])
+	_rd.compute_list_bind_uniform_set(cl, _uniform_set("images"), 0)
+	var ipc := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
+	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
+	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
+	_rd.compute_list_dispatch(cl, int(ceil(_images / 32.0)), counts.x + counts.y, views)
 	_rd.compute_list_end()

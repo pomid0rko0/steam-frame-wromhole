@@ -1,7 +1,7 @@
 // The meshes of the bodies in the curved zone (zone.gdshaderinc, zone_vertex), each node once a
 // frame for each eye, for the bodies' vertex shader (body.gdshaderinc, ZONE): a compute shader's
-// body, not a Godot shader's; zone_sections.gd puts the header (the version, BALL or CUBE) before it
-// and geo.gdshaderinc and zone.gdshaderinc where it says.
+// body, not a Godot shader's; zone_sections.gd puts the header (the version, BALL, CUBE or IMAGES)
+// before it and geo.gdshaderinc and zone.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
 // direction from the centre is the axis the mesh is built round) and the body, so each node of a
@@ -11,6 +11,17 @@
 // body, of those in the zone of this kind (slots from pc.first.x on); z: the eye.
 // Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and (t.z, 0, 0, 0) at x = 2 col
 // and 2 col + 1, y = slot * slot_rows + the mesh's first row + row.
+//
+// IMAGES: which images of each body are drawn at all. An image thinner across than a quarter of a
+// pixel (ZoneSections.CULL_PX: the stereo test's rays a quarter of a pixel off a pixel's centre
+// each way don't all meet it, so it counts for no pixel) is left out: next to the photon sphere and
+// round the throat most of a small body's 20 are (a hand's ball's, seen from beside the zone, all
+// but the first). How thick: the images of the points the body's reach off its centre in the ray's
+// plane, along l and along alpha, and the angle between each pair's directions; a pixel there: its
+// angle at the picture's middle times cos^2 of the way off it. Invocation x: the image, y: the body
+// (the zone's balls, then its cubes), z: the eye. Out: a texel per image, body's slot and eye,
+// (the centre's x, y, z the body was taken at, 1 if drawn, else 0): the vertex shader draws an
+// image only where it says 1 for the centre its instance has.
 
 layout(set = 0, binding = 0) uniform sampler2D g_tab;   // geo.gdshaderinc names it; not read here
 layout(set = 0, binding = 1, std140) uniform Params {
@@ -23,6 +34,7 @@ layout(set = 0, binding = 1, std140) uniform Params {
 	vec4 floor_;        // (g_lift, g_beta)
 	mat4 inv_view;      // INV_VIEW_MATRIX
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
+	vec4 px;            // a pixel's angle at the middle of each eye's picture, rad; what share of one is culled
 } zp;
 layout(set = 0, binding = 2, std140) uniform Bodies {
 	vec4 body[80];      // per slot: C, E1, E2, (size, 0, 0, 0)
@@ -32,6 +44,7 @@ layout(push_constant, std430) uniform Kind {
 	ivec4 first;        // its first slot
 } pc;
 layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray out_img;
+layout(set = 0, binding = 4, rgba32f) uniform restrict writeonly image2DArray cull_img;   // IMAGES' out
 
 #define g_prof zp.prof
 #define g_prof2 zp.prof2
@@ -44,6 +57,60 @@ layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray ou
 
 #include_geo_and_zone
 
+#ifdef IMAGES
+// image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis
+// toward t (alpha past 0 or pi: on the far side, toward -t)
+vec4 zs_see(float el, vec3 en, float pl, vec3 t, float a, int j) {
+	if (a < 0.0) {
+		a = -a;
+		t = -t;
+	}
+	if (a > GEO_PI) {
+		a = 2.0 * GEO_PI - a;
+		t = -t;
+	}
+	vec2 sc = geo_sincos(a);
+	float len, fell;
+	vec4 arrive;
+	return geo_see_image(el, en, pl, sc.y * en + sc.x * t, t, a, j, len, arrive, fell);
+}
+
+// the angle between two directions, small: their unit vectors' distance
+float zs_apart(vec4 a, vec4 b) { return length(a / length(a) - b / length(b)); }
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int j = int(id.x);
+	int balls = pc.first.x, all = pc.first.x + pc.first.y;
+	if (j >= pc.first.w || int(id.y) >= all) return;
+	bool cube = int(id.y) >= balls;
+	int s = cube ? pc.first.z + int(id.y) - balls : int(id.y);
+	vec4 C = zb.body[4 * s];
+	float size = zb.body[4 * s + 3].x;
+	float reach = cube ? size * 1.7320508 : size;
+	float el;
+	vec3 en;
+	vec4 ex, ey, ez;
+	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
+	vec3 n;
+	float pl = geo_l_of(C, n);
+	float ca = dot(n, en);
+	vec3 across = n - ca * en;
+	float sa = length(across);
+	vec3 t = sa > 1e-7 ? across / sa : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	float alpha = geo_atan2(sa, ca);
+	vec4 d0 = zs_see(el, en, pl, t, alpha, j);
+	float da = min(reach / geo_r(abs(pl)), 0.5 * GEO_PI);
+	float thick = max(zs_apart(zs_see(el, en, pl, t, alpha + da, j), zs_see(el, en, pl, t, alpha - da, j)),
+			zs_apart(zs_see(el, en, pl + reach, t, alpha, j), zs_see(el, en, pl - reach, t, alpha, j)));
+	float c = -dot(d0, ez) / length(d0);
+	float px = (id.z == 0u ? zp.px.x : zp.px.y) * max(c * c, 0.0);
+	// not a number anywhere: drawn
+	bool drawn = !geo_finite(thick + c) || thick >= zp.px.z * px;
+	imageStore(cull_img, ivec3(j, s, int(id.z)), vec4(C.xyz, drawn ? 1.0 : 0.0));
+}
+#else
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 void main() {
 	uvec3 id = gl_GlobalInvocationID;
@@ -74,3 +141,4 @@ void main() {
 	imageStore(out_img, ivec3(2 * int(col), y, int(id.z)), vec4(pe, t.xy));
 	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, 0.0, 0.0, 0.0));
 }
+#endif

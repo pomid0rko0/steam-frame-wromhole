@@ -68,6 +68,8 @@ uniform float zone_columns = 64.0;
 // the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this kind's
 // first slot (instance i: body i / zone_images), this mesh's first row in a slot, a slot's rows
 uniform sampler2DArray zone_nodes : filter_nearest, repeat_disable;
+// per image, slot and eye: (the body's centre's x, y, z as the pass took it, 1 if the image is drawn)
+uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;
 uniform int zone_slot = 0;
 uniform int zone_row = 0;
 uniform int zone_slot_rows = 62;
@@ -119,34 +121,45 @@ void vertex() {
 	vec4 ex, ey, ez;
 	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
 	int image = zone_first + INSTANCE_ID % zone_images;
+	int slot = zone_slot + INSTANCE_ID / zone_images;
 	vec4 C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
 	vec4 E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);
 	vec4 E2 = vec4(MODEL_MATRIX[2].z, MODEL_MATRIX[3].xyz);
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
 	float size = INSTANCE_CUSTOM.a;
-	// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
-	ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
-	int row = (zone_slot + INSTANCE_ID / zone_images) * zone_slot_rows + zone_row + node.y;
-	vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
-	vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);
-	vec2 pe = na.xy;
-	vec3 t = vec3(na.zw, nb.x);
-	float pl = pe.x;
-	float alpha = clamp(pe.y, 0.0, GEO_PI);
-	vec2 sca = geo_sincos(alpha);
-	vec3 pn = sca.y * en + sca.x * t;
-	P = vec4(geo_r(abs(pl)) * pn, zone_w(pl));
+	float pl = 0.0;
+	float len = 0.0, fell = 0.0;
+	vec4 arrive = vec4(0.0);
+	// an image the pass leaves out (thinner than a share of a pixel), or of a body it did not take
+	// this frame (a slot not worked out: its nodes are another's, or none): every vertex out of the
+	// picture at the centre, no triangle drawn, no geodesic sought
+	vec4 cull = texelFetch(zone_cull, ivec3(image, slot, int(VIEW_INDEX)), 0);
+	if (cull.w > 0.5 && all(equal(cull.xyz, C.xyz))) {
+		// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
+		ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
+		int row = slot * zone_slot_rows + zone_row + node.y;
+		vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
+		vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);
+		vec2 pe = na.xy;
+		vec3 t = vec3(na.zw, nb.x);
+		pl = pe.x;
+		float alpha = clamp(pe.y, 0.0, GEO_PI);
+		vec2 sca = geo_sincos(alpha);
+		vec3 pn = sca.y * en + sca.x * t;
+		P = vec4(geo_r(abs(pl)) * pn, zone_w(pl));
+		vec4 dir = geo_see_image(el, en, pl, pn, t, alpha, image, len, arrive, fell);
+		POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+	} else {
+		P = C;
+		POSITION = vec4(0.0, 0.0, 2.0, 1.0);
+	}
 	vec4 q = P - C;
 #ifdef BALL
 	nrm = q;
 #else
 	v_box = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
 #endif
-	float len, fell;
-	vec4 arrive;
-	vec4 dir = geo_see_image(el, en, pl, pn, t, alpha, image, len, arrive, fell);
-	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
 #elif defined(TOY)
 	vec4 C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
 	vec4 E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);

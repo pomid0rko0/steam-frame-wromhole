@@ -138,7 +138,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# the meshes' nodes: ZoneSections' slots, balls' first, then cubes', each the fine mesh's rows,
 	# then the coarse one's (both kinds' meshes alike: one grid for its compute shader)
 	assert(ZONE_AZIMUTHS[0] == ZONE_AZIMUTHS[1])
-	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES)
+	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES, ZONE_IMAGES)
 	for k in 4:
 		var m := ShaderMaterial.new()
 		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
@@ -147,6 +147,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
 		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
 		m.set_shader_parameter("zone_nodes", zone_sections.tex)
+		m.set_shader_parameter("zone_cull", zone_sections.cull_tex)
 		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
 		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)

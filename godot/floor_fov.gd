@@ -32,8 +32,6 @@ const TS_END := "floor_fov end"
 
 signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
-signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
-
 var level := 0                      # 0: off
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
 var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
