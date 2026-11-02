@@ -63,6 +63,9 @@ done
 # zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
 # a control, under the mouth looking up (curved_check.gd's PLACES)
 for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
+# the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
+# the start looking up at the mouth, out in B looking back at it
+for p in 0 6; do render -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 # the stereo check scene, also flying (cases 4 and 5)
 for c in 0 1 2 3 4 5; do
 	for m in app lens floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
@@ -110,13 +113,16 @@ for c in 0 1; do
 done
 # the traced rays take minutes a place (more in the throat, where they go round it): JOBS at once,
 # their verdicts in order
-for p in 0 1 2 3 4 5 6 7 8; do
+for c in crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6; do
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
-	python3 "$CMP/curved.py" "$OUT/crv$p" > "$LOGS/crv$p.cmp" 2>&1 &
+	python3 "$CMP/curved.py" "$OUT/$c" > "$LOGS/$c.cmp" 2>&1 &
 done
 wait
 for p in 0 1 2 3 4 5 6 7 8; do
 	verdict "simulated headset, place $p where light is bent: balls, cubes and the floor against traced rays, every image, each eye" cat "$LOGS/crv$p.cmp"
+done
+for p in 0 6; do
+	verdict "simulated headset, place $p where light is bent, our own foveation: the same" cat "$LOGS/crf$p.cmp"
 done
 for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"

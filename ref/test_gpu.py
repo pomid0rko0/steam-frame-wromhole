@@ -21,10 +21,14 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     ref/geo.py's leave (the sweeps by quadrature; itself checked against DOP853 on some of them):
     whether it enters the zone, the universe it leaves into, where (the exit point's direction from
     the centre), its direction there and its length; then where that line meets the floor (z =
-    -lift, as lens.gdshaderinc finds it). Where the exit is ill-posed (the reference's own exit
-    moves by more than half a limit, or into the other universe, as the launch turns by ALPHA_TOL:
-    next to b = r_min and the photon sphere, a ray grazing the zone's ball), the GPU's exit must be
-    the reference's for a launch within ALPHA_TOL (found by bisection on the turn);
+    -lift, as lens.gdshaderinc finds it) within FLOOR_SEEN, beyond which the haze leaves nothing of
+    it. Where the exit is ill-posed (the reference's own exit moves by more than half a limit, or
+    into the other universe, as the launch turns by ALPHA_TOL: next to b = r_min and the photon
+    sphere, a ray grazing the zone's ball), the GPU's exit must be the reference's for a launch
+    within ALPHA_TOL (found by bisection on the turn);
+  the same by the eye's table (geo_xt, our own foveation's floor), on the same rays: its texels about
+    each ray worked out as the table's pass does, the ray by the line between them or by
+    geo_exit_way where the cell is not good;
   where a line of a half-surface leaves a body in the zone (zone_edge_ball, zone_edge_cube): lines
     in every direction from inner points of balls and cubes on the cylinder, the fillet, across the
     zone's edge and out of it, half-surfaces in every azimuth: the point on the body's surface
@@ -34,14 +38,17 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     bodies: every vertex on its body; a ball's first and last columns' sections at its tips; every
     corner of a cube's sections (float64: where the half-surface meets an edge) a vertex of its
     column, and on the same row in the next column (the strips join a corner to itself); a cube an
-    edge of which the space's curve takes back round the axis is left out (counted): its sections
-    cut that edge twice, which one corner an edge can't be;
+    edge of which the space's curve takes back round the axis (folds) only near its surface (TEAR):
+    its sections cut that edge twice, which one corner an edge can't be; and as near their
+    surface, cubes the axis passes through or next to a corner, an edge or a face (within a
+    hundredth of a radian), where the mesh once tore, vertices metres off;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
 float32; the GPU here is given them so written.
 Exit status 1 on any failure.
    python3 ref/test_gpu.py [numbers profile images exit zone eye]     (all, or those checks)"""
+import copy
 import os
 import re
 import sys
@@ -108,6 +115,12 @@ DIRECTION = 5e-4
 NAN_DIRECTION = 2e-2         # radians: the search, a quarter of its rays lost, at most this far off
 LENGTH_REL = 1e-2
 FLOOR_ABS, FLOOR_REL = 1e-3, 2e-3     # metres where a pixel's ray meets the floor, and a share of its way
+# metres of way beyond which the floor is its universe's horizon colour to within half a step of 8
+# bits (look.gdshaderinc's look_ground: the haze 1 - exp(-way / LOOK_HAZE)), so where a ray meets it
+# there doesn't show: a ray grazing it a kilometre off meets it metres further for a direction off
+# by a hundredth of a pixel
+LOOK_HAZE = float(re.search(r'const float LOOK_HAZE = ([\d.]+);', open(os.path.join(SHADERS, 'look.gdshaderinc')).read()).group(1))
+FLOOR_SEEN = LOOK_HAZE * np.log(2 * 255)
 ALPHA_TOL = 1e-5             # radians of launch (a hundredth of a pixel): an ill-posed exit is the GPU's
 EYE_POS, EYE_AXES = 2e-5, 3e-4
 CHORD = 5e-5                 # metres off a body's surface (a ball's chord, a cube's slab)
@@ -153,6 +166,33 @@ void main() {
 		outp[O + 1] = vec4(pos, 0.0);
 		outp[O + 2] = vec4(dir, 0.0);
 		outp[O + 3] = vec4(pos.xy + max(ft, 0.0) * dir.xy, 0.0, 0.0);
+	} else if (mode == 10) {    // as 5, the way across by the eye's table (geo_xt): its texels k and k + 1
+		// worked out here as foveation's table pass works them out; and 1 in the floor's point's .w if
+		// the ray took the table's line, not geo_exit_way
+		float al = abs(a.x);
+		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));
+		float ca, sa, b, gap, sigma;
+		vec3 t;
+		bool hit = geo_exit_ray(a.x, eye, a.yzw, c, ca, sa, t, b, gap, sigma);
+		float sheet = a.x < 0.0 ? -1.0 : 1.0, way = 0.0, took = 0.0;
+		vec3 pos = eye.x * a.yzw, dir = ca * a.yzw + sa * t;
+		if (hit) {
+			vec2 xr = geo_xt_range(al, eye);
+			bool outw = ca >= 0.0;
+			int k;
+			float x = geo_xt_place(al, b, gap, sigma, xr, k);
+			vec4 ta = geo_xt_texel(al, eye, outw, xr, k), tc = geo_xt_texel(al, eye, outw, xr, k + 1);
+			took = ta.w;
+			vec3 w = geo_xt_way(ta, tc, x, al, eye, b, sigma, gap, outw);
+			if (w.z > 0.5) sheet = -sheet;
+			geo_exit_at(a.yzw, t, b, w.x, pos, dir);
+			way = w.y;
+		}
+		float ft = dir.z < 0.0 ? (-g_lift - pos.z) / dir.z : -1.0;
+		outp[O] = vec4(hit ? 1.0 : 0.0, sheet, way, ft < 0.0 ? -1.0 : way + ft);
+		outp[O + 1] = vec4(pos, 0.0);
+		outp[O + 2] = vec4(dir, 0.0);
+		outp[O + 3] = vec4(pos.xy + max(ft, 0.0) * dir.xy, 0.0, took);
 	} else if (mode == 6) {     // a = (eye l, n), c = (point l, n), (t, alpha), (image): the direction, (len, fell)
 		vec4 e = inp[I + 2];
 		float len, fell; vec4 arr;
@@ -163,7 +203,8 @@ void main() {
 	} else if (mode == 9) {     // a = (u, v, columns, rows), c = (en, size), (ball 1 or cube 0), C, E1, E2, E3: (l, alpha), t
 		vec4 C = inp[I + 3];
 		vec3 t;
-		vec2 p = zone_vertex(a.xy, a.z, a.w, inp[I + 2].x > 0.5, c.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], geo_normal(C), c.w, t);
+		bool none;
+		vec2 p = zone_vertex(a.xy, a.z, a.w, inp[I + 2].x > 0.5, c.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], geo_normal(C), c.w, t, none);
 		outp[O] = vec4(p, 0.0, 0.0);
 		outp[O + 1] = vec4(t, 0.0);
 	} else if (mode == 7 || mode == 8) {    // a = (l0, al0, dl, dal), c = (en, size), t, C, E1, E2, E3: (l, alpha)
@@ -480,8 +521,9 @@ def floor_of(pos, dir_, way):
 def compare(ref, g):
     """The GPU's way out g = (hit, sheet, way, floor's way), pos, dir, floor's xy against the reference's
     ((hit, sheet), psi, way, pos, dir): (same universe, pos's angle, dir's angle, way's share of the
-    limit, floor: None if both see the sky, its share of the limit if both the floor, 'horizon' for
-    floor and sky crossed as near the horizon as the GPU's direction is off, else 'flip'))."""
+    limit, floor: None if both see the sky or the floor beyond FLOOR_SEEN, its share of the limit if
+    both the floor, 'horizon' for floor and sky crossed as near the horizon as the GPU's direction is
+    off, else 'flip'))."""
     key, psi, way, pos, dir_ = ref
     same = key == (g[0][0] > 0.5, float(g[0][1]))
     pa, da = angle(g[1][:3], pos), angle(g[2][:3], dir_)
@@ -489,7 +531,7 @@ def compare(ref, g):
     fr = floor_of(pos, dir_, way)
     if (fr is None) != (g[0][3] < 0):
         fl = 'horizon' if abs(dir_[2]) <= da + 1e-7 else 'flip'
-    elif fr is None:
+    elif fr is None or (fr[1] > FLOOR_SEEN and g[0][3] > FLOOR_SEEN):
         fl = None
     else:
         fl = float(np.linalg.norm(g[3][:2] - fr[0]) / (FLOOR_ABS + FLOOR_REL * fr[1]))
@@ -578,8 +620,9 @@ def backward(X, g):
     return best
 
 
-def exit_checks(name, S, gpu, rng):
-    """Each pixel's ray out of the curved zone, and the floor along it."""
+def exit_checks(name, S, gpu, rng, table=False):
+    """Each pixel's ray out of the curved zone, and the floor along it; table: by the eye's table
+    (geo_xt, our own foveation's floor)."""
     places = eye_places(S)
     rows = []
     while len(rows) < 2000:
@@ -595,8 +638,9 @@ def exit_checks(name, S, gpu, rng):
             alpha = launch(rng, False)
         rows.append([el, *en, side * np.cos(alpha), *(np.sin(alpha) * t)])
     rows = np.asarray(rows, 'f4')
-    o = gpu.run(5, rows, out_per=4)
+    o = gpu.run(10 if table else 5, rows, out_per=4)
     gs = [o[4 * k:4 * k + 4] for k in range(len(rows))]
+    took = int(sum(g[3][3] > 0.5 for g in gs))
     worst = dict(pa=0.0, da=0.0, werr=0.0, fl=0.0, back=0.0)
     wrong, wrong_floor, ill, enter, other, horizon, floors = [], [], 0, 0, 0, 0, 0
     for k, (row, g) in enumerate(zip(rows, gs)):
@@ -627,16 +671,18 @@ def exit_checks(name, S, gpu, rng):
             worst['fl'] = max(worst['fl'], c[4]); floors += 1
         horizon += c[4] == 'horizon'
     refdiff = reference_vs_dop853(S, rows[:300])
-    fails = not check(f'{name}: the way out of the zone (geo_exit)', not wrong and refdiff <= 1e-6,
+    what = 'by the eye\'s table (geo_xt)' if table else '(geo_exit)'
+    fails = not check(f'{name}: the way out of the zone {what}', not wrong and refdiff <= 1e-6,
                       f'exit point off by {worst["pa"]:.1e} rad, direction by {worst["da"]:.1e} rad, length {worst["werr"]:.2f} of the limit at most; '
                       f'{len(wrong)} wrong ({len(rows)} rays, {enter} into the zone, {other} of them out into the other universe; '
-                      f'{ill} ill-posed, each the reference\'s for a launch within {worst["back"]:.0e} rad; the reference off DOP853 by {refdiff:.0e})')
+                      f'{ill} ill-posed, each the reference\'s for a launch within {worst["back"]:.0e} rad; the reference off DOP853 by {refdiff:.0e}'
+                      + (f'; {took} of those into the zone by the table\'s line, the rest by geo_exit_way)' if table else ')'))
     for k, row, g, ref, c in (wrong + wrong_floor)[:8]:
         print(f'    ray {k}: eye l {row[0]!r}, n {tuple(row[1:4])}, D {tuple(row[4:8])}: GPU (hit, sheet, way, floor way) {tuple(g[0])}, pos {tuple(g[1][:3])}, dir {tuple(g[2][:3])}; '
               f'reference {ref[0]}, psi {ref[1]:.6f}, way {ref[2]:.6f}, pos {tuple(np.round(ref[3], 6))}, dir {tuple(np.round(ref[4], 6))}; '
               f'(same universe, pos, dir, way, floor) {c}')
-    fails += not check(f'{name}: where the way out meets the floor', not wrong and not wrong_floor,
-                       f'{worst["fl"]:.2f} of the limit at most ({floors} rays onto the floor; {len(wrong_floor)} wrong; '
+    fails += not check(f'{name}: where the way out {"by the table " if table else ""}meets the floor', not wrong and not wrong_floor,
+                       f'{worst["fl"]:.2f} of the limit at most ({floors} rays onto the floor within {FLOOR_SEEN:.0f} m, where it shows; {len(wrong_floor)} wrong; '
                        f'{horizon} floor for sky or back within the direction\'s error of the horizon)')
     return fails
 
@@ -781,6 +827,37 @@ def zone_checks(name, S, gpu, rng):
 
 MESHES = ((64, 48), (64, 12))   # the zone bodies' meshes: Renderer's ZONE_AZIMUTHS, ZONE_ROUND, ZONE_ROUND_COARSE
 NEAR_END = 5e-4                 # metres: a cube's section corner a vertex within this, next to its edge's end
+TEAR = 0.05                     # a share of a cube's half size: no vertex further off its surface
+
+
+def near_axis_cube(S, rng):
+    """A cube in the zone and an eye's axis en through or next to its corner, edge or face (to
+    within a hundredth of a radian), in zone_body's form."""
+    size = rng.choice([0.15, 0.25, 0.3])
+    lc = rng.uniform(-S.L - 0.3, S.L + 0.3)
+    nc = unit(rng.normal(size=3))
+    C = np.r_[float(S.r(lc)) * nc, float(S.w(lc))]
+    dr, dw = float(S.dr(lc)), float(S.dw(lc))
+    a1 = unit(np.cross(nc, rng.normal(size=3)))
+    T = [np.r_[dr * nc, dw], np.r_[a1, 0.0], np.r_[np.cross(nc, a1), 0.0]]
+    Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+    E = [sum(Q[i, j] * T[j] for j in range(3)) for i in range(3)]
+    x = rng.uniform(-1, 1, 3)
+    kind = rng.integers(3)
+    k = rng.integers(3)
+    if kind == 0:
+        x = np.sign(x)
+    elif kind == 1:
+        x = np.sign(x)
+        x[k] = rng.uniform(-1, 1)
+    else:
+        x[k] = np.sign(x[k])
+    P = onto(S, C + size * (x @ np.array(E)), normal4(S, C))
+    n = unit(unit(P[:3]) + rng.choice([0.0, 1e-4, 1e-3, 1e-2]) * rng.normal(size=3))
+    en = n if rng.uniform() < 0.5 else -n
+    t = rng.normal(size=3)
+    t = unit(t - (t @ en) * en)
+    return C, E, size, en, t, np.cross(en, t), True
 
 
 def zone_mesh_checks(name, S, gpu, rng):
@@ -792,11 +869,14 @@ def zone_mesh_checks(name, S, gpu, rng):
             b = zone_body(S, rng, ball, axis_share=0.4)
             if b is not None:
                 bodies.append(b)
+        near = 0 if ball else 30            # bodies[30:]: next to the axis's features
+        bodies += [near_axis_cube(S, rng) for _ in range(near)]
         for cols, rws in MESHES:
             rows = [[i / cols, j / rws, cols, rws, *en, size, 1.0 if ball else 0.0, 0, 0, 0, *C, *E[0], *E[1], *E[2]]
                     for C, E, size, en, t, m, axis in bodies for i in range(cols + 1) for j in range(rws + 1)]
             o = gpu.run(9, rows, in_per=7, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
             worst, alpha_out, tip, corners, missed, moved, strips, folded = 0.0, 0, 0.0, 0, [], 0, 0, 0
+            torn, tear = [], 0.0
             for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
                 L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
                 n = np.cos(A)[..., None] * en + np.sin(A)[..., None] * T
@@ -804,10 +884,16 @@ def zone_mesh_checks(name, S, gpu, rng):
                 q = P - C
                 E = np.array(E)
                 sl = q @ E.T                                   # [cols + 1, rows + 1, 3]
-                if not ball and folds(S, C, E, size, en):
-                    folded += 1
-                    continue
                 off = np.abs(np.linalg.norm(q, axis=-1) - size) if ball else np.abs(np.abs(sl).max(-1) - size)
+                off = np.where(np.isfinite(off), off, np.inf)
+                if not ball and (k >= 30 or folds(S, C, E, size, en)):
+                    # near the surface: no tear (a vertex a hair across the axis, alpha past 0 or
+                    # pi, body.gdshaderinc draws on the axis, where its image is on the ring)
+                    folded += k < 30
+                    tear = max(tear, off.max() / size)
+                    if off.max() > TEAR * size:
+                        torn.append((k, off.max()))
+                    continue
                 worst = max(worst, off.max())
                 alpha_out += int(((A < -1e-6) | (A > np.pi + 1e-6)).sum())
                 if ball:
@@ -846,13 +932,17 @@ def zone_mesh_checks(name, S, gpu, rng):
                             if rs and rows_of[i + 1].get(e) and not rs & rows_of[i + 1][e]:
                                 moved += 1
             body = 'ball' if ball else 'cube'
-            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not missed and moved == 0)
+            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not missed and moved == 0 and not torn)
             fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} (zone_vertex)', ok,
                                f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
                                + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
                                   f'; {len(missed)} of {corners} section corners not a vertex, {moved} on another row in the next column ({strips} strips); '
-                                  f'{folded} left out, an edge taken back round the axis')
+                                  f'{folded} with an edge taken back round the axis and {near} with the axis next to a corner, an edge or a face: '
+                                  f'off their surface by {tear:.1e} of the half size at most, {len(torn)} beyond {TEAR}')
                                + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis)')
+            for k, d in torn[:5]:
+                C, E, size, en = bodies[k][:4]
+                print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: a vertex {d:.2e} m off its surface')
             for k, i, e, d in missed[:5]:
                 C, E, size, en = bodies[k][:4]
                 print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: column {i}, edge {e}: the nearest vertex {d:.2e} m from its corner')
@@ -1070,7 +1160,10 @@ def main(checks=('numbers', 'profile', 'images', 'exit', 'zone', 'eye')):
         if 'images' in checks:
             fails += image_checks(name, S, gpu, gpu_nan, rng)
         if 'exit' in checks:
+            # the table's on the same rays, and the checks after see the same draws as without it
+            same = copy.deepcopy(rng)
             fails += exit_checks(name, S, gpu, rng)
+            fails += exit_checks(name, S, gpu, same, table=True)
         if 'zone' in checks:
             fails += zone_checks(name, S, gpu, rng)
             fails += zone_mesh_checks(name, S, gpu, rng)

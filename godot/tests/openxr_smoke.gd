@@ -133,7 +133,7 @@ func _process(_delta: float) -> bool:
 				and not p.foveation_chosen)
 		U.check("foveation at first: medium, the floor from its texture", main.foveation.level == p.DEFAULT_FOVEATION
 				and _value(p, "fov") == "средняя" and main.foveation.enabled
-				and main.renderer.floor_mat.get_shader_parameter("fov_on") == true)
+				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
 		U.check("the eye at its full size at first: Monado's own", p.full_eye == 128 and _eye() == Vector2i(128, 128)
 				and main.xr_view.size == Vector2i(128, 128) and _value(p, "scale") == "100% (128×128)",
 				"%s, viewport %s" % [_eye(), main.xr_view.size])
@@ -225,7 +225,7 @@ func _foveation(p: Menu, step: int) -> void:
 	if step == 0:
 		p.choose_foveation(0)
 		U.check("выкл: the floor per pixel", fov.level == 0 and _value(p, "fov") == "выкл" and not fov.enabled
-				and main.renderer.floor_mat.get_shader_parameter("fov_on") == false)
+				and main.renderer.floor_quad.material_override == main.renderer.floor_mat)
 		U.check("Monado: no eye tracking, the fovea ahead", not fov.gaze_on
 				and _row(p, "fov").name_label.text == "фовеация · по центру")
 		p.choose_scale(0.8)
@@ -235,7 +235,7 @@ func _foveation(p: Menu, step: int) -> void:
 		p.press()
 		cfg.load("user://settings.cfg")
 		U.check("the foveation row, right twice, A: средняя, foveation 2, the floor from its texture", fov.level == 2
-				and fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == true and _value(p, "fov") == "средняя")
+				and fov.enabled and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat and _value(p, "fov") == "средняя")
 		U.check("foveation on: the eye stays at 80%, both kept", p.render_scale == 0.8
 				and cfg.get_value("render", "foveation_level", -1) == 2 and cfg.get_value("render", "eye", 0.0) == 0.8)
 	elif step == 1:
@@ -247,7 +247,8 @@ func _foveation(p: Menu, step: int) -> void:
 		p.choose_scale(1.0)
 		p.change(1)
 		p.press()
-		U.check("right, A: сильная", fov.level == 3 and fov.enabled and _value(p, "fov") == "сильная")
+		U.check("right, A: сильная, the floor from its texture", fov.level == 3 and fov.enabled and _value(p, "fov") == "сильная"
+				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
 	elif step == 2:
 		var size := main.xr.get_render_target_size()
 		U.check("its texture: made for the picture's 128 pixels, smaller than it", fov._size == Vector2i(128, 128)
@@ -262,7 +263,7 @@ func _foveation(p: Menu, step: int) -> void:
 		p.choose_scale(1.0)
 		p.choose_foveation(0)
 		U.check("off again: the floor per pixel", not fov.enabled
-				and main.renderer.floor_mat.get_shader_parameter("fov_on") == false)
+				and main.renderer.floor_quad.material_override == main.renderer.floor_mat)
 		# the zones: the coarse texels tinted, not kept
 		p.move(1)
 		p.press()

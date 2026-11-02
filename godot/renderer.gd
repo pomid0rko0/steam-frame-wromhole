@@ -9,7 +9,8 @@ extends Node3D
 ##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
 ##   the zone's ball is dropped.
 ## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
-##   geodesic (body.gdshaderinc).
+##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body worked out once a
+##   frame for each eye (zone_sections.gd), each image's vertices only find their geodesics.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -31,6 +32,8 @@ extends Node3D
 # a ShaderMaterial keeps only the uniforms its shader has, so one material switched between them
 # would lose the gravity table
 const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
+# under foveation the quad only samples its texture (either gravity view's: it works both out)
+const FLOOR_SAMPLE_SHADER := preload("res://shaders/floor_sample.gdshader")
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
@@ -89,7 +92,8 @@ var scene: Dictionary
 var xr: XRInterface             # null on the desktop
 var xr_view: SubViewport        # where XR renders; null on the desktop
 var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
-var floor_mat: ShaderMaterial   # the one drawn (gravity_view)
+var floor_mat: ShaderMaterial   # the one drawn (gravity_view) without our own foveation
+var floor_sample_mat := ShaderMaterial.new()   # the one drawn with it (FLOOR_SAMPLE_SHADER)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var zone_mats: Array[ShaderMaterial] = []   # balls fine, coarse, cubes fine, coarse
@@ -104,8 +108,10 @@ var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
 var foveation := Foveation.new()   # the floor coarser away from the gaze (on the camera's compositor: Main)
+var zone_sections := ZoneSections.new()   # the zone bodies' meshes (on the camera's compositor too)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var toy_count := 0              # balls and cubes drawn (set_objects)
+var zone_count := Vector2i.ZERO  # of them in the curved zone (or reaching into it): balls, cubes
 var ball_col := PackedVector4Array()   # the balls' (colour, radius) as set_objects got them
 var bodies: Array = []          # what set_objects drew: [kind ("ball", "cube"), centre (R^4), radius or half size]
 var lens_static := PackedVector4Array()   # the scene's static objects in the lens list, A's then B's
@@ -123,10 +129,16 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.render_priority = FLOOR_PRIORITY
 		floor_mats.append(m)
 	floor_mat = floor_mats[0]
-	foveation.floor_mats = floor_mats
+	floor_sample_mat.shader = FLOOR_SAMPLE_SHADER
+	floor_sample_mat.render_priority = FLOOR_PRIORITY
+	foveation.sample_mat = floor_sample_mat
 	foveation.xr = xr
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
+	# the meshes' nodes: ZoneSections' slots, balls' first, then cubes', each the fine mesh's rows,
+	# then the coarse one's (both kinds' meshes alike: one grid for its compute shader)
+	assert(ZONE_AZIMUTHS[0] == ZONE_AZIMUTHS[1])
+	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES, ZONE_IMAGES)
 	for k in 4:
 		var m := ShaderMaterial.new()
 		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
@@ -134,6 +146,11 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_images", ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
 		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
+		m.set_shader_parameter("zone_nodes", zone_sections.tex)
+		m.set_shader_parameter("zone_cull", zone_sections.cull_tex)
+		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
+		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
+		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
 		zone_mats.append(m)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
@@ -152,7 +169,8 @@ func _ready() -> void:
 	var q := QuadMesh.new()
 	q.size = Vector2(2.0, 2.0)
 	floor_quad.mesh = q
-	floor_quad.material_override = floor_mat
+	_floor_material()
+	foveation.toggled.connect(_floor_material)
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
@@ -191,11 +209,17 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _warm > 0:
 		_warm -= 1
-		floor_quad.material_override = floor_mats[1] if _warm > 0 else floor_mat
 		arrows.visible = _warm > 0 or gravity_view == 2
 		if _warm == 0:
 			for k in beams.size():
 				beams[k].visible = _beam_on[k]
+		_floor_material()
+
+
+## The floor's quad's material: foveation's while it is on (it samples its texture),
+## else the gravity view's per-pixel floor (the warm frames: the gravity floor's, to compile it).
+func _floor_material() -> void:
+	floor_quad.material_override = floor_mats[1] if _warm > 0 else (floor_sample_mat if foveation.enabled else floor_mat)
 
 
 var _warm := 3                  # frames left drawing the gravity views and the beams (_process)
@@ -222,9 +246,10 @@ func upload_space() -> void:
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
-	foveation.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
-			Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
-			Vector2(space.lift, space.grav_beta))
+	for fx in [foveation, zone_sections]:
+		fx.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
+				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
+				Vector2(space.lift, space.grav_beta))
 
 
 var _sweep_tex: Texture2D
@@ -254,6 +279,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		m.set_shader_parameter("head_f", f)
 		m.set_shader_parameter("head_pos", head_pos)
 	foveation.set_head(l, n, f, head_pos)
+	zone_sections.set_head(l, n, f, head_pos)
 
 
 ## The movable balls and cubes: balls by their centres (points of R^4) and (colour, radius), cubes
@@ -261,7 +287,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 ## E1, E2 of the first cube, then the second's...; the third follows from them) and (colour, half
 ## size). Colours as Godot's Color takes them (sRGB). At most MAX_BALLS and MAX_CUBES. Each is drawn
 ## as a body out in a flat universe (seen straight, and in the lens list) or, reaching into the
-## curved zone, as one in it (out_of_zone).
+## curved zone, as one in it (out_of_zone; its meshes' nodes by ZoneSections, this frame's).
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		cube_axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:
 	var n := mini(pos.size(), MAX_BALLS)
@@ -270,12 +296,20 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	var inz := [0, 0]
 	var lens_a := PackedVector4Array()
 	var lens_b := PackedVector4Array()
+	var zone_rows := PackedVector4Array()       # ZoneSections' slots: balls' first, cubes' from MAX_BALLS
+	zone_rows.resize(4 * (MAX_BALLS + MAX_CUBES))
 	for i in n:
 		var C := pos[i]
 		var e := _tangent_pair(C)
 		var c := _linear(col[i])
 		var out := out_of_zone(C, col[i].w)
 		_place(0, out, flat[0] if out else inz[0], pack(C, e[0], e[1]), c)
+		if not out:
+			var k: int = 4 * inz[0]
+			zone_rows[k] = C
+			zone_rows[k + 1] = e[0]
+			zone_rows[k + 2] = e[1]
+			zone_rows[k + 3] = Vector4(col[i].w, 0.0, 0.0, 0.0)
 		if out:
 			flat[0] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 0.0), Vector4(1.0, 0.0, 0.0, col[i].w),
@@ -294,6 +328,12 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		var half := ccol[i].w
 		var out := out_of_zone(C, half * sqrt(3.0))
 		_place(1, out, flat[1] if out else inz[1], pack(C, E1, E2), c)
+		if not out:
+			var k: int = 4 * (MAX_BALLS + inz[1])
+			zone_rows[k] = C
+			zone_rows[k + 1] = E1
+			zone_rows[k + 2] = E2
+			zone_rows[k + 3] = Vector4(half, 0.0, 0.0, 0.0)
 		if out:
 			flat[1] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 2.0), Vector4(E1.x, E1.y, E1.z, half),
@@ -308,8 +348,10 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	cubes.multimesh.visible_instance_count = flat[1]
 	for k in 4:
 		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
+	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
+	zone_count = Vector2i(inz[0], inz[1])
 	ball_col = col.slice(0, n)
 	bodies.clear()
 	for i in n:
@@ -436,7 +478,7 @@ func _tangent_pair(C: Vector4) -> Array:
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	floor_mat = floor_mats[mini(gravity_view, 1)]
-	floor_quad.material_override = floor_mat
+	_floor_material()
 	foveation.gravity = gravity_view > 0
 	arrows.visible = gravity_view == 2
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])

@@ -2,8 +2,8 @@
 same without), each eye:
 - the fovea: <dir>/<b>_app_<eye>.png against <dir>/<a>_app_<eye>.png at the pixels whose centres
   are nearer than r0 - MARGIN to the pixel g the eye looks at, both from <dir>/<b>_fovea.json
-  (Foveation.fovea: g's x, y and r0 per eye, x from the left, y from the top row as the images are
-  saved). There a pixel takes the centre of a texel worked out at its own centre (foveation.gd's
+  (Foveation.fovea: g's x, y, r0 and m per eye, x from the left, y from the top row as the images
+  are saved). There a pixel takes the centre of a texel worked out at its own centre (foveation.gd's
   top), so only the GPU's rounding tells them apart: the largest difference of any colour channel,
   in 1/255, and how many pixels differ by more than ROUNDING. Passes when those are fewer than
   MAX_SHARE of the fovea's pixels (a pixel right on a sharp edge, the sky's against what the curved
@@ -32,7 +32,7 @@ for pair in sys.argv[2:]:
     for i, eye in enumerate(('left', 'right')):
         A = np.asarray(Image.open(os.path.join(d, f'{a}_app_{eye}.png')).convert('RGB'), int)
         B = np.asarray(Image.open(os.path.join(d, f'{b}_app_{eye}.png')).convert('RGB'), int)
-        gx, gy, r0 = fovea[3 * i:3 * i + 3]
+        gx, gy, r0 = fovea[4 * i:4 * i + 3]
         ys, xs = np.mgrid[0:A.shape[0], 0:A.shape[1]] + 0.5
         inside = np.hypot(xs - gx, ys - gy) < r0 - MARGIN
         diff = np.abs(A - B).max(axis=2)[inside]

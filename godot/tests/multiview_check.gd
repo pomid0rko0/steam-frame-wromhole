@@ -24,7 +24,7 @@ extends SceneTree
 ## floor coloured by gravity, also the field lines with their arrows).
 ## fov: foveated rendering on (foveation.gd) at FOV_LEVELS[case], in case 1 with the eyes tracked
 ## looking off the middle (FOV_GAZE); in mode "app" each eye's fovea goes into out_prefix_fovea.json
-## (Foveation.fovea: [g's pixel x, y, r0] per eye), for tools/compare/fovea.py.
+## (Foveation.fovea: [g's pixel x, y, r0, m] per eye), for tools/compare/fovea.py.
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
@@ -91,8 +91,7 @@ func _process(_delta: float) -> bool:
 			main.foveation.show = true
 		if mode == "probe":
 			main.foveation.probe = true
-			for m in main.renderer.floor_mats:
-				m.set_shader_parameter("fov_probe", true)
+			main.renderer.floor_sample_mat.set_shader_parameter("fov_probe", true)
 		if mode == "lens":
 			for m in main.renderer.floor_mats:
 				m.set_shader_parameter("lens_mark", true)

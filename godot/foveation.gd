@@ -7,7 +7,8 @@ extends CompositorEffect
 ## the bodies out in the flat universes); the bodies seen straight and in the zone are geometry,
 ## drawn at the picture's full resolution always. So before the bodies are drawn, a compute shader
 ## (shaders/foveation.gdshaderinc) works out what the quad would draw into a texture per eye, and
-## the quad then only takes each pixel's colour from there, filtered (floor.gdshaderinc, fov_on).
+## the quad then only takes each pixel's colour from there, filtered, with a program of its own
+## (shaders/floor_sample.gdshader, sample_mat: Renderer draws the quad with it while this is on).
 ##
 ## The warp, per eye, about the pixel g the eye looks at: the pixel centred at p, r = |p - g| from
 ## g, takes the texture at c + (p - g) F(r) / r, c being g's texel, with
@@ -29,12 +30,16 @@ extends CompositorEffect
 ## across, yellow up to 3, orange up to 4, red beyond; the fovea as it is.
 ##
 ## probe (tests): each texel holds where its pixel is instead of its colour, and the floor's quad
-## draws how far from its own place each pixel took it (floor.gdshaderinc, fov_probe): every pixel
-## of the floor and the sky, not only the fovea, takes the colour worked out where it is.
+## draws how far from its own place each pixel took it (floor_sample.gdshader, fov_probe): every
+## pixel of the floor and the sky, not only the fovea, takes the colour worked out where it is.
+##
+## Three passes: the eyes, their rows of the way out of the zone (a ray's sigma to where it leaves:
+## geo.gdshaderinc, «the way out by a table»), the texture. GPU timestamps before, between and after
+## them (TS_*) give frame_rate.gd the GPU time of each part of the frame.
 ##
 ## On the XR camera's compositor, before the opaque pass (the 3D scene's render pass stays one).
-## Renderer hands it the space's numbers, the head each frame, and the floor's materials, which
-## sample its texture; Main the level and the gaze. Each eye's warp also goes into a small texture
+## Renderer hands it the space's numbers, the head each frame, and the material the floor's quad
+## samples with; Main the level and the gaze. Each eye's warp also goes into a small texture
 ## the quad reads (fov_warp): both take the same numbers in the same frame. Its line in the log at
 ## each new level or size says what the level is in degrees on this headset.
 
@@ -43,26 +48,35 @@ extends CompositorEffect
 const LEVELS := [[0.30, 0.83], [0.25, 0.65], [0.22, 0.48]]
 const GAZE_SLACK := 0.03            # share of half the picture's width
 const MARGIN := 2                   # texels round the picture's warp: the filter reads one beyond it
+# the GPU timestamps of these passes (RenderingDevice.capture_timestamp): before the eyes, after the
+# way out's table, after the floor's texture
+const TS_BEGIN := "foveation begin"
+const TS_TABLE := "foveation table"
+const TS_END := "foveation end"
+
+signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
 var level := 0                      # 0: off, else LEVELS' index + 1
 var show := false                   # the coarse texels tinted by their size
 var probe := false                  # tests: where each texel's pixel is instead of its colour (the top)
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
-var floor_mats: Array[ShaderMaterial] = []   # the floor's materials, which sample the texture
+var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
 var xr: XRInterface                 # the picture's size; on the desktop (none) target's
 var target: Viewport
 var gaze_on := false                # the eyes tracked (set_gaze)
-var fovea := PackedFloat32Array()   # the last frame's, each eye: g's pixel (x, y), r0 (the tests)
+var fovea := PackedFloat32Array()   # the last frame's warp, each eye: g's pixel (x, y), r0, m (the tests)
 var fov_tex := Texture2DArrayRD.new()
 var warp_tex := Texture2DRD.new()
 
 var _rd: RenderingDevice
-var _shaders := {}                  # "eyes", "floor", "gravity" -> RID
+var _shaders := {}                  # "eyes", "table", "floor", "gravity" -> RID
 var _pipes := {}
 var _sets := {}
 var _ubo: RID
 var _eyes: RID
 var _tex: RID                       # the colours, rgba16f, a layer per eye
+var _xt: RID                        # the way out's rows (foveation.gdshaderinc, xt_img): _xt_n x 4, rgba32f
+var _xt_n := 0                      # texels a row: geo.gdshaderinc's GEO_XN
 var _warp: RID                      # a row per eye: (g, c), (r0, m, the texels across, down), (the picture's pixels across, down)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture
@@ -132,9 +146,10 @@ func set_gaze(dir: Vector3, on: bool) -> void:
 ## The level: 0 off, 1.. LEVELS'.
 func set_level(p_level: int) -> void:
 	level = clampi(p_level, 0, LEVELS.size())
+	var was := enabled
 	enabled = level > 0
-	for m in floor_mats:
-		m.set_shader_parameter("fov_on", enabled)
+	if enabled != was:
+		toggled.emit()
 	resize()
 
 
@@ -197,21 +212,22 @@ func _make(n: Vector2i) -> void:
 	_mutex.unlock()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
-	for m in floor_mats:
-		m.set_shader_parameter("fov_tex", fov_tex)
-		m.set_shader_parameter("fov_warp", warp_tex)
+	sample_mat.set_shader_parameter("fov_tex", fov_tex)
+	sample_mat.set_shader_parameter("fov_warp", warp_tex)
 
 
-## The compute pipelines: the eyes, then the floor, plain or coloured by gravity.
+## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity.
 func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var look: String = (load("res://shaders/look.gdshaderinc") as ShaderInclude).code
 	var lens: String = (load("res://shaders/lens.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/foveation.gdshaderinc") as ShaderInclude).code
 	body = body.replace("#include_geo_and_look", geo + "\n" + look + "\n" + lens)
-	for kind in ["eyes", "floor", "gravity"]:
+	var n := RegEx.create_from_string("const int GEO_XN = (\\d+);").search(geo)
+	_xt_n = int(n.get_string(1))
+	for kind in ["eyes", "table", "floor", "gravity"]:
 		var src := RDShaderSource.new()
-		var defs := {"eyes": "#define EYES\n", "floor": "", "gravity": "#define GRAVITY\n"}
+		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n"}
 		src.source_compute = "#version 450\n" + defs[kind] + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
 		if spirv.compile_error_compute != "":
@@ -226,7 +242,13 @@ func _build() -> void:
 	s.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
 	_sampler = _rd.sampler_create(s)
 	_ubo = _rd.uniform_buffer_create(448)
-	_eyes = _rd.storage_buffer_create(160)
+	_eyes = _rd.storage_buffer_create(192)
+	var x := RDTextureFormat.new()
+	x.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	x.width = _xt_n
+	x.height = 4
+	x.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
+	_xt = _rd.texture_create(x, RDTextureView.new())
 	_lens = _rd.uniform_buffer_create(_lens_size)
 
 
@@ -234,7 +256,7 @@ func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 5:
+	for b in 6:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
@@ -254,6 +276,9 @@ func _uniform_set(kind: String) -> RID:
 			4:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 				u.add_id(_tex)
+			5:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+				u.add_id(_xt)
 		us.append(u)
 	_sets[kind] = _rd.uniform_set_create(us, _shaders[kind], 0)
 	return _sets[kind]
@@ -320,7 +345,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		var g := _centre[v].round().clamp(Vector2.ZERO, pic)
 		var c := Vector2(MARGIN + ceilf(_warp_at(g.x, r0, m)), MARGIN + ceilf(_warp_at(g.y, r0, m)))
 		c += Vector2(posmod(int(c.x - g.x), 2), posmod(int(c.y - g.y), 2))
-		used.append_array([g.x, g.y, r0])
+		used.append_array([g.x, g.y, r0, m])
 		w0.append_array([g.x, g.y, c.x, c.y])
 		w1.append_array([r0, m, _n.x, _n.y])
 		rows.append_array([g.x, g.y, c.x, c.y, r0, m, _n.x, _n.y, pic.x, pic.y, 0.0, 0.0])
@@ -334,16 +359,25 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	fovea = used
 	if tell:
 		_tell_level(data.get_view_projection(0), pic)
+	# a timestamp orders the GPU's work: what was recorded before it runs before it, what after, after
+	_rd.capture_timestamp(TS_BEGIN)
 	var cl := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes["eyes"])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set("eyes"), 0)
 	_rd.compute_list_dispatch(cl, 1, 1, 1)
 	_rd.compute_list_add_barrier(cl)
+	_rd.compute_list_bind_compute_pipeline(cl, _pipes["table"])
+	_rd.compute_list_bind_uniform_set(cl, _uniform_set("table"), 0)
+	_rd.compute_list_dispatch(cl, ceili(_xt_n / 64.0), 2 * views, 1)
+	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_TABLE)
+	cl = _rd.compute_list_begin()
 	var kind := "gravity" if gravity else "floor"
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_dispatch(cl, ceili(_n.x / 8.0), ceili(_n.y / 8.0), views)
 	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_END)
 
 
 static func _warp_at(r: float, r0: float, m: float) -> float:

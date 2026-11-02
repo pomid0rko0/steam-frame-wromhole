@@ -40,7 +40,7 @@ for i, eye in enumerate(('left', 'right')):
     dom = ndimage.binary_erosion(green(img('domain', eye)), iterations=6)
     G = green(img('floor', eye))
     if fovea is not None:
-        gx, gy, r0 = fovea[3 * i:3 * i + 3]
+        gx, gy, r0 = fovea[4 * i:4 * i + 3]
         ys, xs = np.mgrid[0:R.shape[0], 0:R.shape[1]] + 0.5
         dom &= np.hypot(xs - gx, ys - gy) < r0 - 2
     wl = W & dom

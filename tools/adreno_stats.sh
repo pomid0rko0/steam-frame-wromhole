@@ -16,7 +16,10 @@
 # --paths: instead, each way a floor pixel's ray can take (geo_floor's branches; tests/floor_paths.gd
 # forces them one way at a time), the program Godot specialises and runs for it: what a pixel on
 # that way costs.
-#   tools/adreno_stats.sh [--full] [--paths]      (--full: ir3's own lines too)
+# --fov: instead, foveation's compute programs (foveation.gd: the eyes, the way out's table, the
+# floor plain and coloured by gravity; tests/multiview_check.gd with fov), which work out the floor
+# in the headset by default: the floor's quad then only samples their texture.
+#   tools/adreno_stats.sh [--full] [--paths | --fov]      (--full: ir3's own lines too)
 # KEEP_LOG=file keeps the compiler's whole log (on the Frame a file in the repository, which the host
 # sees too). Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured:
 # there is no GPU; the speed check in the headset (bench.gd) measures.
@@ -25,11 +28,13 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/env.sh"
 FULL=""
 SCENE=res://tests/shots.gd
+STAGES=fs,vs
 for a in "$@"; do
 	case $a in
 		--full) FULL=1 ;;
 		--paths) SCENE=res://tests/floor_paths.gd ;;
-		*) echo "usage: tools/adreno_stats.sh [--full] [--paths]"; exit 2 ;;
+		--fov) SCENE=res://tests/multiview_check.gd; STAGES=cs ;;
+		*) echo "usage: tools/adreno_stats.sh [--full] [--paths | --fov]"; exit 2 ;;
 	esac
 done
 [ -z "${KEEP_LOG:-}" ] || KEEP_LOG=$(realpath -m "$KEEP_LOG")
@@ -37,13 +42,15 @@ LOG=$(mktemp)
 DATA=$(mktemp -d)    # a fresh user:// each run: Godot's pipeline cache would skip the compiler
 SHOTS=$(mktemp -d)
 trap 'rm -rf "$LOG" "$DATA" "$SHOTS"' EXIT
+ARGS=("$SHOTS/s")
+[ "$SCENE" != res://tests/multiview_check.gd ] || ARGS=("$SHOTS/f" app 0 fov)
 turnip "$DATA" || exit 2
 cd "$ROOT/godot"
 import_scripts
 d=$(x_display 950)
-XDG_DATA_HOME=$DATA env "${TURNIP[@]}" MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=fs,vs,nocache \
+XDG_DATA_HOME=$DATA env "${TURNIP[@]}" MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=$STAGES,nocache \
 	timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
-	--resolution 320x180 -s "$SCENE" -- "$SHOTS/s" > "$LOG" 2>&1
+	--resolution 320x180 -s "$SCENE" -- "${ARGS[@]}" > "$LOG" 2>&1
 free_display $d
 [ -z "${KEEP_LOG:-}" ] || cp "$LOG" "$KEEP_LOG"
 if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; exit 1; fi
@@ -71,6 +78,19 @@ if sys.argv[3].endswith('floor_paths.gd'):
             sorted(progs, key=lambda p: -p[0])[:2], key=lambda p: p[0])
         print(f'  {name}: {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, '
               f'{cat4} cat4, {cat5} cat5')
+    sys.exit(0)
+if sys.argv[3].endswith('multiview_check.gd'):
+    # foveation.gd compiles its four last, after Godot's own (their order: Foveation._build)
+    progs = [(m.group(1), [int(v) for v in m.groups()[1:]]) for m in re.finditer(
+        r'; CL prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full, (\d+) constlen.*\n'
+        r'.*?(\d+) cat0.*?(\d+) cat4, (\d+) cat5.*\n.*?(\d+) loops\n.*?(\d+) max_waves, (\d+) double', text)]
+    if len(progs) < 4:
+        sys.exit('no compute program statistics in the log')
+    print('foveation\'s compute programs (foveation.gd):')
+    for name, (p, (n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl)) in zip(
+            ('the eyes', 'the way out\'s table', 'the floor', 'the floor by gravity'), progs[-4:]):
+        print(f"  {name} (prog {p}): {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, "
+              f"{cat4} cat4, {cat5} cat5, {loops} loops")
     sys.exit(0)
 for stage in ('FRAG', 'VERT'):
     progs = {}
