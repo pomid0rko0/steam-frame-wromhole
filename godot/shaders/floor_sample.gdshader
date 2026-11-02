@@ -4,7 +4,7 @@ shader_type spatial;
 // looks and coarser away from it (floor_fov.gdshaderinc); each pixel only takes its colour from
 // there, filtered, by the same warp, with the numbers fov_warp holds for its eye. A program of its
 // own, not floor.gdshaderinc's with the lens in it: a pixel here holds a few registers, not the
-// lens's sixteen, so the GPU keeps more of them going at once. Where the quad stands and when it is
+// lens's (tools/adreno_stats.sh), so the GPU keeps more of them going at once. Where the quad stands and when it is
 // drawn: floor.gdshaderinc's top (Renderer draws the quad with this while floor_fov is on).
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
