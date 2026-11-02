@@ -42,7 +42,8 @@
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
 //     up (R^4's z, else x, made orthogonal to the line and the space's normal). Unlit, in beam_col;
 //     below the floor hidden.
-// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point.
+// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point; a
+// cube's normal is its face's, per pixel.
 #if defined(STATIC) && !defined(DIRECT)
 #define DIRECT
 #endif
@@ -79,7 +80,16 @@ uniform int beam_n = 0;
 uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 
+#ifdef CUBE
+// a cube's axes, tangent at the point: each pixel takes its face's (fragment) by v_box. A vertex on
+// an edge is on two faces, and a normal of one of them in it would be spread over the other's
+// triangles by the interpolation (the zone's meshes share their vertices round the section)
+varying vec4 v_ax1;
+varying vec4 v_ax2;
+varying vec4 v_ax3;
+#else
 varying vec4 v_n;       // the surface's normal (R^4)
+#endif
 varying vec4 v_sun;     // toward the sun (R^4, tangent there)
 varying vec4 v_up;      // up (R^4, tangent there)
 varying vec4 v_ray;     // the light's way in (R^4)
@@ -100,7 +110,9 @@ varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
 
 void vertex() {
 	vec4 P;
+#ifndef CUBE
 	vec4 nrm;
+#endif
 #ifdef ZONE
 	float el;
 	vec3 en;
@@ -129,10 +141,7 @@ void vertex() {
 #ifdef BALL
 	nrm = q;
 #else
-	vec3 sv = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
-	vec3 av = abs(sv);
-	nrm = av.x >= av.y && av.x >= av.z ? sign(sv.x) * E1 : (av.y >= av.z ? sign(sv.y) * E2 : sign(sv.z) * E3);
-	v_box = sv;
+	v_box = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
 #endif
 	float len, fell;
 	vec4 arrive;
@@ -157,8 +166,6 @@ void vertex() {
 		P = geo_onto(C + x * (sqrt(max(size * size - c * c, 0.0)) / size), N);
 	}
 	nrm = P - C;
-#else
-	nrm = abs(VERTEX.x) > 0.999 ? sign(VERTEX.x) * E1 : (abs(VERTEX.y) > 0.999 ? sign(VERTEX.y) * E2 : sign(VERTEX.z) * E3);
 #endif
 #elif defined(ARROWS)
 	P = vec4(0.0);
@@ -249,7 +256,13 @@ void vertex() {
 	v_col = COLOR.rgb;
 #endif
 #endif
+#ifdef CUBE
+	v_ax1 = E1 - dot(E1, Np) * Np;
+	v_ax2 = E2 - dot(E2, Np) * Np;
+	v_ax3 = E3 - dot(E3, Np) * Np;
+#else
 	v_n = nrm - dot(nrm, Np) * Np;
+#endif
 	vec4 s4 = look_sun4(pl);
 	v_sun = s4 - dot(s4, Np) * Np;
 	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
@@ -264,12 +277,20 @@ void fragment() {
 #if defined(TOY) || defined(BEAM)
 	if (v_h < 0.0) discard;
 #endif
+#if !defined(ARROWS) && !defined(BEAM)
+#ifdef CUBE
+	vec3 ab = abs(v_box);
+	vec4 nn = ab.x >= ab.y && ab.x >= ab.z ? sign(v_box.x) * v_ax1 : (ab.y >= ab.z ? sign(v_box.y) * v_ax2 : sign(v_box.z) * v_ax3);
+#else
+	vec4 nn = v_n;
+#endif
+#endif
 #ifdef ZONE
 	// a pixel whose normal interpolates to no vector (not a number, or nought) is no part of the
 	// surface: a triangle of next to no area has its varyings so, where a float32 step decides
 	// whether it gets a pixel (without this the stereo test has one inside a cube in each eye at its
 	// place 3)
-	if (!(dot(v_n, v_n) > 1e-12)) discard;
+	if (!(dot(nn, nn) > 1e-12)) discard;
 #endif
 #ifdef DIRECT
 	// the line of sight through the curved zone's ball: the lens's
@@ -281,7 +302,7 @@ void fragment() {
 #if defined(ARROWS) || defined(BEAM)
 	ALBEDO = v_col;
 #else
-	vec4 n = normalize(v_n);
+	vec4 n = normalize(nn);
 	float nl = dot(n, normalize(v_sun));
 	float up = dot(n, normalize(v_up));
 	float nv = -dot(n, normalize(v_ray));
