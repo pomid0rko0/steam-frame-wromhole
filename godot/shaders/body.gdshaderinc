@@ -264,6 +264,11 @@ void fragment() {
 #if defined(TOY) || defined(BEAM)
 	if (v_h < 0.0) discard;
 #endif
+#ifdef ZONE
+	// a pixel of a triangle of next to no area (where the mesh's strips meet on one azimuth): its
+	// varyings come out no numbers, the normal none; it is no part of the surface
+	if (!(dot(v_n, v_n) > 1e-12)) discard;
+#endif
 #ifdef DIRECT
 	// the line of sight through the curved zone's ball: the lens's
 	vec3 d = v_p - v_eye;
