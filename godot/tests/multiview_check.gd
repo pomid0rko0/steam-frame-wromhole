@@ -1,14 +1,15 @@
 extends SceneTree
 ## The in-headset stereo check scene (check_scene.gd) through the simulated headset
 ## (tests/fake_hmd.gd): mode "app" hides Godot's green overlay, "zones" is "app" with foveation's
-## coarse texels tinted (Foveation.show), "lens" is "app" with blue where the
+## coarse texels tinted (Foveation.show), "probe" with foveation's probe (each floor pixel blue,
+## red by how far from its place it took its colour: foveation.gd), "lens" is "app" with blue where the
 ## floor's quad draws what comes through the curved zone (floor.gdshaderinc's lens_mark: the app's
 ## images of the balls and the cube there have no green, tools/compare/check_scene.py leaves them
 ## out), "floor" shows only its floor lines,
 ## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
 ## renderer's white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|zones|lens|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|zones|probe|lens|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
@@ -27,7 +28,7 @@ extends SceneTree
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
-const SHOWN := {"app": [], "zones": [], "lens": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
+const SHOWN := {"app": [], "zones": [], "probe": [], "lens": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
 		"both": ["Grid", "Ball", "Cube"]}
 # case 2: the head's step in the room each frame
 const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05))
@@ -88,6 +89,10 @@ func _process(_delta: float) -> bool:
 			main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
 		if mode == "zones":
 			main.foveation.show = true
+		if mode == "probe":
+			main.foveation.probe = true
+			for m in main.renderer.floor_mats:
+				m.set_shader_parameter("fov_probe", true)
 		if mode == "lens":
 			for m in main.renderer.floor_mats:
 				m.set_shader_parameter("lens_mark", true)

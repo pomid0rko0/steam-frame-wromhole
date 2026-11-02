@@ -31,6 +31,7 @@ varying vec3 v_ray;
 varying vec2 v_clip;
 uniform bool fov_on = false;
 uniform bool lens_mark = false;    // tests: blue where the ray goes through the curved zone, else black
+uniform bool fov_probe = false;    // tests: how far from its place each pixel took its colour (foveation.gd's probe)
 uniform sampler2DArray fov_tex : filter_linear, repeat_disable;
 uniform sampler2D fov_warp : filter_nearest, repeat_disable;   // per eye (a row): (g, c), (r0, m, texels across, down), (pixels across, down) (foveation.gd)
 
@@ -61,7 +62,15 @@ void fragment() {
 		vec2 q = (v_clip * 0.5 + 0.5) * texelFetch(fov_warp, ivec2(2, v), 0).xy - w0.xy;
 		float r = length(q);
 		float k = r > w1.x ? (w1.x + asinh(w1.y * (r - w1.x)) / w1.y) / r : 1.0;
-		ALBEDO = textureLod(fov_tex, vec3((w0.zw + k * q) / w1.zw, float(v)), 0.0).rgb;
+		vec4 t = textureLod(fov_tex, vec3((w0.zw + k * q) / w1.zw, float(v)), 0.0);
+		ALBEDO = t.rgb;
+		if (fov_probe) {
+			// the place the texture holds there (phases over 64 pixels, foveation.gdshaderinc's
+			// FOV_PROBE) against this pixel's own: blue, and red by the larger error, 0.5 px full
+			vec2 e = vec2(atan(t.y, t.x), atan(t.w, t.z)) - 6.2831853 * (q + w0.xy) / 64.0;
+			e = mod(e + 3.14159265, 6.2831853) - 3.14159265;
+			ALBEDO = vec3(min(max(abs(e.x), abs(e.y)) * 64.0 / 6.2831853 / 0.5, 1.0), 0.0, 1.0);
+		}
 	} else {
 		vec3 d = normalize(v_ray);
 		vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;

@@ -30,7 +30,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
 	vec4 warp0[2];      // each eye's g (pixels from the picture's corner at clip (-1, -1)) and c (texels)
 	vec4 warp1[2];      // each eye's r0 (pixels), m (per pixel), the texels across and down
-	vec4 pic;           // the picture's pixels across and down, show
+	vec4 pic;           // the picture's pixels across and down, show, probe
 } fovp;
 layout(set = 0, binding = 3, std430) buffer Eyes {
 	vec4 eyes[10];      // each eye: (el, en), ex, ey, ez, (r, the root of u, r - rho0)
@@ -68,6 +68,8 @@ void main() {
 	eyes[5u * v + 4u] = vec4(geo_r(ale), sqrt(geo_u(ale)), geo_dr(ale), 0.0);
 }
 #else
+#define FOV_PROBE 64.0   // probe: the pixel's place as phases over this many pixels (floor.gdshaderinc)
+
 // show: a coarse texel's tint by its size s in pixels
 vec3 fov_tint(float s) {
 	return s < 2.0 ? vec3(0.1, 0.8, 0.2) : (s < 3.0 ? vec3(0.95, 0.85, 0.1) : (s < 4.0 ? vec3(1.0, 0.45, 0.05) : vec3(0.9, 0.05, 0.05)));
@@ -118,6 +120,13 @@ void main() {
 	vec4 dy = s_a[col + 8u] - s_a[col];
 	vec3 c = lens_colour(sn, a, dx.xyz, dy.xyz, vec2(edge, abs(dx.w) + abs(dy.w)), sqrt(s * k));
 	if (fovp.pic.z > 0.5 && rho > r0) c = mix(c, fov_tint(s), 0.35);
-	imageStore(out_img, ivec3(id), vec4(c, 1.0));
+	vec4 o = vec4(c, 1.0);
+	if (fovp.pic.w > 0.5) {
+		// probe: where this texel's pixel is, as a phase along x and along y (smooth: the filter
+		// mixes neighbours' phases into the phase between them)
+		vec2 ph = 6.2831853 * p / FOV_PROBE;
+		o = vec4(cos(ph.x), sin(ph.x), cos(ph.y), sin(ph.y));
+	}
+	imageStore(out_img, ivec3(id), o);
 }
 #endif

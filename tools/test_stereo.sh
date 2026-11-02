@@ -87,7 +87,7 @@ for c in 0 1 2 3; do
 done
 render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov1" zones 1 fov
 for c in 0 1 2 3; do
-	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
+	for m in app floor domain probe; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
 done
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
@@ -137,14 +137,15 @@ for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, gravity view: the arrows, without the balls" python3 "$CMP/check_scene.py" "$OUT/arp$c" --floor-only
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"
+	verdict "simulated headset, case $c: stereo check scene, foveation on (the floor's lines in the fovea)" python3 "$CMP/check_scene.py" "$OUT/fov$c" --fovea
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, without the balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
+	verdict "simulated headset, case $c: floor lines in the fovea, without the balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only --fovea
 done
-# where the eyes look, foveation changes nothing: the fovea against the same picture without it
-# (away from it the floor is softer: the checks above line it up)
-verdict "foveation: the fovea as without it, each eye" python3 "$CMP/fovea.py" "$OUT" chk0:fov0 chk1:fov1 chk2:fov2 chk3:fov3 pln0:fpl0 pln1:fpl1 pln2:fpl2 pln3:fpl3
+# foveation moves nothing: where the eyes look the picture is the same as without it, and away
+# from there, where the floor is softer, every pixel takes the colour worked out at its place (the
+# probe), so the checks above in the fovea hold all over
+verdict "foveation: the fovea as without it, and every pixel of the floor from its own place, each eye" python3 "$CMP/fovea.py" "$OUT" chk0:fov0 chk1:fov1 chk2:fov2 chk3:fov3 pln0:fpl0 pln1:fpl1 pln2:fpl2 pln3:fpl3
 
 echo
 echo "images: $OUT"

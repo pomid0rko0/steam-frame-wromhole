@@ -28,6 +28,10 @@ extends CompositorEffect
 ## show: the coarse texels tinted by their size (fov_tint in the shader): green up to 2 pixels
 ## across, yellow up to 3, orange up to 4, red beyond; the fovea as it is.
 ##
+## probe (tests): each texel holds where its pixel is instead of its colour, and the floor's quad
+## draws how far from its own place each pixel took it (floor.gdshaderinc, fov_probe): every pixel
+## of the floor and the sky, not only the fovea, takes the colour worked out where it is.
+##
 ## On the XR camera's compositor, before the opaque pass (the 3D scene's render pass stays one).
 ## Renderer hands it the space's numbers, the head each frame, and the floor's materials, which
 ## sample its texture; Main the level and the gaze. Each eye's warp also goes into a small texture
@@ -42,6 +46,7 @@ const MARGIN := 2                   # texels round the picture's warp: the filte
 
 var level := 0                      # 0: off, else LEVELS' index + 1
 var show := false                   # the coarse texels tinted by their size
+var probe := false                  # tests: where each texel's pixel is instead of its colour (the top)
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
 var floor_mats: Array[ShaderMaterial] = []   # the floor's materials, which sample the texture
 var xr: XRInterface                 # the picture's size; on the desktop (none) target's
@@ -322,7 +327,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	p.append_array(off)
 	p.append_array(w0)
 	p.append_array(w1)
-	p.append_array([pic.x, pic.y, 1.0 if show else 0.0, 0.0])
+	p.append_array([pic.x, pic.y, 1.0 if show else 0.0, 1.0 if probe else 0.0])
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	_rd.texture_update(_warp, 0, rows.to_byte_array())

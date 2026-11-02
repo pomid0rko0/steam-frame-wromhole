@@ -8,16 +8,21 @@ for Godot's green edges and the app's magenta cube. Where <prefix>_lens_<eye>.pn
 what the floor's quad draws through the curved zone blue), its blue is left out of the red and the
 magenta: there the app draws the images light makes through the zone, Godot none. A white line is
 brighter than what is round it, not just beside a darker line (the gravity view's 1 g contour). With
---floor-only (the scene without the app's balls) only the floor is compared."""
-import os, sys, numpy as np
+--floor-only (the scene without the app's balls) only the floor is compared. With --fovea (the
+pictures foveated, <prefix>_fovea.json: foveation.gd) the floor's lines only in the fovea, where
+they are as sharp as without it: away from it they are softer and wider than green by design, and
+tools/compare/fovea.py checks that nothing there moved."""
+import os, sys, json, numpy as np
 from PIL import Image
 from scipy import ndimage
 pre = sys.argv[1]
 floor_only = '--floor-only' in sys.argv[2:]
+fovea = json.load(open(f'{pre}_fovea.json')) if '--fovea' in sys.argv[2:] else None
+MIN_WHITE = 1000 if fovea is None else 500   # white line pixels to judge by
 def img(m, eye): return np.asarray(Image.open(f'{pre}_{m}_{eye}.png').convert('RGB'), int)
 def green(a): return (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 80
 ok = True
-for eye in ('left', 'right'):
+for i, eye in enumerate(('left', 'right')):
     R = img('app', eye)
     # the balls' red: green and blue both under 0.45 of red (between the shaded balls and the
     # gravity view's red and orange floor)
@@ -34,6 +39,10 @@ for eye in ('left', 'right'):
     red &= ~lens
     dom = ndimage.binary_erosion(green(img('domain', eye)), iterations=6)
     G = green(img('floor', eye))
+    if fovea is not None:
+        gx, gy, r0 = fovea[3 * i:3 * i + 3]
+        ys, xs = np.mgrid[0:R.shape[0], 0:R.shape[1]] + 0.5
+        dom &= np.hypot(xs - gx, ys - gy) < r0 - 2
     wl = W & dom
     unc = lambda g: (wl & ~g).sum() / max(wl.sum(), 1)
     u0 = unc(G)
@@ -41,7 +50,7 @@ for eye in ('left', 'right'):
     if floor_only:
         print(f'{eye}: floor white px checked {wl.sum()}, uncovered {100*u0:.2f}% '
               f'(if green were 2 px off: {100*u2:.1f}%)')
-        ok &= wl.sum() > 1000 and u0 < 0.01
+        ok &= wl.sum() > MIN_WHITE and u0 < 0.01
         continue
     def objects(sil, mode):
         """Green of a mode against an app's silhouette: (share outside it, regions, the largest
@@ -61,7 +70,7 @@ for eye in ('left', 'right'):
     line = (f'{eye}: floor white px checked {wl.sum()}, uncovered {100*u0:.2f}% '
             f'(if green were 2 px off: {100*u2:.1f}%) | balls {nb}: green outside red {100*out:.2f}%, '
             f'outline difference {bbd} px')
-    ok &= wl.sum() > 1000 and u0 < 0.01 and nb >= 1 and out < 0.01 and bbd <= 2
+    ok &= wl.sum() > MIN_WHITE and u0 < 0.01 and nb >= 1 and out < 0.01 and bbd <= 2
     if os.path.exists(f'{pre}_cube_{eye}.png'):
         # magenta, its dark edges too, near Godot's cube (the gravity view's floor has purple)
         Cg = green(img('cube', eye))
