@@ -1,6 +1,7 @@
 // Bodies in the curved zone drawn round the eye's axis (body.gdshaderinc, ZONE): a mesh's vertex
-// (zone_vertex) as a point of a body's section by a half-surface of the space through that axis.
-// Plain GLSL after geo.gdshaderinc (ref/test_gpu.py takes it too).
+// (zone_vertex) as a point of a body's section by a half-surface of the space through that axis,
+// worked out once a frame per eye by zone_sections.gdshaderinc's compute shader. Plain GLSL after
+// geo.gdshaderinc (ref/test_gpu.py takes it too).
 
 // w(l), the embedding's fourth coordinate (WormholeSpace.w)
 float zone_w(float l) {

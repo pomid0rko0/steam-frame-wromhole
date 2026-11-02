@@ -28,7 +28,9 @@
 //     are. Each point found by Newton's steps on the body's own definition along a straight line of
 //     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
 //     azimuths, and a row on each corner of its sections, the same corner on the same row from one
-//     corner's azimuth to the next: its outline keeps its corners.
+//     corner's azimuth to the next: its outline keeps its corners. A node's point is the same in
+//     every image: it is worked out once a frame for each eye (zone_sections.gd, ZoneSections'
+//     texture zone_nodes), and here each image's vertex takes it and finds its geodesic.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -62,6 +64,12 @@ uniform int zone_first = 0;      // instance i draws image zone_first + i % zone
 uniform int zone_images = 1;
 uniform float zone_round = 48.0; // the mesh's points round a section and azimuths (Renderer._zone_mesh)
 uniform float zone_columns = 64.0;
+// the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this kind's
+// first slot (instance i: body i / zone_images), this mesh's first row in a slot, a slot's rows
+uniform sampler2DArray zone_nodes : filter_nearest, repeat_disable;
+uniform int zone_slot = 0;
+uniform int zone_row = 0;
+uniform int zone_slot_rows = 62;
 #endif
 #ifdef BEAM
 #define BEAM_POINTS 48           // Renderer.BEAM_POINTS
@@ -105,12 +113,13 @@ void vertex() {
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
 	float size = INSTANCE_CUSTOM.a;
-	vec3 t;
-#ifdef BALL
-	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, true, en, C, E1, E2, E3, N, size, t);
-#else
-	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, false, en, C, E1, E2, E3, N, size, t);
-#endif
+	// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
+	ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
+	int row = (zone_slot + INSTANCE_ID / zone_images) * zone_slot_rows + zone_row + node.y;
+	vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
+	vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);
+	vec2 pe = na.xy;
+	vec3 t = vec3(na.zw, nb.x);
 	float pl = pe.x;
 	float alpha = clamp(pe.y, 0.0, GEO_PI);
 	vec2 sca = geo_sincos(alpha);
