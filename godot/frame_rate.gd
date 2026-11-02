@@ -173,6 +173,9 @@ func _process(delta: float) -> void:
 					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, _before_text(),
 					compilations(), main.view_text()] + "; GPU by part, the last frame read: " + _parts_text(parts_last))
 		bench.frame_timing(now, period, reported)
+	var mt := before_ms()    # the frame before's, so before "before" turns to this one
+	if mt.x > now.main_max.x:
+		now.main_max = mt
 	before = [main.started_us, main.scripts_ms, main.parts_ms.duplicate()]
 	t += delta
 	now.drawn += 1
@@ -188,9 +191,6 @@ func _process(delta: float) -> void:
 		if sum > now.parts_max_sum:
 			now.parts_max_sum = sum
 			now.parts_max = parts_last.duplicate()
-	var mt := before_ms()
-	if mt.x > now.main_max.x:
-		now.main_max = mt
 	if requested > 0.0:
 		if absf(meter.rate() - requested) < 0.5:
 			_answer_request()
