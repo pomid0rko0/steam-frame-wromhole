@@ -11,7 +11,8 @@ extends CompositorEffect
 ## pixels, no edge where the density changes; away from the gaze the floor is softer, not blocky.
 ##
 ## Three passes: the eyes, their rows of the way out of the zone (a ray's sigma to where it leaves:
-## geo.gdshaderinc, «the way out by a table»), the texture.
+## geo.gdshaderinc, «the way out by a table»), the texture. GPU timestamps before, between and after
+## them (TS_*) give frame_rate.gd the GPU time of each part of the frame.
 ##
 ## On the XR camera's compositor, before the opaque pass (which it does not split). Renderer hands
 ## it the space's numbers, the head each frame, and the material the floor's quad samples with; Main
@@ -23,6 +24,11 @@ extends CompositorEffect
 # a picture of size pixels a side with the gaze in its middle
 const STRENGTH := {4: 2.0, 5: 4.0}
 const GAZE_REACH := 0.9             # the warp's middle kept this far inside the picture (clip space)
+# the GPU timestamps of these passes (RenderingDevice.capture_timestamp): before the eyes, after the
+# way out's table, after the floor's texture
+const TS_BEGIN := "floor_fov begin"
+const TS_TABLE := "floor_fov table"
+const TS_END := "floor_fov end"
 
 signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
@@ -279,6 +285,8 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	_rd.texture_update(_warp, 0, warp.to_byte_array())
 	var groups := int(ceil(_n / 8.0))
+	# a timestamp orders the GPU's work: what was recorded before it runs before it, what after, after
+	_rd.capture_timestamp(TS_BEGIN)
 	var cl := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes["eyes"])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set("eyes"), 0)
@@ -287,9 +295,12 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes["table"])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set("table"), 0)
 	_rd.compute_list_dispatch(cl, int(ceil(_xt_n / 64.0)), 2 * views, 1)
-	_rd.compute_list_add_barrier(cl)
+	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_TABLE)
+	cl = _rd.compute_list_begin()
 	var kind := "gravity" if gravity else "floor"
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_dispatch(cl, groups, groups, views)
 	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_END)

@@ -397,9 +397,9 @@ func gaze_text() -> String:
 func view_text() -> String:
 	var b := camera.transform.basis
 	var hf: Array = _head_pose[2]
-	var out := "head %.2f m up, right side %.0f deg up; %s; drawn %d balls, %d cubes" % [camera.transform.origin.y,
+	var out := "head %.2f m up, right side %.0f deg up; %s; drawn %d balls, %d cubes (in the curved zone %d balls, %d cubes)" % [camera.transform.origin.y,
 			rad_to_deg(asin(clampf(b.x.y, -1.0, 1.0))), "standing" if viewer.standing else "flying, the feet %.2f m over the floor" % viewer.height(),
-			renderer.ball_col.size(), renderer.toy_count - renderer.ball_col.size()]
+			renderer.ball_col.size(), renderer.toy_count - renderer.ball_col.size(), renderer.zone_count.x, renderer.zone_count.y]
 	if not hf.is_empty() and not renderer.bodies.is_empty():
 		var P := space.embed(_head_pose[0], _head_pose[1])
 		var N := space.normal4(_head_pose[0], _head_pose[1])

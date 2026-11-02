@@ -110,6 +110,7 @@ var floor_quad: MeshInstance3D
 var floor_fov := FloorFov.new()  # our own foveation's floor (on the camera's compositor: Main)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var toy_count := 0              # balls and cubes drawn (set_objects)
+var zone_count := Vector2i.ZERO  # of them in the curved zone (or reaching into it): balls, cubes
 var ball_col := PackedVector4Array()   # the balls' (colour, radius) as set_objects got them
 var bodies: Array = []          # what set_objects drew: [kind ("ball", "cube"), centre (R^4), radius or half size]
 var lens_static := PackedVector4Array()   # the scene's static objects in the lens list, A's then B's
@@ -322,6 +323,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
+	zone_count = Vector2i(inz[0], inz[1])
 	ball_col = col.slice(0, n)
 	bodies.clear()
 	for i in n:
