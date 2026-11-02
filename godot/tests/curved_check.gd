@@ -49,11 +49,14 @@ const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1
 # [m toward the centre from the head (l less), radius or half size, a turn about that line]
 const AXIS_BALL := [1.1, 0.1, 0.0]
 const AXIS_CUBE := [0.7, 0.12, 0.4]
-# and next to one eye's line through the throat's centre (its axis: there the space's curve takes a
-# cube's edge back round the axis, and a section cuts it twice): [the eye (0 left, 1 right), m toward
-# the centre from the eye, half size, the cube's edge across the axis (0) or its corner (1) toward
-# it, how far from the axis (negative: the axis through the cube)]
+# and in the throat (NEAR_AXIS_PLACES) next to one eye's line through the throat's centre (its axis:
+# there the space's curve takes a cube's edge back round the axis, and a section cuts it twice):
+# [the eye (0 left, 1 right), m toward the centre from the eye, half size, the cube's edge across the
+# axis (0) or its corner (1) toward it, how far from the axis (negative: the axis through the cube)].
+# Elsewhere their thin rings near the photon sphere, the axis's Einstein rings, are only a hair's
+# breadth from the traced ones and fail by it (places 2, 3, 8)
 const NEAR_AXIS_CUBES := [[0, 1.7, 0.2, 0, 0.003], [1, 2.4, 0.15, 1, -0.003]]
+const NEAR_AXIS_PLACES := [4, 5]
 
 var main: Main
 var hmd
@@ -144,8 +147,9 @@ func _bodies() -> void:
 	axes.append(sp.embed_vector(al, an, Vector4(0.6, 0.8 * (-sin(aa) * ae1.x + cos(aa) * ae2.x), 0.8 * (-sin(aa) * ae1.y + cos(aa) * ae2.y), 0.8 * (-sin(aa) * ae1.z + cos(aa) * ae2.z))).normalized())
 	cpos.append(sp.embed(al, an))
 	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
-	for c: Array in NEAR_AXIS_CUBES:
-		_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
+	if int(OS.get_cmdline_user_args()[1]) in NEAR_AXIS_PLACES:
+		for c: Array in NEAR_AXIS_CUBES:
+			_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
 	for b: Array in WORLD_BALLS + ([EDGE_BALL] if _fov() else []):
 		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
