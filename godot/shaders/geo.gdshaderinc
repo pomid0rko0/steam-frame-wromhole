@@ -460,38 +460,46 @@ vec4 geo_see_image(float el, vec3 en, float pl, vec3 pn, vec3 t, float alpha, in
 // the ball (or for ever), turns in its plane through the centre across the zone, and leaves it
 // straight into universe A or B (into the other one only with b < r_min): all its turns round the
 // throat are in between, however many.
-// The ray D (a tangent vector at the eye, any length) of the eye at (el, en), eye = (r, the root of
-// u, r - rho0) there (geo_r, geo_u, geo_dr, worked out once per eye). False for a ray that never
-// enters the zone (the eye outside): then pos is the eye's place, dir the ray's direction, sheet the
-// eye's universe (+1 A, -1 B), all in R^4's xyz. Else true: pos is where it leaves the zone (|pos| =
-// Rout), dir its direction there, sheet the universe it goes on in, way the length up to there.
-bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, out float sheet, out float way) {
+// The ray D of the eye (as geo_exit): the cosine and sine of its angle off the outward radial (ca,
+// sa), its unit direction across it (t), its impact b, r - b at the eye (gap: exact for rays along
+// the sphere of the eye) and sigma (geo_sigma); false if it never enters the zone (the eye outside).
+bool geo_exit_ray(float el, vec3 eye, vec3 en, vec4 D, out float ca, out float sa, out vec3 t, out float b, out float gap, out float sigma) {
 	float side = el < 0.0 ? -1.0 : 1.0;
-	float le = abs(el);
 	float re = eye.x;
-	float L = g_prof.w, Rout = g_prof2.x;
-	float ca = side * D.x;                  // along the outward radial direction
-	float sa = length(D.yzw);
-	vec3 t = sa > 1e-7 ? D.yzw / sa : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	ca = side * D.x;                    // along the outward radial direction
+	sa = length(D.yzw);
+	t = sa > 1e-7 ? D.yzw / sa : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
 	float nrm = inversesqrt(ca * ca + sa * sa);
 	ca *= nrm;
 	sa *= nrm;
-	float b = re * sa;
-	sheet = side;
-	way = 0.0;
-	pos = re * en;
-	dir = ca * en + sa * t;
-	if (le >= L && (ca >= 0.0 || b >= Rout)) return false;
-	// what the ray's sweeps share: its impact, the cylinder's rates, the fillet's closed forms
-	float oms = ca * ca / (1.0 + sa);   // 1 - sin: exact for rays along the sphere of the eye
-	float gap_e = re * oms;             // r - b at the eye
-	float sigma = geo_sigma(eye.z - gap_e);
-	float R2 = 2.0 * g_prof.y;
+	b = re * sa;
+	gap = re * (ca * ca / (1.0 + sa));  // 1 - sin: exact for rays along the sphere of the eye
+	sigma = geo_sigma(eye.z - gap);
+	return !(abs(el) >= g_prof.w && (ca >= 0.0 || b >= g_prof2.x));
+}
+
+// A ray's turn and length per metre of l along the throat's cylinder: those of a ray that passes
+// the throat (b < r_min) where there is a cylinder (h > R), next to r_min many turns a metre; else 0.
+vec2 geo_exit_cyl(float b, float sigma) {
+	float k = sqrt(max(-2.0 * g_prof.y * sigma * (g_prof.x + b), 0.0));
+	return sigma < g_prof2.y ? vec2(b / g_prof.x, g_prof.x) / max(k, 1e-12) : vec2(0.0);
+}
+
+// The metres of the cylinder that a ray from the eye at |l| = le crosses on its way out, if it
+// passes the throat: outward to the cylinder's end, inward through l = 0 to its other end.
+float geo_exit_mc(float le, bool outward) {
 	float Lc = g_prof.z;
-	bool pass = sigma < g_prof2.y;      // b < r_min, known from sigma (geo_sigma)
-	float k = sqrt(max(-R2 * sigma * (g_prof.x + b), 0.0));
-	vec2 cyl = pass ? vec2(b / g_prof.x, g_prof.x) / max(k, 1e-12) : vec2(0.0);   // per metre of l
-	vec2 cylL = cyl * Lc;
+	return outward ? max(Lc - le, 0.0) : Lc + min(le, Lc);
+}
+
+// A ray's way across the zone besides its way along the cylinder (geo_exit_way), from the eye at
+// |l| = le (eye as geo_exit has it) by its impact b, sigma and gap (geo_exit_ray) and whether it
+// starts outward: its turn in its plane and its length.
+vec2 geo_exit_rest(float le, vec3 eye, float b, float sigma, float gap_e, bool outward) {
+	float re = eye.x;
+	float L = g_prof.w, Rout = g_prof2.x;
+	float R2 = 2.0 * g_prof.y;
+	// the fillet's closed forms
 	float ul = max(sigma, g_prof2.y);
 	float span = 0.5 - ul;
 	vec2 f0 = geo_F(b, ul);
@@ -500,36 +508,193 @@ bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, o
 	float Dw = s0 + e0, P0 = s0 * e0;
 	float sL = sqrt(max(0.5 - sigma, 0.0));
 	float wL = 2.0 * log((0.70710678 + sL) / Dw);
-	// from the ray's origin (its turning point, or l = 0) to the zone's edge, and to the eye
+	// on the fillet from the ray's origin (its turning point, or the cylinder's end) to the zone's edge
 	vec2 SLf = f0 * wL + f1 * (0.70710678 * sL - P0 + (0.5 * sigma - ul) * wL) + geo_G(sigma, 1.0);
-	vec2 SL = cylL + SLf;
-	float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
-	vec2 se;
 	if (le >= L) {
+		// from the edge in to the origin and out again, and straight from the eye to the edge
+		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
 		float q2 = sqrt(max(gap_e * (re + b), 0.0));
 		float dq = (re - Rout) * (re + Rout) / max(qR + q2, GEO_TINY20);
-		se = SL + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
-	} else if (le > Lc) {
+		return 2.0 * SLf + vec2(geo_atan2(b * dq, b * b + qR * q2), dq);
+	}
+	if (le > g_prof.z) {
+		// on the fillet from the origin to the eye
 		float su = eye.y, eu = sqrt(gap_e / R2);
 		float ue = su * su;
 		float w = 2.0 * log((su + eu) / Dw);
 		vec2 sef = f0 * w + f1 * (su * eu - P0 + (0.5 * sigma - ul) * w) + geo_G(sigma, sqrt(max(ue - ul, 0.0) / span));
-		// outward from the fillet the cylinder's part (large next to r_min) is in both: left out of both
-		if (ca >= 0.0) { SL = SLf; se = sef; } else se = cylL + sef;
-	} else {
-		se = cyl * le;
+		// outward from the eye to the edge; inward to the origin and out to the edge
+		return outward ? SLf - sef : SLf + sef;
 	}
-	// out along its way from the eye: outward straight to the edge; inward through the origin (to
-	// the other universe if it passes the throat)
-	vec2 dw = ca >= 0.0 ? SL - se : SL + se;
-	if (ca < 0.0 && pass) sheet = -side;
-	vec2 sc = geo_sincos(dw.x);
+	return SLf;
+}
+
+// A ray's way across the zone, as geo_exit_rest takes it: (its turn in its plane, its length, 1 if
+// it goes on into the other universe, else 0). Out along its way from the eye: outward straight to
+// the edge; inward through the origin (to the other universe if it passes the throat).
+vec3 geo_exit_way(float le, vec3 eye, float b, float sigma, float gap_e, bool outward) {
+	return vec3(geo_exit_rest(le, eye, b, sigma, gap_e, outward) + geo_exit_mc(le, outward) * geo_exit_cyl(b, sigma),
+			!outward && sigma < g_prof2.y ? 1.0 : 0.0);
+}
+
+// Where the ray of impact b, across direction t of the eye at en, leaves the zone having turned by
+// turn in its plane: the point (|pos| = Rout) and its direction there, in R^4's xyz.
+void geo_exit_at(vec3 en, vec3 t, float b, float turn, out vec3 pos, out vec3 dir) {
+	float Rout = g_prof2.x;
+	float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
+	vec2 sc = geo_sincos(turn);
 	vec3 nx = sc.y * en + sc.x * t;
 	vec3 tx = sc.y * t - sc.x * en;
 	pos = Rout * nx;
 	dir = (qR * nx + b * tx) / Rout;    // b = Rout sin of its angle off the outward radial
-	way = dw.y;
+}
+
+// The ray D (a tangent vector at the eye, any length) of the eye at (el, en), eye = (r, the root of
+// u, r - rho0) there (geo_r, geo_u, geo_dr, worked out once per eye). False for a ray that never
+// enters the zone (the eye outside): then pos is the eye's place, dir the ray's direction, sheet the
+// eye's universe (+1 A, -1 B), all in R^4's xyz. Else true: pos is where it leaves the zone (|pos| =
+// Rout), dir its direction there, sheet the universe it goes on in, way the length up to there.
+// In the three steps above, which our own foveation's floor shares (geo_xt below): the ray
+// (geo_exit_ray), its way across the zone (geo_exit_way), where it leaves (geo_exit_at).
+bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, out float sheet, out float way) {
+	float ca, sa, b, gap, sigma;
+	vec3 t;
+	bool in_ = geo_exit_ray(el, eye, en, D, ca, sa, t, b, gap, sigma);
+	sheet = el < 0.0 ? -1.0 : 1.0;
+	way = 0.0;
+	pos = eye.x * en;
+	dir = ca * en + sa * t;
+	if (!in_) return false;
+	vec3 w = geo_exit_way(abs(el), eye, b, sigma, gap, ca >= 0.0);
+	if (w.z > 0.5) sheet = -sheet;
+	geo_exit_at(en, t, b, w.x, pos, dir);
+	way = w.y;
 	return true;
+}
+
+// ---------------------------------------------------------------- the way out by a table
+// Our own foveation's floor (floor_fov.gdshaderinc) works the way out of the zone out for every
+// texel of its picture, and from inside the zone every one goes through it. For one eye a ray's way
+// across hangs only on its sigma and whether it starts outward (geo_exit_way): so each frame a row
+// per eye and start (outward, inward) holds it (besides its way along the cylinder, which a texel
+// adds: geo_exit_cyl, cheap, and next to r_min many turns) at GEO_XN rays from b = 0 to b = b_max
+// (r of an eye in the zone, Rout of one outside), evenly in
+//   x = sign(d) ln(1 + |d| / GEO_XA) - ln(1 + g / GEO_XB),   d = sigma - u0,  g = (b_max - b) / 2R:
+// crowded next to d = 0 (b = r_min: the photon sphere, or the crease), where the turn grows as
+// ln |d|, a straight line in x, and next to b_max (a ray along the sphere of the eye, or grazing the
+// zone's ball), where it bends as the root of g. A texel takes the way between its row's two nodes
+// about it, linearly in x, where the cell between them is good (geo_xt_good: the ray half way
+// between is off that line by at most GEO_XTOL, a few times the way's own error in float32, which
+// alone then fails no cell: ref/test_gpu.py); elsewhere
+// (next to d = 0 within what x resolves, a turn of many thousands) it takes geo_exit_way itself.
+// ref/test_gpu.py checks the texels' ways out as geo_exit's.
+const int GEO_XN = 4096;
+const float GEO_XA = 1e-8;
+const float GEO_XB = 1e-7;
+const float GEO_XTOL = 3e-5;           // radians of turn
+const float GEO_XTOL_WAY = 1e-4;       // metres, and as a share of the length
+
+float geo_xt_s(float d) { return sign(d) * log(1.0 + abs(d) / GEO_XA); }
+
+// a ray's place along its eye's row, by its d and g
+float geo_xt_x(float d, float g) { return geo_xt_s(d) - log(1.0 + g / GEO_XB); }
+
+// a ray's g from its b and gap (geo_exit_ray), for the eye at |l| = le
+float geo_xt_g(float le, float b, float gap) { return (le >= g_prof.w ? g_prof2.x - b : gap) / (2.0 * g_prof.y); }
+
+// the eye's rows' ends: x at b = 0 and at b = b_max
+vec2 geo_xt_range(float le, vec3 eye) {
+	float R2 = 2.0 * g_prof.y;
+	bool out_ = le >= g_prof.w;
+	return vec2(geo_xt_x(-g_prof.x / R2 - g_prof2.y, (out_ ? g_prof2.x : eye.x) / R2),
+			geo_xt_x((out_ ? g_prof2.x - g_prof.x : eye.z) / R2 - g_prof2.y, 0.0));
+}
+
+// the ray at place x of the eye's row: its sigma, gap and b as geo_exit_ray would give them. Newton
+// in x's first term s = sign(d) ln(1 + |d| / GEO_XA), kept within its bracket; where that leaves g
+// small, again in its second, t = ln(1 + g / GEO_XB): next to b_max s in float32 no longer tells g
+// from 0 (its step there is 2e-6), t does.
+void geo_xt_ray(float le, vec3 eye, float x, out float sigma, out float gap, out float b) {
+	float R2 = 2.0 * g_prof.y, u0 = g_prof2.y;
+	bool out_ = le >= g_prof.w;
+	float lo = geo_xt_s(-g_prof.x / R2 - u0), hi = geo_xt_s((out_ ? g_prof2.x - g_prof.x : eye.z) / R2 - u0);
+	float s = clamp(x, lo, hi);         // x <= s
+	float g = 0.0;
+	for (int i = 0; i < 30; i++) {
+		float d = sign(s) * GEO_XA * (exp(abs(s)) - 1.0);
+		sigma = u0 + d;
+		sigma = abs(sigma) < 1e-14 ? (sigma < 0.0 ? -1e-14 : 1e-14) : sigma;   // as geo_sigma
+		gap = max(eye.z - R2 * sigma, 0.0);
+		b = eye.x - gap;
+		g = geo_xt_g(le, b, gap);
+		float F = s - log(1.0 + g / GEO_XB) - x;
+		if (abs(F) < 1e-6) break;
+		if (F > 0.0) hi = s; else lo = s;
+		float sn = s - F / (1.0 + (GEO_XA + abs(d)) / (GEO_XB + g));
+		s = sn > lo && sn < hi ? sn : 0.5 * (lo + hi);
+	}
+	if (g >= 1e-3) return;
+	// the ray by its g: gap from it in the zone, b from it outside, sigma from gap (geo_exit_ray)
+	float tlo = 0.0, thi = log(1.0 + 1e-2 / GEO_XB);
+	float t = clamp(log(1.0 + g / GEO_XB), tlo, thi);
+	for (int i = 0; i < 30; i++) {
+		g = GEO_XB * (exp(t) - 1.0);
+		if (out_) {
+			b = g_prof2.x - R2 * g;
+			gap = eye.x - b;
+		} else {
+			gap = R2 * g;
+			b = eye.x - gap;
+		}
+		sigma = geo_sigma(eye.z - gap);
+		float d = sigma - u0;
+		float F = geo_xt_s(d) - t - x;
+		if (abs(F) < 1e-6) break;
+		if (F < 0.0) thi = t; else tlo = t;
+		float tn = t + F / (1.0 + GEO_XB * exp(t) / (GEO_XA + abs(d)));
+		t = tn > tlo && tn < thi ? tn : 0.5 * (tlo + thi);
+	}
+}
+
+// the node at place k (0 .. GEO_XN - 1, a half for the ray between two) of the eye's row: its way
+// across besides the cylinder's (geo_exit_rest), and its own x
+vec3 geo_xt_node(float le, vec3 eye, bool outward, vec2 xr, float k) {
+	float sigma, gap, b;
+	geo_xt_ray(le, eye, mix(xr.x, xr.y, k / float(GEO_XN - 1)), sigma, gap, b);
+	return vec3(geo_exit_rest(le, eye, b, sigma, gap, outward), geo_xt_x(sigma - g_prof2.y, geo_xt_g(le, b, gap)));
+}
+
+// whether a ray between nodes a and c of a row may take the line between them, m the node between
+bool geo_xt_good(vec3 a, vec3 m, vec3 c) {
+	vec2 line = mix(a.xy, c.xy, (m.z - a.z) / (c.z - a.z));
+	return geo_finite(a.x + a.y + m.x + m.y + c.x + c.y + line.x + line.y) && c.z > a.z
+			&& abs(m.x - line.x) <= GEO_XTOL && abs(m.y - line.y) <= GEO_XTOL_WAY * (1.0 + abs(m.y));
+}
+
+// texel k of the eye's row (the table's pass writes them): node k (geo_xt_node), and 1 if the cell
+// from it to node k + 1 is good, else 0
+vec4 geo_xt_texel(float le, vec3 eye, bool outward, vec2 xr, int k) {
+	vec3 a = geo_xt_node(le, eye, outward, xr, float(k));
+	if (k >= GEO_XN - 1) return vec4(a, 0.0);
+	vec3 m = geo_xt_node(le, eye, outward, xr, float(k) + 0.5);
+	vec3 c = geo_xt_node(le, eye, outward, xr, float(k + 1));
+	return vec4(a, geo_xt_good(a, m, c) ? 1.0 : 0.0);
+}
+
+// a ray's place in its eye's row (b, gap and sigma from geo_exit_ray, xr from geo_xt_range): its x,
+// and the node k at or before it
+float geo_xt_place(float le, float b, float gap, float sigma, vec2 xr, out int k) {
+	float x = geo_xt_x(sigma - g_prof2.y, geo_xt_g(le, b, gap));
+	k = clamp(int((x - xr.x) / (xr.y - xr.x) * float(GEO_XN - 1)), 0, GEO_XN - 2);
+	return x;
+}
+
+// a ray's way across (as geo_exit_way gives it) from its row's texels k and k + 1 and its x
+// (geo_xt_place); the rest as geo_exit_way takes it, for a cell that is not good
+vec3 geo_xt_way(vec4 a, vec4 c, float x, float le, vec3 eye, float b, float sigma, float gap, bool outward) {
+	if (a.w < 0.5) return geo_exit_way(le, eye, b, sigma, gap, outward);
+	return vec3(mix(a.xy, c.xy, (x - a.z) / (c.z - a.z)) + geo_exit_mc(le, outward) * geo_exit_cyl(b, sigma),
+			!outward && sigma < g_prof2.y ? 1.0 : 0.0);
 }
 
 // ---------------------------------------------------------------- points of R^4
