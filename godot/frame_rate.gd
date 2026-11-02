@@ -43,7 +43,11 @@ const JUDGE_SECONDS := 5        # the verdict judges up to this many last second
 const MIN_SECONDS := 2          # at a new rate, measure this long before judging
 const MISSED_OK := 0.01         # share of the refreshes without a new frame that still counts as keeping up
 const REQUEST_WAIT := 3.0       # s the headset gets to follow a request
-const LATE_LINES := 30          # late frames logged one by one per second, at most
+# late frames logged one by one per second, at most, and none in a second after one with a quarter
+# or more of its refreshes missed (at SteamVR's half rate every second frame is late: the second's
+# line says how many): a run of minutes would otherwise log megabytes
+const LATE_LINES := 3
+const LATE_QUIET := 0.25
 const NOTE_SECONDS := 8         # how long the answer to a choice stays
 const FRAME_RATES := [72.0, 80.0, 90.0, 96.0, 108.0, 120.0, 144.0]   # SteamVR's per-app choices on the Frame
 const VRCMD := "/opt/steamvr/bin/linuxarm64/vrcmd"
@@ -91,7 +95,7 @@ var before: Array = []          # the frame before: [main's start (us), its scri
 var note := ""                  # what came of the last choice
 var note_failed := false
 var note_left := 0
-var late_lines := 0             # late frames logged this second
+var late_lines := 0             # late frames logged this second (LATE_LINES: none more)
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
 var clock_mhz := 0              # read once a second: a kernel file each frame is not free
@@ -331,8 +335,8 @@ func _second() -> void:
 		seconds.append(now)
 		if seconds.size() > JUDGE_SECONDS:
 			seconds.pop_front()
+	late_lines = LATE_LINES if meter.missed() >= LATE_QUIET * maxi(meter.refreshes, 1) else 0
 	meter.reset_window()
-	late_lines = 0
 	note_left -= 1
 	if note_left <= 0:
 		note = ""
