@@ -11,7 +11,8 @@ Checks per eye:
     mismatches beyond MAX_EDGE px of the traced outline, and each body's image's centre within
     MAX_OFFSET px (images of at least MIN_IMAGE px and MIN_THICK: the slivers near the throat's
     photon sphere, a pixel or two thick, move by a pixel with the last digits of the eye's place,
-    and the outline's check takes them); rays still going at RAY_MAX are left out;
+    and the outline's check takes them); rays still going at RAY_MAX are left out, and so is a pixel
+    whose ray a quarter of a pixel off its centre is;
   every image: on a grid of every GRID-th pixel, a traced body where the picture shows none within
     MAX_EDGE px counts as a mismatch too (an image the picture lacks);
   a mismatch counts where the pixel is what the trace says at its centre all across (rays a quarter
@@ -324,13 +325,14 @@ for side_i, eye_name in enumerate(('left', 'right')):
         """Whether pixels (xs, ys) are what the trace says at their centres all across: rays a quarter
         of a pixel from the centre each way meet the body kind (has) or don't (not has). Where they
         don't agree the body's edge crosses the pixel (near the photon sphere an image a pixel or
-        less across, where a ray a hair off goes elsewhere), and either verdict is the pixel's."""
+        less across, where a ray a hair off goes elsewhere), and either verdict is the pixel's; so
+        where one of them is still going at RAY_MAX (it may yet meet a body)."""
         ok = np.ones(len(xs), bool)
         if len(xs) == 0:
             return ok
         for dx, dy in ((-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)):
             k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes), bodies=bodies)
-            ok &= (k == kind) == has
+            ok &= ((k == kind) == has) & (k >= 0)
         return ok
     lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
     li = np.nonzero(lack)[0]
