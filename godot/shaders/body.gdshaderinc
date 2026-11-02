@@ -265,8 +265,10 @@ void fragment() {
 	if (v_h < 0.0) discard;
 #endif
 #ifdef ZONE
-	// a pixel of a triangle of next to no area (where the mesh's strips meet on one azimuth): its
-	// varyings come out no numbers, the normal none; it is no part of the surface
+	// a pixel whose normal interpolates to no vector (not a number, or nought) is no part of the
+	// surface: a triangle of next to no area has its varyings so, where a float32 step decides
+	// whether it gets a pixel (without this the stereo test has one inside a cube in each eye at its
+	// place 3)
 	if (!(dot(v_n, v_n) > 1e-12)) discard;
 #endif
 #ifdef DIRECT

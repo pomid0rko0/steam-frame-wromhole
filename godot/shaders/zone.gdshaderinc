@@ -359,9 +359,8 @@ vec2 zone_cube_azimuth(float u, float columns, bool round_axis, float th0, vec4 
 			// axis or w) at the next span's (the last at the one before), whose sections it has
 			float mid = 0.5 * (k[i] + k[i + 1]);
 			if (k[i + 1] - k[i] < 1e-5) mid = float(i) < spans - 1.0 ? 0.5 * (k[i + 1] + k[min(i + 2, 8)]) : 0.5 * (k[max(i - 1, 0)] + k[i]);
-			// a span's last column on its corner's azimuth exactly, as the next span's first is: the
-			// strip between them has no area (mix at 1 may come out a float32 step off, and a
-			// triangle of almost none gets a pixel now and then, with its varyings no numbers)
+			// a span's last column on its corner's azimuth itself, as the next span's first is (mix
+			// at 1 can come out a float32 step off it): the two columns on that azimuth are one
 			th = vec2(c1 > c0 ? (col >= c1 ? k[i + 1] : mix(k[i], k[i + 1], (col - c0) / (c1 - c0))) : k[i], mid);
 			break;
 		}
