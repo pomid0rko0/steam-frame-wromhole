@@ -26,39 +26,31 @@ struct LensSeen {
 };
 
 // the first of a body's crossings with the straight ray o + t d (unit d) past t = 0, before tmax:
-// its t (or tmax) and normal
-float lens_sphere(vec3 o, vec3 d, vec3 c, float r, float tmax, inout vec3 nrm) {
+// its t, or tmax. Only t: the loop over the bodies (lens_trace) carries nothing else from one to
+// the next, and the normal of the one it met is worked out once after it (lens_normal), so the
+// loop holds few registers.
+float lens_sphere(vec3 o, vec3 d, vec3 c, float r, float tmax) {
 	vec3 oc = o - c;
 	float bq = dot(oc, d);
 	float disc = bq * bq - (dot(oc, oc) - r * r);
 	if (disc < 0.0) return tmax;
 	float t = -bq - sqrt(disc);
-	if (t <= 0.0 || t >= tmax) return tmax;
-	nrm = (oc + t * d) / r;
-	return t;
+	return t <= 0.0 || t >= tmax ? tmax : t;
 }
 
-float lens_box(vec3 o, vec3 d, vec3 c, vec3 e1, vec3 e2, vec3 s, float tmax, inout vec3 nrm, inout vec3 box) {
+float lens_box(vec3 o, vec3 d, vec3 c, vec3 e1, vec3 e2, vec3 s, float tmax) {
 	vec3 e3 = cross(e1, e2);
 	vec3 oc = o - c;
 	vec3 lo = vec3(dot(oc, e1), dot(oc, e2), dot(oc, e3));
 	vec3 ld = vec3(dot(d, e1), dot(d, e2), dot(d, e3));
 	vec3 inv = 1.0 / ld;
 	vec3 t1 = (-s - lo) * inv, t2 = (s - lo) * inv;
-	vec3 tn = min(t1, t2), tf = max(t1, t2);
-	float t = max(max(tn.x, tn.y), tn.z);
-	float tout = min(min(tf.x, tf.y), tf.z);
-	if (t > tout || t <= 0.0 || t >= tmax) return tmax;
-	vec3 q = lo + t * ld;
-	vec3 a = abs(q) / s;
-	vec3 ax = a.x >= a.y && a.x >= a.z ? vec3(1.0, 0.0, 0.0) : (a.y >= a.z ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0));
-	vec3 sg = sign(q) * ax;
-	nrm = sg.x * e1 + sg.y * e2 + sg.z * e3;
-	box = q / s;
-	return t;
+	float t = max(max(min(t1.x, t2.x), min(t1.y, t2.y)), min(t1.z, t2.z));
+	float tout = min(min(max(t1.x, t2.x), max(t1.y, t2.y)), max(t1.z, t2.z));
+	return t > tout || t <= 0.0 || t >= tmax ? tmax : t;
 }
 
-float lens_cylinder(vec3 o, vec3 d, vec3 c, vec3 e1, vec3 e2, float r, float hh, float tmax, inout vec3 nrm) {
+float lens_cylinder(vec3 o, vec3 d, vec3 c, vec3 e1, vec3 e2, float r, float hh, float tmax) {
 	vec3 e3 = cross(e1, e2);
 	vec3 oc = o - c;
 	vec3 lo = vec3(dot(oc, e1), dot(oc, e2), dot(oc, e3));
@@ -70,24 +62,40 @@ float lens_cylinder(vec3 o, vec3 d, vec3 c, vec3 e1, vec3 e2, float r, float hh,
 		float disc = B * B - A * (dot(lo.xy, lo.xy) - r * r);
 		if (disc >= 0.0) {
 			float t = (-B - sqrt(disc)) / A;
-			float z = lo.z + t * ld.z;
-			if (t > 0.0 && t < best && abs(z) <= hh) {
-				best = t;
-				vec2 q = (lo.xy + t * ld.xy) / r;
-				nrm = q.x * e1 + q.y * e2;
-			}
+			if (t > 0.0 && t < best && abs(lo.z + t * ld.z) <= hh) best = t;
 		}
 	}
 	if (abs(ld.z) > 1e-12) {
-		float cap = lo.z > 0.0 ? hh : -hh;
-		float t = (cap - lo.z) / ld.z;
+		float t = ((lo.z > 0.0 ? hh : -hh) - lo.z) / ld.z;
 		vec2 q = lo.xy + t * ld.xy;
-		if (t > 0.0 && t < best && dot(q, q) <= r * r) {
-			best = t;
-			nrm = sign(cap) * e3;
-		}
+		if (t > 0.0 && t < best && dot(q, q) <= r * r) best = t;
 	}
 	return best;
+}
+
+// the outward normal at a point p on body i of the lens list (lens_trace found it there), and a
+// toy cube's point in its own [-1, 1]^3 (else 0): a box's face and a cylinder's side or cap are
+// the ones p is on, the nearest by its own coordinates
+vec3 lens_normal(int i, vec3 p, out vec3 box) {
+	vec4 r0 = lens_body[4 * i], r1 = lens_body[4 * i + 1], r2 = lens_body[4 * i + 2], r3 = lens_body[4 * i + 3];
+	int kind = int(r0.w + 0.5);
+	box = vec3(0.0);
+	vec3 q = p - r0.xyz;
+	if (kind == 0) return q / r1.w;
+	vec3 e3 = cross(r1.xyz, r2.xyz);
+	vec3 lq = vec3(dot(q, r1.xyz), dot(q, r2.xyz), dot(q, e3));
+	if (kind == 3) {
+		float rho = length(lq.xy);
+		if (abs(r3.w - abs(lq.z)) < abs(r1.w - rho)) return sign(lq.z) * e3;
+		vec2 u = lq.xy / max(rho, 1e-12);
+		return u.x * r1.xyz + u.y * r2.xyz;
+	}
+	vec3 s = vec3(r1.w, r2.w, r3.w);
+	vec3 a = abs(lq) / s;
+	vec3 ax = a.x >= a.y && a.x >= a.z ? vec3(1.0, 0.0, 0.0) : (a.y >= a.z ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0));
+	vec3 sg = sign(lq) * ax;
+	if (kind == 2) box = lq / s;
+	return sg.x * r1.xyz + sg.y * r2.xyz + sg.z * e3;
 }
 
 // the straight ray from pos along dir (unit) in universe sheet, way metres from the eye so far:
@@ -108,6 +116,7 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 		tmax = (-lift - pos.z) / dir.z;
 		s.kind = 1;
 	}
+	int hit = -1;
 	if (bodies) {
 		// the ray stays in its plane through the centre: a body further from that plane than its
 		// size is never met
@@ -116,32 +125,29 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 		m = ml > 1e-6 ? m / ml : vec3(0.0);
 		int i0 = sheet > 0.0 ? 0 : int(lens_n.x);
 		int i1 = i0 + int(sheet > 0.0 ? lens_n.x : lens_n.y);
-		int hit = -1;
 		for (int i = i0; i < i1; i++) {
 			vec4 r0 = lens_body[4 * i], r1 = lens_body[4 * i + 1], r2 = lens_body[4 * i + 2], r3 = lens_body[4 * i + 3];
 			int kind = int(r0.w + 0.5);
 			float reach = kind == 0 ? r1.w : (kind == 3 ? length(vec2(r1.w, r3.w)) : length(vec3(r1.w, r2.w, r3.w)));
 			if (abs(dot(r0.xyz, m)) > reach || dot(r0.xyz - pos, dir) < -reach) continue;
-			float t = tmax;
-			vec3 nrm = s.n, box = vec3(0.0);
-			if (kind == 0) t = lens_sphere(pos, dir, r0.xyz, r1.w, tmax, nrm);
-			else if (kind == 3) t = lens_cylinder(pos, dir, r0.xyz, r1.xyz, r2.xyz, r1.w, r3.w, tmax, nrm);
-			else t = lens_box(pos, dir, r0.xyz, r1.xyz, r2.xyz, vec3(r1.w, r2.w, r3.w), tmax, nrm, box);
+			float t;
+			if (kind == 0) t = lens_sphere(pos, dir, r0.xyz, r1.w, tmax);
+			else if (kind == 3) t = lens_cylinder(pos, dir, r0.xyz, r1.xyz, r2.xyz, r1.w, r3.w, tmax);
+			else t = lens_box(pos, dir, r0.xyz, r1.xyz, r2.xyz, vec3(r1.w, r2.w, r3.w), tmax);
 			if (t < tmax) {
 				tmax = t;
 				hit = i;
-				s.n = nrm;
-				s.box = kind == 2 ? box : vec3(0.0);
 			}
 		}
-		if (hit >= 0) {
-			s.kind = 2;
-			s.albedo = lens_body[4 * hit + 3].rgb;
-		}
 	}
-	if (s.kind > 0) {
+	if (s.kind > 0 || hit >= 0) {
 		s.p = pos + tmax * dir;
 		s.way = way + tmax;
+	}
+	if (hit >= 0) {
+		s.kind = 2;
+		s.n = lens_normal(hit, s.p, s.box);
+		s.albedo = lens_body[4 * hit + 3].rgb;
 	}
 	return s;
 }

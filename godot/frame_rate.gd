@@ -33,6 +33,14 @@ extends Node
 ## the frame before's way on the main thread: from main's start to the end of its drawing
 ## (RenderingServer.frame_post_draw), main's script in it by part (Main.PARTS), and the wait from
 ## there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
+## The GPU time by part (_read_parts): from the frame's GPU timestamps, the viewport's begin and end
+## (Godot's, as it measures the viewport) and our own foveation's passes (floor_fov.gd's TS_*):
+## before them (Godot's setup), the eyes and the way out's table, our floor's texture, and the rest
+## (the 3D pass: the bodies, those in the curved zone too, the floor's quad, the menu, the output),
+## averaged over the second in its line, with the dearest frame's of the second (a frame over the
+## budget sends SteamVR to half rate: which part was it), and the last frame read in a late frame's;
+## with our own foveation off, none. Like the GPU time, they belong to a frame two before. The line
+## also has the longest stretch of a frame on the main thread in the second (before_ms).
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
@@ -79,6 +87,8 @@ var seconds: Array[Second] = []   # the last few at the current rate
 var t := 0.0                    # s of this second so far
 var now := Second.new()         # and its counts (shown and refreshes: _second)
 var rate := 0.0                 # measured, Hz
+var parts_frame := -1           # the frame whose GPU timestamps were read last (_read_parts)
+var parts_last := PackedFloat32Array()   # its GPU time by part, ms (empty: none)
 var reported := 0.0             # what the runtime says, Hz (read once a second)
 var vrcmd := VRCMD
 var vrsettings := ""
@@ -161,14 +171,26 @@ func _process(delta: float) -> void:
 					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
 					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
 					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, _before_text(),
-					compilations(), main.view_text()])
+					compilations(), main.view_text()] + "; GPU by part, the last frame read: " + _parts_text(parts_last))
 		bench.frame_timing(now, period, reported)
+	var mt := before_ms()    # the frame before's, so before "before" turns to this one
+	if mt.x > now.main_max.x:
+		now.main_max = mt
 	before = [main.started_us, main.scripts_ms, main.parts_ms.duplicate()]
 	t += delta
 	now.drawn += 1
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
 	now.gpu += g
 	now.gpu_max = maxf(now.gpu_max, g)
+	if _read_parts():
+		now.parts_n += 1
+		var sum := 0.0
+		for i in parts_last.size():
+			now.parts[i] += parts_last[i]
+			sum += parts_last[i]
+		if sum > now.parts_max_sum:
+			now.parts_max_sum = sum
+			now.parts_max = parts_last.duplicate()
 	if requested > 0.0:
 		if absf(meter.rate() - requested) < 0.5:
 			_answer_request()
@@ -351,6 +373,34 @@ func _on_drawn() -> void:
 	drawn_us = Time.get_ticks_usec()
 
 
+## The GPU time by part (this file's top) of the newest frame whose timestamps are back, into
+## parts_last; false if none is newer than the last read, or our own foveation drew none.
+func _read_parts() -> bool:
+	var rd := RenderingServer.get_rendering_device()
+	if rd == null or rd.get_captured_timestamps_frame() == parts_frame:
+		return false
+	parts_frame = rd.get_captured_timestamps_frame()
+	var vp := str(target.get_viewport_rid().get_id())
+	# name: GPU time, ns (what Godot 4.7.2 gives: the parts add up to the viewport's measured time)
+	var at := {}
+	for i in rd.get_captured_timestamps_count():
+		at[rd.get_captured_timestamp_name(i)] = rd.get_captured_timestamp_gpu_time(i)
+	var names := ["vp_begin_" + vp, FloorFov.TS_BEGIN, FloorFov.TS_TABLE, FloorFov.TS_END, "vp_end_" + vp]
+	parts_last = PackedFloat32Array()
+	for k in names.size():
+		if not at.has(names[k]):
+			return false
+	for k in names.size() - 1:
+		parts_last.append((at[names[k + 1]] - at[names[k]]) / 1e6)
+	return true
+
+
+func _parts_text(p: PackedFloat32Array) -> String:
+	if p.size() != 4:
+		return "none (our own foveation off)"
+	return "before ours %.2f, the eyes and the way out's table %.2f, our floor %.2f, the rest (the 3D pass) %.2f ms" % [p[0], p[1], p[2], p[3]]
+
+
 ## The frame before on the main thread (this file's top): ms from main's start to drawn, main's
 ## script in it, and the wait till the next frame's start.
 func before_ms() -> Vector3:
@@ -459,7 +509,10 @@ func _log() -> void:
 			1000.0 / rate if rate > 0.0 else 0.0, clock_mhz, reported,
 			xr.get_available_display_refresh_rates(), stored, int(eye.x), int(eye.y), int(main.menu.runtime_eye.x), int(main.menu.runtime_eye.y),
 			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), main.gaze_text(),
-			n - compiled, n, main.view_text()])
+			n - compiled, n, main.view_text()] + "; GPU by part, the second's average: "
+			+ _parts_text(s.parts_mean()) + "; the dearest frame's: " + _parts_text(s.parts_max)
+			+ "; the main thread's longest frame %.2f ms from main's start to drawn (main's script %.2f), then %.2f ms till the next" % [
+			s.main_max.x, s.main_max.y, s.main_max.z])
 	compiled = n
 
 
@@ -470,7 +523,18 @@ class Second:
 	var drawn := 0                  # frames Godot drew
 	var gpu := 0.0                  # their GPU ms, summed
 	var gpu_max := 0.0
+	var parts := PackedFloat32Array([0, 0, 0, 0])   # their GPU ms by part (_read_parts), summed
+	var parts_n := 0                # frames in parts
+	var parts_max := PackedFloat32Array()   # the GPU time by part of the dearest of them
+	var parts_max_sum := 0.0
+	var main_max := Vector3.ZERO    # the longest frame on the main thread (FrameRate.before_ms)
 
+	## The GPU time by part per frame, ms (empty: none read).
+	func parts_mean() -> PackedFloat32Array:
+		var m := PackedFloat32Array()
+		for v in parts:
+			m.append(v / parts_n if parts_n > 0 else 0.0)
+		return m if parts_n > 0 else PackedFloat32Array()
 
 	## As the tests print it.
 	func _to_string() -> String:

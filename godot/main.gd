@@ -14,13 +14,14 @@ extends Node3D
 ##
 ## The parts: the space's geometry (wormhole_space.gd), the viewer's body (viewer.gd), the renderer
 ## (renderer.gd), the demo's balls and cubes in gravity through the wormhole (toys.gd,
-## ball_world.gd), the hands that grab, throw and pull them (hands.gd), foveated rendering
-## (foveation.gd, split_pass.gd, floor_fov.gd), the menu and the line under it (menu.gd) with the
-## measured frame rate (frame_rate.gd, rate_meter.gd), the speed check (bench.gd) and the stereo
-## check scene (check_scene.gd). Each frame (_process): the menu takes its buttons, then the turn,
-## the reset and the gravity view's button, the body's motion (_locomotion), the free toys (pushed
-## by the hands where they were), the hands and what they hold, and last the toys and the head to
-## the renderer: a toy let go now starts from the hand.
+## ball_world.gd), the hands that grab, throw and pull them (hands.gd), the zone bodies' meshes once
+## a frame (zone_sections.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
+## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd,
+## rate_meter.gd), the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
+## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
+## button, the body's motion (_locomotion), the free toys (pushed by the hands where they were), the
+## hands and what they hold, and last the toys and the head to the renderer: a toy let go now starts
+## from the hand.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -155,7 +156,7 @@ func _ready() -> void:
 	renderer = Renderer.new(space, scene, xr, xr_view)
 	camera.add_child(renderer)
 	foveation.floor_fov = renderer.floor_fov
-	camera.compositor.compositor_effects = [foveation.split_pass, renderer.floor_fov]
+	camera.compositor.compositor_effects = [foveation.split_pass, renderer.floor_fov, renderer.zone_sections]
 
 	rate = FrameRate.new()
 	rate.main = self
@@ -397,9 +398,9 @@ func gaze_text() -> String:
 func view_text() -> String:
 	var b := camera.transform.basis
 	var hf: Array = _head_pose[2]
-	var out := "head %.2f m up, right side %.0f deg up; %s; drawn %d balls, %d cubes" % [camera.transform.origin.y,
+	var out := "head %.2f m up, right side %.0f deg up; %s; drawn %d balls, %d cubes (in the curved zone %d balls, %d cubes)" % [camera.transform.origin.y,
 			rad_to_deg(asin(clampf(b.x.y, -1.0, 1.0))), "standing" if viewer.standing else "flying, the feet %.2f m over the floor" % viewer.height(),
-			renderer.ball_col.size(), renderer.toy_count - renderer.ball_col.size()]
+			renderer.ball_col.size(), renderer.toy_count - renderer.ball_col.size(), renderer.zone_count.x, renderer.zone_count.y]
 	if not hf.is_empty() and not renderer.bodies.is_empty():
 		var P := space.embed(_head_pose[0], _head_pose[1])
 		var N := space.normal4(_head_pose[0], _head_pose[1])

@@ -5,9 +5,14 @@ extends CompositorEffect
 ## bodies seen straight and in the zone are geometry. So before the bodies are drawn, a compute
 ## shader works out what the quad would draw into a texture per eye whose texels are as fine as the picture's
 ## pixels where the eye looks and grow smoothly away from it (shaders/floor_fov.gdshaderinc), and the
-## floor's quad then only takes each pixel's colour from there, filtered (floor.gdshaderinc,
-## fov_on). The bodies stay at the picture's full resolution. No density map: no tiles of coarse
+## floor's quad then only takes each pixel's colour from there, filtered, with a program of its own
+## (shaders/floor_sample.gdshader, sample_mat: Renderer draws the quad with it while this is on).
+## The bodies stay at the picture's full resolution. No density map: no tiles of coarse
 ## pixels, no edge where the density changes; away from the gaze the floor is softer, not blocky.
+##
+## Three passes: the eyes, their rows of the way out of the zone (a ray's sigma to where it leaves:
+## geo.gdshaderinc, «the way out by a table»), the texture. GPU timestamps before, between and after
+## them (TS_*) give frame_rate.gd the GPU time of each part of the frame.
 ##
 ## On the XR camera's compositor, before the opaque pass (which it does not split). Renderer hands
 ## it the space's numbers, the head each frame, and the material the floor's quad samples with; Main
@@ -19,20 +24,29 @@ extends CompositorEffect
 # a picture of size pixels a side with the gaze in its middle
 const STRENGTH := {4: 2.0, 5: 4.0}
 const GAZE_REACH := 0.9             # the warp's middle kept this far inside the picture (clip space)
+# the GPU timestamps of these passes (RenderingDevice.capture_timestamp): before the eyes, after the
+# way out's table, after the floor's texture
+const TS_BEGIN := "floor_fov begin"
+const TS_TABLE := "floor_fov table"
+const TS_END := "floor_fov end"
+
+signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
 var level := 0                      # 0: off
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
-var floor_mats: Array[ShaderMaterial] = []   # the floor's materials, which sample the texture
+var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
 var fov_tex := Texture2DArrayRD.new()
 var warp_tex := Texture2DRD.new()
 
 var _rd: RenderingDevice
-var _shaders := {}                  # "eyes", "floor", "gravity" -> RID
+var _shaders := {}                  # "eyes", "table", "floor", "gravity" -> RID
 var _pipes := {}
 var _sets := {}
 var _ubo: RID
 var _eyes: RID
 var _tex: RID                       # the colours, rgba16f, a layer per eye
+var _xt: RID                        # the way out's rows (floor_fov.gdshaderinc, xt_img): xt_n x 4, rgba32f
+var _xt_n := 0                      # texels a row: geo.gdshaderinc's GEO_XN
 var _warp: RID                      # per eye: (gaze x, y, k, n), (A0 x, A1 x, A0 y, A1 y)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture
@@ -99,9 +113,10 @@ func set_gaze(point: Vector3, on: bool) -> void:
 ## The level (0, 4 or 5) and the picture's pixels a side; the texture is made again when they change.
 func set_level(p_level: int, size: int) -> void:
 	level = p_level if STRENGTH.has(p_level) else 0
+	var was := enabled
 	enabled = level > 0
-	for m in floor_mats:
-		m.set_shader_parameter("fov_on", enabled)
+	if enabled != was:
+		toggled.emit()
 	if not enabled:
 		return
 	_k = STRENGTH[level]
@@ -140,9 +155,8 @@ func _make(n: int) -> void:
 	_mutex.unlock()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
-	for m in floor_mats:
-		m.set_shader_parameter("fov_tex", fov_tex)
-		m.set_shader_parameter("fov_warp", warp_tex)
+	sample_mat.set_shader_parameter("fov_tex", fov_tex)
+	sample_mat.set_shader_parameter("fov_warp", warp_tex)
 
 
 ## The compute pipelines: the eyes, then the floor, plain or coloured by gravity.
@@ -152,9 +166,11 @@ func _build() -> void:
 	var lens: String = (load("res://shaders/lens.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/floor_fov.gdshaderinc") as ShaderInclude).code
 	body = body.replace("#include_geo_and_look", geo + "\n" + look + "\n" + lens)
-	for kind in ["eyes", "floor", "gravity"]:
+	var n := RegEx.create_from_string("const int GEO_XN = (\\d+);").search(geo)
+	_xt_n = int(n.get_string(1))
+	for kind in ["eyes", "table", "floor", "gravity"]:
 		var src := RDShaderSource.new()
-		var defs := {"eyes": "#define EYES\n", "floor": "", "gravity": "#define GRAVITY\n"}
+		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n"}
 		src.source_compute = "#version 450\n" + defs[kind] + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
 		if spirv.compile_error_compute != "":
@@ -169,7 +185,13 @@ func _build() -> void:
 	s.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
 	_sampler = _rd.sampler_create(s)
 	_ubo = _rd.uniform_buffer_create(448)
-	_eyes = _rd.storage_buffer_create(160)
+	_eyes = _rd.storage_buffer_create(192)
+	var x := RDTextureFormat.new()
+	x.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	x.width = _xt_n
+	x.height = 4
+	x.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
+	_xt = _rd.texture_create(x, RDTextureView.new())
 	_lens = _rd.uniform_buffer_create(_lens_size)
 
 
@@ -177,7 +199,7 @@ func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 5:
+	for b in 6:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
@@ -197,6 +219,9 @@ func _uniform_set(kind: String) -> RID:
 			4:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 				u.add_id(_tex)
+			5:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+				u.add_id(_xt)
 		us.append(u)
 	_sets[kind] = _rd.uniform_set_create(us, _shaders[kind], 0)
 	return _sets[kind]
@@ -260,13 +285,22 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	_rd.texture_update(_warp, 0, warp.to_byte_array())
 	var groups := int(ceil(_n / 8.0))
+	# a timestamp orders the GPU's work: what was recorded before it runs before it, what after, after
+	_rd.capture_timestamp(TS_BEGIN)
 	var cl := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes["eyes"])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set("eyes"), 0)
 	_rd.compute_list_dispatch(cl, 1, 1, 1)
 	_rd.compute_list_add_barrier(cl)
+	_rd.compute_list_bind_compute_pipeline(cl, _pipes["table"])
+	_rd.compute_list_bind_uniform_set(cl, _uniform_set("table"), 0)
+	_rd.compute_list_dispatch(cl, int(ceil(_xt_n / 64.0)), 2 * views, 1)
+	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_TABLE)
+	cl = _rd.compute_list_begin()
 	var kind := "gravity" if gravity else "floor"
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_dispatch(cl, groups, groups, views)
 	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_END)
