@@ -9,7 +9,8 @@ extends Node3D
 ##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
 ##   the zone's ball is dropped.
 ## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
-##   geodesic (body.gdshaderinc).
+##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body worked out once a
+##   frame for each eye (zone_sections.gd), each image's vertices only find their geodesics.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -108,6 +109,7 @@ var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
 var floor_fov := FloorFov.new()  # our own foveation's floor (on the camera's compositor: Main)
+var zone_sections := ZoneSections.new()   # the zone bodies' meshes (on the camera's compositor too)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var toy_count := 0              # balls and cubes drawn (set_objects)
 var zone_count := Vector2i.ZERO  # of them in the curved zone (or reaching into it): balls, cubes
@@ -133,6 +135,10 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	floor_fov.sample_mat = floor_sample_mat
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
+	# the meshes' nodes: ZoneSections' slots, balls' first, then cubes', each the fine mesh's rows,
+	# then the coarse one's (both kinds' meshes alike: one grid for its compute shader)
+	assert(ZONE_AZIMUTHS[0] == ZONE_AZIMUTHS[1])
+	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES)
 	for k in 4:
 		var m := ShaderMaterial.new()
 		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
@@ -140,6 +146,10 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_images", ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
 		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
+		m.set_shader_parameter("zone_nodes", zone_sections.tex)
+		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
+		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
+		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
 		zone_mats.append(m)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
@@ -235,9 +245,10 @@ func upload_space() -> void:
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
-	floor_fov.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
-			Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
-			Vector2(space.lift, space.grav_beta))
+	for fx in [floor_fov, zone_sections]:
+		fx.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
+				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
+				Vector2(space.lift, space.grav_beta))
 
 
 var _sweep_tex: Texture2D
@@ -267,6 +278,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		m.set_shader_parameter("head_f", f)
 		m.set_shader_parameter("head_pos", head_pos)
 	floor_fov.set_head(l, n, f, head_pos)
+	zone_sections.set_head(l, n, f, head_pos)
 
 
 ## The movable balls and cubes: balls by their centres (points of R^4) and (colour, radius), cubes
@@ -274,7 +286,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 ## E1, E2 of the first cube, then the second's...; the third follows from them) and (colour, half
 ## size). Colours as Godot's Color takes them (sRGB). At most MAX_BALLS and MAX_CUBES. Each is drawn
 ## as a body out in a flat universe (seen straight, and in the lens list) or, reaching into the
-## curved zone, as one in it (out_of_zone).
+## curved zone, as one in it (out_of_zone; its meshes' nodes by ZoneSections, this frame's).
 func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := PackedVector4Array(),
 		cube_axes := PackedVector4Array(), ccol := PackedVector4Array()) -> void:
 	var n := mini(pos.size(), MAX_BALLS)
@@ -283,12 +295,20 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	var inz := [0, 0]
 	var lens_a := PackedVector4Array()
 	var lens_b := PackedVector4Array()
+	var zone_rows := PackedVector4Array()       # ZoneSections' slots: balls' first, cubes' from MAX_BALLS
+	zone_rows.resize(4 * (MAX_BALLS + MAX_CUBES))
 	for i in n:
 		var C := pos[i]
 		var e := _tangent_pair(C)
 		var c := _linear(col[i])
 		var out := out_of_zone(C, col[i].w)
 		_place(0, out, flat[0] if out else inz[0], pack(C, e[0], e[1]), c)
+		if not out:
+			var k: int = 4 * inz[0]
+			zone_rows[k] = C
+			zone_rows[k + 1] = e[0]
+			zone_rows[k + 2] = e[1]
+			zone_rows[k + 3] = Vector4(col[i].w, 0.0, 0.0, 0.0)
 		if out:
 			flat[0] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 0.0), Vector4(1.0, 0.0, 0.0, col[i].w),
@@ -307,6 +327,12 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		var half := ccol[i].w
 		var out := out_of_zone(C, half * sqrt(3.0))
 		_place(1, out, flat[1] if out else inz[1], pack(C, E1, E2), c)
+		if not out:
+			var k: int = 4 * (MAX_BALLS + inz[1])
+			zone_rows[k] = C
+			zone_rows[k + 1] = E1
+			zone_rows[k + 2] = E2
+			zone_rows[k + 3] = Vector4(half, 0.0, 0.0, 0.0)
 		if out:
 			flat[1] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 2.0), Vector4(E1.x, E1.y, E1.z, half),
@@ -321,6 +347,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	cubes.multimesh.visible_instance_count = flat[1]
 	for k in 4:
 		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
+	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
 	zone_count = Vector2i(inz[0], inz[1])

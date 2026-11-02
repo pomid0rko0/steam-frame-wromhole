@@ -28,7 +28,9 @@
 //     are. Each point found by Newton's steps on the body's own definition along a straight line of
 //     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
 //     azimuths, and a row on each corner of its sections, the same corner on the same row from one
-//     corner's azimuth to the next: its outline keeps its corners.
+//     corner's azimuth to the next: its outline keeps its corners. A node's point is the same in
+//     every image: it is worked out once a frame for each eye (zone_sections.gd, ZoneSections'
+//     texture zone_nodes), and here each image's vertex takes it and finds its geodesic.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -40,7 +42,8 @@
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
 //     up (R^4's z, else x, made orthogonal to the line and the space's normal). Unlit, in beam_col;
 //     below the floor hidden.
-// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point.
+// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point; a
+// cube's normal is its face's, per pixel.
 #if defined(STATIC) && !defined(DIRECT)
 #define DIRECT
 #endif
@@ -62,6 +65,12 @@ uniform int zone_first = 0;      // instance i draws image zone_first + i % zone
 uniform int zone_images = 1;
 uniform float zone_round = 48.0; // the mesh's points round a section and azimuths (Renderer._zone_mesh)
 uniform float zone_columns = 64.0;
+// the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this kind's
+// first slot (instance i: body i / zone_images), this mesh's first row in a slot, a slot's rows
+uniform sampler2DArray zone_nodes : filter_nearest, repeat_disable;
+uniform int zone_slot = 0;
+uniform int zone_row = 0;
+uniform int zone_slot_rows = 62;
 #endif
 #ifdef BEAM
 #define BEAM_POINTS 48           // Renderer.BEAM_POINTS
@@ -71,7 +80,16 @@ uniform int beam_n = 0;
 uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 
+#ifdef CUBE
+// a cube's axes, tangent at the point: each pixel takes its face's (fragment) by v_box. A vertex on
+// an edge is on two faces, and a normal of one of them in it would be spread over the other's
+// triangles by the interpolation (the zone's meshes share their vertices round the section)
+varying vec4 v_ax1;
+varying vec4 v_ax2;
+varying vec4 v_ax3;
+#else
 varying vec4 v_n;       // the surface's normal (R^4)
+#endif
 varying vec4 v_sun;     // toward the sun (R^4, tangent there)
 varying vec4 v_up;      // up (R^4, tangent there)
 varying vec4 v_ray;     // the light's way in (R^4)
@@ -92,7 +110,9 @@ varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
 
 void vertex() {
 	vec4 P;
+#ifndef CUBE
 	vec4 nrm;
+#endif
 #ifdef ZONE
 	float el;
 	vec3 en;
@@ -105,12 +125,13 @@ void vertex() {
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
 	float size = INSTANCE_CUSTOM.a;
-	vec3 t;
-#ifdef BALL
-	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, true, en, C, E1, E2, E3, N, size, t);
-#else
-	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, false, en, C, E1, E2, E3, N, size, t);
-#endif
+	// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
+	ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
+	int row = (zone_slot + INSTANCE_ID / zone_images) * zone_slot_rows + zone_row + node.y;
+	vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
+	vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);
+	vec2 pe = na.xy;
+	vec3 t = vec3(na.zw, nb.x);
 	float pl = pe.x;
 	float alpha = clamp(pe.y, 0.0, GEO_PI);
 	vec2 sca = geo_sincos(alpha);
@@ -120,10 +141,7 @@ void vertex() {
 #ifdef BALL
 	nrm = q;
 #else
-	vec3 sv = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
-	vec3 av = abs(sv);
-	nrm = av.x >= av.y && av.x >= av.z ? sign(sv.x) * E1 : (av.y >= av.z ? sign(sv.y) * E2 : sign(sv.z) * E3);
-	v_box = sv;
+	v_box = vec3(dot(q, E1), dot(q, E2), dot(q, E3)) / size;
 #endif
 	float len, fell;
 	vec4 arrive;
@@ -148,8 +166,6 @@ void vertex() {
 		P = geo_onto(C + x * (sqrt(max(size * size - c * c, 0.0)) / size), N);
 	}
 	nrm = P - C;
-#else
-	nrm = abs(VERTEX.x) > 0.999 ? sign(VERTEX.x) * E1 : (abs(VERTEX.y) > 0.999 ? sign(VERTEX.y) * E2 : sign(VERTEX.z) * E3);
 #endif
 #elif defined(ARROWS)
 	P = vec4(0.0);
@@ -240,7 +256,13 @@ void vertex() {
 	v_col = COLOR.rgb;
 #endif
 #endif
+#ifdef CUBE
+	v_ax1 = E1 - dot(E1, Np) * Np;
+	v_ax2 = E2 - dot(E2, Np) * Np;
+	v_ax3 = E3 - dot(E3, Np) * Np;
+#else
 	v_n = nrm - dot(nrm, Np) * Np;
+#endif
 	vec4 s4 = look_sun4(pl);
 	v_sun = s4 - dot(s4, Np) * Np;
 	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
@@ -255,6 +277,21 @@ void fragment() {
 #if defined(TOY) || defined(BEAM)
 	if (v_h < 0.0) discard;
 #endif
+#if !defined(ARROWS) && !defined(BEAM)
+#ifdef CUBE
+	vec3 ab = abs(v_box);
+	vec4 nn = ab.x >= ab.y && ab.x >= ab.z ? sign(v_box.x) * v_ax1 : (ab.y >= ab.z ? sign(v_box.y) * v_ax2 : sign(v_box.z) * v_ax3);
+#else
+	vec4 nn = v_n;
+#endif
+#endif
+#ifdef ZONE
+	// a pixel whose normal interpolates to no vector (not a number, or nought) is no part of the
+	// surface: a triangle of next to no area has its varyings so, where a float32 step decides
+	// whether it gets a pixel (without this the stereo test has one inside a cube in each eye at its
+	// place 3)
+	if (!(dot(nn, nn) > 1e-12)) discard;
+#endif
 #ifdef DIRECT
 	// the line of sight through the curved zone's ball: the lens's
 	vec3 d = v_p - v_eye;
@@ -265,7 +302,7 @@ void fragment() {
 #if defined(ARROWS) || defined(BEAM)
 	ALBEDO = v_col;
 #else
-	vec4 n = normalize(v_n);
+	vec4 n = normalize(nn);
 	float nl = dot(n, normalize(v_sun));
 	float up = dot(n, normalize(v_up));
 	float nv = -dot(n, normalize(v_ray));

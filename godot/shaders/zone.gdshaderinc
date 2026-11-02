@@ -1,6 +1,7 @@
 // Bodies in the curved zone drawn round the eye's axis (body.gdshaderinc, ZONE): a mesh's vertex
-// (zone_vertex) as a point of a body's section by a half-surface of the space through that axis.
-// Plain GLSL after geo.gdshaderinc (ref/test_gpu.py takes it too).
+// (zone_vertex) as a point of a body's section by a half-surface of the space through that axis,
+// worked out once a frame per eye by zone_sections.gdshaderinc's compute shader. Plain GLSL after
+// geo.gdshaderinc (ref/test_gpu.py takes it too).
 
 // w(l), the embedding's fourth coordinate (WormholeSpace.w)
 float zone_w(float l) {
@@ -358,7 +359,9 @@ vec2 zone_cube_azimuth(float u, float columns, bool round_axis, float th0, vec4 
 			// axis or w) at the next span's (the last at the one before), whose sections it has
 			float mid = 0.5 * (k[i] + k[i + 1]);
 			if (k[i + 1] - k[i] < 1e-5) mid = float(i) < spans - 1.0 ? 0.5 * (k[i + 1] + k[min(i + 2, 8)]) : 0.5 * (k[max(i - 1, 0)] + k[i]);
-			th = vec2(c1 > c0 ? mix(k[i], k[i + 1], (col - c0) / (c1 - c0)) : k[i], mid);
+			// a span's last column on its corner's azimuth itself, as the next span's first is (mix
+			// at 1 can come out a float32 step off it): the two columns on that azimuth are one
+			th = vec2(c1 > c0 ? (col >= c1 ? k[i + 1] : mix(k[i], k[i + 1], (col - c0) / (c1 - c0))) : k[i], mid);
 			break;
 		}
 		c0 = c1 + 1.0;
