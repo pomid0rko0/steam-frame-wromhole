@@ -844,14 +844,9 @@ def zone_mesh_checks(name, S, gpu, rng):
                 off = np.abs(np.linalg.norm(q, axis=-1) - size) if ball else np.abs(np.abs(sl).max(-1) - size)
                 off = np.where(np.isfinite(off), off, np.inf)
                 if not ball and (k >= 30 or folds(S, C, E, size, en)):
-                    # near the surface as body.gdshaderinc draws it (alpha within the half-surface,
-                    # a hair across the axis back on it): no tear
+                    # near the surface: no tear (a vertex a hair across the axis, alpha past 0 or
+                    # pi, body.gdshaderinc draws on the axis, where its image is on the ring)
                     folded += k < 30
-                    Ac = np.clip(A, 0.0, np.pi)
-                    nc = np.cos(Ac)[..., None] * en + np.sin(Ac)[..., None] * T
-                    qc = np.concatenate([S.r(L)[..., None] * nc, S.w(L)[..., None]], axis=-1) - C
-                    off = np.abs(np.abs(qc @ E.T).max(-1) - size)
-                    off = np.where(np.isfinite(off), off, np.inf)
                     tear = max(tear, off.max() / size)
                     if off.max() > TEAR * size:
                         torn.append((k, off.max()))
