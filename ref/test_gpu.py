@@ -156,10 +156,16 @@ void main() {
 		vec4 d = geo_see_image(a.x, a.yzw, c.x, c.yzw, e.xyz, e.w, int(inp[I + 3].x), len, arr, fell);
 		outp[O] = d;
 		outp[O + 1] = vec4(len, fell + 2.0 * float(g_rays), 0.0, 0.0);
-	} else if (mode == 7 || mode == 8) {    // a = (l0, al0, dl, dal), c = (en, size), (t, dphi), C, E1, E2, E3: (l, alpha)
+	} else if (mode == 9) {     // a = (u, v, columns, rows), c = (en, size), (ball 1 or cube 0), C, E1, E2, E3: (l, alpha), t
+		vec4 C = inp[I + 3];
+		vec3 t;
+		vec2 p = zone_vertex(a.xy, a.z, a.w, inp[I + 2].x > 0.5, c.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], geo_normal(C), c.w, t);
+		outp[O] = vec4(p, 0.0, 0.0);
+		outp[O + 1] = vec4(t, 0.0);
+	} else if (mode == 7 || mode == 8) {    // a = (l0, al0, dl, dal), c = (en, size), t, C, E1, E2, E3: (l, alpha)
 		vec4 e = inp[I + 2], C = inp[I + 3];
 		vec2 p = mode == 7 ? zone_edge_ball(a.x, a.y, a.z, a.w, c.xyz, e.xyz, C, c.w)
-				: zone_edge_cube(a.x, a.y, a.z, a.w, e.w, c.xyz, e.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], c.w);
+				: zone_edge_cube(a.x, a.y, a.z, a.w, c.xyz, e.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], c.w);
 		outp[O] = vec4(p, 0.0, 0.0);
 	} else {                    // a = a ball's centre, c = (direction in its tangent frame, radius): (chord, sdf)
 		vec4 N = geo_normal(a);
@@ -673,40 +679,51 @@ def l_of(S, P):
     return sw * (S.Lc + S.R * (np.arctan2(a - Ka, S.Rout - rho) - S.th0))
 
 
+def zone_body(S, rng, ball, axis_share=0.2):
+    """A ball or a cube on the cylinder, the fillet, across the zone's edge or out of it, and an eye's
+    axis en through the centre (t, m: a half-surface's direction and its normal, toward the body's
+    centre): (C, E, size, en, t, m, axis), axis where the body is about the axis; None for a body
+    across the crease of h < R (zone.gdshaderinc's Newton steps take the profile smooth, and the
+    app's throat, h > R, has none)."""
+    where = rng.integers(4)
+    size = rng.uniform(0.05, 0.5) if ball else rng.uniform(0.05, 0.4)
+    if where == 0:          # the cylinder (or round the crease, the photon sphere)
+        lc = rng.uniform(-1, 1) * max(S.Lc - 0.6, 0.5)
+    elif where == 1:        # the fillet
+        lc = rng.choice([-1, 1]) * rng.uniform(S.Lc, S.L)
+    elif where == 2:        # across the zone's edge
+        lc = rng.choice([-1, 1]) * (S.L + rng.uniform(-size, size))
+    else:                   # out
+        lc = rng.choice([-1, 1]) * rng.uniform(S.L + 1, S.L + 10)
+    if S.th0 > 0 and abs(lc) < 2 * size:
+        return None
+    en, t = frame(rng)
+    m = np.cross(en, t)
+    r_c = float(S.r(lc))
+    axis = rng.uniform() < axis_share       # the eye's axis through the body: the half-surfaces round it
+    ac = rng.choice([rng.uniform(0, 0.5), rng.uniform(np.pi - 0.5, np.pi)]) * size / r_c if axis else rng.uniform(0, np.pi)
+    beta = rng.uniform(-0.8, 0.8) * size / r_c
+    nc = np.cos(beta) * (np.cos(ac) * en + np.sin(ac) * t) + np.sin(beta) * m
+    C = np.r_[r_c * nc, float(S.w(lc))]
+    # a frame of the space's tangent space at C
+    dr, dw = float(S.dr(lc)), float(S.dw(lc))
+    a1 = unit(np.cross(nc, rng.normal(size=3)))
+    T = [np.r_[dr * nc, dw], np.r_[a1, 0.0], np.r_[np.cross(nc, a1), 0.0]]
+    Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+    E = [sum(Q[i, j] * T[j] for j in range(3)) for i in range(3)]
+    return C, E, size, en, t, m, axis
+
+
 def zone_checks(name, S, gpu, rng):
     """Where a line of a half-surface from an inner point leaves a ball or a cube."""
     fails = 0
     for ball in (True, False):
         rows, cases = [], []
         while len(rows) < 1500:
-            where = rng.integers(4)
-            size = rng.uniform(0.05, 0.5) if ball else rng.uniform(0.05, 0.4)
-            if where == 0:          # the cylinder (or round the crease, the photon sphere)
-                lc = rng.uniform(-1, 1) * max(S.Lc - 0.6, 0.5)
-            elif where == 1:        # the fillet
-                lc = rng.choice([-1, 1]) * rng.uniform(S.Lc, S.L)
-            elif where == 2:        # across the zone's edge
-                lc = rng.choice([-1, 1]) * (S.L + rng.uniform(-size, size))
-            else:                   # out
-                lc = rng.choice([-1, 1]) * rng.uniform(S.L + 1, S.L + 10)
-            if S.th0 > 0 and abs(lc) < 2 * size:
-                # a body across the crease of h < R: zone.gdshaderinc's Newton steps take the profile
-                # smooth, and the app's throat (h > R) has no crease
+            body = zone_body(S, rng, ball)
+            if body is None:
                 continue
-            en, t = frame(rng)
-            m = np.cross(en, t)
-            r_c = float(S.r(lc))
-            axis = rng.uniform() < 0.2       # the eye's axis through the body: the half-surfaces round it
-            ac = rng.choice([rng.uniform(0, 0.5), rng.uniform(np.pi - 0.5, np.pi)]) * size / r_c if axis else rng.uniform(0, np.pi)
-            beta = rng.uniform(-0.8, 0.8) * size / r_c
-            nc = np.cos(beta) * (np.cos(ac) * en + np.sin(ac) * t) + np.sin(beta) * m
-            C = np.r_[r_c * nc, float(S.w(lc))]
-            # a frame of the space's tangent space at C
-            dr, dw = float(S.dr(lc)), float(S.dw(lc))
-            a1 = unit(np.cross(nc, rng.normal(size=3)))
-            T = [np.r_[dr * nc, dw], np.r_[a1, 0.0], np.r_[np.cross(nc, a1), 0.0]]
-            Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
-            E = [sum(Q[i, j] * T[j] for j in range(3)) for i in range(3)]
+            C, E, size, en, t, m, axis = body
             if axis:
                 ce = C[:3] @ en
                 l0 = l_of(S, np.r_[ce * en, C[3]])
@@ -720,18 +737,17 @@ def zone_checks(name, S, gpu, rng):
             if outside(ball, X0, C, E, size) > -1e-3:
                 continue
             r0 = float(S.r(l0))
-            dphi = rng.choice([1, 4]) * (np.pi if axis else 2 * np.pi) / 48
             for k in range(25):
                 phi = rng.uniform(0, np.pi) if axis else rng.uniform(0, 2 * np.pi)
                 dl, dal = np.cos(phi), (dsg if axis else 1.0) * np.sin(phi) / r0
-                rows.append([l0, al0, dl, dal, *en, size, *t, dphi, *C, *E[0], *E[1], *E[2]])
+                rows.append([l0, al0, dl, dal, *en, size, *t, 0.0, *C, *E[0], *E[1], *E[2]])
         rows = np.asarray(rows, 'f4')
         o = gpu.run(7 if ball else 8, rows, in_per=7)
-        on, off, snapped, edge, moved, past = 0.0, 0.0, 0, 0.0, 0.0, 0
-        bad, later, far = [], [], []
+        on, off = 0.0, 0.0
+        bad, later = [], []
         for k, (row, g) in enumerate(zip(rows.astype(float), o)):
             l0, al0, dl, dal = row[0:4]
-            en, size, t, dphi = row[4:7], row[7], row[8:11], row[11]
+            en, size, t = row[4:7], row[7], row[8:11]
             C, E = row[12:16], [row[16:20], row[20:24], row[24:28]]
             l, a = float(g[0]), float(g[1])
             r0 = float(S.r(l0))
@@ -741,51 +757,134 @@ def zone_checks(name, S, gpu, rng):
             w = np.array([l - l0, r0 * (a - al0)])
             rho = (w @ v) / (v @ v)
             dist = abs(w[0] * v[1] - w[1] * v[0]) / np.linalg.norm(v)
-            q = zone_points(S, np.array([l]), np.array([a]), en, t)[0] - C
-            if ball:
-                e = abs(np.linalg.norm(q) - size)
-            else:
-                sl = np.sort(np.abs([q @ E[0], q @ E[1], q @ E[2]]))
-                e = abs(sl[2] - size)
-            if not ball and dist > 1e-5:
-                # onto an edge of its section: both slabs at their bounds (the third within). How far
-                # from the line's way out, in the largest gap the shader snaps across (rho dphi over
-                # the line's slant, that at least 0.05; the gap is in a slab's offset, the move along
-                # the section): reported only
-                snapped += 1
-                e = max(e, abs(sl[1] - size))
-                edge = max(edge, e)
-                mv = np.linalg.norm(w - rho1 * v) / max(rho1 * dphi / 0.05, 1e-9)
-                moved = max(moved, mv)
-                past += mv > 1
-                if e > CHORD:
-                    far.append((k, row, g, e, mv, rho1))
-                continue
+            e = abs(outside(ball, zone_point(S, l, a, en, t), C, E, size))
             on, off = max(on, e), max(off, dist)
             if e > CHORD:
                 bad.append((k, row, g, e, rho1))
             elif abs(rho - rho1) > 1e-3:
                 later.append((k, row, g, rho, rho1))
         body = 'ball' if ball else 'cube'
-        ok = not bad and not later and not far and off <= 1e-4
+        ok = not bad and not later and off <= 1e-4
         fails += not check(f'{name}: where a line leaves a {body} in the zone (zone_edge_{body})', ok,
                            f'off its surface by {on:.1e} m at most, off the line by {off:.1e} m; {len(bad)} off the surface, {len(later)} not the line\'s first way out'
-                           + ('' if ball else f'; {snapped} onto an edge, {len(far)} of them off it (both slabs within {edge:.1e} m of their bounds), '
-                                                f'{past} moved more than the gap along the section ({moved:.2g} of it at most)')
                            + f' ({len(rows)} lines from {len(rows) // 25} inner points)')
         for k, row, g, e, rho1 in bad[:5]:
             print(f'    line {k}: {line_text(row)}: GPU (l, alpha) {tuple(g[:2])}, off the surface by {e:.2e} m (the first way out {rho1:.4f} m along)')
         for k, row, g, rho, rho1 in later[:5]:
             print(f'    line {k}: {line_text(row)}: GPU (l, alpha) {tuple(g[:2])}, {rho:.4f} m along the line, its first way out {rho1:.4f} m')
-        for k, row, g, e, mv, rho1 in far[:5]:
-            print(f'    line {k}: {line_text(row)}: GPU (l, alpha) {tuple(g[:2])} onto an edge: slabs off their bounds by {e:.2e} m, '
-                  f'{mv:.2g} of the gap from the line\'s first way out ({rho1:.4f} m along)')
     return fails
+
+
+MESHES = ((64, 48), (64, 12))   # the zone bodies' meshes: Renderer's ZONE_AZIMUTHS, ZONE_ROUND, ZONE_ROUND_COARSE
+NEAR_END = 5e-4                 # metres: a cube's section corner a vertex within this, next to its edge's end
+
+
+def zone_mesh_checks(name, S, gpu, rng):
+    """The zone bodies' meshes (zone_vertex) whole, for eyes' axes through and beside them."""
+    fails = 0
+    for ball in (True, False):
+        bodies = []
+        while len(bodies) < 30:
+            b = zone_body(S, rng, ball, axis_share=0.4)
+            if b is not None:
+                bodies.append(b)
+        for cols, rws in MESHES:
+            rows = [[i / cols, j / rws, cols, rws, *en, size, 1.0 if ball else 0.0, 0, 0, 0, *C, *E[0], *E[1], *E[2]]
+                    for C, E, size, en, t, m, axis in bodies for i in range(cols + 1) for j in range(rws + 1)]
+            o = gpu.run(9, rows, in_per=7, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
+            worst, alpha_out, tip, corners, missed, moved, strips = 0.0, 0, 0.0, 0, [], 0, 0
+            for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
+                L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
+                n = np.cos(A)[..., None] * en + np.sin(A)[..., None] * T
+                P = np.concatenate([S.r(L)[..., None] * n, S.w(L)[..., None]], axis=-1)
+                q = P - C
+                E = np.array(E)
+                sl = q @ E.T                                   # [cols + 1, rows + 1, 3]
+                off = np.abs(np.linalg.norm(q, axis=-1) - size) if ball else np.abs(np.abs(sl).max(-1) - size)
+                worst = max(worst, off.max())
+                alpha_out += int(((A < -1e-6) | (A > np.pi + 1e-6)).sum())
+                if ball:
+                    # off the axis, the first and last columns' sections are at the ball's tips
+                    a1 = unit(np.cross(en, [0, 0, 1.0] if abs(en[2]) < 0.9 else [1.0, 0, 0]))
+                    ce = C[:3] @ en
+                    if np.linalg.norm(q[0, 0]) > 0 and not np.isclose(T[0, 0] @ T[-1, 0], 1.0):
+                        for i in (0, cols):
+                            tip = max(tip, np.linalg.norm(P[i] - P[i].mean(0), axis=-1).max() / size)
+                    continue
+                # a cube: each column's section's corners (float64, where the half-surface meets the
+                # cube's edges), each a vertex of that column; and each on the same row in the next
+                # column (where the columns are apart)
+                rows_of = [{} for _ in range(cols + 1)]       # column: edge: the rows at its corner
+                for i in range(cols + 1):
+                    t = T[i, 0]
+                    for e in range(12):
+                        for c in cube_corner(S, C, E, size, en, t, e):
+                            corners += 1
+                            Pc = zone_point(S, c[0], c[1], en, t)
+                            d = np.linalg.norm(P[i] - Pc, axis=-1)
+                            # within a millimetre of its edge's end (a column on a corner's azimuth,
+                            # the shader's own in float32), where the edge meets the half-surface is
+                            # ill-posed: a ten-thousandth of a degree moves it by a tenth of a millimetre
+                            tol = NEAR_END if size - abs((Pc - C) @ E[e // 4]) < 1e-3 else CHORD
+                            if d.min() > tol:
+                                missed.append((k, i, e, d.min()))
+                            rows_of[i][e] = set(np.nonzero(d <= tol)[0].tolist())
+                for i in range(cols):
+                    if angle(T[i, 0], T[i + 1, 0]) > 1e-5:
+                        strips += 1
+                        for e, rs in rows_of[i].items():
+                            if rs and rows_of[i + 1].get(e) and not rs & rows_of[i + 1][e]:
+                                moved += 1
+            body = 'ball' if ball else 'cube'
+            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not missed and moved == 0)
+            fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} (zone_vertex)', ok,
+                               f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
+                               + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
+                                  f'; {len(missed)} of {corners} section corners not a vertex, {moved} on another row in the next column ({strips} strips)')
+                               + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis)')
+            for k, i, e, d in missed[:5]:
+                C, E, size, en = bodies[k][:4]
+                print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: column {i}, edge {e}: the nearest vertex {d:.2e} m from its corner')
+    return fails
+
+
+def cube_corner(S, C, E, size, en, t, e):
+    """Where the half-surface toward t meets the cube's edge e (zone_edge_cut's numbering), float64:
+    Newton in (l, alpha) from the first-order cut; [] where it doesn't (or the edge lies along it)."""
+    E = np.asarray(E)
+    a = e // 4
+    b, g = (a + 1) % 3, (a + 2) % 3
+    gb, gg = (size if e & 1 else -size), (size if e & 2 else -size)
+    m = np.cross(en, t)
+    mu = E[:, :3] @ m
+    if abs(mu[a]) < 1e-9:
+        return []
+    x = np.zeros(3)
+    x[a], x[b], x[g] = (-C[:3] @ m - mu[b] * gb - mu[g] * gg) / mu[a], gb, gg
+    if abs(x[a]) > 1.3 * size:
+        return []
+    X = C + x @ E
+    p = np.array([l_of(S, X), np.arctan2(X[:3] @ t, X[:3] @ en)])
+
+    def f(p):
+        q = zone_point(S, p[0], p[1], en, t) - C
+        return np.array([q @ E[b] - gb, q @ E[g] - gg])
+    for _ in range(40):
+        F = f(p)
+        h = 1e-7
+        J = np.c_[(f(p + [h, 0]) - f(p - [h, 0])) / (2 * h), (f(p + [0, h]) - f(p - [0, h])) / (2 * h)]
+        if abs(np.linalg.det(J)) < 1e-8:
+            return []
+        p = p - np.linalg.solve(J, F)
+    q = zone_point(S, p[0], p[1], en, t) - C
+    if np.abs(f(p)).max() > 1e-9 or abs(q @ E[a]) > size + 1e-9 or not 0 <= p[1] <= np.pi:
+        return []
+    return [p]
 
 
 def line_text(row):
     return (f'(l0, al0, dl, dal) {tuple(float(x) for x in row[0:4])}, en {tuple(float(x) for x in row[4:7])}, size {float(row[7])!r}, '
-            f't {tuple(float(x) for x in row[8:11])}, dphi {float(row[11])!r}, C {tuple(float(x) for x in row[12:16])}, '
+            f't {tuple(float(x) for x in row[8:11])}, C {tuple(float(x) for x in row[12:16])}, '
             f'E1 {tuple(float(x) for x in row[16:20])}, E2 {tuple(float(x) for x in row[20:24])}, E3 {tuple(float(x) for x in row[24:28])}')
 
 
@@ -919,6 +1018,7 @@ def main(checks=('numbers', 'profile', 'images', 'exit', 'zone', 'eye')):
             fails += exit_checks(name, S, gpu, rng)
         if 'zone' in checks:
             fails += zone_checks(name, S, gpu, rng)
+            fails += zone_mesh_checks(name, S, gpu, rng)
         if name == 'the app' and 'eye' in checks:
             fails += eye_checks(S, gpu, rng)
     print(f'FAILURES: {fails}')

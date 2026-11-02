@@ -14,13 +14,16 @@ Checks per eye:
     and the outline's check takes them); rays still going at RAY_MAX are left out;
   every image: on a grid of every GRID-th pixel, a traced body where the picture shows none within
     MAX_EDGE px counts as a mismatch too (an image the picture lacks);
+  a mismatch counts where the pixel is what the trace says at its centre all across (rays a quarter
+    of a pixel off each way agree): where they don't, a body's edge crosses the pixel, and near the
+    photon sphere images a pixel across or less come and go with a hair of the ray's direction;
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
     haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least
     (where FLOOR_MIN of them are usable).
    python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)
 With CURVED_DIFF=1 in the environment it also writes prefix_diff_left.png, _right.png: the picture
-dimmed, the traced bodies' pixels the picture lacks bright, the picture's the trace lacks dark, the
-grid's lacking rays white."""
+dimmed, the traced bodies' pixels the picture lacks bright, the picture's the trace lacks dark, those
+beyond MAX_EDGE yellow, the grid's lacking rays white."""
 import json, os, sys
 import numpy as np
 from PIL import Image
@@ -302,7 +305,22 @@ for side_i, eye_name in enumerate(('left', 'right')):
     gk, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, gx.astype(float), gy.astype(float)), axes))
     near_red = ndimage.binary_dilation(red, iterations=int(MAX_EDGE) + 1)
     near_green = ndimage.binary_dilation(green, iterations=int(MAX_EDGE) + 1)
-    lacking = int(((gk == 1) & ~near_red[gy, gx]).sum() + ((gk == 2) & ~near_green[gy, gx]).sum())
+    def steady(xs, ys, kind, has):
+        """Whether pixels (xs, ys) are what the trace says at their centres all across: rays a quarter
+        of a pixel from the centre each way meet the body kind (has) or don't (not has). Where they
+        don't agree the body's edge crosses the pixel (near the photon sphere an image a pixel or
+        less across, where a ray a hair off goes elsewhere), and either verdict is the pixel's."""
+        ok = np.ones(len(xs), bool)
+        if len(xs) == 0:
+            return ok
+        for dx, dy in ((-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)):
+            k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes))
+            ok &= (k == kind) == has
+        return ok
+    lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
+    li = np.nonzero(lack)[0]
+    lack[li] = steady(gx[li].astype(float), gy[li].astype(float), gk[li], True)
+    lacking = int(lack.sum())
     # the bodies: a band round the picture's outlines and the grid's traced bodies, and inside
     seed = body.copy()
     seed[gy[gk == 1], gx[gk == 1]] = True
@@ -317,10 +335,14 @@ for side_i, eye_name in enumerate(('left', 'right')):
     ref_red[ys, xs] = kind == 1; ref_green[ys, xs] = kind == 2
     line = f'{eye_name}: eye l {l0:.3f}, {lacking} grid rays meet a body the picture lacks, {int((~known).sum())} rays still going'
     ok &= lacking == 0
-    for name, A, Rf in (('balls', red, ref_red), ('cubes', green, ref_green)):
+    far_all = np.zeros_like(red)
+    for name, A, Rf, code in (('balls', red, ref_red, 1), ('cubes', green, ref_green, 2)):
         mis = (A ^ Rf) & region & known
         dist = ndimage.distance_transform_edt(~(Rf ^ ndimage.binary_erosion(Rf)))   # px to the traced outline
         far = mis & (dist > MAX_EDGE)
+        fy, fx = np.nonzero(far)
+        far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), Rf[fy, fx])
+        far_all |= far
         lab, nb = ndimage.label(ndimage.binary_dilation(Rf, iterations=2))
         worst = 0.0
         for k in range(1, nb + 1):
@@ -346,8 +368,8 @@ for side_i, eye_name in enumerate(('left', 'right')):
         for A, Rf, c in ((red, ref_red, (255, 80, 80)), (green, ref_green, (80, 255, 80))):
             out[Rf & ~A & known] = c
             out[A & ~Rf & region & known] = (np.array(c) * 0.35).astype(np.uint8)
-        lk = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
-        out[gy[lk], gx[lk]] = (255, 255, 255)
+        out[gy[lack], gx[lack]] = (255, 255, 255)
+        out[far_all] = (255, 255, 0)
         Image.fromarray(out).save(f'{pre}_diff_{eye_name}.png')
     # the floor: sampled pixels away from the bodies
     rng = np.random.default_rng(side_i)

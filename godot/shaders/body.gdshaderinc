@@ -26,8 +26,9 @@
 //     a body round the axis every azimuth, each section an arc from where the axis enters it to
 //     where it leaves. No triangle crosses the axis, and the images come out as rings where they
 //     are. Each point found by Newton's steps on the body's own definition along a straight line of
-//     (l, r alpha) from the inner point (zone.gdshaderinc); a cube's columns stand on its corners'
-//     azimuths and its sections' points near an edge on that edge, so its outline keeps its corners.
+//     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
+//     azimuths, and a row on each corner of its sections, the same corner on the same row from one
+//     corner's azimuth to the next: its outline keeps its corners.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -104,68 +105,11 @@ void vertex() {
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
 	float size = INSTANCE_CUSTOM.a;
+	vec3 t;
 #ifdef BALL
-	float reach = size;
+	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, true, en, C, E1, E2, E3, N, size, t);
 #else
-	float reach = 1.8 * size;    // its cut box within this chord of C (sqrt 3, and the cut's bulge)
-#endif
-	// the axis's frame: a1, a2 across it; the body's centre's offset across it, and the axis's
-	// point nearest the centre, inside the body or not
-	vec3 a1 = normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
-	vec3 a2 = cross(en, a1);
-	vec2 cp = vec2(dot(C.xyz, a1), dot(C.xyz, a2));
-	float d = length(cp);
-	float ce = dot(C.xyz, en);
-	vec3 nn;
-	float l0 = geo_l_of(vec4(ce * en, C.w), nn);
-	float al0 = ce >= 0.0 ? 0.0 : GEO_PI;
-#ifdef BALL
-	bool ball = true;
-#else
-	bool ball = false;
-#endif
-	bool round_axis = d < reach && zone_out(ball, zone_point(l0, al0, en, a1), C, E1, E2, E3, size) < 0.0;
-	float th, phi, dsg;
-	if (round_axis) {
-		// every azimuth; from the axis's entry round to its exit, into the half-surface
-		th = 2.0 * GEO_PI * VERTEX.x;
-		phi = GEO_PI * VERTEX.y;
-		dsg = ce >= 0.0 ? 1.0 : -1.0;
-	} else {
-		float w = d > reach ? geo_asin(reach / d) : GEO_PI;
-		th = geo_atan2(cp.y, cp.x) + (2.0 * VERTEX.x - 1.0) * w;
-		phi = 2.0 * GEO_PI * VERTEX.y;
-		dsg = 1.0;
-	}
-#ifdef CUBE
-	// a cube's outline turns at its corners: a column on each one's azimuth
-	th = zone_cube_azimuth(VERTEX.x, zone_columns, round_axis, round_axis ? 0.0 : geo_atan2(cp.y, cp.x), C, E1, E2, E3, N, size, a1, a2);
-#endif
-	vec2 sct = geo_sincos(th);
-	vec3 t = sct.y * a1 + sct.x * a2;
-	if (!round_axis) {
-		// the inner point: the centre's place in the half-surface's hyperplane, its direction there
-		// and the l of the profile's point nearest it
-		vec3 m = sct.y * a2 - sct.x * a1;
-		vec3 cq = C.xyz - dot(C.xyz, m) * m;
-		al0 = geo_atan2(dot(cq, t), dot(cq, en));
-		l0 = geo_l_of(vec4(cq, C.w), nn);
-#ifdef CUBE
-		// a cube's: inside its section also near a corner
-		vec2 la;
-		if (zone_inner_cube(C, E1, E2, E3, N, size, m, en, t, la)) {
-			l0 = la.x;
-			al0 = la.y;
-		}
-#endif
-	}
-	vec2 scp = geo_sincos(phi);
-	float r0 = geo_r(abs(l0));
-	float dl = scp.y, dal = dsg * scp.x / r0;
-#ifdef BALL
-	vec2 pe = zone_edge_ball(l0, al0, dl, dal, en, t, C, size);
-#else
-	vec2 pe = zone_edge_cube(l0, al0, dl, dal, (round_axis ? GEO_PI : 2.0 * GEO_PI) / zone_round, en, t, C, E1, E2, E3, size);
+	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, false, en, C, E1, E2, E3, N, size, t);
 #endif
 	float pl = pe.x;
 	float alpha = clamp(pe.y, 0.0, GEO_PI);
