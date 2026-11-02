@@ -147,7 +147,7 @@ vec2 zone_cube_corner(int e, vec2 p, vec3 en, vec3 t, vec4 C, vec4 E1, vec4 E2, 
 // corner of the lowest edge; round the axis (round_axis) it goes from where the axis enters the
 // cube (the first row) to where it leaves (the last), from the axis's point (l, alpha) ax along
 // it, into the half-surface by dsg (+1: alpha growing from 0, -1: from pi).
-vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg, vec3 en, vec3 t, vec3 m, vec3 tm, vec3 mm,
+vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg, vec3 en, vec3 a1, vec3 a2, vec3 t, vec3 m, vec3 tm, vec3 mm,
 		float thm, vec4 za, vec4 zb, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size) {
 	vec3 mu = vec3(dot(E1.xyz, m), dot(E2.xyz, m), dot(E3.xyz, m));
 	float c = -dot(C.xyz, m);
@@ -157,14 +157,32 @@ vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg,
 	int n = 0;
 	vec4 summ = vec4(0.0);
 	for (int e = 0; e < 12; e++) {
-		// cut where the span's middle is between its ends' azimuths (the short way: an edge clear of
-		// the axis spans less than half a turn round it), as the spans are
+		// cut where the span's middle is between its ends' azimuths, as the spans are: on the arc
+		// the edge goes round the axis by from one end to the other. Which way: to first order its
+		// ends' cross product's along the axis; where the edge passes nearer the axis than the space's
+		// curve moves it (2 size^2 / R), by the azimuth of its middle on the space.
 		int a = e / 4;
 		int v1 = ((e & 1) << ((a + 1) % 3)) | (((e >> 1) & 1) << ((a + 2) % 3)), v2 = v1 | (1 << a);
-		float d1 = (v1 < 4 ? za[v1] : zb[v1 - 4]) - thm, d2 = (v2 < 4 ? za[v2] : zb[v2 - 4]) - thm;
-		d1 -= 2.0 * GEO_PI * floor(d1 / (2.0 * GEO_PI) + 0.5);
-		d2 -= 2.0 * GEO_PI * floor(d2 / (2.0 * GEO_PI) + 0.5);
-		if (d1 * d2 > 0.0 || abs(d1 - d2) >= GEO_PI || n >= 6) continue;
+		vec4 Ea = a == 0 ? E1 : (a == 1 ? E2 : E3);
+		vec4 xm4 = C + size * (((v1 & 1) == 0 ? -1.0 : 1.0) * E1 + ((v1 & 2) == 0 ? -1.0 : 1.0) * E2 + ((v1 & 4) == 0 ? -1.0 : 1.0) * E3) + size * Ea;
+		vec3 p1 = xm4.xyz - size * Ea.xyz, p2 = xm4.xyz + size * Ea.xyz;
+		p1 -= dot(p1, en) * en;
+		p2 -= dot(p2, en) * en;
+		vec3 dp = p2 - p1;
+		float near = length(p1 + clamp(-dot(p1, dp) / max(dot(dp, dp), 1e-12), 0.0, 1.0) * dp);
+		float az1 = v1 < 4 ? za[v1] : zb[v1 - 4];
+		float da = (v2 < 4 ? za[v2] : zb[v2 - 4]) - az1, dm = thm - az1;
+		da -= 2.0 * GEO_PI * floor(da / (2.0 * GEO_PI));
+		dm -= 2.0 * GEO_PI * floor(dm / (2.0 * GEO_PI));
+		bool up;
+		if (near > 2.0 * size * size / g_prof.y + 0.01) {
+			up = dot(cross(p1, p2), en) >= 0.0;
+		} else {
+			vec4 Pm = geo_onto(xm4, N);
+			float dmid = geo_atan2(dot(Pm.xyz, a2), dot(Pm.xyz, a1)) - az1;
+			up = dmid - 2.0 * GEO_PI * floor(dmid / (2.0 * GEO_PI)) <= da;
+		}
+		if ((up ? dm > da : dm < da) || n >= 6) continue;
 		vec3 xm = zone_edge_cut(e, mum, cm, size).xyz;
 		summ += C + xm.x * E1 + xm.y * E2 + xm.z * E3;
 		ed[n] = e;
@@ -265,11 +283,26 @@ vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg,
 	vec2 d = vec2(pe[1].x - pe[0].x, rc * (pe[1].y - pe[0].y));
 	vec2 nd = vec2(-d.y, d.x) / max(length(d), 1e-12);
 	vec2 dir = vec2(nd.x, nd.y / rc);         // across the chord, in (l, alpha) per metre
-	for (int i = 0; i < 3; i++) {
-		float g = dot(zone_point(p.x, p.y, en, t) - C, Ef) - goal;
-		float dg = dot(zone_rate(p.x, p.y, en, t, dir.x, dir.y), Ef);
-		if (abs(dg) < 1e-9) break;
-		p -= (g / dg) * dir;
+	vec2 pk = p;
+	for (int round = 0; round < 2; round++) {
+		for (int i = 0; i < 3; i++) {
+			float g = dot(zone_point(p.x, p.y, en, t) - C, Ef) - goal;
+			float dg = dot(zone_rate(p.x, p.y, en, t, dir.x, dir.y), Ef);
+			if (abs(dg) < 1e-9) break;
+			p -= (g / dg) * dir;
+		}
+		// past another face (an end on two or three faces, the face shared taken wrong): onto that
+		// one, kept where it gets there
+		vec4 q = zone_point(p.x, p.y, en, t) - C;
+		vec3 sv = vec3(dot(q, E1), dot(q, E2), dot(q, E3));
+		vec3 over = abs(sv) - size;
+		if (round == 1) return max(max(over.x, over.y), over.z) <= 1e-5 && geo_finite(p.x + p.y) ? p : pk;
+		over[face.x] = -1.0;
+		int f2 = over.x >= over.y && over.x >= over.z ? 0 : (over.y >= over.z ? 1 : 2);
+		if (over[f2] <= 1e-5) break;
+		pk = p;
+		Ef = f2 == 0 ? E1 : (f2 == 1 ? E2 : E3);
+		goal = sv[f2] < 0.0 ? -size : size;
 	}
 	return p;
 }
@@ -381,6 +414,42 @@ float zone_ball_reach(vec4 C, float d, float size) {
 	return geo_asin(sqrt(lo));
 }
 
+// The axis's point deepest in a cube (the least of its largest slab): the axis is (l, al0), and
+// along it each slab to first order a line; the least of the three lines' largest absolute value, at
+// one's zero or where two cross, and again from there. (l, the largest slab less the half size
+// there: below 0 inside.) The axis can go through a cube by a corner while its point nearest the
+// centre is out.
+vec2 zone_cube_axis(float l0, float al0, vec3 en, vec3 a1, vec4 C, vec4 E1, vec4 E2, vec4 E3, float size) {
+	float l = l0, out_ = 0.0;
+	for (int it = 0; it < 3; it++) {
+		vec4 q = zone_point(l, al0, en, a1) - C;
+		vec4 T = zone_rate(l, al0, en, a1, 1.0, 0.0);
+		vec3 v = vec3(dot(q, E1), dot(q, E2), dot(q, E3));
+		vec3 g = vec3(dot(T, E1), dot(T, E2), dot(T, E3));
+		out_ = max(max(abs(v.x), abs(v.y)), abs(v.z)) - size;
+		if (it == 2) break;
+		float bx = 0.0, bm = out_ + size;
+		for (int c = 0; c < 9; c++) {
+			float x;
+			if (c < 3) {
+				x = abs(g[c]) > 1e-9 ? -v[c] / g[c] : 0.0;
+			} else {
+				int pr = (c - 3) / 2;                                // pairs (0, 1), (0, 2), (1, 2), each sign
+				int i = pr == 2 ? 1 : 0, j = pr == 0 ? 1 : 2;
+				float sg = ((c - 3) & 1) == 0 ? 1.0 : -1.0;
+				float den = g[i] - sg * g[j];
+				x = abs(den) > 1e-9 ? (sg * v[j] - v[i]) / den : 0.0;
+			}
+			x = clamp(x, -4.0 * size, 4.0 * size);
+			vec3 w = abs(v + g * x);
+			float mm = max(max(w.x, w.y), w.z);
+			if (mm < bm) { bm = mm; bx = x; }
+		}
+		l += bx;
+	}
+	return vec2(l, out_);
+}
+
 // A body's vertex in the curved zone (body.gdshaderinc, ZONE) for the eye whose direction from the
 // centre is en: column u of the mesh (columns strips across the azimuths) and row v (rows round the
 // section): (l, alpha) of its point on the body, and t, its half-surface's direction (across en).
@@ -398,7 +467,12 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 	float ce = dot(C.xyz, en);
 	vec3 nn;
 	vec2 ax = vec2(geo_l_of(vec4(ce * en, C.w), nn), ce >= 0.0 ? 0.0 : GEO_PI);
-	bool round_axis = d < reach && zone_out(ball, zone_point(ax.x, ax.y, en, a1), C, E1, E2, E3, size) < 0.0;
+	bool round_axis = d < reach && zone_out(true, zone_point(ax.x, ax.y, en, a1), C, E1, E2, E3, size) < 0.0;
+	if (!ball && d < reach) {
+		vec2 deep = zone_cube_axis(ax.x, ax.y, en, a1, C, E1, E2, E3, size);
+		round_axis = deep.y < 0.0;
+		ax.x = deep.x;
+	}
 	// round the axis: every azimuth, each section from the axis's entry round to its exit, into the
 	// half-surface
 	float dsg = round_axis && ce < 0.0 ? -1.0 : 1.0;
@@ -420,6 +494,6 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 	vec2 az = zone_cube_azimuth(uv.x, columns, round_axis, th0, za, zb);
 	vec2 sct = geo_sincos(az.x), scm = geo_sincos(az.y);
 	t = sct.y * a1 + sct.x * a2;
-	return zone_cube_section(uv.y, rows, round_axis, ax, dsg, en, t, sct.y * a2 - sct.x * a1,
+	return zone_cube_section(uv.y, rows, round_axis, ax, dsg, en, a1, a2, t, sct.y * a2 - sct.x * a1,
 			scm.y * a1 + scm.x * a2, scm.y * a2 - scm.x * a1, az.y, za, zb, C, E1, E2, E3, N, size);
 }

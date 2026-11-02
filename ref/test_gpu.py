@@ -25,13 +25,17 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     moves by more than half a limit, or into the other universe, as the launch turns by ALPHA_TOL:
     next to b = r_min and the photon sphere, a ray grazing the zone's ball), the GPU's exit must be
     the reference's for a launch within ALPHA_TOL (found by bisection on the turn);
-  where a line of a half-surface leaves a body in the zone (zone_edge_ball, zone_edge_cube: the
-    zone's meshes): lines in every direction from inner points of balls and cubes on the cylinder,
-    the fillet, across the zone's edge and out of it, half-surfaces in every azimuth: the point on
-    the body's surface (chord, a cube's largest slab) and on its line, the line's first way out (as
-    float64 finds it, sampled and bisected); where a cube's point goes onto an edge of its section
-    (off its line), both slabs at their bounds and the third within (how far along the section it
-    moved, against the gap the shader snaps across, is printed);
+  where a line of a half-surface leaves a body in the zone (zone_edge_ball, zone_edge_cube): lines
+    in every direction from inner points of balls and cubes on the cylinder, the fillet, across the
+    zone's edge and out of it, half-surfaces in every azimuth: the point on the body's surface
+    (chord, a cube's largest slab) and on its line, the line's first way out (as float64 finds it,
+    sampled and bisected);
+  the zone bodies' meshes whole (zone_vertex, MESHES), for eyes' axes through and beside the
+    bodies: every vertex on its body; a ball's first and last columns' sections at its tips; every
+    corner of a cube's sections (float64: where the half-surface meets an edge) a vertex of its
+    column, and on the same row in the next column (the strips join a corner to itself); a cube an
+    edge of which the space's curve takes back round the axis is left out (counted): its sections
+    cut that edge twice, which one corner an edge can't be;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
@@ -792,7 +796,7 @@ def zone_mesh_checks(name, S, gpu, rng):
             rows = [[i / cols, j / rws, cols, rws, *en, size, 1.0 if ball else 0.0, 0, 0, 0, *C, *E[0], *E[1], *E[2]]
                     for C, E, size, en, t, m, axis in bodies for i in range(cols + 1) for j in range(rws + 1)]
             o = gpu.run(9, rows, in_per=7, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
-            worst, alpha_out, tip, corners, missed, moved, strips = 0.0, 0, 0.0, 0, [], 0, 0
+            worst, alpha_out, tip, corners, missed, moved, strips, folded = 0.0, 0, 0.0, 0, [], 0, 0, 0
             for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
                 L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
                 n = np.cos(A)[..., None] * en + np.sin(A)[..., None] * T
@@ -800,6 +804,9 @@ def zone_mesh_checks(name, S, gpu, rng):
                 q = P - C
                 E = np.array(E)
                 sl = q @ E.T                                   # [cols + 1, rows + 1, 3]
+                if not ball and folds(S, C, E, size, en):
+                    folded += 1
+                    continue
                 off = np.abs(np.linalg.norm(q, axis=-1) - size) if ball else np.abs(np.abs(sl).max(-1) - size)
                 worst = max(worst, off.max())
                 alpha_out += int(((A < -1e-6) | (A > np.pi + 1e-6)).sum())
@@ -811,6 +818,8 @@ def zone_mesh_checks(name, S, gpu, rng):
                         for i in (0, cols):
                             tip = max(tip, np.linalg.norm(P[i] - P[i].mean(0), axis=-1).max() / size)
                     continue
+                # an edge the space's curve takes back round the axis (the axis next to it): its
+                # sections there cut it twice, which a section's corners, one an edge, can't be
                 # a cube: each column's section's corners (float64, where the half-surface meets the
                 # cube's edges), each a vertex of that column; and each on the same row in the next
                 # column (where the columns are apart)
@@ -825,7 +834,8 @@ def zone_mesh_checks(name, S, gpu, rng):
                             # within a millimetre of its edge's end (a column on a corner's azimuth,
                             # the shader's own in float32), where the edge meets the half-surface is
                             # ill-posed: a ten-thousandth of a degree moves it by a tenth of a millimetre
-                            tol = NEAR_END if size - abs((Pc - C) @ E[e // 4]) < 1e-3 else CHORD
+                            end = size - abs((Pc - C) @ E[e // 4])
+                            tol = max(NEAR_END, end + CHORD) if end < 1e-3 else CHORD
                             if d.min() > tol:
                                 missed.append((k, i, e, d.min()))
                             rows_of[i][e] = set(np.nonzero(d <= tol)[0].tolist())
@@ -840,12 +850,57 @@ def zone_mesh_checks(name, S, gpu, rng):
             fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} (zone_vertex)', ok,
                                f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
                                + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
-                                  f'; {len(missed)} of {corners} section corners not a vertex, {moved} on another row in the next column ({strips} strips)')
+                                  f'; {len(missed)} of {corners} section corners not a vertex, {moved} on another row in the next column ({strips} strips); '
+                                  f'{folded} left out, an edge taken back round the axis')
                                + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis)')
             for k, i, e, d in missed[:5]:
                 C, E, size, en = bodies[k][:4]
                 print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: column {i}, edge {e}: the nearest vertex {d:.2e} m from its corner')
     return fails
+
+
+def normal4(S, C):
+    """The space's normal at its point C (geo_normal)."""
+    x = C[:3]
+    rho, a, sw = np.linalg.norm(x), abs(C[3]), (1.0 if C[3] >= 0 else -1.0)
+    Ka = S.Lc - S.R * np.sin(S.th0)
+    if rho >= S.Rout:
+        return np.array([0, 0, 0, -sw])
+    if a <= Ka:
+        return np.r_[x / rho, 0.0]
+    q = unit(np.array([rho - S.Rout, a - Ka]))
+    return np.r_[-q[0] * x / rho, -q[1] * sw]
+
+
+def onto(S, Q, N):
+    """Q taken along N onto the space (geo_onto), float64."""
+    c = 0.0
+    for _ in range(30):
+        P = Q + c * N
+        l = l_of(S, P)
+        Ps = np.r_[float(S.r(l)) * unit(P[:3]), float(S.w(l))]
+        c += (Ps - P) @ N
+    return Q + c * N
+
+
+def folds(S, C, E, size, en):
+    """Whether one of a cube's edges goes back round the axis along en (its azimuth turns back:
+    the axis within the space's curve of it)."""
+    N = normal4(S, C)
+    a1 = unit(np.cross(en, [0, 0, 1.0] if abs(en[2]) < 0.9 else [1.0, 0, 0]))
+    a2 = np.cross(en, a1)
+    for e in range(12):
+        a, b, g = e // 4, (e // 4 + 1) % 3, (e // 4 + 2) % 3
+        az = []
+        for u in np.linspace(-1, 1, 33):
+            x = np.zeros(3)
+            x[a], x[b], x[g] = u * size, (size if e & 1 else -size), (size if e & 2 else -size)
+            P = onto(S, C + x @ E, N)
+            az.append(np.arctan2(P[:3] @ a2, P[:3] @ a1))
+        d = np.diff(np.unwrap(az))
+        if (d > 1e-9).any() and (d < -1e-9).any():
+            return True
+    return False
 
 
 def cube_corner(S, C, E, size, en, t, e):
