@@ -367,7 +367,8 @@ func _read_parts() -> bool:
 		return false
 	parts_frame = rd.get_captured_timestamps_frame()
 	var vp := str(target.get_viewport_rid().get_id())
-	var at := {}                # name: GPU time, microseconds
+	# name: GPU time, ns (what Godot 4.7.2 gives: the parts add up to the viewport's measured time)
+	var at := {}
 	for i in rd.get_captured_timestamps_count():
 		at[rd.get_captured_timestamp_name(i)] = rd.get_captured_timestamp_gpu_time(i)
 	var names := ["vp_begin_" + vp, FloorFov.TS_BEGIN, FloorFov.TS_TABLE, FloorFov.TS_END, "vp_end_" + vp]
@@ -376,7 +377,7 @@ func _read_parts() -> bool:
 		if not at.has(names[k]):
 			return false
 	for k in names.size() - 1:
-		parts_last.append((at[names[k + 1]] - at[names[k]]) / 1000.0)
+		parts_last.append((at[names[k + 1]] - at[names[k]]) / 1e6)
 	return true
 
 
