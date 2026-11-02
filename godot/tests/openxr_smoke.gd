@@ -7,7 +7,7 @@ extends SceneTree
 ## a restart (a display that follows is answered too); choices made while vrcmd runs end with the
 ## last one written; settings written before the eye's size was the app's own go, and the eye
 ## starts at its full size (under Monado the runtime's own), not written till chosen; a foveation
-## level chosen when the levels were gentler starts at the weakest of now's, kept so; the resolution row sets the size of the images OpenXR takes from the next
+## level chosen when there were three levels starts at the same one now, kept so; the resolution row sets the size of the images OpenXR takes from the next
 ## frame on, the XR viewport follows, also when the menu takes a value by itself, and keeps it, and
 ## every frame the XR viewport is as big as those images; the foveation row turns foveated
 ## rendering on at its level (the floor from foveation.gd's texture, made for the picture's size)
@@ -42,7 +42,7 @@ func _initialize() -> void:
 	old.set_value("ui", "strip", true)
 	old.set_value("render", "scale", 0.8)
 	old.set_value("render", "foveation", 4)
-	old.set_value("render", "foveation_level", 3)   # chosen when Foveation.LEVELS were gentler
+	old.set_value("render", "foveation_level", 3)   # chosen when Foveation.LEVELS were three: the strongest
 	old.save("user://settings.cfg")
 	main = load("res://main.tscn").instantiate() as Main
 	# the toys at rest, without the throw and the drop: after the drop, frames on software Vulkan
@@ -130,10 +130,10 @@ func _process(_delta: float) -> bool:
 			U.check("the menu heads with the rate", p.text.begins_with("%.0f Гц · " % oxr.display_refresh_rate))
 		U.check("frames judged, green", green, "after %d frames, seconds %s" % [frames - 232, r.seconds])
 		# after the green check: each change of the eye's size makes the images again, a missed frame or two
-		U.check("the old settings' scale gone, not chosen; the foveation level of gentler levels chosen, now the weakest",
+		U.check("the old settings' scale gone, not chosen; the foveation level chosen among three, chosen, the same now",
 				not p.scale_chosen and p.foveation_chosen)
-		U.check("foveation at first: слабая, the floor from its texture", main.foveation.level == 1
-				and _value(p, "fov") == "слабая" and main.foveation.enabled
+		U.check("foveation at first: средняя (the strongest of three), the floor from its texture", main.foveation.level == 2
+				and _value(p, "fov") == "средняя" and main.foveation.enabled
 				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
 		U.check("the eye at its full size at first: Monado's own", p.full_eye == 128 and _eye() == Vector2i(128, 128)
 				and main.xr_view.size == Vector2i(128, 128) and _value(p, "scale") == "100% (128×128)",
@@ -147,10 +147,10 @@ func _process(_delta: float) -> bool:
 		cfg.load("user://settings.cfg")
 		U.check("on to the next row: 110% chosen, kept, the foveation as it was; the size from the next frame on",
 				p.render_scale == 1.1 and cfg.get_value("render", "eye", 0.0) == 1.1 and p.picked() == "fov"
-				and main.foveation.level == 1 and _eye() == Vector2i(128, 128))
+				and main.foveation.level == 2 and _eye() == Vector2i(128, 128))
 		U.check("the old settings gone from the file, the foveation level kept as now's",
 				not cfg.has_section_key("render", "scale") and not cfg.has_section_key("render", "foveation")
-				and not cfg.has_section_key("render", "foveation_level") and cfg.get_value("render", "fovea", -1) == 1)
+				and not cfg.has_section_key("render", "foveation_level") and cfg.get_value("render", "fovea", -1) == 2)
 		U.check("the row shows it", _value(p, "scale") == "110% (141×141)" and _color(p, "scale") == p.COLOR_TEXT)
 	if j == 2:
 		var fov := main.foveation

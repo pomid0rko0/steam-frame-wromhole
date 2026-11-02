@@ -15,9 +15,9 @@ extends Node3D
 const SCALES := [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
 const FRAME_EYE := 2160         # the Steam Frame's screen, pixels a side per eye (README.md, «Требования»)
 # names of Foveation.set_level's levels
-const FOVEATIONS := ["выкл", "слабая", "средняя", "сильная"]
-const FOV_LOG := ["off", "weak", "medium", "strong"]
-const DEFAULT_FOVEATION := 1    # until one is chosen
+const FOVEATIONS := ["выкл", "слабая", "средняя", "сильная", "очень сильная"]
+const FOV_LOG := ["off", "weak", "medium", "strong", "strongest"]
+const DEFAULT_FOVEATION := 2    # until one is chosen
 const SETTINGS := "user://settings.cfg"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
@@ -599,8 +599,9 @@ static func _keep(cfg: ConfigFile, key: String, value: Variant, chosen: bool) ->
 ## The settings file, as written now. One with render/scale is from before the eye's size was the
 ## app's own: its scale was a share of the runtime's size; render/foveation and render/own_order
 ## chose among foveations there are no more (SteamVR's density map, our former warps): they go.
-## render/foveation_level chose among Foveation.LEVELS when they were gentler: off stays off, any
-## other is the weakest now (the strongest then; the rest were gentler still).
+## render/foveation_level chose among Foveation.LEVELS when there were three: off stays off, the
+## weakest and the strongest then are the weakest and the medium now, the medium then (between
+## them) the weakest now.
 static func _load() -> ConfigFile:
 	var cfg := ConfigFile.new()
 	cfg.load(SETTINGS)
@@ -608,7 +609,7 @@ static func _load() -> ConfigFile:
 		if cfg.has_section_key("render", k):
 			cfg.erase_section_key("render", k)
 	if cfg.has_section_key("render", "foveation_level"):
-		cfg.set_value("render", "fovea", mini(int(cfg.get_value("render", "foveation_level")), 1))
+		cfg.set_value("render", "fovea", [0, 1, 1, 2][clampi(int(cfg.get_value("render", "foveation_level")), 0, 3)])
 		cfg.erase_section_key("render", "foveation_level")
 	return cfg
 

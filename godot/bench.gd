@@ -70,7 +70,7 @@ const TILT_PERIOD := 2.0        # s: its tilts (roll)
 # the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
 # eyes]; the first is the reference the others are compared with
 const VARIANTS := [["plain", 0, false], ["foveation weak", 1, false], ["foveation medium", 2, false],
-	["foveation strong", 3, false], ["a cube at the eyes", 0, true]]
+	["foveation strong", 3, false], ["foveation strongest", 4, false], ["a cube at the eyes", 0, true]]
 # the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
