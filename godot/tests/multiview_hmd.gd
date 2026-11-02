@@ -5,8 +5,11 @@ extends SceneTree
 ## of the head are drawn either by the app's renderer (mode "app": placed by walking from the feet
 ## along their play-space offset, a cube's axes carried along; a beam's points so) or by Godot's
 ## standard renderer (mode "mesh": a beam as a prism of Renderer.BEAM_SIDES sides turned as
-## body.gdshaderinc turns the app's). In each eye the silhouettes must coincide.
-##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix app|mesh case balls|cubes|beams
+## body.gdshaderinc turns the app's). In each eye the silhouettes must coincide where light goes
+## straight: Godot draws no image of them through the curved zone. Mode "lens" is "app" with blue where
+## the floor's quad draws what comes through the zone (floor.gdshaderinc's lens_mark), for
+## tools/compare/silhouettes.py to leave out.
+##   godot --path . -s res://tests/multiview_hmd.gd -- out_prefix app|mesh|lens case balls|cubes|beams
 
 const U := preload("res://tests/util.gd")
 const RADIUS := 0.25
@@ -45,10 +48,15 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	frames += 1
 	if frames == 3:
-		# start where main starts, with the head pose now known
-		main.place(main.START_POS, main.START_FORWARD)
+		# start where main starts, with the head pose now known, the back to the wormhole: what is
+		# compared here is where light goes straight (tests/curved_check.gd takes the rest)
+		main.place(main.START_POS, -main.START_FORWARD)
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view
+		main.renderer.show_scene(false)  # the scene's reddish sphere would count as a ball
+		if mode == "lens":
+			for m in main.renderer.floor_mats:
+				m.set_shader_parameter("lens_mark", true)
 		var head: Transform3D = hmd.head
 		var feet := Vector3(head.origin.x, 0.0, head.origin.z)
 		var sp: WormholeSpace = main.space
@@ -113,7 +121,7 @@ func _process(_delta: float) -> bool:
 				col.append(Vector4(4.0, 0.0, 0.0, HALF))   # saturated: shading and edges stay red
 			else:
 				col.append(Vector4(1.0, 0.0, 0.0, RADIUS))
-		if mode == "app" and not beams:
+		if mode != "mesh" and not beams:
 			if cubes:
 				main.renderer.set_objects(PackedVector4Array(), PackedVector4Array(), pos, axes, col)
 			else:

@@ -252,7 +252,8 @@ func _process(_delta: float) -> bool:
 			right.set_input(&"primary", Vector2(0.0, 1.0))
 		480:
 			right.set_input(&"primary", Vector2.ZERO)
-			U.check("standing, the right stick up does nothing", main.viewer.standing and main.viewer.height() == 0.0)
+			U.check("standing, the right stick up does nothing", main.viewer.standing and absf(main.viewer.height()) < 1e-5,
+					"the feet %s m over the floor" % main.viewer.height())
 			_check_turn("... nor turns", 0.0)
 			right.set_input(&"primary_click", true)
 		482:
@@ -288,14 +289,14 @@ func _process(_delta: float) -> bool:
 			U.check("flight with gravity again", main.viewer.gravity)
 		640:
 			U.check("let go, it turns upright, falls and lands", main.viewer.standing
-					and (main.viewer.frame[1] as Vector4).distance_to(Vector4(0.0, 0.0, 0.0, 1.0)) < 1e-6, "standing %s" % main.viewer.standing)
+					and _chart(1).distance_to(Vector3(0.0, 0.0, 1.0)) < 1e-6, "standing %s, up %s" % [main.viewer.standing, _chart(1)])
 			main.hold = true
 			right.set_input(&"trigger", 1.0)
 		655:
 			right.set_input(&"trigger", 0.0)
 		657:
 			U.check("while the speed check holds the viewer, the right trigger does not fly", main.viewer.standing
-					and main.viewer.height() == 0.0, "standing %s" % main.viewer.standing)
+					and absf(main.viewer.height()) < 1e-5, "standing %s, the feet %s m over the floor" % [main.viewer.standing, main.viewer.height()])
 			main.hold = false
 			U.finish(self, hmd, [left, right])
 	return false

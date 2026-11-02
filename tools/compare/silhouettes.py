@@ -3,8 +3,10 @@ offsets. Arguments: the image prefix (<prefix>_app_left.png, <prefix>_mesh_left.
 how many objects at least (MIN_CHECKED by default). PASS: in each eye at least that many objects
 lie wholly in the picture (a turned head can lose one or two past its edge), each of them has its
 app's silhouette's centre within MAX_OFFSET px of Godot's, and the union IoU is at least MIN_IOU
-(no object of the app's where Godot drew none)."""
-import sys, numpy as np
+(no object of the app's where Godot drew none). Where <prefix>_lens_<eye>.png exists (the app's picture with what the
+floor's quad draws through the curved zone blue, multiview_hmd.gd's mode "lens"), its blue pixels
+are left out of both: there the app draws the images light makes through the zone, Godot none."""
+import os, sys, numpy as np
 from PIL import Image
 from scipy import ndimage
 def mask(p):
@@ -17,6 +19,11 @@ worst = 0.0
 ok = True
 for eye in ('left', 'right'):
     A = mask(f'{sys.argv[1]}_app_{eye}.png'); B = mask(f'{sys.argv[1]}_mesh_{eye}.png')
+    lens_png = f'{sys.argv[1]}_lens_{eye}.png'
+    if os.path.exists(lens_png):
+        L = np.asarray(Image.open(lens_png).convert('RGB'), int)
+        lens = (L[..., 2] > 128) & (L[..., 0] < 64)
+        A &= ~lens; B &= ~lens
     iou = (A & B).sum() / max((A | B).sum(), 1)
     lb, nb = ndimage.label(B)
     print(f'{eye}: union IoU {iou:.4f}, mesh blobs {nb}')

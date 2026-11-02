@@ -4,7 +4,10 @@ away from its edges) that green does NOT cover. With green wider than the white 
 ~0 when aligned; shifting green by 2 px shows how fast it grows.
 Balls: share of green ball-grid pixels outside the app's red silhouette, and the
 difference of their outlines (bounding boxes). The cube (when its pictures are there): the same
-for Godot's green edges and the app's magenta cube. With
+for Godot's green edges and the app's magenta cube. Where <prefix>_lens_<eye>.png exists (the same picture with
+what the floor's quad draws through the curved zone blue), its blue is left out of the red and the
+magenta: there the app draws the images light makes through the zone, Godot none. A white line is
+brighter than what is round it, not just beside a darker line (the gravity view's 1 g contour). With
 --floor-only (the scene without the app's balls) only the floor is compared."""
 import os, sys, numpy as np
 from PIL import Image
@@ -21,7 +24,14 @@ for eye in ('left', 'right'):
     gb = np.maximum(R[..., 1], R[..., 2])
     red = ((R[..., 0] - gb) > 60) & (gb < 0.45 * R[..., 0])
     gray = R.mean(axis=2)
-    W = (gray - ndimage.grey_opening(gray, size=(7, 7))) > 10
+    dark = (ndimage.grey_closing(gray, size=(7, 7)) - gray) > 25
+    W = ((gray - ndimage.grey_opening(gray, size=(7, 7))) > 10) & ~ndimage.binary_dilation(dark, iterations=3)
+    lens_png = f'{pre}_lens_{eye}.png'
+    lens = np.zeros_like(W)
+    if os.path.exists(lens_png):
+        L = np.asarray(Image.open(lens_png).convert('RGB'), int)
+        lens = (L[..., 2] > 128) & (L[..., 0] < 64)
+    red &= ~lens
     dom = ndimage.binary_erosion(green(img('domain', eye)), iterations=6)
     G = green(img('floor', eye))
     wl = W & dom
@@ -59,7 +69,7 @@ for eye in ('left', 'right'):
         if Cg.any():
             ys, xs = np.nonzero(Cg)
             near[max(ys.min() - 12, 0):ys.max() + 13, max(xs.min() - 12, 0):xs.max() + 13] = True
-        mag = ((np.minimum(R[..., 0], R[..., 2]) - R[..., 1]) > 25) & near
+        mag = ((np.minimum(R[..., 0], R[..., 2]) - R[..., 1]) > 25) & near & ~lens
         cout, cn, cbd = objects(mag, 'cube')
         line += f' | cube: green outside magenta {100*cout:.2f}%, outline difference {cbd} px'
         ok &= cn == 1 and cout < 0.01 and cbd <= 2

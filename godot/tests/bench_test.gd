@@ -1,7 +1,8 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
-## way of VARIANTS (the cube before the eyes drawn in its own), logs a line per place, and gives
-## back the foveation, the cube and where the viewer stood. The menu has its row.
+## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
+## cube before the eyes drawn in its own), logs a line per place, and gives back the foveation, the
+## cube and where the viewer stood. The menu has its row.
 ##   godot --path . -s res://tests/bench_test.gd
 
 const U := preload("res://tests/util.gd")
@@ -14,6 +15,24 @@ var started := false
 
 func check(name: String, good: bool, got: Variant = "") -> void:
 	U.check(name, good, str(got))
+
+
+## How far the viewer is from a place of Bench.PLACES (bench.gd's top): on the axis, the head from
+## (l, +x); standing, the feet from the chart point, on the floor.
+func _off_place(where: Variant) -> float:
+	var sp: WormholeSpace = main.space
+	var v := main.viewer
+	if where is float and not is_inf(where):
+		var hp := v.head(main.camera.transform.origin.y)
+		return 1e9 if v.standing else (sp.embed(hp[0], hp[1]) - sp.embed(where, Vector3(1.0, 0.0, 0.0))).length()
+	var at: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
+	var p := sp.point_from_chart(at.z, Vector3(at.x, at.y, 0.0))
+	return 1e9 if not v.standing else (sp.embed(v.l, v.n) - sp.embed(p[0], p[1])).length()
+
+
+## The cubes the renderer draws (out in a flat universe or in the curved zone).
+func _cubes() -> int:
+	return main.renderer.bodies.filter(func(x: Array) -> bool: return x[0] == "cube").size()
 
 
 func _initialize() -> void:
@@ -42,11 +61,12 @@ func _process(_d: float) -> bool:
 	if started and frames > 3:
 		if b.running and b.step >= 0:
 			var place: Array = b.PLACES[b.plan[b.step].x]
-			if absf(main.viewer.l - b._l(place[0])) > 0.3:
-				check("at the place being timed", false, "%.2f vs %.2f" % [main.viewer.l, b._l(place[0])])
+			var miss := _off_place(place[0])
+			if miss > 1e-3:
+				check("at the place being timed", false, "%s: %.4f m off" % [b._name(place[0]), miss])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
-			if b.near != v.near or (b.near and main.renderer.cubes.multimesh.visible_instance_count != main.toys.world.cubes.size() + 1):
+			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1):
 				check("the segment's cube before the eyes", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != ((v.foveation > 0 and v.foveation <= Foveation.LEVELS) or v.split):
@@ -63,7 +83,7 @@ func _process(_d: float) -> bool:
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("no cube before the eyes after it", not b.near and main.renderer.cubes.multimesh.visible_instance_count == main.toys.world.cubes.size())
+			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)

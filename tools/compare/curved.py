@@ -1,17 +1,30 @@
-"""Stereo in the curved zone (tests/curved_check.gd): each eye's picture against rays this script
+"""Stereo where light is bent (tests/curved_check.gd): each eye's picture against rays this script
 traces itself, independently of the shaders' method: the eye moved from the head along a geodesic
 and its frame carried along (RK4), each pixel's ray integrated as a geodesic of the space in 3D
-(RK4, the equations of docs/geometry.md, «Движение»), the balls and cubes as BallWorld defines them
-(chord distance in R^4; the 4D box cut by the space), the floor n.z = 0.
+(RK4, the equations of docs/geometry.md, «Движение»; steps of STEP and STEP_CYL in and near the
+curved zone, longer out in the flat universes), however many times it goes round the throat, up to RAY_MAX; the
+balls and cubes as BallWorld defines them (chord distance in R^4; the 4D box cut by the space), met
+by each step's chord of R^4; the floor where the height r(l) n_z + lift goes through 0.
 Checks per eye:
   bodies: in a band round each body's outline in the picture and inside it, the pixels whose ray
     meets a red ball or a green cube against the picture's red and green: at most MAX_FAR
-    mismatches beyond MAX_EDGE px of the traced outline (the rays sample a body every STEP), and
-    each body's centre within MAX_OFFSET px;
+    mismatches beyond MAX_EDGE px of the traced outline, and each body's image's centre within
+    MAX_OFFSET px (images of at least MIN_IMAGE px and MIN_THICK: the slivers near the throat's
+    photon sphere, a pixel or two thick, move by a pixel with the last digits of the eye's place,
+    and the outline's check takes them); rays still going at RAY_MAX are left out;
+  every image: on a grid of every GRID-th pixel, a traced body where the picture shows none within
+    MAX_EDGE px counts as a mismatch too (an image the picture lacks);
+  a mismatch counts where the pixel is what the trace says at its centre all across (rays a quarter
+    of a pixel off each way agree): where they don't, a body's edge crosses the pixel, and near the
+    photon sphere images a pixel across or less come and go with a hair of the ray's direction;
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
-    haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least.
-   python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)"""
-import json, sys
+    haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least
+    (where FLOOR_MIN of them are usable).
+   python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)
+With CURVED_DIFF=1 in the environment it also writes prefix_diff_left.png, _right.png: the picture
+dimmed, the traced bodies' pixels the picture lacks bright, the picture's the trace lacks dark, those
+beyond MAX_EDGE yellow, the grid's lacking rays white."""
+import json, os, sys
 import numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -21,13 +34,20 @@ MAX_FAR = 10
 MAX_OFFSET = 0.5
 AGREE = 0.995
 BAND = 4
-STEP = 0.005            # m: RK4 steps of the bodies' rays
-FLOOR_STEP = 0.02       # m: of the floor's
+MIN_IMAGE = 30          # px: an image's centre is checked if it has this many
+MIN_THICK = 2.0         # and its pixels are this many times its outline's (a disc of radius 4 px: 2)
+STEP = 0.05             # m: RK4 steps on the fillets and near the zone (a chord strays 0.3 mm from
+STEP_CYL = 0.1          # the path), on the cylinder (0.4 mm); out in a flat universe a tenth of the
+STEP_MAX = 0.5          # way to the zone's edge, up to this
+RAY_MAX = 90.0          # m along a ray at most
 FLOOR_SAMPLES = 1500
+FLOOR_MIN = 100         # fewer usable floor samples (a view without much floor): no floor check
+GRID = 4
 
 pre = sys.argv[1]
 D = json.load(open(pre + '.json'))
 rho0, h, R = D['profile']
+lift = D['lift']
 Lc = max(h - R, 0.0)
 th0 = float(np.arcsin(max(1.0 - h / R, 0.0)))
 L = Lc + R * (np.pi / 2 - th0)
@@ -73,21 +93,28 @@ def rhs(l, n, vl, v, vecs):
 
 def rk4(state, hs):
     def add(s, d, c):
-        out = [s[0] + c * d[0], s[1] + c * d[1], s[2] + c * d[2], s[3] + c * d[3]]
+        def m(x):
+            return (c[..., None] if np.ndim(c) and np.ndim(x) > np.ndim(c) else c) * x
+        out = [s[0] + m(d[0]), s[1] + m(d[1]), s[2] + m(d[2]), s[3] + m(d[3])]
         for (Ul, u), (dUl, du) in zip(s[4:], d[4:]):
-            out.append((Ul + c * dUl, u + c * du))
+            out.append((Ul + m(dUl), u + m(du)))
         return out
 
     def f(s):
         return rhs(s[0], s[1], s[2], s[3], s[4:])
+    hs = np.asarray(hs, float)
+    hv = hs[..., None] if hs.ndim else hs              # the step for vectors (n, v, u)
+
+    def mul(c, x):
+        return (c[..., None] if np.ndim(c) and np.ndim(x) > np.ndim(c) else c) * x
     k1 = f(state)
     k2 = f(add(state, k1, hs / 2))
     k3 = f(add(state, k2, hs / 2))
     k4 = f(add(state, k3, hs))
-    new = [state[i] + hs / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) for i in range(4)]
+    new = [state[i] + mul(hs / 6, k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) for i in range(4)]
     for j in range(len(state) - 4):
-        Ul = state[4 + j][0] + hs / 6 * (k1[4 + j][0] + 2 * k2[4 + j][0] + 2 * k3[4 + j][0] + k4[4 + j][0])
-        u = state[4 + j][1] + hs / 6 * (k1[4 + j][1] + 2 * k2[4 + j][1] + 2 * k3[4 + j][1] + k4[4 + j][1])
+        Ul = state[4 + j][0] + mul(hs / 6, k1[4 + j][0] + 2 * k2[4 + j][0] + 2 * k3[4 + j][0] + k4[4 + j][0])
+        u = state[4 + j][1] + mul(hs / 6, k1[4 + j][1] + 2 * k2[4 + j][1] + 2 * k3[4 + j][1] + k4[4 + j][1])
         new.append((Ul, u))
     n = new[1] / np.linalg.norm(new[1], axis=-1, keepdims=True)
     new[1] = n
@@ -153,38 +180,87 @@ for c in D['cubes']:
     CUBES.append((C, np.array([e1, e2, e3, N]), c['half']))
 
 
-def trace(l0, n0, D4, smax, hs, bodies=True):
+def seg_ball(P0, P1, C, rad):
+    """Where along the chord P0 -> P1 it first enters the ball (0..1), else 2."""
+    d = P1 - P0
+    q = P0 - C
+    a = np.maximum(np.sum(d * d, -1), 1e-30)
+    b = np.sum(q * d, -1)
+    c = np.sum(q * q, -1) - rad * rad
+    disc = b * b - a * c
+    u = (-b - np.sqrt(np.maximum(disc, 0))) / a
+    u = np.where(c <= 0, 0.0, u)
+    return np.where((disc >= 0) & (u >= 0) & (u <= 1), u, 2.0)
+
+
+def seg_box(P0, P1, C, Ax, half):
+    """Where along the chord P0 -> P1 it first enters the 4D box (0..1), else 2."""
+    o = (P0 - C) @ Ax.T
+    d = (P1 - P0) @ Ax.T
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t1 = (-half - o) / d
+        t2 = (half - o) / d
+    # along an axis it does not move: inside that slab for good, or never in it
+    t1 = np.where(d == 0, np.where(np.abs(o) <= half, -np.inf, np.inf), t1)
+    t2 = np.where(d == 0, np.where(np.abs(o) <= half, np.inf, np.inf), t2)
+    tin = np.max(np.minimum(t1, t2), -1)
+    tout = np.min(np.maximum(t1, t2), -1)
+    u = np.maximum(tin, 0)
+    return np.where((tin <= tout) & (u <= 1) & (tout >= 0), u, 2.0)
+
+
+def height(l, n):
+    return r_of(l) * n[..., 2] + lift
+
+
+def trace(l0, n0, D4, smax=RAY_MAX, bodies=True):
     """Rays from (l0, n0) along unit tangent vectors D4 [m, 4]: what each meets first: 1 a ball,
-    2 a cube, 3 the floor (with its l, n and the way), 0 nothing within smax."""
+    2 a cube, 3 the floor (with its l, n and the way), 0 the sky, -1 still going at smax."""
     m = D4.shape[0]
     l = np.full(m, l0); n = np.tile(n0, (m, 1)); vl = D4[:, 0].copy(); v = D4[:, 1:].copy()
-    kind = np.zeros(m, int); hit_l = np.zeros(m); hit_n = np.zeros((m, 3)); way = np.zeros(m)
+    kind = np.full(m, -1); hit_l = np.zeros(m); hit_n = np.zeros((m, 3)); way = np.zeros(m)
+    s = np.zeros(m)
     alive = np.ones(m, bool)
-    s = 0.0
-    while s < smax and alive.any():
+    while alive.any():
         idx = np.nonzero(alive)[0]
+        r = r_of(l[idx])
+        al = np.abs(l[idx])
+        hs = np.where(al < L + 0.5, np.where(al < Lc - 0.1, STEP_CYL, STEP), np.clip(0.1 * (r - Rout), STEP, STEP_MAX))
         st = rk4([l[idx], n[idx], vl[idx], v[idx]], hs)
-        P = embed(st[0], st[1])
-        inside = np.zeros((len(idx), 2), bool)
+        P0 = embed(l[idx], n[idx])
+        P1 = embed(st[0], st[1])
+        best = np.full(len(idx), 2.0)
+        what = np.zeros(len(idx), int)
         if bodies:
             for C, rad in BALLS:
-                inside[:, 0] |= np.sum((P - C) ** 2, -1) < rad * rad
+                u = seg_ball(P0, P1, C, rad)
+                what = np.where(u < best, 1, what); best = np.minimum(best, u)
             for C, Ax, a in CUBES:
-                inside[:, 1] |= np.all(np.abs((P - C) @ Ax.T) < a, -1)
-        floor = (n[idx, 2] > 0) & (st[1][:, 2] <= 0) & ~inside[:, 0] & ~inside[:, 1]
-        kind[idx[inside[:, 0]]] = 1
-        kind[idx[inside[:, 1] & ~inside[:, 0]]] = 2
-        fi = idx[floor]
-        f = n[fi, 2] / (n[fi, 2] - st[1][floor, 2])
-        kind[fi] = 3
-        hit_l[fi] = l[fi] + f * (st[0][floor] - l[fi])
-        nn = n[fi] + f[:, None] * (st[1][floor] - n[fi])
-        nn[:, 2] = 0
-        hit_n[fi] = nn / np.linalg.norm(nn, axis=-1, keepdims=True)
-        way[fi] = s + f * hs
-        alive[idx[inside[:, 0] | inside[:, 1] | floor]] = False
+                u = seg_box(P0, P1, C, Ax, a)
+                what = np.where(u < best, 2, what); best = np.minimum(best, u)
+        h0 = height(l[idx], n[idx]); h1 = height(st[0], st[1])
+        fl = (h0 > 0) & (h1 <= 0)
+        uf = np.where(fl, h0 / np.where(fl, h0 - h1, 1.0), 2.0)
+        what = np.where(uf < best, 3, what); best = np.minimum(best, uf)
+        hit = best <= 1
+        hi = idx[hit]
+        kind[hi] = what[hit]
+        f = best[hit]
+        hit_l[hi] = l[hi] + f * (st[0][hit] - l[hi])
+        nn = n[hi] + f[:, None] * (st[1][hit] - n[hi])
+        hit_n[hi] = nn / np.linalg.norm(nn, axis=-1, keepdims=True)
+        way[hi] = s[hi] + f * hs[hit]
+        alive[hi] = False
         l[idx], n[idx], vl[idx], v[idx] = st[0], st[1], st[2], st[3]
-        s += hs
+        s[idx] += hs
+        # out in a flat universe, going away from the zone and up (no floor ahead, nothing to meet
+        # once past the bodies): the sky
+        rr = r_of(l[idx])
+        out = (np.abs(l[idx]) > L) & (vl[idx] * np.sign(l[idx]) > 0) & (rr > 60.0)
+        sky = idx[out & alive[idx]]
+        kind[sky] = 0
+        alive[sky] = False
+        alive[idx[alive[idx] & (s[idx] >= smax)]] = False
     return kind, hit_l, hit_n, way
 
 
@@ -195,7 +271,7 @@ def to_tangent(n0, d, axes):
     return D4 / np.linalg.norm(D4, axis=-1, keepdims=True)
 
 
-def look_floor(l, n, way):
+def look_floor(l, way):
     """The floor's light and dark colours there after the haze (look.gdshaderinc), sRGB 0..255."""
     A = np.array([[0.7874, 0.6038, 0.4064], [0.6559, 0.4624, 0.2846]])
     B = np.array([[0.6383, 0.7106, 0.7874], [0.4624, 0.5542, 0.6739]])
@@ -209,6 +285,12 @@ def look_floor(l, n, way):
     return srgb * 255
 
 
+def chart_xy(l, n):
+    """A floor point's chart x, y (chart B mirrored in x)."""
+    x = r_of(l)[:, None] * n
+    return np.c_[np.where(l < 0, -x[:, 0], x[:, 0]), x[:, 1]]
+
+
 ok = True
 for side_i, eye_name in enumerate(('left', 'right')):
     e = D['eyes'][side_i]
@@ -217,30 +299,78 @@ for side_i, eye_name in enumerate(('left', 'right')):
     red = (img[..., 0] - np.maximum(img[..., 1], img[..., 2])) > 60
     green = (img[..., 1] - np.maximum(img[..., 0], img[..., 2])) > 60
     body = red | green
-    # the bodies: a band round the picture's outlines, and inside
-    region = ndimage.binary_dilation(body, iterations=BAND)
+    # every image: rays on a coarse grid over the whole picture
+    gy, gx = np.mgrid[0:H:GRID, 0:W:GRID]
+    gy = gy.ravel(); gx = gx.ravel()
+    gk, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, gx.astype(float), gy.astype(float)), axes))
+    near_red = ndimage.binary_dilation(red, iterations=int(MAX_EDGE) + 1)
+    near_green = ndimage.binary_dilation(green, iterations=int(MAX_EDGE) + 1)
+    def steady(xs, ys, kind, has):
+        """Whether pixels (xs, ys) are what the trace says at their centres all across: rays a quarter
+        of a pixel from the centre each way meet the body kind (has) or don't (not has). Where they
+        don't agree the body's edge crosses the pixel (near the photon sphere an image a pixel or
+        less across, where a ray a hair off goes elsewhere), and either verdict is the pixel's."""
+        ok = np.ones(len(xs), bool)
+        if len(xs) == 0:
+            return ok
+        for dx, dy in ((-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)):
+            k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes))
+            ok &= (k == kind) == has
+        return ok
+    lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
+    li = np.nonzero(lack)[0]
+    lack[li] = steady(gx[li].astype(float), gy[li].astype(float), gk[li], True)
+    lacking = int(lack.sum())
+    # the bodies: a band round the picture's outlines and the grid's traced bodies, and inside
+    seed = body.copy()
+    seed[gy[gk == 1], gx[gk == 1]] = True
+    seed[gy[gk == 2], gx[gk == 2]] = True
+    region = ndimage.binary_dilation(seed, iterations=BAND + GRID)
     ys, xs = np.nonzero(region)
     d = pixel_rays(e, xs.astype(float), ys.astype(float))
-    kind, _, _, _ = trace(l0, n0, to_tangent(n0, d, axes), 8.0, STEP)
+    kind, _, _, _ = trace(l0, n0, to_tangent(n0, d, axes))
+    known = np.ones_like(red)
+    known[ys, xs] = kind >= 0
     ref_red = np.zeros_like(red); ref_green = np.zeros_like(green)
     ref_red[ys, xs] = kind == 1; ref_green[ys, xs] = kind == 2
-    line = f'{eye_name}: eye l {l0:.3f}'
-    for name, A, Rf in (('balls', red, ref_red), ('cubes', green, ref_green)):
-        mis = (A ^ Rf) & region
+    line = f'{eye_name}: eye l {l0:.3f}, {lacking} grid rays meet a body the picture lacks, {int((~known).sum())} rays still going'
+    ok &= lacking == 0
+    far_all = np.zeros_like(red)
+    for name, A, Rf, code in (('balls', red, ref_red, 1), ('cubes', green, ref_green, 2)):
+        mis = (A ^ Rf) & region & known
         dist = ndimage.distance_transform_edt(~(Rf ^ ndimage.binary_erosion(Rf)))   # px to the traced outline
         far = mis & (dist > MAX_EDGE)
+        fy, fx = np.nonzero(far)
+        far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), Rf[fy, fx])
+        far_all |= far
         lab, nb = ndimage.label(ndimage.binary_dilation(Rf, iterations=2))
         worst = 0.0
         for k in range(1, nb + 1):
             reg = lab == k
-            ry, rx = np.nonzero(Rf & reg); gy, gx = np.nonzero(A & reg)
-            if len(gx) == 0 or len(rx) == 0:
+            ry, rx = np.nonzero(Rf & reg); gy2, gx2 = np.nonzero(A & reg)
+            img_k = Rf & reg
+            outline = img_k & ~ndimage.binary_erosion(img_k)
+            if len(rx) < MIN_IMAGE or len(rx) < MIN_THICK * outline.sum():
+                continue
+            if len(gx2) == 0:
                 worst = 99.0; continue
             touches = rx.min() == 0 or ry.min() == 0 or rx.max() == W - 1 or ry.max() == H - 1
             if not touches:
-                worst = max(worst, float(np.hypot(rx.mean() - gx.mean(), ry.mean() - gy.mean())))
-        line += f' | {name} {nb}: {int(mis.sum())} px differ, {int(far.sum())} beyond {MAX_EDGE} px of the outline, worst centre {worst:.2f} px'
-        ok &= nb >= 1 and far.sum() <= MAX_FAR and worst <= MAX_OFFSET
+                off = float(np.hypot(rx.mean() - gx2.mean(), ry.mean() - gy2.mean()))
+                if os.environ.get('CURVED_DIFF') and off > MAX_OFFSET:
+                    print(f'  {eye_name} {name}: image of {len(rx)} px at ({rx.mean():.0f}, {ry.mean():.0f}), '
+                          f'{len(gx2)} in the picture, centre {off:.2f} px off')
+                worst = max(worst, off)
+        line += f' | {name} {nb} images: {int(mis.sum())} px differ, {int(far.sum())} beyond {MAX_EDGE} px of the outline, worst centre {worst:.2f} px'
+        ok &= far.sum() <= MAX_FAR and worst <= MAX_OFFSET
+    if os.environ.get('CURVED_DIFF'):
+        out = (img * 0.4).astype(np.uint8)
+        for A, Rf, c in ((red, ref_red, (255, 80, 80)), (green, ref_green, (80, 255, 80))):
+            out[Rf & ~A & known] = c
+            out[A & ~Rf & region & known] = (np.array(c) * 0.35).astype(np.uint8)
+        out[gy[lack], gx[lack]] = (255, 255, 255)
+        out[far_all] = (255, 255, 0)
+        Image.fromarray(out).save(f'{pre}_diff_{eye_name}.png')
     # the floor: sampled pixels away from the bodies
     rng = np.random.default_rng(side_i)
     fy, fx = np.nonzero(~region)
@@ -250,25 +380,22 @@ for side_i, eye_name in enumerate(('left', 'right')):
     # neighbours a pixel right and down, for the footprint of a pixel on the floor
     dxr = pixel_rays(e, fx + 1.0, fy.astype(float)); dyr = pixel_rays(e, fx.astype(float), fy + 1.0)
     T = to_tangent(n0, np.vstack([d, dxr, dyr]), axes)
-    kind, hl, hn, way = trace(l0, n0, T, 40.0, FLOOR_STEP, bodies=False)
+    kind, hl, hn, way = trace(l0, n0, T, bodies=False)
     m = len(fx)
-    q = np.c_[np.abs(hl), np.arctan2(hn[:, 1], np.where(hl < 0, -hn[:, 0], hn[:, 0])) * 24 / (2 * np.pi)]
-    qx = np.c_[np.abs(hl[m:2 * m]), np.arctan2(hn[m:2 * m, 1], np.where(hl[m:2 * m] < 0, -hn[m:2 * m, 0], hn[m:2 * m, 0])) * 24 / (2 * np.pi)]
-    qy = np.c_[np.abs(hl[2 * m:]), np.arctan2(hn[2 * m:, 1], np.where(hl[2 * m:] < 0, -hn[2 * m:, 0], hn[2 * m:, 0])) * 24 / (2 * np.pi)]
-    qq = q[:m]
-    fw = np.maximum(np.abs(qx - qq), np.abs(qy - qq))
-    fw = np.where(fw > 12, 24 - fw, fw)                      # the sectors' seam
     good = (kind[:m] == 3) & (kind[m:2 * m] == 3) & (kind[2 * m:] == 3)
+    q = chart_xy(hl, hn)
+    qq = q[:m]
+    fw = np.maximum(np.abs(q[m:2 * m] - qq), np.abs(q[2 * m:] - qq))
     frac = np.abs(qq - np.round(qq))                         # cell units to the nearest edge or line
     good &= np.all(frac > np.maximum(4 * fw, 0.06), axis=1) & np.all(fw < 0.08, axis=1) & (way[:m] < 35)
     parity = (np.floor(qq[:, 0]) + np.floor(qq[:, 1])).astype(int) % 2
-    cols = look_floor(hl[:m], hn[:m], way[:m])
+    cols = look_floor(hl[:m], way[:m])
     pix = img[fy, fx].astype(float)
     dl = np.abs(pix - cols[:, 0]).sum(-1); dd = np.abs(pix - cols[:, 1]).sum(-1)
     seen_light = dl < dd
     # look_checker gives 0 (the dark colour) where floor(x) + floor(y) is even
     agree = (seen_light == (parity == 1))[good]
     line += f' | floor: {int(good.sum())} samples, {100 * agree.mean() if agree.size else 0:.2f}% in the right cell'
-    ok &= agree.size >= 200 and agree.mean() >= AGREE
+    ok &= agree.size < FLOOR_MIN or agree.mean() >= AGREE
     print(line)
 print('PASS' if ok else 'FAIL')

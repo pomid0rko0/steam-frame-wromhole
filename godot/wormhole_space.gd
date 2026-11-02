@@ -7,6 +7,11 @@ extends RefCounted
 ## A point is (l, n): n is a unit Vector3 on the shared angular sphere.
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
+##
+## The floor is the plane lift below the throat's centre in each flat universe (R^4's z = -lift
+## in either sheet); lift > Rout, so it stays out of the curved zone. The charts (chart_position)
+## put it at z = 0: chart A is R^4's xyz in sheet A raised by lift, chart B the same in sheet B,
+## mirrored in x.
 
 const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet radii (it takes none elsewhere)
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
@@ -15,6 +20,7 @@ const GRAV_SUB := 2      # RK4 steps between nodes
 var rho0: float
 var h: float
 var fillet: float
+var lift: float                 # m: the throat's centre above the floor
 var Lc: float
 var th0: float
 var L: float
@@ -27,17 +33,16 @@ var grav_beta := 0.0
 var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_NODES, interleaved
 
 
-func _init(throat_radius: float, half_length: float, fillet_radius: float) -> void:
+func _init(throat_radius: float, half_length: float, fillet_radius: float, p_lift: float) -> void:
 	set_profile(throat_radius, half_length, fillet_radius)
+	lift = p_lift
+	assert(lift > Rout, "the floor must stay out of the curved zone")
 
 
 ## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
-## the shape: the renderer's profile, sweep table and gravity table (Renderer.upload_space), the
-## stereo check scene
-## (check_scene.gd: its grid's rout and lsh, its balls' and cube's R^4 centres from h), and what
-## stands in chart coordinates outside Rout: godot/scene.json's objects, the toys' places (toys.gd),
-## CheckScene.BALLS and CUBE, main.START_POS, and bench.gd's PLACES and TOUR_L (metres of l chosen
-## against the edge). Nothing keeps the feet's and the balls' distance to the curved zone's edge.
+## the shape (Renderer.upload_space: the profile, the sweep table, the gravity's numbers; the field
+## lines), and keep lift above Rout and what stands in chart coordinates (godot/scene.json's objects,
+## the toys' places, CheckScene's, main.START_POS, bench.gd's places) out of the curved zone.
 func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length
@@ -229,10 +234,10 @@ func _trace(trace: Array, l: float, psi: float, n: Vector3, e: Vector3, s: float
 	var pts: Array = trace[0]
 	var lens: Array = trace[1]
 	var Q := embed(l, (cos(psi) * n + sin(psi) * e).normalized())
-	if Q.z < 0.0:
+	if Q.z < -lift:
 		var P: Vector4 = pts[pts.size() - 1]
 		var s0: float = lens[lens.size() - 1]
-		var f := P.z / (P.z - Q.z)
+		var f := (P.z + lift) / (P.z - Q.z)
 		pts.append(P.lerp(Q, f))
 		lens.append(s0 + f * (s - s0))
 		return true
@@ -338,13 +343,13 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 
 
 ## The geodesic from (l, n) along the unit vector dir, for up to dist, cut where it reaches the
-## floor (height 0, R^4's z): as points of R^4 and their lengths along it, [Array of Vector4, Array
+## floor (height 0): as points of R^4 and their lengths along it, [Array of Vector4, Array
 ## of float], the first at (l, n). In a flat universe a geodesic is a straight line of R^4, given by
 ## its ends; on the cylinder a helix, by points RAY_TOL off its chords at most; on a fillet by the
 ## ends of RK4 steps of RAY_STEP fillet radii. What a hand points at (hands.gd).
 func ray(l: float, n: Vector3, dir: Vector4, dist: float) -> Array:
 	var trace := [[embed(l, n)], [0.0]]
-	if trace[0][0].z > 0.0:
+	if trace[0][0].z > -lift:
 		geodesic(l, n, dir, dist, [], trace, RAY_STEP)
 	return trace
 
@@ -363,11 +368,12 @@ func bend(l: float) -> float:
 
 
 ## A chart position of the flat region on one side to a manifold point. Chart A is R^4's xyz in
-## sheet A; chart B is sheet B's, mirrored in x (a frame right-handed in either chart has the same
-## orientation in the space).
+## sheet A raised by lift (the floor at z = 0); chart B is sheet B's, mirrored in x (a frame
+## right-handed in either chart has the same orientation in the space).
 func point_from_chart(side: float, x: Vector3) -> Array:
-	var rr := x.length()
-	var n := x / rr
+	var c := Vector3(x.x, x.y, x.z - lift)
+	var rr := c.length()
+	var n := c / rr
 	if side < 0.0:
 		n.x = -n.x
 	return [side * (rr - Rout + L), n]
@@ -444,11 +450,12 @@ func normal4(l: float, n: Vector3) -> Vector4:
 	return Vector4(p.x, p.y, p.z, dr(l))
 
 
-## Height above the floor, H = r(l) n_z: exactly the chart height z in both flat universes,
-## extended smoothly through the throat. Its gradient (r' n_z, e_z - n_z n) has length 1 on the
-## floor: where a body touches the floor and which way the floor pushes it.
+## Height above the floor, H = r(l) n_z + lift: exactly the chart height z in both flat universes,
+## extended smoothly through the throat, where it is at least lift - Rout > 0. Its gradient
+## (r' n_z, e_z - n_z n) has length 1 in the flat universes: where a body touches the floor and
+## which way the floor pushes it.
 func height(l: float, n: Vector3) -> float:
-	return r(l) * n.z
+	return r(l) * n.z + lift
 
 
 func height_grad(l: float, n: Vector3) -> Vector4:
@@ -530,38 +537,31 @@ func gravity_f(l: float) -> PackedFloat64Array:
 	return PackedFloat64Array([f, sg * fp])
 
 
-## The potential divided by g, in metres: the chart height z far from the wormhole.
+## The potential divided by g, in metres: the chart height z far from the wormhole (lift added:
+## the harmonic f n_z is measured from the throat's centre).
 func potential(l: float, n: Vector3) -> float:
-	return gravity_f(l)[0] * n.z
+	return gravity_f(l)[0] * n.z + lift
 
 
-## Its gradient; gravity is -g times this. On the floor it is the floor normal times
-## floor_gravity(l).
+## Its gradient; gravity is -g times this.
 func potential_grad(l: float, n: Vector3) -> Vector4:
 	var F := gravity_f(l)
 	var u := (Vector3(0.0, 0.0, 1.0) - n.z * n) * (F[0] / r(l))
 	return Vector4(F[1] * n.z, u.x, u.y, u.z)
 
 
-## Strength of gravity on the floor at l, in g.
-func floor_gravity(l: float) -> float:
-	return gravity_f(l)[0] / r(l)
-
-
-## Gravity on the floor for the renderer's gravity view (floor_gravity.gdshader): its strength in g
-## at |l| = i GRAV_FLOOR_END / (GRAV_FLOOR_N - 1), and beyond that end the closed form 1 + beta / r^3.
-## {image (RF, GRAV_FLOOR_N x 1), axes: (the end, beta)}.
-const GRAV_FLOOR_N := 512
-
-
-func gravity_table() -> Dictionary:
-	var end := L + 8.0
-	var data := PackedFloat32Array()
-	data.resize(GRAV_FLOOR_N)
-	for i in GRAV_FLOOR_N:
-		data[i] = floor_gravity(end * i / (GRAV_FLOOR_N - 1))
-	var img := Image.create_from_data(GRAV_FLOOR_N, 1, false, Image.FORMAT_RF, data.to_byte_array())
-	return {"image": img, "axes": Vector2(end, grav_beta)}
+## Strength of gravity on the floor, in g, rho metres (along the floor) from the point under the
+## throat's centre: there, in a flat universe, the potential is z' (1 + beta / r^3) + lift (z' =
+## -lift the floor's height against the centre, r^2 = rho^2 + lift^2), whose gradient has the
+## parts 3 beta lift rho / r^5 along the floor and 1 + beta / r^3 - 3 beta lift^2 / r^5 up.
+## look.gdshaderinc's look_grav_floor is the same.
+func floor_gravity(rho: float) -> float:
+	var r2 := rho * rho + lift * lift
+	var r1 := sqrt(r2)
+	var r5 := r2 * r2 * r1
+	var along := 3.0 * grav_beta * lift * rho / r5
+	var up := 1.0 + grav_beta / (r2 * r1) - 3.0 * grav_beta * lift * lift / r5
+	return sqrt(along * along + up * up)
 
 
 ## One RK4 step of free motion under gravity, -grav * potential_grad (geodesic + force).
@@ -637,7 +637,7 @@ func chart_position(l: float, n: Vector3) -> Vector3:
 	var x := r(l) * n
 	if l < 0.0:
 		x.x = -x.x
-	return x
+	return Vector3(x.x, x.y, x.z + lift)
 
 
 # ---------------------------------------------------------------- the sweep table

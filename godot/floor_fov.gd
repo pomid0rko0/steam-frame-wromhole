@@ -1,8 +1,9 @@
 class_name FloorFov
 extends CompositorEffect
-## Our own foveation (Foveation's levels 4 and 5). Per pixel only the floor and the sky cost much
-## (a ray's sweep each); the bodies are geometry. So before the bodies are drawn, a compute shader
-## works out the floor and the sky into a texture per eye whose texels are as fine as the picture's
+## Our own foveation (Foveation's levels 4 and 5). Per pixel only the floor's quad costs much (a
+## ray's way out of the curved zone, and through it the bodies out in the flat universes); the
+## bodies seen straight and in the zone are geometry. So before the bodies are drawn, a compute
+## shader works out what the quad would draw into a texture per eye whose texels are as fine as the picture's
 ## pixels where the eye looks and grow smoothly away from it (shaders/floor_fov.gdshaderinc), and the
 ## floor's quad then only takes each pixel's colour from there, filtered (floor.gdshaderinc,
 ## fov_on). The bodies stay at the picture's full resolution. No density map: no tiles of coarse
@@ -35,12 +36,14 @@ var _tex: RID                       # the colours, rgba16f, a layer per eye
 var _warp: RID                      # per eye: (gaze x, y, k, n), (A0 x, A1 x, A0 y, A1 y)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture
-var _grav: RID                      # the floor's gravity
+var _lens: RID                      # the lens list (lens.gdshaderinc), a uniform buffer
 var _n := 0                         # texels a side
 var _size := 0                      # the picture's pixels a side it was made for
 var _k := 1.0
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
-var _gravx := Vector2.ZERO
+var _floor := Vector2.ZERO          # (lift, beta)
+var _lens_bytes := PackedByteArray()   # the lens list as the buffer takes it; empty: sent
+var _lens_size := 160 * 16 + 16
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
 var _gaze := Vector3.ZERO           # a point the eyes look at (play space); _gaze_on: valid
 var _gaze_on := false
@@ -52,16 +55,26 @@ func _init() -> void:
 	enabled = false
 
 
-## The space and its tables (Renderer.upload_space): the shaders' g_prof, g_prof2, g_tabx, g_tab,
-## the gravity's g_grav and g_gravx.
-func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, grav: Texture2D, gravx: Vector2) -> void:
+## The space and its table (Renderer.upload_space): the shaders' g_prof, g_prof2, g_tabx, g_tab,
+## and (g_lift, g_beta).
+func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, floor_: Vector2) -> void:
 	_mutex.lock()
 	_space = PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
 			tabx.x, tabx.y, tabx.z, tabx.w])
 	_tab = RenderingServer.texture_get_rd_texture(tab.get_rid())
-	_grav = RenderingServer.texture_get_rd_texture(grav.get_rid())
-	_gravx = gravx
+	_floor = floor_
 	_sets.clear()
+	_mutex.unlock()
+
+
+## The lens list as Renderer has it: lens_body's rows and lens_n.
+func set_lens(rows: PackedVector4Array, counts: Vector2) -> void:
+	var f := PackedFloat32Array()
+	for r in rows:
+		f.append_array([r.x, r.y, r.z, r.w])
+	f.append_array([counts.x, counts.y, 0.0, 0.0])
+	_mutex.lock()
+	_lens_bytes = f.to_byte_array()
 	_mutex.unlock()
 
 
@@ -136,8 +149,9 @@ func _make(n: int) -> void:
 func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var look: String = (load("res://shaders/look.gdshaderinc") as ShaderInclude).code
+	var lens: String = (load("res://shaders/lens.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/floor_fov.gdshaderinc") as ShaderInclude).code
-	body = body.replace("#include_geo_and_look", geo + "\n" + look)
+	body = body.replace("#include_geo_and_look", geo + "\n" + look + "\n" + lens)
 	for kind in ["eyes", "floor", "gravity"]:
 		var src := RDShaderSource.new()
 		var defs := {"eyes": "#define EYES\n", "floor": "", "gravity": "#define GRAVITY\n"}
@@ -156,6 +170,7 @@ func _build() -> void:
 	_sampler = _rd.sampler_create(s)
 	_ubo = _rd.uniform_buffer_create(448)
 	_eyes = _rd.storage_buffer_create(160)
+	_lens = _rd.uniform_buffer_create(_lens_size)
 
 
 func _uniform_set(kind: String) -> RID:
@@ -166,10 +181,13 @@ func _uniform_set(kind: String) -> RID:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
-			0, 1:
+			0:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
 				u.add_id(_sampler)
-				u.add_id(_tab if b == 0 else _grav)
+				u.add_id(_tab)
+			1:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+				u.add_id(_lens)
 			2:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
 				u.add_id(_ubo)
@@ -201,8 +219,12 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	p.append_array(_head)
 	var gaze := _gaze
 	var gaze_on := _gaze_on
+	var lens := _lens_bytes
+	_lens_bytes = PackedByteArray()
 	_mutex.unlock()
-	p.append_array([_gravx.x, _gravx.y, 0.0, 0.0])
+	if not lens.is_empty():
+		_rd.buffer_update(_lens, 0, lens.size(), lens)
+	p.append_array([_floor.x, _floor.y, 0.0, 0.0])
 	for c in [cam.basis.x, cam.basis.y, cam.basis.z]:
 		p.append_array([c.x, c.y, c.z, 0.0])
 	p.append_array([cam.origin.x, cam.origin.y, cam.origin.z, 1.0])

@@ -29,7 +29,7 @@ func _process(_delta: float) -> bool:
 		main.place(main.START_POS, main.START_FORWARD)      # chart to play: multiview_sphere.gd
 	if frames == 3:
 		if mode == "app":
-			var pos := PackedVector4Array([Vector4(CHART.x, CHART.y, CHART.z, main.space.h)])
+			var pos := PackedVector4Array([Vector4(CHART.x, CHART.y, CHART.z - main.space.lift, main.space.h)])
 			main.renderer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
 		else:
 			var m := U.red(U.sphere(RADIUS))

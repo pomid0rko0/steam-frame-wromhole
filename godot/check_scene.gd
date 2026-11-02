@@ -24,8 +24,9 @@ static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> 
 	var floor_mat := ShaderMaterial.new()
 	floor_mat.shader = load("res://shaders/check_grid.gdshader")
 	assert(floor_mat.shader.code.contains("balls[%d]" % BALLS.size()), "check_grid.gdshader's balls[] holds BALLS")
+	var zone := Vector3(0.0, 0.0, space.lift)        # the throat's centre in chart A
 	floor_mat.set_shader_parameter("rout", space.Rout)
-	floor_mat.set_shader_parameter("lsh", space.L)
+	floor_mat.set_shader_parameter("zone", zone - Vector3(0.0, 0.0, 0.002))
 	floor_mat.render_priority = 10
 	var bl := PackedVector4Array()
 	for c in BALLS:
@@ -45,10 +46,11 @@ static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> 
 	var ball_mat := ShaderMaterial.new()
 	ball_mat.shader = load("res://shaders/check_ball.gdshader")
 	ball_mat.render_priority = 11
+	ball_mat.set_shader_parameter("rout", space.Rout)
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
 	for c in BALLS:
-		pos.append(Vector4(c.x, c.y, c.z, space.h))     # R^4 point of sheet A
+		pos.append(Vector4(c.x, c.y, c.z - space.lift, space.h))     # R^4 point of sheet A
 		col.append(Vector4(BALL_COLOR.r, BALL_COLOR.g, BALL_COLOR.b, BALL_RADIUS))
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
@@ -58,7 +60,8 @@ static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> 
 		var m := MeshInstance3D.new()
 		m.name = "Ball%d" % pos.size()
 		m.mesh = s
-		m.material_override = ball_mat
+		m.material_override = ball_mat.duplicate()
+		m.material_override.set_shader_parameter("zone", zone - c)
 		m.position = c
 		overlay.add_child(m)
 	# the cube: Godot draws its edges green, the renderer its 4D box
@@ -69,12 +72,14 @@ static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> 
 	box.material_override = ShaderMaterial.new()
 	box.material_override.shader = load("res://shaders/check_cube.gdshader")
 	box.material_override.set_shader_parameter("half", CUBE_HALF)
+	box.material_override.set_shader_parameter("rout", space.Rout)
+	box.material_override.set_shader_parameter("zone", Basis(Vector3(0.0, 0.0, 1.0), CUBE_YAW).inverse() * (zone - CUBE))
 	box.material_override.render_priority = 11
 	box.transform = Transform3D(Basis(Vector3(0.0, 0.0, 1.0), CUBE_YAW), CUBE)
 	overlay.add_child(box)
 	var axes := PackedVector4Array([Vector4(cos(CUBE_YAW), sin(CUBE_YAW), 0.0, 0.0),
 			Vector4(-sin(CUBE_YAW), cos(CUBE_YAW), 0.0, 0.0)])
-	renderer.set_objects(pos, col, PackedVector4Array([Vector4(CUBE.x, CUBE.y, CUBE.z, space.h)]), axes,
+	renderer.set_objects(pos, col, PackedVector4Array([Vector4(CUBE.x, CUBE.y, CUBE.z - space.lift, space.h)]), axes,
 			PackedVector4Array([Vector4(CUBE_COLOR.r, CUBE_COLOR.g, CUBE_COLOR.b, CUBE_HALF)]))
 	renderer.show_scene(false)
 

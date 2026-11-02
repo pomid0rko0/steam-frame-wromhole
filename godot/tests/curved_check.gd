@@ -1,29 +1,46 @@
 extends SceneTree
-## Stereo in the curved zone, where there is no Godot geometry to compare with: the simulated
-## headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced head) stands or
-## flies at a place of PLACES with red balls and green cubes round the head, and each eye's picture is saved
-## with what tools/compare/curved.py needs to trace that eye's rays itself, independently of the
-## shaders: the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's
-## static objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
+## Stereo where light is bent by the wormhole, where there is no Godot geometry to compare with: the
+## simulated headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced
+## head) stands or flies at a place of PLACES with red balls and green cubes round the head and at
+## fixed places of the space (WORLD: in the throat, on its far side, in universe B, behind the
+## mouth: seen through the lens and in the zone, every image), and each eye's picture is saved with
+## what tools/compare/curved.py needs to trace that eye's rays itself, independently of the shaders:
+## the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's static
+## objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
 ##   godot --path . -s res://tests/curved_check.gd -- out_prefix place
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
 const U := preload("res://tests/util.gd")
-# [the feet's l, degrees right of the throat (place_on_axis), flights from there (main.viewer: off
-# the floor, then each a geodesic along the head's x right, y up, -z ahead, the room's axes carried
-# along), the head's pitch in degrees (util.gd's headset)]: standing in the throat looking along it
-# and sideways round it, at the curved zone's edge, inside universe B's fillet facing the throat, in
-# the flat universe the same way as a control; flying 2 m up round the throat's middle, 5.5 m up
-# round it at l 1 (past its top), high above universe A looking down into the throat, and through
-# the throat 0.5 m over the floor into universe B, looking down to B's floor (up turned about 48
-# degrees: tests/flight_test.gd)
-const PLACES := [[0.0, 10.0, [], -10.0], [0.3, 95.0, [], -10.0], [5.0, 15.0, [], -10.0], [-4.6, 170.0, [], -10.0],
-		[12.0, 40.0, [], -10.0], [0.0, 10.0, [Vector3(0.0, 2.0, 0.0)], -10.0], [1.0, 30.0, [Vector3(0.0, 5.5, 0.0)], -10.0],
-		[12.0, 0.0, [Vector3(0.0, 6.0, -9.0)], -60.0], [12.0, 0.0, [Vector3(0.0, 0.5, 0.0), Vector3(0.0, 0.0, -20.0)], -55.0]]
+# [the feet's place on universe A's floor (chart x, y), the direction they face (chart x, y),
+# flights from there (main.viewer: off the floor, then each a geodesic along the head's x right, y
+# up, -z ahead, the room's axes carried along), a turn of the room to the right after, in degrees,
+# the head's pitch in degrees (util.gd's headset)]: standing at the start looking up at the mouth;
+# level with the throat's centre 9 m out; at the curved zone's edge; in A's fillet; in the throat
+# looking along it and sideways; out in universe B looking back at the mouth; far off, a control;
+# under the mouth looking up into it
+const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0)], 0.0, 0.0],
+		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -4.6)], 0.0, -5.0],
+		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 90.0, -10.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 180.0, 0.0],
+		[Vector2(24.0, 9.0), Vector2(1.0, 0.3), [], 0.0, -10.0],
+		[Vector2(0.6, 0.4), Vector2(-1.0, 0.0), [], 0.0, 75.0]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
 const CUBES := [[Vector3(0.35, 0.15, -0.6), 0.1, Vector3(0.4, 0.6, 0.1)], [Vector3(-0.4, -0.5, -2.6), 0.28, Vector3(-0.2, 0.9, 0.3)]]
+# bodies at points (l, n) of the space: balls [l, n, radius], cubes [l, n, half size, a turn about
+# n's tangent plane]: on the throat's far side from the start, in it near its top, in B's fillet,
+# out in B through the throat from the start, out in A behind the mouth
+const WORLD_BALLS := [[0.3, Vector3(-1.0, 0.05, 0.1), 0.4], [1.5, Vector3(0.1, -0.2, 1.0), 0.3],
+		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45]]
+const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1.0, 0.35, 0.15), 0.4, 0.3]]
+# and on the line through the head and the throat's centre, where a body's images close into rings:
+# [m toward the centre from the head (l less), radius or half size, a turn about that line]
+const AXIS_BALL := [1.1, 0.1, 0.0]
+const AXIS_CUBE := [0.7, 0.12, 0.4]
 
 var main: Main
 var hmd
@@ -34,7 +51,7 @@ var place: Array
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	place = PLACES[int(args[1])]
-	hmd = U.headset(1, place[3], Vector2i(640, 640))
+	hmd = U.headset(1, place[4], Vector2i(640, 640))
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = false
@@ -47,17 +64,16 @@ func _process(_delta: float) -> bool:
 	if frames == 3:
 		main.menu.visible = false
 		main.renderer.show_scene(false)
-		main.place_on_axis(place[0], place[1], 0.0)
+		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
 		var v: Viewer = main.viewer
 		var fwd := main._head_forward_xz()
 		for d: Vector3 in place[2]:
 			v.take_off()
 			v.move(WormholeSpace.combine(v.frame, Vector3(-d.x * fwd.y - d.z * fwd.x, d.y, d.x * fwd.x - d.z * fwd.y)))
+		v.turn(deg_to_rad(place[3]))
 		if not place[2].is_empty():
 			var hp := v.head(hmd.head.origin.y)
-			print("flying: the feet %.2f m over the floor, the head %.2f m, up %.0f deg from the floor's normal there"
-					% [v.height(), main.space.height(hp[0], hp[1]),
-					rad_to_deg(acos(clampf((v.frame[1] as Vector4).dot(main.space.height_grad(v.l, v.n).normalized()), -1.0, 1.0)))])
+			print("flying: the head at l %.2f, %.2f m over the floor" % [hp[0], main.space.height(hp[0], hp[1])])
 		main.hold = true
 	if frames == 5:
 		_bodies()
@@ -94,12 +110,46 @@ func _bodies() -> void:
 			var A: Vector4 = ax.x * g[2][0] + ax.y * g[2][1] + ax.z * g[2][2]
 			axes.append(sp.embed_vector(g[0], g[1], A).normalized())
 		ccol.append(Vector4(0.0, 4.0, 0.0, c[1]))
+	# on the axis, a little off it (the line still through them)
+	var hl: float = hp[0]
+	var hn: Vector3 = hp[1]
+	var side := signf(hl)
+	var off := _normal_to(hn) * 0.02
+	var ab := sp.embed(hl - side * AXIS_BALL[0], (hn + off).normalized())
+	pos.append(ab)
+	col.append(Vector4(4.0, 0.0, 0.0, AXIS_BALL[1]))
+	var al: float = hl - side * AXIS_CUBE[0]
+	var an := (hn - off).normalized()
+	var ae1 := _normal_to(an)
+	var ae2 := an.cross(ae1)
+	var aa: float = AXIS_CUBE[2]
+	axes.append(sp.embed_vector(al, an, Vector4(0.0, cos(aa) * ae1.x + sin(aa) * ae2.x, cos(aa) * ae1.y + sin(aa) * ae2.y, cos(aa) * ae1.z + sin(aa) * ae2.z)).normalized())
+	axes.append(sp.embed_vector(al, an, Vector4(0.6, 0.8 * (-sin(aa) * ae1.x + cos(aa) * ae2.x), 0.8 * (-sin(aa) * ae1.y + cos(aa) * ae2.y), 0.8 * (-sin(aa) * ae1.z + cos(aa) * ae2.z))).normalized())
+	cpos.append(sp.embed(al, an))
+	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
+	for b: Array in WORLD_BALLS:
+		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
+		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
+	for c: Array in WORLD_CUBES:
+		var n: Vector3 = (c[1] as Vector3).normalized()
+		var C := sp.embed(c[0], n)
+		var e1 := _normal_to(n)
+		var e2 := n.cross(e1)
+		var a: float = c[3]
+		for ax in [cos(a) * e1 + sin(a) * e2, -sin(a) * e1 + cos(a) * e2]:
+			axes.append(sp.embed_vector(c[0], n, Vector4(0.0, ax.x, ax.y, ax.z)).normalized())
+		cpos.append(C)
+		ccol.append(Vector4(0.0, 4.0, 0.0, c[2]))
 	main.toys.enabled = false
 	main.renderer.set_objects(pos, col, cpos, axes, ccol)
 	_objects = [pos, col, cpos, axes, ccol]
 
 
 var _objects := []
+
+
+static func _normal_to(n: Vector3) -> Vector3:
+	return (Vector3(0.0, 0.0, 1.0) if absf(n.z) < 0.9 else Vector3(1.0, 0.0, 0.0)).cross(n).normalized()
 
 
 static func _walk(sp: WormholeSpace, hp: Array, d: Vector3) -> Array:
@@ -117,7 +167,7 @@ func _dump(path: String) -> void:
 		eyes.append({"basis": [_v3(t.basis.x), _v3(t.basis.y), _v3(t.basis.z)], "origin": _v3(t.origin),
 				"frustum": [hmd.frusta[v].x, hmd.frusta[v].y, hmd.frusta[v].z, hmd.frusta[v].w]})
 	var sp: WormholeSpace = main.space
-	var d := {"profile": [sp.rho0, sp.h, sp.fillet], "size": [hmd.size.x, hmd.size.y],
+	var d := {"profile": [sp.rho0, sp.h, sp.fillet], "lift": sp.lift, "size": [hmd.size.x, hmd.size.y],
 		"head": {"l": hp[0], "n": _v3(hp[1]), "frame": [_v4(f[0]), _v4(f[1]), _v4(f[2])],
 			"pos": _v3(main.camera.transform.origin)},
 		"eyes": eyes, "balls": [], "cubes": []}

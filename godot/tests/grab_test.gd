@@ -24,12 +24,12 @@ extends SceneTree
 ##    make nothing; while the menu is open, B, X and the D-pad down make nothing either (the B
 ##    that closes it neither), A does not reset; the D-pad down makes a cube as X does; A puts
 ##    everything back and empties the hands
-## 9. in the middle of the throat: the hand is a head-to-hand geodesic away, the held ball keeps
-##    its offset in the hand's axes through the curved space, and leaves the hand smoothly
-## 10. from the start, a ball thrown toward the wormhole ends up in universe B
-## 11. a ball held with the hand inside it, lowered onto the floor at the shell's edge and let go
-##     with the hand still: it is set down at rest, the hand that let it go does not push it, and
-##     gravity rolls it toward the throat by itself
+## 9. hovering in the middle of the throat: the hand is a head-to-hand geodesic away, the held ball
+##    keeps its offset in the hand's axes through the curved space, and leaves the hand smoothly
+## 10. from the start, a ball thrown up into the mouth ends up in universe B
+## 11. a ball held with the hand inside it, lowered onto the floor under the mouth and let go with
+##     the hand still: it is set down at rest, the hand that let it go does not push it, and gravity
+##     rolls it away from under the mouth by itself
 
 const U := preload("res://tests/util.gd")
 const SIZE := 160                    # each eye's picture
@@ -371,7 +371,7 @@ func _hand_over() -> void:
 func _pushes() -> void:
 	_clear()
 	var ball := _ball_at(Vector3(9.0, 0.0, 0.2), 0.2)
-	var cube: BallWorld.Cube = main.toys.cube_on_floor(Vector2(9.0, -1.2), 0.15, 0.0, Color.WHITE)
+	var cube: BallWorld.Cube = main.toys.cube_on_floor(1.0, Vector2(9.0, -1.2), 0.15, 0.0, Color.WHITE)
 	_pose(left, Vector3(-2.0, 1.0, 0.5))          # out of the way
 	# the right hand sweeps along +y (room +x) at 2 m/s through the ball's centre height
 	var p := Vector3(-0.5, 0.2, -1.0)
@@ -537,6 +537,7 @@ func _hold_and_reset() -> void:
 func _throat() -> void:
 	_clear()
 	main.place_on_axis(0.0, 90.0)
+	main.set_fall(false)
 	var sp: WormholeSpace = main.space
 	var p := Vector3(0.25, 1.3, -0.45)
 	_pose(right, p)
@@ -587,6 +588,7 @@ func _throat() -> void:
 	U.check("in the throat the ball leaves the hand smoothly", ball.held == &"" and (after - before).length() < 0.1,
 			"%.3f m/s in the hand, %.3f m/s just after, apart by %.3f" % [before.length(), after.length(), (after - before).length()])
 	main.place(main.START_POS, main.START_FORWARD)
+	main.set_fall(true)
 	await _step(1)
 
 
@@ -601,7 +603,7 @@ func _into_b() -> void:
 	await _step(1)
 	right.set_input(&"by_button", false)
 	var ball := _hand(1).held
-	var v := Vector3(-0.15, 1.0, -8.0)
+	var v := Vector3(-0.3, 8.0, -10.0)      # chart A (-10, -0.3, 8): up into the mouth
 	for k in 8:
 		p += v / 60.0
 		_pose(right, p)
@@ -610,7 +612,7 @@ func _into_b() -> void:
 		await _step(1)
 	_pose(right, Vector3(0.25, 1.0, -0.3))
 	await _step(240)
-	U.check("a ball thrown from the start toward the wormhole ends up in universe B",
+	U.check("a ball thrown from the start up into the mouth ends up in universe B",
 			ball != null and ball.l < -main.space.L, "l = %.2f (universe B: below %.2f)" % [ball.l if ball else 0.0, -main.space.L])
 
 
@@ -618,15 +620,17 @@ func _into_b() -> void:
 func _set_down() -> void:
 	_clear()
 	var sp: WormholeSpace = main.space
-	# feet 1.2 m outside the shell's edge (chart radius Rout), facing the throat
-	main.place(Vector3(sp.Rout + 1.2, 0.0, 0.0), Vector3(-1.0, 0.0, 0.0))
+	# feet 5.8 m along the floor from under the throat's centre, facing away from it: the ball goes
+	# down 7 m off it, where the floor's push only just beats rolling friction (a stronger one would
+	# move it within the third of a second the hand is checked in)
+	main.place(Vector3(5.8, 0.0, 0.0), Vector3(1.0, 0.0, 0.0))
 	_pose(left, Vector3(-2.0, 1.0, 0.5))
 	var p := Vector3(0.0, 0.8, -1.1)
 	_pose(right, p)
 	await _step(3)
 	# a ball whose centre is 10 cm in front of the hand: the hand is inside it
 	var rad := 0.2
-	var c: Array = sp.point_from_chart(1.0, Vector3(sp.Rout, 0.0, 0.8))
+	var c: Array = sp.point_from_chart(1.0, Vector3(7.0, 0.0, 0.8))
 	var ball: BallWorld.Ball = main.toys.world.add(c[0], c[1], Vector4.ZERO, rad, Color(0.95, 0.95, 0.97))
 	right.set_input(&"grip", 1.0)
 	await _step(1)
@@ -644,13 +648,14 @@ func _set_down() -> void:
 	var E0: Vector4 = sp.embed(ball.l, ball.n)
 	var v0 := _vel(ball).length()
 	U.check("let go with the hand still, the ball is set down at rest", ball.held == &"" and v0 < 1e-3,
-			"%.4f m/s, at l = %.3f (the edge %.3f)" % [v0, ball.l, sp.L])
+			"%.4f m/s, at chart A %s" % [v0, _at(ball)])
 	await _step(20)
 	var moved: float = (sp.embed(ball.l, ball.n) - E0).length()
 	U.check("the hand that let it go, still inside it, does not push it", moved < 0.01,
 			"moved %.4f m in 1/3 s, %.3f m/s" % [moved, _vel(ball).length()])
-	var l0: float = ball.l
+	var x0 := _at(ball)
 	_pose(right, Vector3(0.6, 1.2, -0.3))
 	await _step(8 * 60)
-	U.check("set down at the shell's edge, the ball rolls toward the throat by itself", l0 - ball.l > 0.2,
-			"l %.3f -> %.3f in 8 s, %.3f m/s" % [l0, ball.l, _vel(ball).length()])
+	var x1 := _at(ball)
+	U.check("set down under the mouth, the ball rolls away from under it by itself", x1.x - x0.x > 0.2 and absf(x1.y - x0.y) < 0.01,
+			"chart A %s -> %s in 8 s, %.3f m/s" % [x0, x1, _vel(ball).length()])

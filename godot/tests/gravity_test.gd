@@ -5,12 +5,12 @@ extends SceneTree
 ## 1. the field matches ref/gravity.py (python3 ref/test_gravity.py prints these numbers)
 ## 2. it solves Laplace's equation, (r^2 f')' = 2 f, also on the fillet's table
 ## 3. potential_grad is the gradient of potential (so the field conserves energy)
-## 4. the renderer's table of gravity on the floor (gravity_table) is the field, and its end joins
-##    the closed form beyond
+## 4. floor_gravity, the closed form on the floor, is the field (potential_grad) there, in either
+##    universe
 ## 5. G cycles the views (Renderer.GRAVITY_VIEWS): the floor's shader and the arrows; not during
 ##    the speed check
-## 6. the pictures: the floor yellow (1 g) far out and dark purple (0.2 g) in the middle of the
-##    throat, the sky untouched; arrows drawn over the view with view 2
+## 6. the pictures: the floor yellow (1 g) far out and under the mouth (1.03 g), the sky
+##    untouched (but for what comes through the throat); arrows drawn over the view with view 2
 ## With a prefix, saves the pictures it checks.
 
 const U := preload("res://tests/util.gd")
@@ -20,9 +20,13 @@ var frames := 0
 var shots := ""
 var step := 0
 var pics := {}
-# [name, l (null: the start's), degrees up, gravity view]
-const PICS := [["far", 11.6, -70.0, 1], ["throat", 0.0, -70.0, 1], ["throat_off", 0.0, -70.0, 0],
-		["start_off", null, 0.0, 0], ["start_floor", null, 0.0, 1], ["start_arrows", null, 0.0, 2]]
+# [name, where the feet stand on universe A's floor facing -x (chart), degrees up, gravity view]
+# ... and last where the floor's quad draws what comes through the curved zone, from the start
+# (floor.gdshaderinc's lens_mark)
+const PICS := [["far", Vector3(20.0, 0.0, 0.0), -70.0, 1], ["under", Vector3(2.5, 0.0, 0.0), -70.0, 1],
+		["under_off", Vector3(2.5, 0.0, 0.0), -70.0, 0], ["start_off", Main.START_POS, 0.0, 0],
+		["start_floor", Main.START_POS, 0.0, 1], ["start_arrows", Main.START_POS, 0.0, 2],
+		["start_lens", Main.START_POS, 0.0, 0]]
 
 
 func _initialize() -> void:
@@ -52,8 +56,9 @@ func _process(_delta: float) -> bool:
 		var p: Array = PICS[i]
 		if k == 0:
 			main.set_gravity_view(p[3])
-			var start_l: float = main.space.point_from_chart(1.0, main.START_POS)[0]
-			main.place_on_axis(p[1] if p[1] != null else start_l, 0.0, p[2])
+			main.place(p[1], Vector3(-1.0, 0.0, 0.0), 1.0, p[2])
+			for m in main.renderer.floor_mats:
+				m.set_shader_parameter("lens_mark", p[0] == "start_lens")
 		elif k == 2:
 			var img := root.get_texture().get_image()
 			img.convert(Image.FORMAT_RGB8)
@@ -65,16 +70,15 @@ func _process(_delta: float) -> bool:
 
 func _math_checks(sp: WormholeSpace) -> void:
 	# 1: against the float64 reference
-	var ref_l := [0.0, 2.0, 4.0, 5.0, sp.L]
-	var ref_g := [0.20557, 0.30391, 0.69300, 0.91320, 0.94991]
+	var ref_rho := [0.0, 2.5, 5.0, 10.0, 20.0]
+	var ref_g := [1.05129, 1.02593, 1.00463, 0.99909, 0.99970]
 	var worst := absf(sp.grav_beta - (-3.20586))
 	var got := []
-	for i in ref_l.size():
-		got.append(snappedf(sp.floor_gravity(ref_l[i]), 0.00001))
-		worst = maxf(worst, absf(sp.floor_gravity(ref_l[i]) - ref_g[i]))
-		worst = maxf(worst, absf(sp.floor_gravity(-ref_l[i]) - ref_g[i]))     # the same in universe B
+	for i in ref_rho.size():
+		got.append(snappedf(sp.floor_gravity(ref_rho[i]), 0.00001))
+		worst = maxf(worst, absf(sp.floor_gravity(ref_rho[i]) - ref_g[i]))
 	U.check("gravity matches ref/gravity.py", worst < 2e-5,
-			"floor g at l = 0, 2, 4, 5, L: %s (%s), beta %.5f m^3 (-3.20586)" % [str(got), str(ref_g), sp.grav_beta])
+			"floor g at 0, 2.5, 5, 10, 20 m along it from under the throat's centre: %s (%s), beta %.5f m^3 (-3.20586)" % [str(got), str(ref_g), sp.grav_beta])
 
 	# 2: (r^2 f')' = 2 f by central differences, in doubles
 	var res := 0.0
@@ -105,22 +109,16 @@ func _math_checks(sp: WormholeSpace) -> void:
 		gerr = maxf(gerr, maxf(absf(dl - G.x), absf(dt - Vector3(G.y, G.z, G.w).dot(t))))
 	U.check("potential_grad is the potential's gradient", gerr < 1e-4, "max difference %s (in g)" % _e(gerr))
 
-	# 4: the renderer's table, float32, linear between its nodes as the GPU filters it
-	var gt := sp.gravity_table()
-	var img: Image = gt.image
-	var ax: Vector2 = gt.axes
-	var n := img.get_width()
-	var terr := 0.0
-	for i in 400:
-		var l := (i + 0.5) / 400.0 * ax.x
-		var x := l / ax.x * (n - 1)
-		var k := mini(int(x), n - 2)
-		var g := lerpf(img.get_pixel(k, 0).r, img.get_pixel(k + 1, 0).r, x - k)
-		terr = maxf(terr, absf(g - sp.floor_gravity(l)))
-	var rr := sp.r(ax.x)
-	var join := absf(img.get_pixel(n - 1, 0).r - (1.0 + ax.y / (rr * rr * rr)))
-	U.check("the renderer's gravity on the floor is the field", terr < 2e-3 and join < 1e-5,
-			"within %s g between the nodes, at the end %s from the closed form" % [_e(terr), _e(join)])
+	# 4: floor_gravity against the field on the floor, in both universes, round the point under the
+	# throat's centre
+	var ferr := 0.0
+	for i in 40:
+		var rho := 0.75 * i
+		var a := 0.7 * i
+		for side in [1.0, -1.0]:
+			var p := sp.point_from_chart(side, Vector3(rho * cos(a), rho * sin(a), 0.0))
+			ferr = maxf(ferr, absf(sp.potential_grad(p[0], p[1]).length() - sp.floor_gravity(rho)))
+	U.check("floor_gravity is the field on the floor", ferr < 1e-5, "within %s g, 0 to 29 m along the floor in A and B" % _e(ferr))
 
 
 ## x as "1.5e-5"
@@ -168,24 +166,27 @@ static func _mid(img: Image) -> Color:
 
 func _picture_checks() -> void:
 	var far := _mid(pics.far)
-	var thr := _mid(pics.throat)
-	var off := _mid(pics.throat_off)
+	var und := _mid(pics.under)
+	var off := _mid(pics.under_off)
 	U.check("floor far out: yellow, 1 g", far.r > 0.8 and far.g > 0.7 and far.r > far.b + 0.35 and far.g > far.b + 0.3,
 			"middle of the view %s" % far)
-	U.check("floor in the middle of the throat: dark purple, 0.2 g", thr.b > thr.g + 0.1 and thr.r > thr.g + 0.05 and thr.v < 0.7
-			and (thr - off).get_luminance() != 0.0, "middle of the view %s (without the view %s)" % [thr, off])
-	# from the start: the sky (top fifth) is the same with the floor view and without, the floor (bottom fifth) changes
-	# with the floor view, and the arrows show only with view 2
-	var sky := _diff(pics.start_off, pics.start_floor, 0.0, 0.2)
+	U.check("floor under the mouth: yellow too, 1.03 g", und.r > 0.8 and und.g > 0.7 and und.r > und.b + 0.35 and und.g > und.b + 0.3
+			and (und - off).get_luminance() != 0.0, "middle of the view %s (without the view %s)" % [und, off])
+	# from the start: the sky (the top fifth, but for the throat: the floor seen through it is coloured too) is the
+	# same with the floor view and without, the floor (bottom fifth) changes with the floor view, and the arrows
+	# show only with view 2 (the lines a metre apart across the plane through the throat, seen face on from 10 m:
+	# 2 % of the view)
+	var sky := _diff(pics.start_off, pics.start_floor, 0.0, 0.2, pics.start_lens)
 	var flo := _diff(pics.start_off, pics.start_floor, 0.8, 1.0)
 	var arr := _diff(pics.start_floor, pics.start_arrows, 0.0, 1.0)
-	U.check("from the start: sky untouched, floor coloured, arrows drawn", sky.x < 3.0 / 255.0 and flo.y > 0.9 and arr.y > 0.03 and arr.y < 0.6,
+	U.check("from the start: sky untouched, floor coloured, arrows drawn", sky.x < 3.0 / 255.0 and flo.y > 0.9 and arr.y > 0.01 and arr.y < 0.6,
 			"sky differs by %.1f/255 at most; %.0f%% of the floor's pixels changed; arrows on %.0f%% of the view" % [sky.x * 255.0, 100.0 * flo.y, 100.0 * arr.y])
 
 
-## Between two pictures, over the rows from y0 to y1 (fractions of the height): (largest
-## difference of a channel, share of pixels that differ by more than 4/255).
-static func _diff(a: Image, b: Image, y0: float, y1: float) -> Vector2:
+## Between two pictures, over the rows from y0 to y1 (fractions of the height), but where lens (a
+## picture with lens_mark) is blue: (largest difference of a channel, share of pixels that differ by
+## more than 4/255).
+static func _diff(a: Image, b: Image, y0: float, y1: float, lens: Image = null) -> Vector2:
 	var mx := 0.0
 	var n := 0
 	var changed := 0
@@ -193,6 +194,8 @@ static func _diff(a: Image, b: Image, y0: float, y1: float) -> Vector2:
 		for x in a.get_width():
 			var p := a.get_pixel(x, y)
 			var q := b.get_pixel(x, y)
+			if lens != null and lens.get_pixel(x, y).b > 0.5 and lens.get_pixel(x, y).r < 0.2:
+				continue
 			var d := maxf(maxf(absf(p.r - q.r), absf(p.g - q.g)), absf(p.b - q.b))
 			mx = maxf(mx, d)
 			n += 1

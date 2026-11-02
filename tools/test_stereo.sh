@@ -51,21 +51,21 @@ verdict() {   # name, comparison command...
 for m in app mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
 for m in app mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
 # balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES), and the hands' beams, drawn
-# by the app against Godot's own
+# by the app against Godot's own where light goes straight (lens: the rest, left out)
 for c in 0 1; do
-	for m in app mesh; do
+	for m in app mesh lens; do
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c balls
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/cub$c" $m $c cubes
 		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/bea$c" $m $c beams
 	done
 done
-# the curved zone: the throat, sideways in it, the curved zone's edge, universe B's fillet, and a
-# place in the flat universe the same way as a control; flying round the throat, over its top, high
-# above it and out of it tilted (curved_check.gd's PLACES)
+# where light is bent: at the start looking up at the lifted throat, level with it, at the curved
+# zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
+# a control, under the mouth looking up (curved_check.gd's PLACES)
 for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
 # the stereo check scene, also flying (cases 4 and 5)
 for c in 0 1 2 3 4 5; do
-	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
+	for m in app lens floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
 done
 # the same floor lines without the balls and the cube
 for c in 0 1 2 3 4 5; do
@@ -75,7 +75,7 @@ done
 # with the balls and the cube, and without them (plain)
 for v in gravity arrows; do
 	for c in 0 1 2 3; do
-		for m in app floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
+		for m in app lens floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
 		for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
 	done
 done
@@ -107,8 +107,15 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
 	verdict "simulated headset, case $c: the hands' beams, each eye" python3 "$CMP/silhouettes.py" "$OUT/bea$c" 2
 done
+# the traced rays take minutes a place (more in the throat, where they go round it): JOBS at once,
+# their verdicts in order
 for p in 0 1 2 3 4 5 6 7 8; do
-	verdict "simulated headset, curved zone, place $p: balls, cubes and the floor against traced rays, each eye" python3 "$CMP/curved.py" "$OUT/crv$p"
+	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
+	python3 "$CMP/curved.py" "$OUT/crv$p" > "$LOGS/crv$p.cmp" 2>&1 &
+done
+wait
+for p in 0 1 2 3 4 5 6 7 8; do
+	verdict "simulated headset, place $p where light is bent: balls, cubes and the floor against traced rays, every image, each eye" cat "$LOGS/crv$p.cmp"
 done
 for c in 0 1 2 3 4 5; do
 	verdict "simulated headset, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/chk$c"
