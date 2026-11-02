@@ -156,7 +156,7 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 bool lens_near(float el, float re, vec4 D, float ang) {
 	float ca = (el < 0.0 ? -D.x : D.x);
 	float sa = length(D.yzw);
-	float k = inversesqrt(max(ca * ca + sa * sa, 1e-30));
+	float k = inversesqrt(max(ca * ca + sa * sa, 1e-12));
 	float b = re * sa * k;
 	// b grows by sqrt(re^2 - b^2) per radian of the ray's turn off the centre
 	return ca < 0.0 && b < g_prof2.x + ang * sqrt(max(re * re - b * b, 0.0));
