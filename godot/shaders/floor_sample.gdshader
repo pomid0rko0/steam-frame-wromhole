@@ -31,10 +31,10 @@ void fragment() {
 	vec4 t = textureLod(fov_tex, vec3((w0.zw + k * q) / w1.zw, float(v)), 0.0);
 	ALBEDO = t.rgb;
 	if (fov_probe) {
-		// the place the texture holds there (phases over 64 pixels, foveation.gdshaderinc's
+		// the place the texture holds there (phases over 256 pixels, foveation.gdshaderinc's
 		// FOV_PROBE) against this pixel's own: blue, and red by the larger error, 0.5 px full
-		vec2 e = vec2(atan(t.y, t.x), atan(t.w, t.z)) - 6.2831853 * (q + w0.xy) / 64.0;
+		vec2 e = vec2(atan(t.y, t.x), atan(t.w, t.z)) - 6.2831853 * (q + w0.xy) / 256.0;
 		e = mod(e + 3.14159265, 6.2831853) - 3.14159265;
-		ALBEDO = vec3(min(max(abs(e.x), abs(e.y)) * 64.0 / 6.2831853 / 0.5, 1.0), 0.0, 1.0);
+		ALBEDO = vec3(min(max(abs(e.x), abs(e.y)) * 256.0 / 6.2831853 / 0.5, 1.0), 0.0, 1.0);
 	}
 }

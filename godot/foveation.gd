@@ -45,7 +45,7 @@ extends CompositorEffect
 
 # by level (1 weak, 2 medium, 3 strong; 0 is off): [r0, the r where a texel spans 2 pixels], in
 # shares of half the picture's width
-const LEVELS := [[0.30, 0.83], [0.25, 0.65], [0.22, 0.48]]
+const LEVELS := [[0.22, 0.48], [0.175, 0.372], [0.123, 0.255]]
 const GAZE_SLACK := 0.03            # share of half the picture's width
 const MARGIN := 2                   # texels round the picture's warp: the filter reads one beyond it
 # the GPU timestamps of these passes (RenderingDevice.capture_timestamp): before the eyes, after the

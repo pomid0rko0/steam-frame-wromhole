@@ -12,8 +12,8 @@ same without), each eye:
   where the floor's quad draws, red by how far from its own place each pixel took its colour, 0.5 px
   full, linear and stored as sRGB): away from the fovea the floor is softer by design, but a pixel
   must take what was worked out where it is, or the eyes' pictures would part. Passes when no
-  pixel is off by more than PROBE_LIMIT px (the warp's own error, the filter's on a curved grid of
-  texels, is far below) over enough of the picture.
+  pixel is off by more than PROBE_LIMIT px or PROBE_SHARE of its texel (the larger: the filter on a
+  curved grid of texels errs by a share of the texel), over enough of the picture.
    python3 tools/compare/fovea.py dir a:b [a:b ...]     (where numpy is: tools/box.sh)"""
 import sys, os, json
 import numpy as np
@@ -23,6 +23,7 @@ ROUNDING = 1
 MAX_SHARE = 5e-4
 MARGIN = 2
 PROBE_LIMIT = 0.1
+PROBE_SHARE = 0.01
 d = sys.argv[1]
 ok = True
 n = 0
@@ -32,9 +33,10 @@ for pair in sys.argv[2:]:
     for i, eye in enumerate(('left', 'right')):
         A = np.asarray(Image.open(os.path.join(d, f'{a}_app_{eye}.png')).convert('RGB'), int)
         B = np.asarray(Image.open(os.path.join(d, f'{b}_app_{eye}.png')).convert('RGB'), int)
-        gx, gy, r0 = fovea[4 * i:4 * i + 3]
+        gx, gy, r0, m = fovea[4 * i:4 * i + 4]
         ys, xs = np.mgrid[0:A.shape[0], 0:A.shape[1]] + 0.5
-        inside = np.hypot(xs - gx, ys - gy) < r0 - MARGIN
+        r = np.hypot(xs - gx, ys - gy)
+        inside = r < r0 - MARGIN
         diff = np.abs(A - B).max(axis=2)[inside]
         big = int((diff > ROUNDING).sum())
         n += 1
@@ -47,10 +49,12 @@ for pair in sys.argv[2:]:
             floor = (P[..., 2] > 0.5) & (P[..., 1] < 0.2)
             lin = np.where(P[..., 0] <= 0.04045, P[..., 0] / 12.92, ((P[..., 0] + 0.055) / 1.055) ** 2.4)
             err = 0.5 * lin[floor]
+            texel = np.where(r > r0, np.sqrt(1 + (m * (r - r0)) ** 2), 1.0)[floor]
+            limit = np.maximum(PROBE_LIMIT, PROBE_SHARE * texel)
             far = floor & ~inside
-            line += (f' | probe: {floor.sum()} px ({far.sum()} out of the fovea), off by up to '
-                     f'{err.max() if err.size else 0:.3f} px, {int((err > PROBE_LIMIT).sum())} over {PROBE_LIMIT}')
-            ok &= far.sum() > 0.3 * P.shape[0] * P.shape[1] and err.size > 0 and err.max() <= PROBE_LIMIT
+            line += (f' | probe: {floor.sum()} px ({far.sum()} out of the fovea, texels up to {texel.max():.1f} px), '
+                     f'off by up to {err.max() if err.size else 0:.3f} px, {int((err > limit).sum())} over the limit')
+            ok &= far.sum() > 0.3 * P.shape[0] * P.shape[1] and err.size > 0 and (err <= limit).all()
         print(line)
 print(f'{n} pictures compared')
 print('PASS' if ok and n > 0 else 'FAIL')

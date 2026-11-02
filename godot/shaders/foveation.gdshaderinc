@@ -86,7 +86,9 @@ void main() {
 	imageStore(xt_img, ivec2(k, row), geo_xt_texel(abs(eyes[6u * v].x), eye, (row & 1) == 0, eyes[6u * v + 5u].xy, k));
 }
 #else
-#define FOV_PROBE 64.0   // probe: the pixel's place as phases over this many pixels (floor.gdshaderinc)
+// probe: the pixel's place as phases over this many pixels (floor_sample.gdshader): long beside a
+// texel, so that the filter's mix of two neighbours' phases is the phase between them
+#define FOV_PROBE 256.0
 
 // show: a coarse texel's tint by its size s in pixels
 vec3 fov_tint(float s) {

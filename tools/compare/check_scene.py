@@ -18,7 +18,8 @@ from scipy import ndimage
 pre = sys.argv[1]
 floor_only = '--floor-only' in sys.argv[2:]
 fovea = json.load(open(f'{pre}_fovea.json')) if '--fovea' in sys.argv[2:] else None
-MIN_WHITE = 1000 if fovea is None else 500   # white line pixels to judge by
+MIN_WHITE = 1000    # white line pixels to judge by (in the fovea: FOVEA_WHITE of its pixels)
+FOVEA_WHITE = 0.005
 def img(m, eye): return np.asarray(Image.open(f'{pre}_{m}_{eye}.png').convert('RGB'), int)
 def green(a): return (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 80
 ok = True
@@ -43,6 +44,7 @@ for i, eye in enumerate(('left', 'right')):
         gx, gy, r0 = fovea[4 * i:4 * i + 3]
         ys, xs = np.mgrid[0:R.shape[0], 0:R.shape[1]] + 0.5
         dom &= np.hypot(xs - gx, ys - gy) < r0 - 2
+        MIN_WHITE = FOVEA_WHITE * np.pi * (r0 - 2) ** 2
     wl = W & dom
     unc = lambda g: (wl & ~g).sum() / max(wl.sum(), 1)
     u0 = unc(G)
