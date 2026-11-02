@@ -62,10 +62,12 @@ void fragment() {
 	} else {
 		vec3 d = normalize(v_ray);
 		vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;
+		// two pixels' turn (lens_near)
+		float ang = 2.0 * length(fwidth(d));
 		vec3 pos, dir;
 		float sheet, way;
 		bool lensed = geo_exit(v_el, v_eye, v_en, D, pos, dir, sheet, way);
-		LensSeen s = lens_trace(pos, dir, sheet, way, lensed);
+		LensSeen s = lens_trace(pos, dir, sheet, way, lensed || lens_near(v_el, v_eye.x, D, ang));
 		// the floor's pattern and a cube's edges from their neighbours' (outside any branch)
 		vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
 		float e = dot(s.box, s.box) > 0.0 ? look_box_edge(s.box) : -1.0;

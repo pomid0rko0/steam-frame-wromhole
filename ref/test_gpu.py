@@ -34,8 +34,10 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     bodies: every vertex on its body; a ball's first and last columns' sections at its tips; every
     corner of a cube's sections (float64: where the half-surface meets an edge) a vertex of its
     column, and on the same row in the next column (the strips join a corner to itself); a cube an
-    edge of which the space's curve takes back round the axis is left out (counted): its sections
-    cut that edge twice, which one corner an edge can't be;
+    edge of which the space's curve takes back round the axis (folds) only near its surface (TEAR):
+    its sections cut that edge twice, which one corner an edge can't be; and as near their
+    surface, cubes the axis passes through or next to a corner, an edge or a face (within a
+    hundredth of a radian), where the mesh once tore, vertices metres off;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
@@ -781,6 +783,37 @@ def zone_checks(name, S, gpu, rng):
 
 MESHES = ((64, 48), (64, 12))   # the zone bodies' meshes: Renderer's ZONE_AZIMUTHS, ZONE_ROUND, ZONE_ROUND_COARSE
 NEAR_END = 5e-4                 # metres: a cube's section corner a vertex within this, next to its edge's end
+TEAR = 0.05                     # a share of a cube's half size: no vertex further off its surface
+
+
+def near_axis_cube(S, rng):
+    """A cube in the zone and an eye's axis en through or next to its corner, edge or face (to
+    within a hundredth of a radian), in zone_body's form."""
+    size = rng.choice([0.15, 0.25, 0.3])
+    lc = rng.uniform(-S.L - 0.3, S.L + 0.3)
+    nc = unit(rng.normal(size=3))
+    C = np.r_[float(S.r(lc)) * nc, float(S.w(lc))]
+    dr, dw = float(S.dr(lc)), float(S.dw(lc))
+    a1 = unit(np.cross(nc, rng.normal(size=3)))
+    T = [np.r_[dr * nc, dw], np.r_[a1, 0.0], np.r_[np.cross(nc, a1), 0.0]]
+    Q = np.linalg.qr(rng.normal(size=(3, 3)))[0]
+    E = [sum(Q[i, j] * T[j] for j in range(3)) for i in range(3)]
+    x = rng.uniform(-1, 1, 3)
+    kind = rng.integers(3)
+    k = rng.integers(3)
+    if kind == 0:
+        x = np.sign(x)
+    elif kind == 1:
+        x = np.sign(x)
+        x[k] = rng.uniform(-1, 1)
+    else:
+        x[k] = np.sign(x[k])
+    P = onto(S, C + size * (x @ np.array(E)), normal4(S, C))
+    n = unit(unit(P[:3]) + rng.choice([0.0, 1e-4, 1e-3, 1e-2]) * rng.normal(size=3))
+    en = n if rng.uniform() < 0.5 else -n
+    t = rng.normal(size=3)
+    t = unit(t - (t @ en) * en)
+    return C, E, size, en, t, np.cross(en, t), True
 
 
 def zone_mesh_checks(name, S, gpu, rng):
@@ -792,11 +825,14 @@ def zone_mesh_checks(name, S, gpu, rng):
             b = zone_body(S, rng, ball, axis_share=0.4)
             if b is not None:
                 bodies.append(b)
+        near = 0 if ball else 30            # bodies[30:]: next to the axis's features
+        bodies += [near_axis_cube(S, rng) for _ in range(near)]
         for cols, rws in MESHES:
             rows = [[i / cols, j / rws, cols, rws, *en, size, 1.0 if ball else 0.0, 0, 0, 0, *C, *E[0], *E[1], *E[2]]
                     for C, E, size, en, t, m, axis in bodies for i in range(cols + 1) for j in range(rws + 1)]
             o = gpu.run(9, rows, in_per=7, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
             worst, alpha_out, tip, corners, missed, moved, strips, folded = 0.0, 0, 0.0, 0, [], 0, 0, 0
+            torn, tear = [], 0.0
             for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
                 L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
                 n = np.cos(A)[..., None] * en + np.sin(A)[..., None] * T
@@ -804,10 +840,21 @@ def zone_mesh_checks(name, S, gpu, rng):
                 q = P - C
                 E = np.array(E)
                 sl = q @ E.T                                   # [cols + 1, rows + 1, 3]
-                if not ball and folds(S, C, E, size, en):
-                    folded += 1
-                    continue
                 off = np.abs(np.linalg.norm(q, axis=-1) - size) if ball else np.abs(np.abs(sl).max(-1) - size)
+                off = np.where(np.isfinite(off), off, np.inf)
+                if not ball and (k >= 30 or folds(S, C, E, size, en)):
+                    # near the surface as body.gdshaderinc draws it (alpha within the half-surface,
+                    # a hair across the axis back on it): no tear
+                    folded += k < 30
+                    Ac = np.clip(A, 0.0, np.pi)
+                    nc = np.cos(Ac)[..., None] * en + np.sin(Ac)[..., None] * T
+                    qc = np.concatenate([S.r(L)[..., None] * nc, S.w(L)[..., None]], axis=-1) - C
+                    off = np.abs(np.abs(qc @ E.T).max(-1) - size)
+                    off = np.where(np.isfinite(off), off, np.inf)
+                    tear = max(tear, off.max() / size)
+                    if off.max() > TEAR * size:
+                        torn.append((k, off.max()))
+                    continue
                 worst = max(worst, off.max())
                 alpha_out += int(((A < -1e-6) | (A > np.pi + 1e-6)).sum())
                 if ball:
@@ -846,13 +893,17 @@ def zone_mesh_checks(name, S, gpu, rng):
                             if rs and rows_of[i + 1].get(e) and not rs & rows_of[i + 1][e]:
                                 moved += 1
             body = 'ball' if ball else 'cube'
-            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not missed and moved == 0)
+            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not missed and moved == 0 and not torn)
             fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} (zone_vertex)', ok,
                                f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
                                + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
                                   f'; {len(missed)} of {corners} section corners not a vertex, {moved} on another row in the next column ({strips} strips); '
-                                  f'{folded} left out, an edge taken back round the axis')
+                                  f'{folded} with an edge taken back round the axis and {near} with the axis next to a corner, an edge or a face: '
+                                  f'off their surface by {tear:.1e} of the half size at most, {len(torn)} beyond {TEAR}')
                                + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis)')
+            for k, d in torn[:5]:
+                C, E, size, en = bodies[k][:4]
+                print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: a vertex {d:.2e} m off its surface')
             for k, i, e, d in missed[:5]:
                 C, E, size, en = bodies[k][:4]
                 print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: column {i}, edge {e}: the nearest vertex {d:.2e} m from its corner')

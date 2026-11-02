@@ -28,7 +28,9 @@
 //     are. Each point found by Newton's steps on the body's own definition along a straight line of
 //     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
 //     azimuths, and a row on each corner of its sections, the same corner on the same row from one
-//     corner's azimuth to the next: its outline keeps its corners.
+//     corner's azimuth to the next: its outline keeps its corners. Every point stays on the body:
+//     where those steps leave one off (the axis next to an edge), a line from the section's
+//     inside puts it there.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.

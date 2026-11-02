@@ -7,7 +7,10 @@ extends SceneTree
 ## what tools/compare/curved.py needs to trace that eye's rays itself, independently of the shaders:
 ## the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's static
 ## objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
-##   godot --path . -s res://tests/curved_check.gd -- out_prefix place
+## With fov, our own foveation (floor_fov.gd, the menu's default level) draws the floor and what is
+## seen through the lens: a body crossing the edge of the zone's disc in the picture is drawn by its
+## mesh outside it and by the filtered texture inside it, and must not part there.
+##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov]
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
 const U := preload("res://tests/util.gd")
@@ -33,14 +36,21 @@ const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.
 const CUBES := [[Vector3(0.35, 0.15, -0.6), 0.1, Vector3(0.4, 0.6, 0.1)], [Vector3(-0.4, -0.5, -2.6), 0.28, Vector3(-0.2, 0.9, 0.3)]]
 # bodies at points (l, n) of the space: balls [l, n, radius], cubes [l, n, half size, a turn about
 # n's tangent plane]: on the throat's far side from the start, in it near its top, in B's fillet,
-# out in B through the throat from the start, out in A behind the mouth
+# out in B through the throat from the start, out in A behind the mouth across the edge of the
+# zone's disc in the picture from the start (part of it seen straight, part through the lens), out
+# in A behind the mouth
 const WORLD_BALLS := [[0.3, Vector3(-1.0, 0.05, 0.1), 0.4], [1.5, Vector3(0.1, -0.2, 1.0), 0.3],
-		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45]]
+		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45], [11.62, Vector3(-6.64, 7.2, 2.26), 1.2]]
 const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1.0, 0.35, 0.15), 0.4, 0.3]]
 # and on the line through the head and the throat's centre, where a body's images close into rings:
 # [m toward the centre from the head (l less), radius or half size, a turn about that line]
 const AXIS_BALL := [1.1, 0.1, 0.0]
 const AXIS_CUBE := [0.7, 0.12, 0.4]
+# and next to one eye's line through the throat's centre (its axis: there the space's curve takes a
+# cube's edge back round the axis, and a section cuts it twice): [the eye (0 left, 1 right), m toward
+# the centre from the eye, half size, the cube's edge across the axis (0) or its corner (1) toward
+# it, how far from the axis (negative: the axis through the cube)]
+const NEAR_AXIS_CUBES := [[0, 1.7, 0.2, 0, 0.003], [1, 2.4, 0.15, 1, -0.003]]
 
 var main: Main
 var hmd
@@ -77,6 +87,10 @@ func _process(_delta: float) -> bool:
 		main.hold = true
 	if frames == 5:
 		_bodies()
+	if frames == 6 and OS.get_cmdline_user_args().has("fov"):
+		# after main's first frames, which set each kind of foveation in turn
+		main.foveation.set_level(Menu.DEFAULT_FOVEATION)
+		print("foveation ", main.foveation.level)
 	if frames == 14:
 		var prefix: String = OS.get_cmdline_user_args()[0]
 		U.save_eyes(main, prefix, "app")
@@ -127,6 +141,8 @@ func _bodies() -> void:
 	axes.append(sp.embed_vector(al, an, Vector4(0.6, 0.8 * (-sin(aa) * ae1.x + cos(aa) * ae2.x), 0.8 * (-sin(aa) * ae1.y + cos(aa) * ae2.y), 0.8 * (-sin(aa) * ae1.z + cos(aa) * ae2.z))).normalized())
 	cpos.append(sp.embed(al, an))
 	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
+	for c: Array in NEAR_AXIS_CUBES:
+		_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
 	for b: Array in WORLD_BALLS:
 		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
@@ -146,6 +162,42 @@ func _bodies() -> void:
 
 
 var _objects := []
+
+
+## A cube next to eye c[0]'s axis (NEAR_AXIS_CUBES): its centre c[1] toward the throat's centre from
+## the eye, moved off the axis so that its edge across the axis (c[3] 0: the edge along the first
+## axis, the other two at 45 degrees to the axis) or its corner (1: the body diagonal across it)
+## is c[4] from it.
+func _near_axis_cube(sp: WormholeSpace, hp: Array, head: Transform3D, c: Array, cpos: PackedVector4Array,
+		axes: PackedVector4Array, ccol: PackedVector4Array) -> void:
+	var eye := _walk(sp, hp, head.basis * (hmd.eyes[c[0]] as Transform3D).origin)
+	var el: float = eye[0]
+	var en: Vector3 = eye[1]
+	var side := signf(el)
+	var half: float = c[2]
+	var al: float = el - side * float(c[1])
+	var reach: float = half * (sqrt(2.0) if c[3] == 0 else sqrt(3.0))
+	var e1 := _normal_to(en)
+	var nc := (en * cos((reach + c[4]) / sp.r(al)) + e1 * sin((reach + c[4]) / sp.r(al))).normalized()
+	# at the centre: along l, away from the axis, across both
+	var a := (e1 - e1.dot(nc) * nc).normalized()
+	var b := nc.cross(a)
+	var L := Vector4(1.0, 0.0, 0.0, 0.0)
+	var A := Vector4(0.0, a.x, a.y, a.z)
+	var B := Vector4(0.0, b.x, b.y, b.z)
+	var ax: Array
+	if c[3] == 0:
+		ax = [B, (L + A) / sqrt(2.0)]           # the edge along B at -half (both others): toward -A
+	else:
+		# three axes whose sum is along A: the corner at -half (all three) toward -A
+		ax = []
+		for k in 2:
+			var ph := TAU * k / 3.0
+			ax.append(A / sqrt(3.0) + sqrt(2.0 / 3.0) * (cos(ph) * L + sin(ph) * B))
+	for x: Vector4 in ax:
+		axes.append(sp.embed_vector(al, nc, x).normalized())
+	cpos.append(sp.embed(al, nc))
+	ccol.append(Vector4(0.0, 4.0, 0.0, half))
 
 
 static func _normal_to(n: Vector3) -> Vector3:
