@@ -21,6 +21,10 @@ Checks per eye:
     haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least
     (where FLOOR_MIN of them are usable).
    python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)
+Rendered with our own foveation (the json's fovea: its strength k; floor_fov.gd), the floor and what
+is seen through the lens come from a texture whose texel at clip (x, y) from the picture's middle
+spans sqrt(1 + (k x)^2) by sqrt(1 + (k y)^2) pixels: there MAX_EDGE, MAX_OFFSET and the grid's
+reach are that many times the larger.
 With CURVED_DIFF=1 in the environment it also writes prefix_diff_left.png, _right.png: the picture
 dimmed, the traced bodies' pixels the picture lacks bright, the picture's the trace lacks dark, those
 beyond MAX_EDGE yellow, the grid's lacking rays white."""
@@ -46,6 +50,7 @@ GRID = 4
 
 pre = sys.argv[1]
 D = json.load(open(pre + '.json'))
+FOVEA = float(D.get('fovea', 0.0))
 rho0, h, R = D['profile']
 lift = D['lift']
 Lc = max(h - R, 0.0)
@@ -303,8 +308,12 @@ for side_i, eye_name in enumerate(('left', 'right')):
     gy, gx = np.mgrid[0:H:GRID, 0:W:GRID]
     gy = gy.ravel(); gx = gx.ravel()
     gk, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, gx.astype(float), gy.astype(float)), axes))
-    near_red = ndimage.binary_dilation(red, iterations=int(MAX_EDGE) + 1)
-    near_green = ndimage.binary_dilation(green, iterations=int(MAX_EDGE) + 1)
+    # each pixel's texel size (our own foveation, FOVEA), 1 without
+    cx = (np.arange(W) + 0.5) / W * 2 - 1; cy = (np.arange(H) + 0.5) / H * 2 - 1
+    texel = np.maximum(np.sqrt(1 + (FOVEA * cx[None, :]) ** 2), np.sqrt(1 + (FOVEA * cy[:, None]) ** 2))
+    reach = int(np.ceil(MAX_EDGE * texel.max())) + 1
+    near_red = ndimage.binary_dilation(red, iterations=reach)
+    near_green = ndimage.binary_dilation(green, iterations=reach)
     def steady(xs, ys, kind, has):
         """Whether pixels (xs, ys) are what the trace says at their centres all across: rays a quarter
         of a pixel from the centre each way meet the body kind (has) or don't (not has). Where they
@@ -339,7 +348,7 @@ for side_i, eye_name in enumerate(('left', 'right')):
     for name, A, Rf, code in (('balls', red, ref_red, 1), ('cubes', green, ref_green, 2)):
         mis = (A ^ Rf) & region & known
         dist = ndimage.distance_transform_edt(~(Rf ^ ndimage.binary_erosion(Rf)))   # px to the traced outline
-        far = mis & (dist > MAX_EDGE)
+        far = mis & (dist > MAX_EDGE * texel)
         fy, fx = np.nonzero(far)
         far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), Rf[fy, fx])
         far_all |= far
@@ -356,7 +365,7 @@ for side_i, eye_name in enumerate(('left', 'right')):
                 worst = 99.0; continue
             touches = rx.min() == 0 or ry.min() == 0 or rx.max() == W - 1 or ry.max() == H - 1
             if not touches:
-                off = float(np.hypot(rx.mean() - gx2.mean(), ry.mean() - gy2.mean()))
+                off = float(np.hypot(rx.mean() - gx2.mean(), ry.mean() - gy2.mean())) / texel[int(ry.mean()), int(rx.mean())]
                 if os.environ.get('CURVED_DIFF') and off > MAX_OFFSET:
                     print(f'  {eye_name} {name}: image of {len(rx)} px at ({rx.mean():.0f}, {ry.mean():.0f}), '
                           f'{len(gx2)} in the picture, centre {off:.2f} px off')

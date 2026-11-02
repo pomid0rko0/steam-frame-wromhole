@@ -8,8 +8,9 @@ extends SceneTree
 ## the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's static
 ## objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
 ## With fov, our own foveation (floor_fov.gd, the menu's default level) draws the floor and what is
-## seen through the lens: a body crossing the edge of the zone's disc in the picture is drawn by its
-## mesh outside it and by the filtered texture inside it, and must not part there.
+## seen through the lens, and a ball crosses the edge of the zone's disc in the picture from the start
+## (EDGE_BALL): drawn by its mesh outside the disc and by the filtered texture inside it, it must not
+## part there. tools/compare/curved.py then allows each pixel's texel size more (the json's fovea).
 ##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov]
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
@@ -36,11 +37,13 @@ const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.
 const CUBES := [[Vector3(0.35, 0.15, -0.6), 0.1, Vector3(0.4, 0.6, 0.1)], [Vector3(-0.4, -0.5, -2.6), 0.28, Vector3(-0.2, 0.9, 0.3)]]
 # bodies at points (l, n) of the space: balls [l, n, radius], cubes [l, n, half size, a turn about
 # n's tangent plane]: on the throat's far side from the start, in it near its top, in B's fillet,
-# out in B through the throat from the start, out in A behind the mouth across the edge of the
-# zone's disc in the picture from the start (part of it seen straight, part through the lens), out
-# in A behind the mouth
+# out in B through the throat from the start, out in A behind the mouth
 const WORLD_BALLS := [[0.3, Vector3(-1.0, 0.05, 0.1), 0.4], [1.5, Vector3(0.1, -0.2, 1.0), 0.3],
-		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45], [11.62, Vector3(-6.64, 7.2, 2.26), 1.2]]
+		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45]]
+# with fov: out in A behind the mouth across the edge of the zone's disc in the picture from the
+# start (part of it seen straight, part through the lens); its images near the photon sphere, thin
+# rings, are left to the places without
+const EDGE_BALL := [11.62, Vector3(-6.64, 7.2, 2.26), 1.2]
 const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1.0, 0.35, 0.15), 0.4, 0.3]]
 # and on the line through the head and the throat's centre, where a body's images close into rings:
 # [m toward the centre from the head (l less), radius or half size, a turn about that line]
@@ -87,7 +90,7 @@ func _process(_delta: float) -> bool:
 		main.hold = true
 	if frames == 5:
 		_bodies()
-	if frames == 6 and OS.get_cmdline_user_args().has("fov"):
+	if frames == 6 and _fov():
 		# after main's first frames, which set each kind of foveation in turn
 		main.foveation.set_level(Menu.DEFAULT_FOVEATION)
 		print("foveation ", main.foveation.level)
@@ -143,7 +146,7 @@ func _bodies() -> void:
 	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
 	for c: Array in NEAR_AXIS_CUBES:
 		_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
-	for b: Array in WORLD_BALLS:
+	for b: Array in WORLD_BALLS + ([EDGE_BALL] if _fov() else []):
 		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
 	for c: Array in WORLD_CUBES:
@@ -162,6 +165,10 @@ func _bodies() -> void:
 
 
 var _objects := []
+
+
+static func _fov() -> bool:
+	return OS.get_cmdline_user_args().has("fov")
 
 
 ## A cube next to eye c[0]'s axis (NEAR_AXIS_CUBES): its centre c[1] toward the throat's centre from
@@ -222,7 +229,8 @@ func _dump(path: String) -> void:
 	var d := {"profile": [sp.rho0, sp.h, sp.fillet], "lift": sp.lift, "size": [hmd.size.x, hmd.size.y],
 		"head": {"l": hp[0], "n": _v3(hp[1]), "frame": [_v4(f[0]), _v4(f[1]), _v4(f[2])],
 			"pos": _v3(main.camera.transform.origin)},
-		"eyes": eyes, "balls": [], "cubes": []}
+		"eyes": eyes, "balls": [], "cubes": [],
+		"fovea": FloorFov.STRENGTH[main.foveation.level] if main.foveation.level in FloorFov.STRENGTH else 0.0}
 	for i in _objects[0].size():
 		d.balls.append({"c": _v4(_objects[0][i]), "r": _objects[1][i].w})
 	for i in _objects[2].size():
