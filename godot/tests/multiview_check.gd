@@ -38,7 +38,7 @@ const KEYS := [[5, KEY_W, true], [5, KEY_D, true], [15, KEY_W, false], [15, KEY_
 		[21, KEY_Q, true], [21, KEY_W, true], [31, KEY_Q, false], [31, KEY_W, false]]
 # fov: the level by case (Foveation.LEVELS' index + 1), and where the eyes look in case 1 (the
 # head's space)
-const FOV_LEVELS := [2, 2, 4, 1, 2, 2]
+const FOV_LEVELS := [3, 3, 5, 1, 3, 3]
 const FOV_GAZE := Vector3(0.25, 0.15, -1.0)
 const KEYS_4 := [[5, KEY_SPACE, true], [5, KEY_W, true], [15, KEY_W, false], [16, KEY_E, true], [18, KEY_E, false],
 		[19, KEY_K, true], [21, KEY_K, false], [22, KEY_L, true], [24, KEY_L, false], [25, KEY_SPACE, false]]
