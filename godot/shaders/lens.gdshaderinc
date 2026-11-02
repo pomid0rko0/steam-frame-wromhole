@@ -152,6 +152,22 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 	return s;
 }
 
+// Whether a ray from an eye out of the curved zone that misses its ball (geo_exit false) passes so
+// near it that the bodies on its straight line are looked for too (lens_trace's bodies), ang
+// (radians) of a pixel's or texel's neighbourhood off it reaching into the ball: there the bodies
+// seen straight are this quad's, not their meshes' (body.gdshaderinc drops a fragment whose line of
+// sight goes through the ball), and the filtered texels or a pixel's neighbours must have them on
+// both sides of its edge, or a light seam goes round the zone where a body crosses it. el, re: the
+// eye's l and r; D: the ray (geo_exit's).
+bool lens_near(float el, float re, vec4 D, float ang) {
+	float ca = (el < 0.0 ? -D.x : D.x);
+	float sa = length(D.yzw);
+	float k = inversesqrt(max(ca * ca + sa * sa, 1e-12));
+	float b = re * sa * k;
+	// b grows by sqrt(re^2 - b^2) per radian of the ray's turn off the centre
+	return ca < 0.0 && b < g_prof2.x + ang * sqrt(max(re * re - b * b, 0.0));
+}
+
 // where the straight ray from pos along dir (sheet) meets the floor, as look_ground_at takes it
 // (chart x, y), whether or not something is in front: its pattern's neighbours are smooth across
 // a body's edge. Far off (none) the point under the horizon's haze.

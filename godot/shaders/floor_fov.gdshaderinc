@@ -124,7 +124,10 @@ void main() {
 		geo_exit_at(e.yzw, tr, b, w.x, pos, dir);
 		way = w.y;
 	}
-	LensSeen sn = lens_trace(pos, dir, sheet, way, lensed);
+	// two texels' turn: the quad filters between neighbouring texels (lens_near)
+	vec4 p2 = fovp.inv_proj[v] * vec4(clip + vec2(4.0 * max(px2.x, px2.y) / fovp.pic.x, 0.0), 0.5, 1.0);
+	float ang = length(normalize(p2.xyz / p2.w - fovp.eye_off[v].xyz) - d);
+	LensSeen sn = lens_trace(pos, dir, sheet, way, lensed || lens_near(e.x, eye.x, D, ang));
 	vec3 a = look_ground_at(lens_floor_xy(pos, dir, sheet));
 	float edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;
 	// a fragment shader's dFdx and dFdy: the differences within each 2 x 2 square of texels

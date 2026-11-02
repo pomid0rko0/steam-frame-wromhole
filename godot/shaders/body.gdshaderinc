@@ -28,9 +28,11 @@
 //     are. Each point found by Newton's steps on the body's own definition along a straight line of
 //     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
 //     azimuths, and a row on each corner of its sections, the same corner on the same row from one
-//     corner's azimuth to the next: its outline keeps its corners. A node's point is the same in
-//     every image: it is worked out once a frame for each eye (zone_sections.gd, ZoneSections'
-//     texture zone_nodes), and here each image's vertex takes it and finds its geodesic.
+//     corner's azimuth to the next: its outline keeps its corners. Every point stays on the body:
+//     where those steps leave one off (the axis next to an edge), a line from the section's
+//     inside puts it there. A node's point is the same in every image: it is worked out once a
+//     frame for each eye (zone_sections.gd, ZoneSections' texture zone_nodes), and here each
+//     image's vertex takes it and finds its geodesic.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -42,8 +44,11 @@
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
 //     up (R^4's z, else x, made orthogonal to the line and the space's normal). Unlit, in beam_col;
 //     below the floor hidden.
-// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point; a
-// cube's normal is its face's, per pixel.
+// Lit in R^4: the normal of the surface and the sun (look_sun4) as tangent vectors at the point. A
+// cube is lit by the face each pixel is on (its largest box coordinate): a vertex on an edge is on
+// two faces, and a normal of either in it would be spread over the other's triangles (along every
+// edge of a cube seen straight, and in the zone's meshes, which share their vertices round the
+// section, column by column, in wedges).
 #if defined(STATIC) && !defined(DIRECT)
 #define DIRECT
 #endif
@@ -83,18 +88,17 @@ uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 
 #ifdef CUBE
-// a cube's axes, tangent at the point: each pixel takes its face's (fragment) by v_box. A vertex on
-// an edge is on two faces, and a normal of one of them in it would be spread over the other's
-// triangles by the interpolation (the zone's meshes share their vertices round the section)
-varying vec4 v_ax1;
-varying vec4 v_ax2;
-varying vec4 v_ax3;
+// each face axis's normal (the axis, tangent at the point, unit) against the sun, up and the
+// light's way in (n . sun, n . up, -n . ray): the fragment takes its face's
+varying vec3 v_lit1;
+varying vec3 v_lit2;
+varying vec3 v_lit3;
 #else
 varying vec4 v_n;       // the surface's normal (R^4)
-#endif
 varying vec4 v_sun;     // toward the sun (R^4, tangent there)
 varying vec4 v_up;      // up (R^4, tangent there)
 varying vec4 v_ray;     // the light's way in (R^4)
+#endif
 varying float v_l;
 varying float v_h;      // height above the floor
 varying vec3 v_col;
@@ -131,6 +135,7 @@ void vertex() {
 	float pl = 0.0;
 	float len = 0.0, fell = 0.0;
 	vec4 arrive = vec4(0.0);
+	bool none = false;            // the section's steps came out not a number (zone_vertex)
 	// an image the pass leaves out (thinner than a share of a pixel), or of a body it did not take
 	// this frame (a slot not worked out: its nodes are another's, or none): every vertex out of the
 	// picture at the centre, no triangle drawn, no geodesic sought
@@ -143,6 +148,7 @@ void vertex() {
 		vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);
 		vec2 pe = na.xy;
 		vec3 t = vec3(na.zw, nb.x);
+		none = nb.y > 0.5;
 		pl = pe.x;
 		float alpha = clamp(pe.y, 0.0, GEO_PI);
 		vec2 sca = geo_sincos(alpha);
@@ -251,7 +257,6 @@ void vertex() {
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
 #endif
 #endif
-	v_ray = arrive;
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
 	v_col = COLOR.rgb;
@@ -269,41 +274,41 @@ void vertex() {
 	v_col = COLOR.rgb;
 #endif
 #endif
+	vec4 s4 = look_sun4(pl);
+	vec4 sun = s4 - dot(s4, Np) * Np;
+	vec4 up4 = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
 #ifdef CUBE
-	v_ax1 = E1 - dot(E1, Np) * Np;
-	v_ax2 = E2 - dot(E2, Np) * Np;
-	v_ax3 = E3 - dot(E3, Np) * Np;
+	// unit vectors here (up is none where the space's normal is up: nought, as is its light)
+	vec4 sh = sun * inversesqrt(max(dot(sun, sun), 1e-12));
+	vec4 uh = up4 * inversesqrt(max(dot(up4, up4), 1e-12));
+	vec4 rh = arrive * inversesqrt(max(dot(arrive, arrive), 1e-12));
+	vec4 a1 = E1 - dot(E1, Np) * Np, a2 = E2 - dot(E2, Np) * Np, a3 = E3 - dot(E3, Np) * Np;
+	a1 *= inversesqrt(max(dot(a1, a1), 1e-12));
+	a2 *= inversesqrt(max(dot(a2, a2), 1e-12));
+	a3 *= inversesqrt(max(dot(a3, a3), 1e-12));
+	v_lit1 = vec3(dot(a1, sh), dot(a1, uh), -dot(a1, rh));
+	v_lit2 = vec3(dot(a2, sh), dot(a2, uh), -dot(a2, rh));
+	v_lit3 = vec3(dot(a3, sh), dot(a3, uh), -dot(a3, rh));
 #else
 	v_n = nrm - dot(nrm, Np) * Np;
+	v_sun = sun;
+	v_up = up4;
+	v_ray = arrive;
 #endif
-	vec4 s4 = look_sun4(pl);
-	v_sun = s4 - dot(s4, Np) * Np;
-	v_up = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
 	v_l = pl;
 	v_h = P.z + g_lift;
 	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
 	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
+#ifdef ZONE
+	// and orange where a cube's section's steps came out not a number (zone_cube_section)
+	if (none) v_col = mix(v_col, vec3(1.0, 0.5, 0.0), 0.7);
+#endif
 }
 
 void fragment() {
 #if defined(TOY) || defined(BEAM)
 	if (v_h < 0.0) discard;
-#endif
-#if !defined(ARROWS) && !defined(BEAM)
-#ifdef CUBE
-	vec3 ab = abs(v_box);
-	vec4 nn = ab.x >= ab.y && ab.x >= ab.z ? sign(v_box.x) * v_ax1 : (ab.y >= ab.z ? sign(v_box.y) * v_ax2 : sign(v_box.z) * v_ax3);
-#else
-	vec4 nn = v_n;
-#endif
-#endif
-#ifdef ZONE
-	// a pixel whose normal interpolates to no vector (not a number, or nought) is no part of the
-	// surface: a triangle of next to no area has its varyings so, where a float32 step decides
-	// whether it gets a pixel (without this the stereo test has one inside a cube in each eye at its
-	// place 3)
-	if (!(dot(nn, nn) > 1e-12)) discard;
 #endif
 #ifdef DIRECT
 	// the line of sight through the curved zone's ball: the lens's
@@ -315,16 +320,29 @@ void fragment() {
 #if defined(ARROWS) || defined(BEAM)
 	ALBEDO = v_col;
 #else
-	vec4 n = normalize(nn);
-	float nl = dot(n, normalize(v_sun));
-	float up = dot(n, normalize(v_up));
-	float nv = -dot(n, normalize(v_ray));
-	vec3 col = look_body(v_col, nl, up, nv, v_l);
 #ifdef CUBE
+	// the face this pixel is on: its largest box coordinate
+	vec3 ab = abs(v_box);
+	vec3 lit = ab.x >= ab.y && ab.x >= ab.z ? sign(v_box.x) * v_lit1 : (ab.y >= ab.z ? sign(v_box.y) * v_lit2 : sign(v_box.z) * v_lit3);
+	vec3 col = look_body(v_col, lit.x, lit.y, lit.z, v_l);
 	// dark edges: the distance to the face's nearest edge in pixels
 	float e = look_box_edge(v_box);
 	float fw = max(fwidth(e), 1e-5);
 	col *= mix(0.45, 1.0, clamp((e - 0.04) / fw + 0.5, 0.0, 1.0));
+#else
+	vec4 n = normalize(v_n);
+	float nl = dot(n, normalize(v_sun));
+	float up = dot(n, normalize(v_up));
+	float nv = -dot(n, normalize(v_ray));
+	vec3 col = look_body(v_col, nl, up, nv, v_l);
+#endif
+#ifdef ZONE
+	// a pixel whose numbers came out none is no part of the surface: a triangle of next to no area
+	// (a cube's strip between two columns on one corner's azimuth, zone_cube_azimuth: its vertices
+	// all on that azimuth's line in the view, each placed by its own search) gets one now and then,
+	// its varyings no numbers. Dropped after the derivatives, which take its neighbours; by the bits
+	// (geo_finite): a compiler may take a comparison as if no number were NaN
+	if (!geo_finite(col.r + col.g + col.b)) discard;
 #endif
 	ALBEDO = col;
 #endif

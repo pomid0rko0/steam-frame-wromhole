@@ -9,7 +9,8 @@
 // here once per eye, not in each vertex of each of its images. Invocation x: a node, the fine mesh's
 // first, column by column (a column's nodes share a half-surface: a cube's corners there); y: the
 // body, of those in the zone of this kind (slots from pc.first.x on); z: the eye.
-// Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and (t.z, 0, 0, 0) at x = 2 col
+// Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and (t.z, 1 if zone_vertex's
+// steps came out not a number, else 0, 0, 0) at x = 2 col
 // and 2 col + 1, y = slot * slot_rows + the mesh's first row + row.
 //
 // IMAGES: which images of each body are drawn at all. An image thinner across than a quarter of a
@@ -132,13 +133,14 @@ void main() {
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
 	vec3 t;
+	bool none;
 #ifdef BALL
-	vec2 pe = zone_vertex(vec2(float(col) / columns, float(row) / rows), columns, rows, true, en, C, E1, E2, E3, N, size, t);
+	vec2 pe = zone_vertex(vec2(float(col) / columns, float(row) / rows), columns, rows, true, en, C, E1, E2, E3, N, size, t, none);
 #else
-	vec2 pe = zone_vertex(vec2(float(col) / columns, float(row) / rows), columns, rows, false, en, C, E1, E2, E3, N, size, t);
+	vec2 pe = zone_vertex(vec2(float(col) / columns, float(row) / rows), columns, rows, false, en, C, E1, E2, E3, N, size, t, none);
 #endif
 	int y = s * int(pc.grid.w) + (coarse ? int(pc.grid.y) + 1 : 0) + int(row);
 	imageStore(out_img, ivec3(2 * int(col), y, int(id.z)), vec4(pe, t.xy));
-	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, 0.0, 0.0, 0.0));
+	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, none ? 1.0 : 0.0, 0.0, 0.0));
 }
 #endif
