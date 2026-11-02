@@ -255,7 +255,7 @@ func _foveation(p: Menu, step: int) -> void:
 		p.press()
 		U.check("узкая: our own, no density map, no split, the floor from floor_fov's texture", main.foveation.level == 5
 				and main.xr_view.vrs_mode == Viewport.VRS_DISABLED and not main.foveation.split_pass.enabled
-				and fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == true
+				and fov.enabled and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat
 				and _value(p, "fov") == "плавная узкая")
 	elif step == 2:
 		var size := main.xr.get_render_target_size()
@@ -271,7 +271,7 @@ func _foveation(p: Menu, step: int) -> void:
 		p.choose_scale(1.0)
 		p.choose_foveation(0)
 		U.check("off again: no density map, no split, the floor per pixel", main.xr_view.vrs_mode == Viewport.VRS_DISABLED
-				and not main.foveation.split_pass.enabled and not fov.enabled and main.renderer.floor_mat.get_shader_parameter("fov_on") == false)
+				and not main.foveation.split_pass.enabled and not fov.enabled and main.renderer.floor_quad.material_override == main.renderer.floor_mat)
 		# the gaze dot: Monado has no eye tracking, so the gaze is "none"; the dot shows and hides
 		p.move(1)
 		p.press()

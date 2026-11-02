@@ -32,6 +32,9 @@ extends Node3D
 # a ShaderMaterial keeps only the uniforms its shader has, so one material switched between them
 # would lose the gravity table
 const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
+# under our own foveation the quad only samples floor_fov's texture (either gravity view's: it works
+# both out)
+const FLOOR_SAMPLE_SHADER := preload("res://shaders/floor_sample.gdshader")
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
@@ -90,7 +93,8 @@ var scene: Dictionary
 var xr: XRInterface             # null on the desktop
 var xr_view: SubViewport        # where XR renders; null on the desktop
 var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
-var floor_mat: ShaderMaterial   # the one drawn (gravity_view)
+var floor_mat: ShaderMaterial   # the one drawn (gravity_view) without our own foveation
+var floor_sample_mat := ShaderMaterial.new()   # the one drawn with it (FLOOR_SAMPLE_SHADER)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var zone_mats: Array[ShaderMaterial] = []   # balls fine, coarse, cubes fine, coarse
@@ -125,7 +129,9 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.render_priority = FLOOR_PRIORITY
 		floor_mats.append(m)
 	floor_mat = floor_mats[0]
-	floor_fov.floor_mats = floor_mats
+	floor_sample_mat.shader = FLOOR_SAMPLE_SHADER
+	floor_sample_mat.render_priority = FLOOR_PRIORITY
+	floor_fov.sample_mat = floor_sample_mat
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
 	# the meshes' nodes: ZoneSections' slots, balls' first, then cubes', each the fine mesh's rows,
@@ -161,7 +167,8 @@ func _ready() -> void:
 	var q := QuadMesh.new()
 	q.size = Vector2(2.0, 2.0)
 	floor_quad.mesh = q
-	floor_quad.material_override = floor_mat
+	_floor_material()
+	floor_fov.toggled.connect(_floor_material)
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
@@ -200,11 +207,17 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _warm > 0:
 		_warm -= 1
-		floor_quad.material_override = floor_mats[1] if _warm > 0 else floor_mat
 		arrows.visible = _warm > 0 or gravity_view == 2
 		if _warm == 0:
 			for k in beams.size():
 				beams[k].visible = _beam_on[k]
+		_floor_material()
+
+
+## The floor's quad's material: our own foveation's while floor_fov is on (it samples its texture),
+## else the gravity view's per-pixel floor (the warm frames: the gravity floor's, to compile it).
+func _floor_material() -> void:
+	floor_quad.material_override = floor_mats[1] if _warm > 0 else (floor_sample_mat if floor_fov.enabled else floor_mat)
 
 
 var _warm := 3                  # frames left drawing the gravity views and the beams (_process)
@@ -462,7 +475,7 @@ func _tangent_pair(C: Vector4) -> Array:
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	floor_mat = floor_mats[mini(gravity_view, 1)]
-	floor_quad.material_override = floor_mat
+	_floor_material()
 	floor_fov.gravity = gravity_view > 0
 	arrows.visible = gravity_view == 2
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
