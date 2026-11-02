@@ -103,7 +103,7 @@ var statics: Array[MeshInstance3D] = []
 var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
-var floor_fov := FloorFov.new()  # our own foveation's floor (on the camera's compositor: Main)
+var foveation := Foveation.new()   # the floor coarser away from the gaze (on the camera's compositor: Main)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var toy_count := 0              # balls and cubes drawn (set_objects)
 var ball_col := PackedVector4Array()   # the balls' (colour, radius) as set_objects got them
@@ -123,7 +123,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.render_priority = FLOOR_PRIORITY
 		floor_mats.append(m)
 	floor_mat = floor_mats[0]
-	floor_fov.floor_mats = floor_mats
+	foveation.floor_mats = floor_mats
+	foveation.xr = xr
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
 	for k in 4:
@@ -221,7 +222,7 @@ func upload_space() -> void:
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
-	floor_fov.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
+	foveation.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
 			Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
 			Vector2(space.lift, space.grav_beta))
 
@@ -252,7 +253,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		m.set_shader_parameter("head_n", n)
 		m.set_shader_parameter("head_f", f)
 		m.set_shader_parameter("head_pos", head_pos)
-	floor_fov.set_head(l, n, f, head_pos)
+	foveation.set_head(l, n, f, head_pos)
 
 
 ## The movable balls and cubes: balls by their centres (points of R^4) and (colour, radius), cubes
@@ -383,7 +384,7 @@ func _upload_lens(toys_a: PackedVector4Array, toys_b: PackedVector4Array) -> voi
 	for m in floor_mats:
 		m.set_shader_parameter("lens_body", rows)
 		m.set_shader_parameter("lens_n", Vector2(ca, cb))
-	floor_fov.set_lens(rows, Vector2(ca, cb))
+	foveation.set_lens(rows, Vector2(ca, cb))
 
 
 var _lens_toys := [PackedVector4Array(), PackedVector4Array()]
@@ -436,7 +437,7 @@ func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	floor_mat = floor_mats[mini(gravity_view, 1)]
 	floor_quad.material_override = floor_mat
-	floor_fov.gravity = gravity_view > 0
+	foveation.gravity = gravity_view > 0
 	arrows.visible = gravity_view == 2
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 

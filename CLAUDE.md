@@ -72,7 +72,7 @@ itself. Install nothing by hand: what the work needs goes into `setup.sh`.
 
 Runs of minutes, so in the background (the rule above): `tools/test_stereo.sh`, `tools/test.sh`,
 `tools/test_openxr.sh` (alone: its top says why), `python3 ref/test_gpu.py`, `tools/test_box.sh` (on
-the Frame only). Under a minute: `tools/export.sh`, `fdm_check.sh`, `adreno_stats.sh`, `python3
+the Frame only). Under a minute: `tools/export.sh`, `adreno_stats.sh`, `python3
 ref/test_gravity.py`.
 
 - **Before a Godot run of your own with `-s`** (the tools import by themselves when a script

@@ -10,9 +10,9 @@
 // Per pixel: the ray's way out of the zone (geo_exit, geo.gdshaderinc), then along the straight line
 // what it meets (lens_trace, lens.gdshaderinc) and its colour. Each eye (geo_eye) is worked out per
 // corner in vertex() and handed on flat.
-// fov_on (our own foveation, floor_fov.gd): the colours were worked out already, into fov_tex, a
-// texel per pixel where the eye looks and coarser away from it (shaders/floor_fov.gdshaderinc);
-// each pixel takes its place there by the same warp, with the numbers fov_warp holds for its eye.
+// fov_on (foveation.gd): the colours were worked out already, into fov_tex, a texel per pixel round
+// where the eye looks and coarser away from it (shaders/foveation.gdshaderinc); each pixel takes
+// its place there by the same warp, with the numbers fov_warp holds for its eye.
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
 #include "res://shaders/geo_uniforms.gdshaderinc"
@@ -32,7 +32,7 @@ varying vec2 v_clip;
 uniform bool fov_on = false;
 uniform bool lens_mark = false;    // tests: blue where the ray goes through the curved zone, else black
 uniform sampler2DArray fov_tex : filter_linear, repeat_disable;
-uniform sampler2D fov_warp : filter_nearest, repeat_disable;   // per eye (row): (gaze x, y, k, n), (A0, A1 along x, then y)
+uniform sampler2D fov_warp : filter_nearest, repeat_disable;   // per eye (a row): (g, c), (r0, m, texels across, down), (pixels across, down) (foveation.gd)
 
 void vertex() {
 	// a quad over the whole view at the far plane (reversed depth: 0), so that any body's depth wins;
@@ -55,10 +55,13 @@ void vertex() {
 
 void fragment() {
 	if (fov_on) {
+		// the pixel r from g: at c + (p - g) F(r) / r in the texture
 		int v = int(VIEW_INDEX);
-		vec4 wg = texelFetch(fov_warp, ivec2(0, v), 0), wa = texelFetch(fov_warp, ivec2(1, v), 0);
-		vec2 t = (asinh(wg.z * (v_clip - wg.xy)) / wg.z - wa.xz) / (wa.yw - wa.xz);
-		ALBEDO = textureLod(fov_tex, vec3(t, float(v)), 0.0).rgb;
+		vec4 w0 = texelFetch(fov_warp, ivec2(0, v), 0), w1 = texelFetch(fov_warp, ivec2(1, v), 0);
+		vec2 q = (v_clip * 0.5 + 0.5) * texelFetch(fov_warp, ivec2(2, v), 0).xy - w0.xy;
+		float r = length(q);
+		float k = r > w1.x ? (w1.x + asinh(w1.y * (r - w1.x)) / w1.y) / r : 1.0;
+		ALBEDO = textureLod(fov_tex, vec3((w0.zw + k * q) / w1.zw, float(v)), 0.0).rgb;
 	} else {
 		vec3 d = normalize(v_ray);
 		vec4 D = d.x * v_ex + d.y * v_ey + d.z * v_ez;

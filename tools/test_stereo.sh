@@ -79,12 +79,13 @@ for v in gravity arrows; do
 		for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
 	done
 done
-# foveated rendering on (Foveation.set_level): SteamVR's level in even cases (the 3D scene in a
-# render pass of its own), our own in odd ones, narrow in case 1 and wide in case 3 (floor_fov.gd:
-# the floor coarser away from the picture's middle, the bodies as ever)
+# foveated rendering on (foveation.gd: the floor coarser away from where the eyes look, the bodies
+# as ever), each case at its level, in case 1 with the eyes tracked looking off the middle
+# (multiview_check.gd's FOV_LEVELS, FOV_GAZE); case 1 also with the coarse texels tinted, to look at
 for c in 0 1 2 3; do
 	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
 done
+render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov1" zones 1 fov
 for c in 0 1 2 3; do
 	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
 done
@@ -141,9 +142,9 @@ done
 for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, without the balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
 done
-# the split pass changes nothing in the picture: each image with SteamVR's foveation on against the
-# same off (our own changes the floor away from the middle: the checks above line it up)
-verdict "SteamVR's foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk0:fov0 chk2:fov2 pln0:fpl0 pln2:fpl2
+# where the eyes look, foveation changes nothing: the fovea against the same picture without it
+# (away from it the floor is softer: the checks above line it up)
+verdict "foveation: the fovea as without it, each eye" python3 "$CMP/fovea.py" "$OUT" chk0:fov0 chk1:fov1 chk2:fov2 chk3:fov3 pln0:fpl0 pln1:fpl1 pln2:fpl2 pln3:fpl3
 
 echo
 echo "images: $OUT"

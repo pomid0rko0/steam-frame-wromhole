@@ -10,14 +10,13 @@ extends Node
 ## fall into the GPU's groups). With the toys still (main.hold stops them) and the viewer put at the
 ## pose (_put: standing, main.place, or flying on the axis through the throat's centre at its
 ## height, main.place_on_axis), the pose decides what the renderer does. Besides it a frame's time
-## changes with where the eyes look under foveation (the density map follows them: foveation.gd)
-## and with SteamVR's half rate after a late frame (below).
+## changes with where the eyes look under foveation (its fovea follows them: foveation.gd) and with
+## SteamVR's half rate after a late frame (below).
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
 ## and the frame is timed on the GPU (the median frame of each segment), this build's renderer each
-## way VARIANTS lists: without foveation, the split pass alone (what foveation's pass costs without
-## a map), each foveation, and with a cube held right before the eyes (NEAR_CUBE: a body near the
-## eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
+## the eyes (NEAR_CUBE: a body near the eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
@@ -68,11 +67,10 @@ const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
-# the comparison's variants: [label, foveation level (Foveation.set_level), split, the cube before
-# the eyes]; the first is the reference the others are compared with
-const VARIANTS := [["plain", 0, false, false], ["passes split", 0, true, false],
-	["SteamVR low", 1, false, false], ["SteamVR high", 3, false, false],
-	["own wide", 4, false, false], ["own narrow", 5, false, false], ["a cube at the eyes", 0, false, true]]
+# the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
+# eyes]; the first is the reference the others are compared with
+const VARIANTS := [["plain", 0, false], ["foveation weak", 1, false], ["foveation medium", 2, false],
+	["foveation strong", 3, false], ["a cube at the eyes", 0, true]]
 # the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
@@ -214,7 +212,7 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
+		variants.append(Setup.new(f[0], f[1], f[2]))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
@@ -310,9 +308,8 @@ func _prepare() -> void:
 ## A variant's foveation and cube.
 func _use(v: Setup) -> void:
 	near = v.near
-	var fov: Foveation = main.foveation
-	if fov.level != v.foveation or fov.split_pass.enabled != (v.foveation > 0 or v.split):
-		fov.set_level(v.foveation, v.split)
+	if main.foveation.level != v.foveation:
+		main.foveation.set_level(v.foveation)
 
 
 func _segment() -> void:
@@ -585,13 +582,11 @@ func _show(s: String) -> void:
 class Setup:
 	var label: String
 	var foveation: int              # Foveation.set_level's level
-	var split: bool                 # the split pass without a density map
 	var near: bool                  # the cube before the eyes
 
-	func _init(p_label: String, p_foveation: int, p_split: bool, p_near: bool) -> void:
+	func _init(p_label: String, p_foveation: int, p_near: bool) -> void:
 		label = p_label
 		foveation = p_foveation
-		split = p_split
 		near = p_near
 
 
