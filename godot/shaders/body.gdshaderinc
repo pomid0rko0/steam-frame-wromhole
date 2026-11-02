@@ -123,9 +123,11 @@ void vertex() {
 	float size = INSTANCE_CUSTOM.a;
 	vec3 t;
 #ifdef BALL
-	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, true, en, C, E1, E2, E3, N, size, t);
+	bool none;
+	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, true, en, C, E1, E2, E3, N, size, t, none);
 #else
-	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, false, en, C, E1, E2, E3, N, size, t);
+	bool none;
+	vec2 pe = zone_vertex(VERTEX.xy, zone_columns, zone_round, false, en, C, E1, E2, E3, N, size, t, none);
 #endif
 	float pl = pe.x;
 	float alpha = clamp(pe.y, 0.0, GEO_PI);
@@ -276,6 +278,10 @@ void vertex() {
 	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
 	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
+#ifdef ZONE
+	// and orange where a cube's section's steps came out not a number (zone_cube_section)
+	if (none) v_col = mix(v_col, vec3(1.0, 0.5, 0.0), 0.7);
+#endif
 }
 
 void fragment() {

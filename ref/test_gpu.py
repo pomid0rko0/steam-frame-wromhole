@@ -165,7 +165,8 @@ void main() {
 	} else if (mode == 9) {     // a = (u, v, columns, rows), c = (en, size), (ball 1 or cube 0), C, E1, E2, E3: (l, alpha), t
 		vec4 C = inp[I + 3];
 		vec3 t;
-		vec2 p = zone_vertex(a.xy, a.z, a.w, inp[I + 2].x > 0.5, c.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], geo_normal(C), c.w, t);
+		bool none;
+		vec2 p = zone_vertex(a.xy, a.z, a.w, inp[I + 2].x > 0.5, c.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], geo_normal(C), c.w, t, none);
 		outp[O] = vec4(p, 0.0, 0.0);
 		outp[O + 1] = vec4(t, 0.0);
 	} else if (mode == 7 || mode == 8) {    // a = (l0, al0, dl, dal), c = (en, size), t, C, E1, E2, E3: (l, alpha)

@@ -154,8 +154,10 @@ vec2 zone_cube_corner(int e, vec2 p, vec3 en, vec3 t, vec4 C, vec4 E1, vec4 E2, 
 // cube (the first row) to where it leaves (the last), from the axis's point (l, alpha) ax along
 // it, into the half-surface by dsg (+1: alpha growing from 0, -1: from pi).
 vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, float dsg, vec3 en, vec3 a1, vec3 a2, vec3 t, vec3 m, vec3 tm, vec3 mm,
-		float thm, vec4 za, vec4 zb, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out vec2 inner) {
+		float thm, vec4 za, vec4 zb, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out vec2 inner, out vec2 aim, out int cedge) {
 	inner = ax;
+	aim = ax;
+	cedge = -1;
 	vec3 mu = vec3(dot(E1.xyz, m), dot(E2.xyz, m), dot(E3.xyz, m));
 	float c = -dot(C.xyz, m);
 	vec3 mum = vec3(dot(E1.xyz, mm), dot(E2.xyz, mm), dot(E3.xyz, mm));
@@ -202,7 +204,8 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 		// the hyperplane's nearest to C
 		vec3 x = clamp(mu * (c / max(dot(mu, mu), 1e-12)), vec3(-size), vec3(size));
 		vec4 P = geo_onto(C + x.x * E1 + x.y * E2 + x.z * E3, N);
-		return vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
+		aim = vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
+		return aim;
 	}
 	// The corners' order: by their directions at the span's middle (to first order) from the middle
 	// of the corners (off the axis: from the first corner's direction) or from the axis's point
@@ -251,6 +254,7 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 	// each is on (a corner's two: its edge's; the axis's entry or exit: the one it crosses), as
 	// axis (0 to 2) and side (-1, 1), (-1, 0) for none
 	vec2 pe[2];
+	vec4 xe[2];         // the ends to first order (R^4): aim
 	ivec2 fa[2], fb[2];
 	for (int s = 0; s < 2; s++) {
 		int ci = s == 0 ? ca : cb;
@@ -259,7 +263,8 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 		if (ci >= 0) {
 			int e = ed[ci];
 			vec3 x = zone_edge_cut(e, mu, c, size).xyz;
-			vec4 P = geo_onto(C + x.x * E1 + x.y * E2 + x.z * E3, N);
+			xe[s] = C + x.x * E1 + x.y * E2 + x.z * E3;
+			vec4 P = geo_onto(xe[s], N);
 			vec2 p = vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
 			bool ok;
 			vec2 pc = zone_cube_corner(e, p, en, t, C, E1, E2, E3, size, ok);
@@ -271,7 +276,8 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 			// the axis's entry (s 0) or exit (s 1): along the axis from its point
 			float r0 = geo_r(abs(ax.x));
 			pe[s] = zone_edge_cube(ax.x, ax.y, s == 0 ? 1.0 : -1.0, 0.0, en, t, C, E1, E2, E3, size);
-			vec4 q = zone_point(pe[s].x, pe[s].y, en, t) - C;
+			xe[s] = zone_point(pe[s].x, pe[s].y, en, t);
+			vec4 q = xe[s] - C;
 			vec3 sv = vec3(dot(q, E1), dot(q, E2), dot(q, E3));
 			vec3 av = abs(sv);
 			int a = av.x >= av.y && av.x >= av.z ? 0 : (av.y >= av.z ? 1 : 2);
@@ -279,6 +285,13 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 			fb[s] = ivec2(-1, 0);
 		}
 	}
+	// the row's place to first order, on the chord of its ends' first-order places: where the
+	// steps below aim (zone_cube_section's)
+	vec4 xa = f == 0.0 ? xe[0] : (f == 1.0 ? xe[1] : mix(xe[0], xe[1], f));
+	vec4 Pa = geo_onto(xa, N);
+	aim = vec2(geo_l_of(Pa, nn), zone_alpha(Pa.xyz, t, en));
+	if (f == 0.0 && ca >= 0) cedge = ed[ca];
+	if (f == 1.0 && cb >= 0) cedge = ed[cb];
 	if (f == 0.0) return pe[0];
 	if (f == 1.0) return pe[1];
 	// between: on the chord, then across it onto the face both ends are on (Newton on its slab)
@@ -314,6 +327,31 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 	return p;
 }
 
+// Where a cube's edge e (zone_edge_cut's numbering) meets the hyperplane x . m = 0 of R^4's xyz on
+// the half-surface's side (t), as (l, alpha): the edge's points taken onto the space (geo_onto), the
+// crossing bracketed by its ends and halved; found false where its ends are on one side.
+vec2 zone_cube_corner_halving(int e, vec3 en, vec3 t, vec3 m, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out bool found) {
+	int a = e / 4;
+	int b = (a + 1) % 3, g = (a + 2) % 3;
+	vec4 Ea = a == 0 ? E1 : (a == 1 ? E2 : E3);
+	vec4 Eb = b == 0 ? E1 : (b == 1 ? E2 : E3), Eg = g == 0 ? E1 : (g == 1 ? E2 : E3);
+	vec4 O = C + ((e & 1) == 0 ? -size : size) * Eb + ((e & 2) == 0 ? -size : size) * Eg;
+	float lo = -size, hi = size;
+	float glo = dot(geo_onto(O + lo * Ea, N).xyz, m), ghi = dot(geo_onto(O + hi * Ea, N).xyz, m);
+	found = glo * ghi <= 0.0;
+	if (!found) return vec2(0.0);
+	for (int i = 0; i < 16; i++) {
+		float mid = 0.5 * (lo + hi);
+		float gm = dot(geo_onto(O + mid * Ea, N).xyz, m);
+		if ((gm <= 0.0) == (glo <= 0.0)) { lo = mid; glo = gm; } else { hi = mid; }
+	}
+	vec4 P = geo_onto(O + 0.5 * (lo + hi) * Ea, N);
+	vec3 nn;
+	vec2 pc = vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
+	found = dot(P.xyz, t) >= -1e-6 * size && geo_finite(pc.x + pc.y);
+	return pc;
+}
+
 // How deep the point (l, alpha) of the half-surface toward t is in a cube: its largest slab less
 // the half size (below 0 inside).
 float zone_cube_depth(vec2 p, vec3 en, vec3 t, vec4 C, vec4 E1, vec4 E2, vec4 E3, float size) {
@@ -330,17 +368,28 @@ float zone_cube_depth(vec2 p, vec3 en, vec3 t, vec4 C, vec4 E1, vec4 E2, vec4 E3
 // middle of the section to first order (the cube's tangent space at C: the plane mu . x = c of its
 // box coordinates cuts its edges in a polygon; the mean of its corners on the half-surface's side).
 vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg, vec3 en, vec3 a1, vec3 a2, vec3 t, vec3 m, vec3 tm, vec3 mm,
-		float thm, vec4 za, vec4 zb, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size) {
-	vec2 inner;
-	vec2 p = zone_cube_section_steps(v, rows, round_axis, ax, dsg, en, a1, a2, t, m, tm, mm, thm, za, zb, C, E1, E2, E3, N, size, inner);
+		float thm, vec4 za, vec4 zb, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out bool none) {
+	vec2 inner, aim;
+	int cedge;
+	vec2 p = zone_cube_section_steps(v, rows, round_axis, ax, dsg, en, a1, a2, t, m, tm, mm, thm, za, zb, C, E1, E2, E3, N, size, inner, aim, cedge);
 	float off = 1e9;
-	if (geo_finite(p.x + p.y)) {
+	none = !geo_finite(p.x + p.y);
+	if (!none) {
 		off = abs(zone_cube_depth(p, en, t, C, E1, E2, E3, size));
 		if (p.y < -1e-6 || p.y > GEO_PI + 1e-6) off = max(off, 1e-3);
 	}
 	if (off <= 3e-5) return p;
+	if (cedge >= 0) {
+		// a corner: where its edge meets the half-surface's hyperplane, by halving the edge between
+		// its ends' sides of it (no Newton to go astray); none if both ends are on one side
+		bool found;
+		vec2 pc = zone_cube_corner_halving(cedge, en, t, m, C, E1, E2, E3, N, size, found);
+		if (found) return pc;
+	}
 	float gi = zone_cube_depth(inner, en, t, C, E1, E2, E3, size);
 	float ga = zone_cube_depth(ax, en, t, C, E1, E2, E3, size);
+	if (!geo_finite(gi)) gi = 1e9;
+	if (!geo_finite(ga)) ga = 1e9;
 	if (ga < gi) { inner = ax; gi = ga; }
 	vec3 mu = vec3(dot(E1.xyz, m), dot(E2.xyz, m), dot(E3.xyz, m));
 	float c = -dot(C.xyz, m);
@@ -365,8 +414,11 @@ vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg,
 	// none inside (a section of next to no width, at the end of the cube's azimuths): the steps'
 	// point, unless it is further off than such a section's own first-order error
 	if (gi >= 0.0 && off < 0.02 * size) return p;
+	// toward the steps' point if it is near the surface, else toward the row's first-order place
+	// (a point Newton took astray, or not a number: the headset's GPU makes some where the PC's don't)
+	vec2 to = off < 0.02 * size ? p : aim;
 	float ri = geo_r(abs(inner.x));
-	vec2 d = vec2(p.x - inner.x, ri * (p.y - inner.y));
+	vec2 d = vec2(to.x - inner.x, ri * (to.y - inner.y));
 	float dd = dot(d, d);
 	if (!geo_finite(dd) || dd < 1e-14) {
 		// none to aim at: the row's own way round the inner point
@@ -531,7 +583,8 @@ vec2 zone_cube_axis(float l0, float al0, vec3 en, vec3 a1, vec4 C, vec4 E1, vec4
 // A ball (ball true) of radius size, a cube of half size size (axes E1, E2, E3); N the space's
 // normal at the centre C. Round the axis where the axis's point nearest the centre is inside the
 // body, else off it.
-vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out vec3 t) {
+vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out vec3 t, out bool none) {
+	none = false;
 	float reach = ball ? size : 1.8 * size;    // a cube's cut box is within this chord of C (sqrt 3, and the cut's bulge)
 	// the axis's frame: a1, a2 across it; the body's centre's offset across it, and the axis's
 	// point nearest the centre, inside the body or not
@@ -570,5 +623,5 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 	vec2 sct = geo_sincos(az.x), scm = geo_sincos(az.y);
 	t = sct.y * a1 + sct.x * a2;
 	return zone_cube_section(uv.y, rows, round_axis, ax, dsg, en, a1, a2, t, sct.y * a2 - sct.x * a1,
-			scm.y * a1 + scm.x * a2, scm.y * a2 - scm.x * a1, az.y, za, zb, C, E1, E2, E3, N, size);
+			scm.y * a1 + scm.x * a2, scm.y * a2 - scm.x * a1, az.y, za, zb, C, E1, E2, E3, N, size, none);
 }
