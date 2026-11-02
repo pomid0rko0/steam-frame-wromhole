@@ -10,7 +10,7 @@ extends SceneTree
 ## 5. G cycles the views (Renderer.GRAVITY_VIEWS): the floor's shader and the arrows; not during
 ##    the speed check
 ## 6. the pictures: the floor yellow (1 g) far out and under the mouth (1.03 g), the sky
-##    untouched; arrows drawn over the view with view 2
+##    untouched (but for what comes through the throat); arrows drawn over the view with view 2
 ## With a prefix, saves the pictures it checks.
 
 const U := preload("res://tests/util.gd")
@@ -21,9 +21,12 @@ var shots := ""
 var step := 0
 var pics := {}
 # [name, where the feet stand on universe A's floor facing -x (chart), degrees up, gravity view]
+# ... and last where the floor's quad draws what comes through the curved zone, from the start
+# (floor.gdshaderinc's lens_mark)
 const PICS := [["far", Vector3(20.0, 0.0, 0.0), -70.0, 1], ["under", Vector3(2.5, 0.0, 0.0), -70.0, 1],
 		["under_off", Vector3(2.5, 0.0, 0.0), -70.0, 0], ["start_off", Main.START_POS, 0.0, 0],
-		["start_floor", Main.START_POS, 0.0, 1], ["start_arrows", Main.START_POS, 0.0, 2]]
+		["start_floor", Main.START_POS, 0.0, 1], ["start_arrows", Main.START_POS, 0.0, 2],
+		["start_lens", Main.START_POS, 0.0, 0]]
 
 
 func _initialize() -> void:
@@ -54,6 +57,8 @@ func _process(_delta: float) -> bool:
 		if k == 0:
 			main.set_gravity_view(p[3])
 			main.place(p[1], Vector3(-1.0, 0.0, 0.0), 1.0, p[2])
+			for m in main.renderer.floor_mats:
+				m.set_shader_parameter("lens_mark", p[0] == "start_lens")
 		elif k == 2:
 			var img := root.get_texture().get_image()
 			img.convert(Image.FORMAT_RGB8)
@@ -167,19 +172,21 @@ func _picture_checks() -> void:
 			"middle of the view %s" % far)
 	U.check("floor under the mouth: yellow too, 1.03 g", und.r > 0.8 and und.g > 0.7 and und.r > und.b + 0.35 and und.g > und.b + 0.3
 			and (und - off).get_luminance() != 0.0, "middle of the view %s (without the view %s)" % [und, off])
-	# from the start: the sky (top fifth) is the same with the floor view and without, the floor (bottom fifth) changes
-	# with the floor view, and the arrows show only with view 2 (the lines a metre apart across the plane through the
-	# throat, seen face on from 10 m: 2 % of the view)
-	var sky := _diff(pics.start_off, pics.start_floor, 0.0, 0.2)
+	# from the start: the sky (the top fifth, but for the throat: the floor seen through it is coloured too) is the
+	# same with the floor view and without, the floor (bottom fifth) changes with the floor view, and the arrows
+	# show only with view 2 (the lines a metre apart across the plane through the throat, seen face on from 10 m:
+	# 2 % of the view)
+	var sky := _diff(pics.start_off, pics.start_floor, 0.0, 0.2, pics.start_lens)
 	var flo := _diff(pics.start_off, pics.start_floor, 0.8, 1.0)
 	var arr := _diff(pics.start_floor, pics.start_arrows, 0.0, 1.0)
 	U.check("from the start: sky untouched, floor coloured, arrows drawn", sky.x < 3.0 / 255.0 and flo.y > 0.9 and arr.y > 0.01 and arr.y < 0.6,
 			"sky differs by %.1f/255 at most; %.0f%% of the floor's pixels changed; arrows on %.0f%% of the view" % [sky.x * 255.0, 100.0 * flo.y, 100.0 * arr.y])
 
 
-## Between two pictures, over the rows from y0 to y1 (fractions of the height): (largest
-## difference of a channel, share of pixels that differ by more than 4/255).
-static func _diff(a: Image, b: Image, y0: float, y1: float) -> Vector2:
+## Between two pictures, over the rows from y0 to y1 (fractions of the height), but where lens (a
+## picture with lens_mark) is blue: (largest difference of a channel, share of pixels that differ by
+## more than 4/255).
+static func _diff(a: Image, b: Image, y0: float, y1: float, lens: Image = null) -> Vector2:
 	var mx := 0.0
 	var n := 0
 	var changed := 0
@@ -187,6 +194,8 @@ static func _diff(a: Image, b: Image, y0: float, y1: float) -> Vector2:
 		for x in a.get_width():
 			var p := a.get_pixel(x, y)
 			var q := b.get_pixel(x, y)
+			if lens != null and lens.get_pixel(x, y).b > 0.5 and lens.get_pixel(x, y).r < 0.2:
+				continue
 			var d := maxf(maxf(absf(p.r - q.r), absf(p.g - q.g)), absf(p.b - q.b))
 			mx = maxf(mx, d)
 			n += 1

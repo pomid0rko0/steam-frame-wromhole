@@ -30,6 +30,11 @@ func _off_place(where: Variant) -> float:
 	return 1e9 if not v.standing else (sp.embed(v.l, v.n) - sp.embed(p[0], p[1])).length()
 
 
+## The cubes the renderer draws (out in a flat universe or in the curved zone).
+func _cubes() -> int:
+	return main.renderer.bodies.filter(func(x: Array) -> bool: return x[0] == "cube").size()
+
+
 func _initialize() -> void:
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "none"
@@ -61,7 +66,7 @@ func _process(_d: float) -> bool:
 				check("at the place being timed", false, "%s: %.4f m off" % [b._name(place[0]), miss])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
-			if b.near != v.near or (b.near and main.renderer.cubes.multimesh.visible_instance_count != main.toys.world.cubes.size() + 1):
+			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1):
 				check("the segment's cube before the eyes", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != ((v.foveation > 0 and v.foveation <= Foveation.LEVELS) or v.split):
@@ -78,7 +83,7 @@ func _process(_d: float) -> bool:
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("no cube before the eyes after it", not b.near and main.renderer.cubes.multimesh.visible_instance_count == main.toys.world.cubes.size())
+			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)
