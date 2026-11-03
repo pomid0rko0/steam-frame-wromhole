@@ -46,12 +46,17 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
 float32; the GPU here is given them so written.
-Exit status 1 on any failure.
+Each throat's checks run in pieces, each in a process of its own (a GPU context and random draws
+of its own, seeded by the throat and the piece), as many at once as there are cores, the longest
+first; their lines come throat by throat. Exit status 1 on any failure.
    python3 ref/test_gpu.py [numbers profile images exit zone eye]     (all, or those checks)"""
 import copy
 import os
 import re
+import subprocess
 import sys
+import tempfile
+import time
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
@@ -1146,32 +1151,88 @@ def numbers_check():
                          f'{count} numbers in {files} files, {len(changed)} changed' + ''.join(f'\n    {c}' for c in changed)))
 
 
-def main(checks=('numbers', 'profile', 'images', 'exit', 'zone', 'eye')):
+CHECKS = ('numbers', 'profile', 'images', 'exit', 'zone', 'eye')
+# the pieces run apart: (the check that asks for it, its name), the longest first
+PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('profile', 'profile'), ('images', 'images'),
+          ('eye', 'eye'))
+
+
+def piece_checks(index, piece):
+    """PROFILES' index-th throat's piece of the checks, on a GPU context of its own, with random draws
+    of its own (seeded by the throat and the piece)."""
     ctx = moderngl.create_standalone_context(backend='egl', require=430)
-    rng = np.random.default_rng(1)
+    rng = np.random.default_rng([index, [p for _, p in PIECES].index(piece)])
+    name, prof = list(PROFILES.items())[index]
+    S = Space(*prof)
+    S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
+    gpu = Gpu(ctx, S)
+    if piece == 'profile':
+        return profile_checks(name, S, gpu, Gpu(ctx, S, NAN_SRC), rng)
+    if piece == 'images':
+        return image_checks(name, S, gpu, Gpu(ctx, S, NAN_SRC), rng)
+    if piece == 'exit':
+        # the table's on the same rays
+        same = copy.deepcopy(rng)
+        return exit_checks(name, S, gpu, rng) + exit_checks(name, S, gpu, same, table=True)
+    if piece == 'zone':
+        return zone_checks(name, S, gpu, rng)
+    if piece == 'mesh':
+        return zone_mesh_checks(name, S, gpu, rng)
+    return eye_checks(S, gpu, rng)
+
+
+def main(checks=CHECKS):
+    """The numbers here, then each throat's each piece in a process of its own (this script with
+    --piece), as many at once as there are cores, the longest first; their output kept in files and
+    printed throat by throat, piece by piece in the checks' order."""
     fails = numbers_check() if 'numbers' in checks else 0
-    for name, prof in PROFILES.items():
-        S = Space(*prof)
-        S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
-        gpu = Gpu(ctx, S)
-        gpu_nan = Gpu(ctx, S, NAN_SRC)
-        if 'profile' in checks:
-            fails += profile_checks(name, S, gpu, gpu_nan, rng)
-        if 'images' in checks:
-            fails += image_checks(name, S, gpu, gpu_nan, rng)
-        if 'exit' in checks:
-            # the table's on the same rays, and the checks after see the same draws as without it
-            same = copy.deepcopy(rng)
-            fails += exit_checks(name, S, gpu, rng)
-            fails += exit_checks(name, S, gpu, same, table=True)
-        if 'zone' in checks:
-            fails += zone_checks(name, S, gpu, rng)
-            fails += zone_mesh_checks(name, S, gpu, rng)
-        if name == 'the app' and 'eye' in checks:
-            fails += eye_checks(S, gpu, rng)
+    asked = {piece for check, piece in PIECES if check in checks}
+    runs = [(i, piece) for _, piece in PIECES for i, name in enumerate(PROFILES)
+            if piece in asked and (piece != 'eye' or name == 'the app')]
+    width = max(1, len(os.sched_getaffinity(0)))
+    procs, waiting, took = {}, list(runs), {}
+    def start():
+        i, piece = waiting.pop(0)
+        took[i, piece] = time.monotonic()
+        out = tempfile.TemporaryFile('w+')
+        procs[i, piece] = (subprocess.Popen([sys.executable, __file__, '--piece', str(i), piece],
+                                            stdout=out, stderr=subprocess.STDOUT, text=True), out)
+    while waiting and len(procs) < width:
+        start()
+    done = {}
+    while len(done) < len(runs):
+        for key, (proc, out) in list(procs.items()):
+            if key not in done and proc.poll() is not None:
+                done[key] = proc
+                took[key] = time.monotonic() - took[key]
+                if waiting:
+                    start()
+        if len(done) < len(runs):
+            time.sleep(0.2)
+    order = ('profile', 'images', 'exit', 'zone', 'mesh', 'eye')
+    for i, name in enumerate(PROFILES):
+        for piece in order:
+            if (i, piece) not in procs:
+                continue
+            proc, out = procs[i, piece]
+            out.seek(0)
+            text = out.read()
+            last = re.findall(r'^FAILURES: (\d+)$', text, re.M)
+            print(re.sub(r'^FAILURES: \d+\n?', '', text, flags=re.M), end='', flush=True)
+            if proc.returncode not in (0, 1) or not last:
+                print(f'FAIL {name}, {piece}: its checks ended with status {proc.returncode}', flush=True)
+                fails += 1
+            else:
+                fails += int(last[-1])
+    print(f'pieces on {width} cores, seconds each: ' + ', '.join(
+        f'{list(PROFILES)[i]} {piece} {took[i, piece]:.0f}' for i, piece in runs))
     print(f'FAILURES: {fails}')
     return fails
 
 
 if __name__ == '__main__':
-    sys.exit(1 if main(sys.argv[1:] or ('numbers', 'profile', 'images', 'exit', 'zone', 'eye')) else 0)
+    if sys.argv[1:2] == ['--piece']:
+        f = int(piece_checks(int(sys.argv[2]), sys.argv[3]))
+        print(f'FAILURES: {f}')
+        sys.exit(1 if f else 0)
+    sys.exit(1 if main(sys.argv[1:] or CHECKS) else 0)

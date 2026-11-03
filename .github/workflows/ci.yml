@@ -1,6 +1,10 @@
-# On every push to a branch: the builds and every test, each test on a machine of its own (the
-# OpenXR test then runs alone, as tools/test_openxr.sh needs), in the tests' environment (image.yml:
-# its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it). A branch that
+# On every push to a branch: the builds and every test, in the tests' environment (image.yml: its
+# amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it), shared out over
+# seven machines that end at about the same time: the builds, then the OpenXR test alone (as
+# tools/test_openxr.sh needs), then a share of the stereo test; the Godot tests and the headset's
+# compiler, then a share; the shaders' accuracy, alone, as its time differs from machine to machine
+# (3.5 to 7 minutes); four more machines of the stereo test alone (tools/stereo_parts.txt: the
+# shares, PART=n). A branch that
 # differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
 # («Что изменилось», changes); main, a version, a tag and a release always get them all.
 # The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
@@ -86,10 +90,10 @@ jobs:
       arch: arm64
 
   build:
-    name: Сборки для шлема и ПК
+    name: Сборки для шлема и ПК, OpenXR, стерео-тест 1
     needs: image
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     container:
       image: ${{ needs.image.outputs.image }}
       credentials:
@@ -99,6 +103,7 @@ jobs:
       frame: ${{ steps.export.outputs.frame }}
       windows: ${{ steps.export.outputs.windows }}
       linux: ${{ steps.export.outputs.linux }}
+      stereo: ${{ steps.stereo.outcome }}
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -149,12 +154,33 @@ jobs:
         with:
           path: godot/build/${{ steps.export.outputs.linux_check }}
           archive: false
+      - id: openxr
+        if: ${{ !cancelled() }}
+        run: tools/test_openxr.sh
+      - if: ${{ !cancelled() && steps.openxr.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: openxr-logs
+          path: .wt/.out/
+          include-hidden-files: true
+      - id: stereo
+        if: ${{ !cancelled() }}
+        run: PART=1 OUT="$PWD/stereo" tools/test_stereo.sh
+      - if: ${{ !cancelled() && steps.stereo.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: stereo-images-1
+          path: stereo/
 
   stereo:
-    name: Стерео-тест
+    name: Стерео-тест ${{ matrix.part }}
     needs: image
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [3, 4, 5, 6]
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 40
     container:
       image: ${{ needs.image.outputs.image }}
       credentials:
@@ -163,18 +189,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: OUT="$PWD/stereo" tools/test_stereo.sh
+      - run: PART=${{ matrix.part }} OUT="$PWD/stereo" tools/test_stereo.sh
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: stereo-images
+          name: stereo-images-${{ matrix.part }}
           path: stereo/
 
-  # the builds go unless the stereo test passed (above); skipped, it had no builds to go with it
+  # the builds go unless every share of the stereo test passed (above); with no builds made, nothing
   unsafe:
     name: Удаление сборок, если стерео-тест не прошёл
-    needs: [build, stereo]
-    if: always() && needs.stereo.result != 'success' && needs.stereo.result != 'skipped'
+    needs: [build, tests, stereo]
+    if: >-
+      always() && needs.build.result != 'skipped' && (needs.stereo.result != 'success'
+      || needs.build.outputs.stereo != 'success' || needs.tests.outputs.stereo != 'success')
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -189,52 +217,52 @@ jobs:
             echo "deleted $name"
           done
 
+  # what the headset's shader compiler makes of the shaders goes into the job's summary; it fails on
+  # a shader the compiler refuses
   tests:
-    name: Тесты в Godot
+    name: Тесты в Godot, компилятор шлема, стерео-тест 2
     needs: image
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 40
     container:
       image: ${{ needs.image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      stereo: ${{ steps.stereo.outcome }}
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: OUT="$PWD/test-logs" tools/test.sh
-      - if: failure()
+      - id: tests
+        run: OUT="$PWD/test-logs" tools/test.sh
+      - if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}
         uses: actions/upload-artifact@v7
         with:
           name: test-logs
           path: test-logs/
-
-  openxr:
-    name: Приложение через OpenXR
-    needs: image
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    container:
-      image: ${{ needs.image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: tools/test_openxr.sh
-      - if: failure()
+      - if: ${{ !cancelled() }}
+        run: |
+          for a in "" --paths --fov; do
+            echo "### tools/adreno_stats.sh $a"
+            echo '```'
+            tools/adreno_stats.sh $a
+            echo '```'
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: stereo
+        if: ${{ !cancelled() }}
+        run: PART=2 OUT="$PWD/stereo" tools/test_stereo.sh
+      - if: ${{ !cancelled() && steps.stereo.outcome == 'failure' }}
         uses: actions/upload-artifact@v7
         with:
-          name: openxr-logs
-          path: .wt/.out/
-          include-hidden-files: true
+          name: stereo-images-2
+          path: stereo/
 
   ref:
     name: Точность шейдеров и гравитации
     needs: image
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 40
     container:
       image: ${{ needs.image.outputs.image }}
       credentials:
@@ -245,29 +273,6 @@ jobs:
       - run: python3 ref/test_gpu.py
       - if: ${{ !cancelled() }}
         run: python3 ref/test_gravity.py
-
-  # what the headset's shader compiler makes of the shaders, in the job's summary; it fails on a
-  # shader the compiler refuses
-  adreno:
-    name: Компилятор шлема
-    needs: image
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    container:
-      image: ${{ needs.image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: |
-          for a in "" --paths --fov; do
-            echo "### tools/adreno_stats.sh $a"
-            echo '```'
-            tools/adreno_stats.sh $a
-            echo '```'
-          done | tee -a "$GITHUB_STEP_SUMMARY"
 
   # the version the button asks for: its tag, from the newest one, at once (the release makes it)
   version:
@@ -300,7 +305,7 @@ jobs:
   # on every push that builds the builds are gathered as for a release; published only for a version
   release:
     name: Релиз (публикация — только для версии)
-    needs: [changes, build, stereo, tests, openxr, ref, adreno, version]
+    needs: [changes, build, tests, ref, stereo, version]
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -346,7 +351,7 @@ jobs:
   # cancelled run).
   all:
     name: Все проверки
-    needs: [changes, image, image-arm64, build, stereo, tests, openxr, ref, adreno, release]
+    needs: [changes, image, image-arm64, build, tests, ref, stereo, release]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

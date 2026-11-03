@@ -38,11 +38,12 @@ keep and what was learnt about it: the comment at the top of its file.
   that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
   does changes, the title changes with it. The description: what to check in the headset (a yes/no
   they can see), what the tests and CI found, what is left. The two are the PR's commit in `main`.
-- **CI checks every push** (README, «Проверки»): both builds and every test, each on a machine of
-  its own, on exactly the commit pushed; a branch that differs from `main` only in Markdown and
-  `docs/` gets none, as nothing reads them. Push what you deliver; that run is the check of record,
-  also of the tests you didn't run yourself. Watch it: in a cloud session subscribe to the PR, whose
-  activity brings CI's failures; on the Frame `gh run watch`. A red run is yours to fix.
+- **CI checks every push** (README, «Проверки»): both builds and every test, shared out over seven
+  machines (the stereo test in parts, `tools/stereo_parts.txt`), on exactly the commit pushed; a
+  branch that differs from `main` only in Markdown and `docs/` gets none, as nothing reads them. Push
+  what you deliver; that run is the check of record, also of the tests you didn't run yourself.
+  Watch it: in a cloud session subscribe to the PR, whose activity brings CI's failures; on the
+  Frame `gh run watch`. A red run is yours to fix.
 - **Docs say what is true now.** README, `docs/` and code comments describe the code as it is: no
   history (git and the PRs keep it), no versions, numbers only as measured on the current code, with
   the tool or test that gives them. A change that makes a statement or a number stale fixes or
@@ -57,9 +58,10 @@ keep and what was learnt about it: the comment at the top of its file.
   (`.github/ISSUE_TEMPLATE/headset-bug.yml`): read its build and log first. A PR that does one says
   `Closes #N` in its description; a bug or a wish found and not done goes into an issue of its own.
   An issue names the code as it is: a branch that renames or changes what an open issue names
-  fixes that issue too (search the issues for the name). An issue or comment you write ends with
+  fixes that issue too (search the issues for the name). An issue you write ends with
   «🤖 *Написал Claude (Claude Code); на GitHub показан от имени владельца.*»: GitHub shows it as the
-  owner's and drops the usual footer.
+  owner's and drops the usual footer from an issue's body. A comment gets that footer from GitHub
+  itself: add nothing to it.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
 - **No work is worth anything by itself.** Nothing is kept only because it was here before you or
