@@ -23,12 +23,10 @@ keep and what was learnt about it: the comment at the top of its file.
 - **One wish per chat,** on its own branch, started from `origin/main` after `git fetch` (a cloud
   session's local `main` can be days old), or the issue's branch if it has one
   (`git branch -r --list 'origin/*/<N>-*'`); not the branch a cloud session makes for itself
-  (`claude/…`, `ccr-…`). The owner allows pushing to it. Its name is `<kind>/<issue>-<words>`: the
-  kind of change, the wish's issue (one said in the chat gets its issue first) and at most three
-  English words of the issue's title (`fix/43-cube-tearing`, `feature/47-throat-shape`). The
-  kinds: `feature` (the headset gains something), `fix` (something in it is wrong), `performance`
-  (the same, faster), `refactoring` (the code changes, the headset doesn't), `tests`, `tools` (CI,
-  scripts), `docs` (README, `docs/`, this file).
+  (`claude/…`, `ccr-…`). The owner allows pushing to it. Its name is `<type>/<issue>-<words>`: the
+  change's type as in Conventional Commits (`feat`, `fix`, `perf`, `refactor`, `test`, `ci`,
+  `docs`…), the wish's issue (one said in the chat gets its issue first) and a few English words
+  (`fix/43-cube-tearing`, `feat/47-throat-shape`).
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
