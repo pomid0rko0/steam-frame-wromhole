@@ -131,8 +131,8 @@ func _process(_delta: float) -> bool:
 		# after the green check: each change of the eye's size makes the images again, a missed frame or two
 		U.check("the old settings' scale and foveation gone: neither chosen", not p.scale_chosen
 				and not p.foveation_chosen)
-		U.check("foveation at first: сильная, the default, the floor from its texture", main.foveation.level == p.DEFAULT_FOVEATION
-				and _value(p, "fov") == "сильная" and main.foveation.enabled
+		U.check("foveation at first: предельная, the default, the floor from its texture", main.foveation.level == p.DEFAULT_FOVEATION
+				and _value(p, "fov") == "предельная" and main.foveation.enabled
 				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
 		U.check("the eye at its full size at first: Monado's own", p.full_eye == 128 and _eye() == Vector2i(128, 128)
 				and main.xr_view.size == Vector2i(128, 128) and _value(p, "scale") == "100% (128×128)",

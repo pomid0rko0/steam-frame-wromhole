@@ -17,7 +17,7 @@ const FRAME_EYE := 2160         # the Steam Frame's screen, pixels a side per ey
 # names of Foveation.set_level's levels
 const FOVEATIONS := ["выкл", "слабая", "средняя", "сильная", "очень сильная", "предельная"]
 const FOV_LOG := ["off", "weak", "medium", "strong", "stronger", "strongest"]
-const DEFAULT_FOVEATION := 3    # until one is chosen
+const DEFAULT_FOVEATION := 5    # until one is chosen
 const SETTINGS := "user://settings.cfg"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
