@@ -53,7 +53,9 @@ keep and what was learnt about it: the comment at the top of its file.
   «Документация»), ошибка, скорость; a big one's steps are its sub-issues. A PR that does one says
   `Closes #N` in its description; a bug or a wish found and not done goes into an issue of its own.
   An issue names the code as it is: a branch that renames or changes what an open issue names
-  fixes that issue too (search the issues for the name).
+  fixes that issue too (search the issues for the name). An issue or comment you write ends with
+  «🤖 *Написал Claude (Claude Code); на GitHub показан от имени владельца.*»: GitHub shows it as the
+  owner's and drops the usual footer.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
 - **No work is worth anything by itself.** Nothing is kept only because it was here before you or
