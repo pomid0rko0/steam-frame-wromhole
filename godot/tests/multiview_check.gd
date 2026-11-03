@@ -36,9 +36,10 @@ const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04
 const KEYS := [[5, KEY_W, true], [5, KEY_D, true], [15, KEY_W, false], [15, KEY_D, false],
 		[16, KEY_E, true], [18, KEY_E, false], [19, KEY_TAB, true], [20, KEY_TAB, false],
 		[21, KEY_Q, true], [21, KEY_W, true], [31, KEY_Q, false], [31, KEY_W, false]]
-# fov: the level by case (Foveation.LEVELS' index + 1), and where the eyes look in case 1 (the
-# head's space)
-const FOV_LEVELS := [5, 5, 3, 1, 5, 5]
+# fov: the level by case (Foveation.LEVELS' index + 1: in case 0 a fovea round the picture's middle
+# that reaches the floor's lines, the strongest's there is sky and the throat), and where the eyes
+# look in case 1 (the head's space)
+const FOV_LEVELS := [3, 5, 5, 1, 5, 5]
 const FOV_GAZE := Vector3(0.25, 0.15, -1.0)
 const KEYS_4 := [[5, KEY_SPACE, true], [5, KEY_W, true], [15, KEY_W, false], [16, KEY_E, true], [18, KEY_E, false],
 		[19, KEY_K, true], [21, KEY_K, false], [22, KEY_L, true], [24, KEY_L, false], [25, KEY_SPACE, false]]

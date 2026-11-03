@@ -23,8 +23,10 @@ Checks per eye:
     its centre meets this kind next with the other kind taken out (near the photon sphere both kinds' images, thinner than a pixel,
     lie in one band, and a hair off the front one shows the one behind);
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
-    haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least
-    (where FLOOR_MIN of them are usable).
+    haze) against the picture's colour, away from the cells' edges and lines (by the pixel's
+    footprint on the floor, and under foveation by two of its texel's: the cell's edge filtered over
+    the texel, then between neighbouring texels), where the texel's footprint leaves the checker its
+    full contrast: AGREE of them at least (where FLOOR_MIN of them are usable).
    python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)
 Rendered with foveation (the json's fovea: each eye's g x, y, r0 and m, foveation.gd's warp), the
 floor and what is seen through the lens come from a texture whose texel at r pixels from g spans
@@ -412,8 +414,10 @@ for side_i, eye_name in enumerate(('left', 'right')):
     q = chart_xy(hl, hn)
     qq = q[:m]
     fw = np.maximum(np.abs(q[m:2 * m] - qq), np.abs(q[2 * m:] - qq))
+    ft = fw * texel[fy, fx][:, None]                         # its texel's
     frac = np.abs(qq - np.round(qq))                         # cell units to the nearest edge or line
-    good &= np.all(frac > np.maximum(4 * fw, 0.06), axis=1) & np.all(fw < 0.08, axis=1) & (way[:m] < 35)
+    good &= (np.all(frac > np.maximum(np.maximum(4 * fw, 2 * ft), 0.06), axis=1) & np.all(fw < 0.08, axis=1)
+             & np.all(ft < 0.2, axis=1) & (way[:m] < 35))
     parity = (np.floor(qq[:, 0]) + np.floor(qq[:, 1])).astype(int) % 2
     cols = look_floor(hl[:m], way[:m])
     pix = img[fy, fx].astype(float)
