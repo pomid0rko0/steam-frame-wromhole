@@ -11,12 +11,17 @@ Checks per eye:
     mismatches beyond MAX_EDGE px of the traced outline, and each body's image's centre within
     MAX_OFFSET px (images of at least MIN_IMAGE px and MIN_THICK: the slivers near the throat's
     photon sphere, a pixel or two thick, move by a pixel with the last digits of the eye's place,
-    and the outline's check takes them); rays still going at RAY_MAX are left out;
+    and the outline's check takes them); rays still going at RAY_MAX are left out, and so is a pixel
+    whose ray a quarter of a pixel off its centre is;
   every image: on a grid of every GRID-th pixel, a traced body where the picture shows none within
     MAX_EDGE px counts as a mismatch too (an image the picture lacks);
   a mismatch counts where the pixel is what the trace says at its centre all across (rays a quarter
     of a pixel off each way agree): where they don't, a body's edge crosses the pixel, and near the
     photon sphere images a pixel across or less come and go with a hair of the ray's direction;
+    a ball's pixel where the trace has a cube in front (or a cube's where a ball) is the front
+    body's pixel its image lacks, judged by that body's outline, when a ray a quarter of a pixel off
+    its centre meets this kind next with the other kind taken out (near the photon sphere both kinds' images, thinner than a pixel,
+    lie in one band, and a hair off the front one shows the one behind);
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
     haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least
     (where FLOOR_MIN of them are usable).
@@ -218,9 +223,10 @@ def height(l, n):
     return r_of(l) * n[..., 2] + lift
 
 
-def trace(l0, n0, D4, smax=RAY_MAX, bodies=True):
+def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
     """Rays from (l0, n0) along unit tangent vectors D4 [m, 4]: what each meets first: 1 a ball,
-    2 a cube, 3 the floor (with its l, n and the way), 0 the sky, -1 still going at smax."""
+    2 a cube, 3 the floor (with its l, n and the way), 0 the sky, -1 still going at smax. Only the
+    body kinds in bodies are there."""
     m = D4.shape[0]
     l = np.full(m, l0); n = np.tile(n0, (m, 1)); vl = D4[:, 0].copy(); v = D4[:, 1:].copy()
     kind = np.full(m, -1); hit_l = np.zeros(m); hit_n = np.zeros((m, 3)); way = np.zeros(m)
@@ -236,10 +242,11 @@ def trace(l0, n0, D4, smax=RAY_MAX, bodies=True):
         P1 = embed(st[0], st[1])
         best = np.full(len(idx), 2.0)
         what = np.zeros(len(idx), int)
-        if bodies:
+        if 1 in bodies:
             for C, rad in BALLS:
                 u = seg_ball(P0, P1, C, rad)
                 what = np.where(u < best, 1, what); best = np.minimum(best, u)
+        if 2 in bodies:
             for C, Ax, a in CUBES:
                 u = seg_box(P0, P1, C, Ax, a)
                 what = np.where(u < best, 2, what); best = np.minimum(best, u)
@@ -317,17 +324,18 @@ for side_i, eye_name in enumerate(('left', 'right')):
     reach = int(np.ceil(MAX_EDGE * texel.max())) + 1
     near_red = ndimage.binary_dilation(red, iterations=reach)
     near_green = ndimage.binary_dilation(green, iterations=reach)
-    def steady(xs, ys, kind, has):
+    def steady(xs, ys, kind, has, bodies=(1, 2)):
         """Whether pixels (xs, ys) are what the trace says at their centres all across: rays a quarter
         of a pixel from the centre each way meet the body kind (has) or don't (not has). Where they
         don't agree the body's edge crosses the pixel (near the photon sphere an image a pixel or
-        less across, where a ray a hair off goes elsewhere), and either verdict is the pixel's."""
+        less across, where a ray a hair off goes elsewhere), and either verdict is the pixel's; so
+        where one of them is still going at RAY_MAX (it may yet meet a body)."""
         ok = np.ones(len(xs), bool)
         if len(xs) == 0:
             return ok
         for dx, dy in ((-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)):
-            k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes))
-            ok &= (k == kind) == has
+            k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes), bodies=bodies)
+            ok &= ((k == kind) == has) & (k >= 0)
         return ok
     lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
     li = np.nonzero(lack)[0]
@@ -354,6 +362,12 @@ for side_i, eye_name in enumerate(('left', 'right')):
         far = mis & (dist > MAX_EDGE * texel)
         fy, fx = np.nonzero(far)
         far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), Rf[fy, fx])
+        # the picture's body where the other kind is in front: its pixel the other kind's image
+        # lacks, judged by that kind's outline; this kind's own only if no ray of the pixel meets it
+        # without the other kind there
+        other = (ref_green if code == 1 else ref_red)
+        fy, fx = np.nonzero(far & A & other)
+        far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), False, bodies=(code,))
         far_all |= far
         lab, nb = ndimage.label(ndimage.binary_dilation(Rf, iterations=2))
         worst = 0.0
@@ -392,7 +406,7 @@ for side_i, eye_name in enumerate(('left', 'right')):
     # neighbours a pixel right and down, for the footprint of a pixel on the floor
     dxr = pixel_rays(e, fx + 1.0, fy.astype(float)); dyr = pixel_rays(e, fx.astype(float), fy + 1.0)
     T = to_tangent(n0, np.vstack([d, dxr, dyr]), axes)
-    kind, hl, hn, way = trace(l0, n0, T, bodies=False)
+    kind, hl, hn, way = trace(l0, n0, T, bodies=())
     m = len(fx)
     good = (kind[:m] == 3) & (kind[m:2 * m] == 3) & (kind[2 * m:] == 3)
     q = chart_xy(hl, hn)
