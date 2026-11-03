@@ -1,0 +1,226 @@
+# On every push to a branch: the headset's builds and every test, each test on a machine of its
+# own (the OpenXR test then runs alone, as tools/test_openxr.sh needs), in the tests' environment
+# (image.yml: its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it).
+# The builds are the run's files at once, named as tools/export.sh names them, which
+# tools/deploy_frame.ps1 takes; they are deleted from the run unless the stereo test passes on the
+# same commit (the hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a
+# rerun of the stereo test alone does not bring them back ("Re-run all jobs" does).
+# On a version tag, or a release published on GitHub (its tag comes with it: one run takes both),
+# the same, then the release: notes generated from the merged PRs' titles if GitHub's form made
+# none, the build attached as wormhole_vr.arm64 and as the zip, once every job here has passed.
+name: CI
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  packages: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  image:
+    name: Образ окружения (amd64)
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      arch: amd64
+
+  image-arm64:
+    name: Образ окружения для Фрейма (arm64)
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      arch: arm64
+
+  build:
+    name: Сборка для шлема
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      zip: ${{ steps.build.outputs.zip }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - id: build
+        run: |
+          tools/export.sh "$GITHUB_REF_NAME"
+          echo "zip=$(basename godot/build/wormhole_vr_*_steam_frame.zip)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.build.outputs.zip }}
+          archive: false
+      - id: check
+        run: |
+          tools/export.sh --check "$GITHUB_REF_NAME"
+          echo "zip=$(basename godot/build/wormhole_vr_*_check_*_steam_frame.zip)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.check.outputs.zip }}
+          archive: false
+
+  stereo:
+    name: Стерео-тест
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: OUT="$PWD/stereo" tools/test_stereo.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stereo-images
+          path: stereo/
+
+  # the builds go unless the stereo test passed (above)
+  unsafe:
+    name: Удаление сборки, если стерео-тест не прошёл
+    needs: [build, stereo]
+    if: always() && needs.stereo.result != 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name | endswith("_steam_frame.zip")) | "\(.id) \(.name)"' |
+          while read -r id name; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            echo "deleted $name"
+          done
+
+  tests:
+    name: Тесты в Godot
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: OUT="$PWD/test-logs" tools/test.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs
+          path: test-logs/
+
+  openxr:
+    name: Приложение через OpenXR
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: tools/test_openxr.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openxr-logs
+          path: .wt/.out/
+          include-hidden-files: true
+
+  ref:
+    name: Точность шейдеров и гравитации
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 ref/test_gpu.py
+      - if: ${{ !cancelled() }}
+        run: python3 ref/test_gravity.py
+
+  # what the headset's shader compiler makes of the shaders, in the job's summary; it fails on a
+  # shader the compiler refuses
+  adreno:
+    name: Компилятор шлема
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: |
+          for a in "" --paths --fov; do
+            echo "### tools/adreno_stats.sh $a"
+            echo '```'
+            tools/adreno_stats.sh $a
+            echo '```'
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # on every push the build is unpacked as for a release; published only for a version
+  release:
+    name: Релиз (публикация — только для версии)
+    needs: [build, stereo, tests, openxr, ref, adreno]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.zip }}
+          path: dl
+          skip-decompress: true
+      - env:
+          ZIP: ${{ needs.build.outputs.zip }}
+        run: |
+          ls -la dl
+          unzip -o "dl/$ZIP" -d dl
+          [ -s dl/wormhole_vr.arm64 ]
+      - if: github.event_name == 'release' || github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          ZIP: ${{ needs.build.outputs.zip }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          gh release upload "$TAG" dl/wormhole_vr.arm64 "dl/$ZIP" --clobber

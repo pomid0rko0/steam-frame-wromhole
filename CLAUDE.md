@@ -12,20 +12,31 @@ keep and what was learnt about it: the comment at the top of its file.
   Flatpak `flatpak-spawn --host` is refused), or in a cloud session (an Ubuntu container, no
   headset), while the owner wears the headset. The tools find out where they run.
 - **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session attach
-  its zip to the chat. Say what to look at. **Never start the app, SteamVR, `vrcmd` or any window
-  yourself:** it takes the view the owner is in.
+  its zip to the chat. CI's run of a pushed commit has the same zips (README, «Проверки»): link the
+  run too. Say what to look at. **Never start the app, SteamVR, `vrcmd` or any window yourself:** it
+  takes the view the owner is in.
 - **The owner can't judge test images or numbers:** verifying is your job. What they check in the
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
-- **One wish per chat,** on a branch you name yourself, started from `main` or the branch
-  `docs/wishlist.md` gives for the wish; not the branch a cloud session makes for itself (`claude/…`,
-  `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
+- **One wish per chat,** on a branch you name yourself, started from `origin/main` after `git fetch`
+  (a cloud session's local `main` can be days old) or the branch `docs/wishlist.md` gives for the
+  wish; not the branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
   as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
   origin already has a branch by that name, add what this one does differently, or a number
   (`cleanup-2`), rather than a synonym.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are git tags
-  the owner sets on such a commit.
+  the owner sets on such a commit, and CI makes each one a release (README, «Проверки») whose notes
+  are the titles of the PRs merged since the last one.
+- **A PR's title is its line in those notes,** which the owner reads: in Russian, what changes for
+  the person in the headset (what they see or can do, what got faster), not how it is done; a PR
+  that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
+  does changes, the title changes with it. The description: what to check in the headset (a yes/no
+  they can see), what the tests and CI found, what is left.
+- **CI checks every push** (README, «Проверки»): both builds and every test, each on a machine of
+  its own, on exactly the commit pushed. Push what you deliver; that run is the check of record,
+  also of the tests you didn't run yourself. Watch it: in a cloud session subscribe to the PR, whose
+  activity brings CI's failures; on the Frame `gh run watch`. A red run is yours to fix.
 - **Docs say what is true now.** README, `docs/` and code comments describe the code as it is: no
   history (git and the PRs keep it), no versions, numbers only as measured on the current code, with
   the tool or test that gives them. A change that makes a statement or a number stale fixes or
@@ -48,9 +59,10 @@ keep and what was learnt about it: the comment at the top of its file.
 - **A rule in the way:** say so to the owner and propose a replacement; don't work around it
   silently, and don't change a rule without them.
 - **Long runs in the background, the build at once.** The owner checks builds without waiting for
-  the tests, the stereo test included: once the code for a build is in place, start
-  `tools/test_stereo.sh` in the background, export and deliver the build, say the tests still run.
-  Every run of minutes goes to the background; report and fix what it finds afterwards. A run reads
+  the tests, the stereo test included: once the code for a build is in place, commit and push it
+  (CI starts every test on it) or start `tools/test_stereo.sh` in the background, export and deliver
+  the build, say the tests still run. On the Frame let CI run them: `tools/box.sh` gives its tests
+  one core. Every run of minutes goes to the background; report and fix what it finds afterwards. A run reads
   the code from disk while it goes: run it from your task's worktree in `.wt/<branch>` (`tools/box.sh`
   says how), never from the tree you edit.
 - **Read the comment at the top of every file you change, and main.gd's:** the parts, the order of
@@ -59,8 +71,11 @@ keep and what was learnt about it: the comment at the top of its file.
 ## Hard rule: stereo before headset
 
 Broken stereo physically hurts in a headset. Every headset build gets `tools/test_stereo.sh` on
-exactly its source, and it must pass (exit 0). The owner may take the build before the run ends: the
-moment it fails, tell them at once not to put that build on, then fix it. Anything Godot draws next
+exactly its source, and it must pass (exit 0): here, or in CI's run of the commit the build names
+(`tools/export.sh` puts it in the name; a `+` after it means `godot/` differed from that commit, and
+CI's run is not on its source). The owner may take the build before the run ends: the moment it
+fails, tell them at once not to put that build on, then fix it. CI deletes the builds of a run whose
+stereo test failed, but not one already downloaded. Anything Godot draws next
 to ray-traced things must line up the same way, and the stereo test must check it.
 
 ## Commands
@@ -81,3 +96,8 @@ ref/test_gravity.py`.
 - **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,
   `gh auth setup-git`) and commits as `Claude <noreply@anthropic.com>`. In a cloud session branch
   pushes go through the session's proxy and tag pushes are refused.
+- **CI** (`.github/workflows/ci.yml`) runs all of the above but `test_box.sh`. Its runs and logs:
+  in a cloud session the GitHub MCP's `actions_list`, `actions_get` and `get_job_logs`; on the Frame
+  `gh run view --log-failed`. Its tests run in the image of `tools/Containerfile` (named by
+  `tools/box_image.sh`): a change to it or to `setup.sh` makes CI build a new one first, minutes
+  longer.

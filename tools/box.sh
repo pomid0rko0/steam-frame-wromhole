@@ -1,6 +1,9 @@
 #!/bin/bash
 # Runs a command where the tests run: on the Steam Frame (SteamOS: no apt, a read-only root, no
 # lavapipe, no Monado) in an Ubuntu container (podman), set up once with all of tools/setup.sh. It
+# is made from the image CI publishes of setup.sh (tools/box_image.sh), where setup.sh then finds
+# all done; without that image (setup.sh changed and not pushed yet, a private package, no network),
+# from plain Ubuntu, where setup.sh downloads and builds it all. It
 # sees only this repository, at the same path: no GPU, no display, no SteamVR, so a test can't reach
 # the headset the owner is wearing, and its renders run on the CPU cores Steam gives desktop apps
 # (they inherit the editor's affinity).
@@ -94,8 +97,10 @@ mkdir -p "$REPO/.wt"
 exec 9>"$REPO/.wt/.box.lock"
 flock 9
 if ! podman container exists $NAME; then
+	image=$("$ROOT/tools/box_image.sh")
+	podman pull -q "$image" >/dev/null 2>&1 || image=$IMAGE
 	podman run -d --name $NAME --init --cpus $CPUS --memory $MEM --memory-swap $MEM \
-		-v "$REPO:$REPO" -w "$REPO" $IMAGE sleep infinity >/dev/null 9>&-
+		-v "$REPO:$REPO" -w "$REPO" "$image" sleep infinity >/dev/null 9>&-
 fi
 podman update --cpus $CPUS --memory $MEM --memory-swap $MEM $NAME >/dev/null   # also when they change
 [ "$(podman inspect -f '{{.State.Running}}' $NAME)" = true ] || podman start $NAME >/dev/null 9>&-
