@@ -74,6 +74,9 @@ keep and what was learnt about it: the comment at the top of its file.
   what exists, up to writing the project anew. Nothing is kept for compatibility: carry along
   everything that depends on a change in the same branch and migrate what is stored. The checks
   still apply.
+- **A standard before your own:** what has an established convention, spec or tool (names,
+  formats, protocols, methods), find it and take it as it is; make your own only where none fits,
+  and say why.
 - **Make slow frames cheaper without giving anything up,** and without counting on anything
   staying as it is now.
 - **The maths isn't fixed either.** The wormhole's shape and metric, the equations of motion,
