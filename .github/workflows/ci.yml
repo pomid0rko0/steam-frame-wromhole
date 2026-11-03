@@ -1,9 +1,10 @@
 # On every push to a branch: the builds and every test, in the tests' environment (image.yml: its
 # amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it), shared out over
 # seven machines that end at about the same time: the builds, then the OpenXR test alone (as
-# tools/test_openxr.sh needs); the Godot tests and the headset's compiler; the shaders' accuracy;
-# each followed by its share of the stereo test, and four more machines of the stereo test alone
-# (tools/stereo_parts.txt: the shares, PART=n). A branch that
+# tools/test_openxr.sh needs), then a share of the stereo test; the Godot tests and the headset's
+# compiler, then a share; the shaders' accuracy, alone, as its time differs from machine to machine
+# (3.5 to 7 minutes); four more machines of the stereo test alone (tools/stereo_parts.txt: the
+# shares, PART=n). A branch that
 # differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
 # («Что изменилось», changes); main, a version, a tag and a release always get them all.
 # The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
@@ -177,7 +178,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [4, 5, 6, 7]
+        part: [3, 4, 5, 6]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     container:
@@ -198,11 +199,10 @@ jobs:
   # the builds go unless every share of the stereo test passed (above); with no builds made, nothing
   unsafe:
     name: Удаление сборок, если стерео-тест не прошёл
-    needs: [build, tests, ref, stereo]
+    needs: [build, tests, stereo]
     if: >-
       always() && needs.build.result != 'skipped' && (needs.stereo.result != 'success'
-      || needs.build.outputs.stereo != 'success' || needs.tests.outputs.stereo != 'success'
-      || needs.ref.outputs.stereo != 'success')
+      || needs.build.outputs.stereo != 'success' || needs.tests.outputs.stereo != 'success')
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -259,7 +259,7 @@ jobs:
           path: stereo/
 
   ref:
-    name: Точность шейдеров и гравитации, стерео-тест 3
+    name: Точность шейдеров и гравитации
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -268,22 +268,11 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    outputs:
-      stereo: ${{ steps.stereo.outcome }}
     steps:
       - uses: actions/checkout@v7
-      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: python3 ref/test_gpu.py
       - if: ${{ !cancelled() }}
         run: python3 ref/test_gravity.py
-      - id: stereo
-        if: ${{ !cancelled() }}
-        run: PART=3 OUT="$PWD/stereo" tools/test_stereo.sh
-      - if: ${{ !cancelled() && steps.stereo.outcome == 'failure' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: stereo-images-3
-          path: stereo/
 
   # the version the button asks for: its tag, from the newest one, at once (the release makes it)
   version:

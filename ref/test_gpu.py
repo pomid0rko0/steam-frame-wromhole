@@ -1190,9 +1190,10 @@ def main(checks=CHECKS):
     runs = [(i, piece) for _, piece in PIECES for i, name in enumerate(PROFILES)
             if piece in asked and (piece != 'eye' or name == 'the app')]
     width = max(1, len(os.sched_getaffinity(0)))
-    procs, waiting = {}, list(runs)
+    procs, waiting, took = {}, list(runs), {}
     def start():
         i, piece = waiting.pop(0)
+        took[i, piece] = time.monotonic()
         out = tempfile.TemporaryFile('w+')
         procs[i, piece] = (subprocess.Popen([sys.executable, __file__, '--piece', str(i), piece],
                                             stdout=out, stderr=subprocess.STDOUT, text=True), out)
@@ -1203,6 +1204,7 @@ def main(checks=CHECKS):
         for key, (proc, out) in list(procs.items()):
             if key not in done and proc.poll() is not None:
                 done[key] = proc
+                took[key] = time.monotonic() - took[key]
                 if waiting:
                     start()
         if len(done) < len(runs):
@@ -1222,6 +1224,8 @@ def main(checks=CHECKS):
                 fails += 1
             else:
                 fails += int(last[-1])
+    print(f'pieces on {width} cores, seconds each: ' + ', '.join(
+        f'{list(PROFILES)[i]} {piece} {took[i, piece]:.0f}' for i, piece in runs))
     print(f'FAILURES: {fails}')
     return fails
 
