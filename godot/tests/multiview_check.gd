@@ -1,30 +1,36 @@
 extends SceneTree
 ## The in-headset stereo check scene (check_scene.gd) through the simulated headset
-## (tests/fake_hmd.gd): mode "app" hides Godot's green overlay, "zones" is "app" with foveation's
-## coarse texels tinted (Foveation.show), "probe" with foveation's probe (each floor pixel blue,
-## red by how far from its place it took its colour: foveation.gd), "lens" is "app" with blue where the
-## floor's quad draws what comes through the curved zone (floor.gdshaderinc's lens_mark: the app's
-## images of the balls and the cube there have no green, tools/compare/check_scene.py leaves them
-## out), "floor" shows only its floor lines,
-## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
-## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
-## renderer's white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|zones|probe|lens|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+## (tests/fake_hmd.gd), one case of it in one run: the case walks its frames once (below), then
+## draws its pictures one after another, each SETTLE frames after its state is set, and saves each
+## eye's as <dir>/<prefix>_<mode>_left.png and _right.png. A picture is the same as the case's
+## run with that picture alone (the state it needs set from its fourth frame on) gives.
+##   godot --path . --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- dir case group...
+## group: prefix[+plain][+gravity|+arrows][+fov]:mode[,mode...], its pictures in that order; the
+## plain groups' last (the balls and the cube taken away are not put back).
+## Modes: "app" hides Godot's green overlay, "zones" is "app" with foveation's coarse texels tinted
+## (Foveation.show), "probe" with foveation's probe (each floor pixel blue, red by how far from its
+## place it took its colour: foveation.gd), "lens" is "app" with blue where the floor's quad draws
+## what comes through the curved zone (floor.gdshaderinc's lens_mark: the app's images of the balls
+## and the cube there have no green, tools/compare/check_scene.py leaves them out), "floor" shows
+## only its floor lines, "domain" fills the area where it may draw floor lines, "balls" shows only
+## its ball grids, "cube" only the cube's edges, "both" all of it. Comparing them shows whether
+## green lands exactly on the renderer's white lines, red balls and magenta cube.
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
 ## left while walking forward (Q, W; KEYS): the overlay must follow the world; 4: as 1, without
 ## gravity in flight, then flies up (Space) and forward (W), and in the air snaps right (E), pitches
 ## down (K) and rolls right (L) about the head, and hovers there (KEYS_4); 5: as 1, flying 1 m up
-## with the room's axes
-## pitched 20 degrees and rolled 15 (as a flight through the curved zone leaves them). Run with
-## --fixed-fps 60, so every mode walks and turns the same.
+## with the room's axes pitched 20 degrees and rolled 15 (as a flight through the curved zone leaves
+## them). Run with --fixed-fps 60, so every run walks and turns the same; nothing moves once it has.
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
 ## gravity, arrows: the gravity views "floor" and "floor and field lines" (Renderer.GRAVITY_VIEWS: the
 ## floor coloured by gravity, also the field lines with their arrows).
 ## fov: foveated rendering on (foveation.gd) at FOV_LEVELS[case], in case 1 with the eyes tracked
-## looking off the middle (FOV_GAZE); in mode "app" each eye's fovea goes into out_prefix_fovea.json
-## (Foveation.fovea: [g's pixel x, y, r0, m] per eye), for tools/compare/fovea.py.
+## looking off the middle (FOV_GAZE: tracked through the whole run if a group has fov; without
+## foveation nothing reads the gaze); with mode "app" each eye's fovea goes into
+## <dir>/<prefix>_fovea.json (Foveation.fovea: [g's pixel x, y, r0, m] per eye), for
+## tools/compare/fovea.py.
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
@@ -43,32 +49,46 @@ const FOV_LEVELS := [3, 5, 5, 1, 5, 5]
 const FOV_GAZE := Vector3(0.25, 0.15, -1.0)
 const KEYS_4 := [[5, KEY_SPACE, true], [5, KEY_W, true], [15, KEY_W, false], [16, KEY_E, true], [18, KEY_E, false],
 		[19, KEY_K, true], [21, KEY_K, false], [22, KEY_L, true], [24, KEY_L, false], [25, KEY_SPACE, false]]
+# frames drawn with a picture's state before it is saved (U.save_eyes takes the last one drawn)
+const SETTLE := 2
 
 var main: Main
 var hmd
 var frames := 0
-var mode: String
+var dir: String
 var case := 0
+var walked := 24                # the frame the case has walked its way by, and its pictures begin
+var shots: Array = []           # [prefix, mode, plain, gravity view, fov], the plain ones last
+var shot := -1                  # the one drawn now
+var due := 0                    # the frame it is saved at
 var plain := false
-var gravity := 0
-var fov := false
 
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
-	mode = args[1]
-	case = int(args[2])
-	plain = args.slice(3).has("plain")
-	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
-	fov = args.slice(3).has("fov")
+	dir = args[0]
+	case = int(args[1])
+	var later := []
+	for group in args.slice(2):
+		var g: PackedStringArray = group.split(":")
+		var v: PackedStringArray = g[0].split("+")
+		for mode in g[1].split(","):
+			if not SHOWN.has(mode):
+				printerr("multiview_check.gd: no mode ", mode)
+				quit(2)
+				return
+			var s := [v[0], mode, v.has("plain"), 1 if v.has("gravity") else (2 if v.has("arrows") else 0), v.has("fov")]
+			(later if s[2] else shots).append(s)
+	shots.append_array(later)
 	hmd = U.headset(mini(case, 1), -25.0)
-	if fov and case == 1:
+	if case == 1 and shots.any(func(s: Array) -> bool: return s[4]):
 		hmd.gaze = FOV_GAZE.normalized()
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = true
 	if case == 3 or case == 4:
 		main.smooth_turn = false
+		walked = 34
 	root.add_child(main)
 
 
@@ -86,39 +106,47 @@ func _process(_delta: float) -> bool:
 			main._update_chart_map()
 	if frames == 4:
 		main.menu.visible = false        # it follows the head: in every view
-		if plain:
-			main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
-		if mode == "zones":
-			main.foveation.show = true
-		if mode == "probe":
-			main.foveation.probe = true
-			main.renderer.floor_sample_mat.set_shader_parameter("fov_probe", true)
-		if mode == "lens":
-			for m in main.renderer.floor_mats:
-				m.set_shader_parameter("lens_mark", true)
-		if gravity > 0:
-			main.set_gravity_view(gravity)
-		CheckScene.show_only(main.overlay, SHOWN[mode])
-		if mode == "domain":
-			main.overlay.get_node("Grid").material_override.set_shader_parameter("solid", true)
-	if frames == 6 and fov:
-		# after main's first frames, which set foveation off and on and then the menu's
-		main.foveation.set_level(FOV_LEVELS[case])
-		print("foveation ", main.foveation.level)
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = HEAD_STEP * hmd.head
 	if case == 3 or case == 4:
 		for k in KEYS if case == 3 else KEYS_4:
 			if k[0] == frames:
 				U.key(k[1], k[2])
-	if frames == (34 if case == 3 or case == 4 else 24):
-		if case >= 4:
-			print("flying %s, the feet %.3f m over the floor" % [not main.viewer.standing, main.viewer.height()])
-		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
-		if fov and mode == "app":
-			var f := FileAccess.open(OS.get_cmdline_user_args()[0] + "_fovea.json", FileAccess.WRITE)
+	if frames == walked and case >= 4:
+		print("flying %s, the feet %.3f m over the floor" % [not main.viewer.standing, main.viewer.height()])
+	if frames == due:
+		var s: Array = shots[shot]
+		U.save_eyes(main, dir.path_join(s[0]), s[1])
+		if s[4] and s[1] == "app":
+			var f := FileAccess.open(dir.path_join(s[0]) + "_fovea.json", FileAccess.WRITE)
 			f.store_string(JSON.stringify(Array(main.foveation.fovea)))
-		print("saved ", mode)
-		U.finish(self, hmd)
-		return true
+		print("saved ", s[0], " ", s[1])
+		if shot == shots.size() - 1:
+			U.finish(self, hmd)
+			return true
+	if frames == walked or frames == due:
+		shot += 1
+		_show(shots[shot])
+		due = frames + SETTLE
 	return false
+
+
+## What picture s draws: each setting a picture can differ in, set to its.
+func _show(s: Array) -> void:
+	var mode: String = s[1]
+	if s[2] and not plain:
+		main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
+		plain = true
+	if s[3] != main.renderer.gravity_view:
+		main.set_gravity_view(s[3])
+	var level: int = FOV_LEVELS[case] if s[4] else 0
+	if level != main.foveation.level:
+		main.foveation.set_level(level)
+		print("foveation ", main.foveation.level)
+	main.foveation.show = mode == "zones"
+	main.foveation.probe = mode == "probe"
+	main.renderer.floor_sample_mat.set_shader_parameter("fov_probe", mode == "probe")
+	for m in main.renderer.floor_mats:
+		m.set_shader_parameter("lens_mark", mode == "lens")
+	CheckScene.show_only(main.overlay, SHOWN[mode])
+	main.overlay.get_node("Grid").material_override.set_shader_parameter("solid", mode == "domain")

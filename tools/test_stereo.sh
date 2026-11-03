@@ -87,49 +87,33 @@ for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=crv$p render -s res://tests/c
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do want crf$p && TRACE=crf$p render -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 if want desktop; then
-	for m in app mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
-	for m in app mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
+	render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"
+	render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph"
 fi
 # balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES), and the hands' beams, drawn
-# by the app against Godot's own where light goes straight (lens: the rest, left out)
+# by the app against Godot's own where light goes straight (lens: the rest, left out); a case a run
 for c in 0 1; do
 	want headset || break
-	for m in app mesh lens; do
-		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c balls
-		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/cub$c" $m $c cubes
-		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/bea$c" $m $c beams
-	done
+	render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT" $c balls:hmd$c cubes:cub$c beams:bea$c
 done
-# the stereo check scene, also flying (cases 4 and 5)
+# the stereo check scene (multiview_check.gd, a case a run), also flying (cases 4 and 5): chk with the
+# balls and the cube, pln the same floor lines without them; with foveated rendering on (foveation.gd:
+# the floor coarser away from where the eyes look, the bodies as ever) fov and fpl, each case at its
+# level, in case 1 with the eyes tracked looking off the middle (multiview_check.gd's FOV_LEVELS,
+# FOV_GAZE), case 1 also with the coarse texels tinted, to look at
 for c in 0 1 2 3 4 5; do
 	want check$c || continue
-	for m in app lens floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
+	g="chk$c:app,lens,floor,domain,balls,cube,both pln$c+plain:app,floor,domain"
+	[ $c -ge 4 ] || g="$g fov$c+fov:app,floor,domain,balls,cube,both$([ $c = 1 ] && echo ,zones) fpl$c+plain+fov:app,floor,domain,probe"
+	render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT" $c $g
 done
-# the same floor lines without the balls and the cube
-for c in 0 1 2 3 4 5; do
-	want check$c || continue
-	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
-done
-# the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
-# with the balls and the cube, and without them (plain)
-for v in gravity arrows; do
-	for c in 0 1 2 3; do
-		want gravity$c || continue
-		for m in app lens floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
-		for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
-	done
-done
-# foveated rendering on (foveation.gd: the floor coarser away from where the eyes look, the bodies
-# as ever), each case at its level, in case 1 with the eyes tracked looking off the middle
-# (multiview_check.gd's FOV_LEVELS, FOV_GAZE); case 1 also with the coarse texels tinted, to look at
+# the gravity view (main.set_gravity_view): the floor coloured by gravity (gra), then also the arrows
+# (arr); with the balls and the cube, and without them (grp, arp)
 for c in 0 1 2 3; do
-	want check$c || continue
-	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
-done
-want check1 && render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov1" zones 1 fov
-for c in 0 1 2 3; do
-	want check$c || continue
-	for m in app floor domain probe; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
+	want gravity$c || continue
+	render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT" $c \
+		gra$c+gravity:app,lens,floor,domain,balls,cube arr$c+arrows:app,lens,floor,domain,balls,cube \
+		grp$c+gravity+plain:app,floor,domain arp$c+arrows+plain:app,floor,domain
 done
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
