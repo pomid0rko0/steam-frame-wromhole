@@ -142,6 +142,35 @@ vec2 zone_cube_corner(int e, vec2 p, vec3 en, vec3 t, vec4 C, vec4 E1, vec4 E2, 
 	return p;
 }
 
+// Where a cube's edge e (zone_edge_cut's numbering) meets the hyperplane x . m = 0 of R^4's xyz on
+// the half-surface's side (t), as (l, alpha): the edge's points taken onto the space (geo_onto), the
+// crossing bracketed by its ends and halved; an end on the hyperplane (to its float32: a column on
+// that corner's azimuth) is the crossing itself. Found false where its ends are on one side.
+vec2 zone_cube_corner_halving(int e, vec3 en, vec3 t, vec3 m, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out bool found) {
+	int a = e / 4;
+	int b = (a + 1) % 3, g = (a + 2) % 3;
+	vec4 Ea = a == 0 ? E1 : (a == 1 ? E2 : E3);
+	vec4 Eb = b == 0 ? E1 : (b == 1 ? E2 : E3), Eg = g == 0 ? E1 : (g == 1 ? E2 : E3);
+	vec4 O = C + ((e & 1) == 0 ? -size : size) * Eb + ((e & 2) == 0 ? -size : size) * Eg;
+	float lo = -size, hi = size;
+	float glo = dot(geo_onto(O + lo * Ea, N).xyz, m), ghi = dot(geo_onto(O + hi * Ea, N).xyz, m);
+	float at = 2.0;                    // the crossing's place along the edge in half sizes, if at an end
+	if (min(abs(glo), abs(ghi)) <= 1e-5) at = abs(glo) <= abs(ghi) ? -1.0 : 1.0;
+	found = glo * ghi <= 0.0 || at < 2.0;
+	if (!found) return vec2(0.0);
+	for (int i = 0; i < 16; i++) {
+		if (at < 2.0) break;
+		float mid = 0.5 * (lo + hi);
+		float gm = dot(geo_onto(O + mid * Ea, N).xyz, m);
+		if ((gm <= 0.0) == (glo <= 0.0)) { lo = mid; glo = gm; } else { hi = mid; }
+	}
+	vec4 P = geo_onto(O + (at < 2.0 ? at * size : 0.5 * (lo + hi)) * Ea, N);
+	vec3 nn;
+	vec2 pc = vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
+	found = dot(P.xyz, t) >= -1e-6 * size && geo_finite(pc.x + pc.y);
+	return pc;
+}
+
 // The point of row v (in [0, 1], rows of them) of a cube's section by the half-surface toward t (the
 // hyperplane through the axis with normal m), as (l, alpha), so that a row falls on each corner of
 // the section, where its outline turns, and the same corner on the same row all through the
@@ -168,9 +197,11 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 	vec4 summ = vec4(0.0);
 	for (int e = 0; e < 12; e++) {
 		// cut where the span's middle is between its ends' azimuths, as the spans are: on the arc
-		// the edge goes round the axis by from one end to the other. Which way: to first order its
-		// ends' cross product's along the axis; where the edge passes nearer the axis than the space's
-		// curve moves it (2 size^2 / R), by the azimuth of its middle on the space.
+		// the edge goes round the axis by from one end to the other. Which way: the short way between
+		// its ends' azimuths on the space (an edge that keeps further from the axis than the space's
+		// curve moves it, 2 size^2 / R, goes round it by less than half a turn; to first order an edge
+		// next to a half-surface's plane can come out going the other way round); where it passes
+		// nearer, by the azimuth of its middle on the space.
 		int a = e / 4;
 		int v1 = ((e & 1) << ((a + 1) % 3)) | (((e >> 1) & 1) << ((a + 2) % 3)), v2 = v1 | (1 << a);
 		vec4 Ea = a == 0 ? E1 : (a == 1 ? E2 : E3);
@@ -186,7 +217,7 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 		dm -= 2.0 * GEO_PI * floor(dm / (2.0 * GEO_PI));
 		bool up;
 		if (near > 2.0 * size * size / g_prof.y + 0.01) {
-			up = dot(cross(p1, p2), en) >= 0.0;
+			up = da <= GEO_PI;
 		} else {
 			vec4 Pm = geo_onto(xm4, N);
 			float dmid = geo_atan2(dot(Pm.xyz, a2), dot(Pm.xyz, a1)) - az1;
@@ -201,7 +232,7 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 	float rr = floor(clamp(v, 0.0, 1.0) * rows + 0.5);
 	vec3 nn;
 	if (n == 0 && !round_axis) {
-		// no corner (a section at the end of the cube's span, to rounding): the cube's point nearest
+		// no corner (a section next to the end of the cube's span, to rounding): the cube's point nearest
 		// the hyperplane's nearest to C
 		vec3 x = clamp(mu * (c / max(dot(mu, mu), 1e-12)), vec3(-size), vec3(size));
 		vec4 P = geo_onto(C + x.x * E1 + x.y * E2 + x.z * E3, N);
@@ -269,6 +300,9 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 			vec2 p = vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
 			bool ok;
 			vec2 pc = zone_cube_corner(e, p, en, t, C, E1, E2, E3, size, ok);
+			// Newton astray (an edge next to the half-surface's plane, whose crossing slides along
+			// it, or across the axis's hair): by halving the edge, else the first-order place
+			if (!ok) pc = zone_cube_corner_halving(e, en, t, m, C, E1, E2, E3, N, size, ok);
 			pe[s] = ok ? pc : p;
 			int a = e / 4;
 			fa[s] = ivec2((a + 1) % 3, (e & 1) == 0 ? -1 : 1);
@@ -326,31 +360,6 @@ vec2 zone_cube_section_steps(float v, float rows, bool round_axis, vec2 ax, floa
 		goal = sv[f2] < 0.0 ? -size : size;
 	}
 	return p;
-}
-
-// Where a cube's edge e (zone_edge_cut's numbering) meets the hyperplane x . m = 0 of R^4's xyz on
-// the half-surface's side (t), as (l, alpha): the edge's points taken onto the space (geo_onto), the
-// crossing bracketed by its ends and halved; found false where its ends are on one side.
-vec2 zone_cube_corner_halving(int e, vec3 en, vec3 t, vec3 m, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size, out bool found) {
-	int a = e / 4;
-	int b = (a + 1) % 3, g = (a + 2) % 3;
-	vec4 Ea = a == 0 ? E1 : (a == 1 ? E2 : E3);
-	vec4 Eb = b == 0 ? E1 : (b == 1 ? E2 : E3), Eg = g == 0 ? E1 : (g == 1 ? E2 : E3);
-	vec4 O = C + ((e & 1) == 0 ? -size : size) * Eb + ((e & 2) == 0 ? -size : size) * Eg;
-	float lo = -size, hi = size;
-	float glo = dot(geo_onto(O + lo * Ea, N).xyz, m), ghi = dot(geo_onto(O + hi * Ea, N).xyz, m);
-	found = glo * ghi <= 0.0;
-	if (!found) return vec2(0.0);
-	for (int i = 0; i < 16; i++) {
-		float mid = 0.5 * (lo + hi);
-		float gm = dot(geo_onto(O + mid * Ea, N).xyz, m);
-		if ((gm <= 0.0) == (glo <= 0.0)) { lo = mid; glo = gm; } else { hi = mid; }
-	}
-	vec4 P = geo_onto(O + 0.5 * (lo + hi) * Ea, N);
-	vec3 nn;
-	vec2 pc = vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
-	found = dot(P.xyz, t) >= -1e-6 * size && geo_finite(pc.x + pc.y);
-	return pc;
 }
 
 // How deep the point (l, alpha) of the half-surface toward t is in a cube: its largest slab less
@@ -412,7 +421,7 @@ vec2 zone_cube_section(float v, float rows, bool round_axis, vec2 ax, float dsg,
 		float gm = zone_cube_depth(pm, en, t, C, E1, E2, E3, size);
 		if (gm < gi) { inner = pm; gi = gm; }
 	}
-	// none inside (a section of next to no width, at the end of the cube's azimuths): the steps'
+	// none inside (a section of next to no width, next to the end of the cube's azimuths): the steps'
 	// point, unless it is further off than such a section's own first-order error
 	if (gi >= 0.0 && off < 0.02 * size) return p;
 	// toward the steps' point if it is near the surface, else toward the row's first-order place
@@ -623,6 +632,22 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 	vec2 az = zone_cube_azimuth(uv.x, columns, round_axis, th0, za, zb);
 	vec2 sct = geo_sincos(az.x), scm = geo_sincos(az.y);
 	t = sct.y * a1 + sct.x * a2;
+	// off the axis the first and last columns are on the azimuths of the corners furthest round
+	// either way, where the outline turns at that corner: the section there is the corner itself
+	// (the steps can't find a section of no width: they left points there a tenth of a metre off)
+	float col = floor(clamp(uv.x, 0.0, 1.0) * columns + 0.5);
+	if (!round_axis && (col == 0.0 || col == columns)) {
+		int ic = 0;
+		float ext = col == 0.0 ? 1e9 : -1e9;
+		for (int i = 0; i < 8; i++) {
+			float a = (i < 4 ? za[i] : zb[i - 4]) - th0;
+			a -= 2.0 * GEO_PI * floor(a / (2.0 * GEO_PI) + 0.5);       // as zone_cube_azimuth's
+			if (col == 0.0 ? a < ext : a > ext) { ext = a; ic = i; }
+		}
+		vec4 P = geo_onto(C + size * (((ic & 1) == 0 ? -1.0 : 1.0) * E1 + ((ic & 2) == 0 ? -1.0 : 1.0) * E2
+				+ ((ic & 4) == 0 ? -1.0 : 1.0) * E3), N);
+		return vec2(geo_l_of(P, nn), zone_alpha(P.xyz, t, en));
+	}
 	return zone_cube_section(uv.y, rows, round_axis, ax, dsg, en, a1, a2, t, sct.y * a2 - sct.x * a1,
 			scm.y * a1 + scm.x * a2, scm.y * a2 - scm.x * a1, az.y, za, zb, C, E1, E2, E3, N, size, none);
 }

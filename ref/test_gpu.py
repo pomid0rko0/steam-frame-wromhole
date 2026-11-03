@@ -39,7 +39,9 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   the zone bodies' meshes whole (zone_vertex, MESHES), for eyes' axes through and beside the
     bodies: every vertex on its body; a ball's first and last columns' sections at its tips; every
     corner of a cube's sections (float64: where the half-surface meets an edge) a vertex of its
-    column, and on the same row in the next column (the strips join a corner to itself); a cube an
+    column, or the corner of a half-surface turned round the axis by no more than CORNER_AZ (an
+    edge next to the half-surface's plane: turned_corner), and on the same row in the next column
+    (the strips join a corner to itself); a cube an
     edge of which the space's curve takes back round the axis (folds) only near its surface (TEAR):
     its sections cut that edge twice, which one corner an edge can't be; and as near their
     surface, cubes the axis passes through or next to a corner, an edge or a face (within a
@@ -850,7 +852,7 @@ def zone_checks(name, S, gpu, rng):
 
 
 MESHES = ((64, 48), (64, 12))   # the zone bodies' meshes: Renderer's ZONE_AZIMUTHS, ZONE_ROUND, ZONE_ROUND_COARSE
-NEAR_END = 5e-4                 # metres: a cube's section corner a vertex within this, next to its edge's end
+CORNER_AZ = 1e-4                # radians (a tenth of a pixel): a cube's section corner a vertex of a half-surface turned so far
 TEAR = 0.05                     # a share of a cube's half size: no vertex further off its surface
 
 
@@ -902,7 +904,7 @@ def zone_mesh_checks(name, S, gpu, rng):
                     for C, E, size, en, t, m, axis in bodies for i in range(cols + 1) for j in range(rws + 1)]
             o = gpu.run(9, rows, in_per=7, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
             worst, alpha_out, tip, corners, missed, moved, strips, folded = 0.0, 0, 0.0, 0, [], 0, 0, 0
-            torn, tear = [], 0.0
+            torn, tear, turns = [], 0.0, []
             for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
                 L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
                 n = np.cos(A)[..., None] * en + np.sin(A)[..., None] * T
@@ -943,14 +945,16 @@ def zone_mesh_checks(name, S, gpu, rng):
                             corners += 1
                             Pc = zone_point(S, c[0], c[1], en, t)
                             d = np.linalg.norm(P[i] - Pc, axis=-1)
-                            # within a millimetre of its edge's end (a column on a corner's azimuth,
-                            # the shader's own in float32), where the edge meets the half-surface is
-                            # ill-posed: a ten-thousandth of a degree moves it by a tenth of a millimetre
-                            end = size - abs((Pc - C) @ E[e // 4])
-                            tol = max(NEAR_END, end + CHORD) if end < 1e-3 else CHORD
-                            if d.min() > tol:
-                                missed.append((k, i, e, d.min()))
-                            rows_of[i][e] = set(np.nonzero(d <= tol)[0].tolist())
+                            if d.min() > CHORD:
+                                # not a vertex itself: the edge's point a vertex is for a turn round
+                                # the axis within CORNER_AZ
+                                turned = turned_corner(S, C, E, size, en, t, e, c, P[i])
+                                if turned is None:
+                                    missed.append((k, i, e, d.min()))
+                                else:
+                                    d = np.linalg.norm(P[i] - turned[1], axis=-1)
+                                    turns.append(abs(turned[0]))
+                            rows_of[i][e] = set(np.nonzero(d <= CHORD)[0].tolist())
                 for i in range(cols):
                     if angle(T[i, 0], T[i + 1, 0]) > 1e-5:
                         strips += 1
@@ -962,7 +966,8 @@ def zone_mesh_checks(name, S, gpu, rng):
             fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} (zone_vertex)', ok,
                                f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
                                + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
-                                  f'; {len(missed)} of {corners} section corners not a vertex, {moved} on another row in the next column ({strips} strips); '
+                                  f'; {len(missed)} of {corners} section corners not a vertex ({len(turns)} a vertex for a half-surface turned round the axis by up to {max(turns, default=0.0):.0e} rad), '
+                                  f'{moved} on another row in the next column ({strips} strips); '
                                   f'{folded} with an edge taken back round the axis and {near} with the axis next to a corner, an edge or a face: '
                                   f'off their surface by {tear:.1e} of the half size at most, {len(torn)} beyond {TEAR}')
                                + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis)')
@@ -973,6 +978,47 @@ def zone_mesh_checks(name, S, gpu, rng):
                 C, E, size, en = bodies[k][:4]
                 print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: column {i}, edge {e}: the nearest vertex {d:.2e} m from its corner')
     return fails
+
+
+def turned_corner(S, C, E, size, en, t, e, c, V):
+    """A corner c (l, alpha) of the half-surface toward t on the cube's edge e that none of its
+    column's vertices V is at: the point of that edge whose azimuth round the axis en is within
+    CORNER_AZ of the half-surface's, turned round the axis into it, nearest V, as (the turn, the
+    point); None if it is further from them than CHORD. Next to the half-surface's plane an edge
+    goes round the axis by next to nothing, and where it crosses the half-surface slides along it
+    with the azimuth's last digits. The axis is the eye's, and the space is symmetric round it: the
+    picture of such a vertex is the edge's point's turned by as much, a tenth of a pixel at most."""
+    E = np.asarray(E)
+    a, b, g = e // 4, (e // 4 + 1) % 3, (e // 4 + 2) % 3
+    O = C + (size if e & 1 else -size) * E[b] + (size if e & 2 else -size) * E[g]
+    N = normal4(S, C)
+    m = np.cross(en, t)
+
+    def put(u):
+        Q = onto(S, O + u * size * E[a], N)
+        x = Q[:3]
+        along = x @ en
+        across = x - along * en
+        return np.arctan2(across @ m, across @ t), zone_point(S, l_of(S, Q), np.arctan2(np.linalg.norm(across), along), en, t)
+
+    uc = float((zone_point(S, c[0], c[1], en, t) - C) @ E[a]) / size
+    h = 1e-6
+    rate = abs(put(min(uc + h, 1.0))[0] - put(max(uc - h, -1.0))[0]) / (min(uc + h, 1.0) - max(uc - h, -1.0))
+    reach = CORNER_AZ / max(rate, 1e-12)
+
+    def far(u):
+        turn, X = put(u)
+        return np.linalg.norm(V - X, axis=-1).min() if abs(turn) <= CORNER_AZ else np.inf
+    us = np.linspace(max(uc - reach, -1.0), min(uc + reach, 1.0), 201)
+    fs = np.array([far(u) for u in us])
+    k = int(np.argmin(fs))
+    if not np.isfinite(fs[k]):
+        return None
+    r = optimize.minimize_scalar(far, bounds=(us[max(k - 1, 0)], us[min(k + 1, len(us) - 1)]), method='bounded',
+                                 options={'xatol': 1e-12})
+    u = r.x if r.fun < fs[k] else us[k]
+    turn, X = put(u)
+    return (turn, X) if far(u) <= CHORD else None
 
 
 def normal4(S, C):
