@@ -1,0 +1,44 @@
+# The tests' environment as an image in the repository's Packages (tools/Containerfile), for one
+# machine; CI calls it for each. The name, tag and all, is tools/box_image.sh's: an image of that
+# name already there is taken as it is, so it is built only on the first push after a change to
+# the Containerfile or setup.sh (on a machine of its kind: Godot, Turnip and the Python packages are
+# each machine's own).
+name: image
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: amd64 or arm64
+        required: true
+        type: string
+    outputs:
+      image:
+        description: the image's name
+        value: ${{ jobs.image.outputs.image }}
+jobs:
+  image:
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: name
+        run: echo "image=$(tools/box_image.sh ${{ inputs.arch }})" >> "$GITHUB_OUTPUT"
+      - name: Build and push, unless there
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo "$IMAGE: there"; exit 0; fi
+          ctx=$(mktemp -d)
+          cp tools/setup.sh "$ctx/"
+          docker build -f tools/Containerfile -t "$IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.description=The tests' environment: Ubuntu with all of tools/setup.sh" \
+            "$ctx"
+          docker push "$IMAGE"

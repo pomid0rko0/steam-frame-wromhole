@@ -1,0 +1,310 @@
+# On every push to a branch: the builds and every test, each test on a machine of its own (the
+# OpenXR test then runs alone, as tools/test_openxr.sh needs), in the tests' environment (image.yml:
+# its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it).
+# The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
+# are the run's files at once, named as export.sh names them (tools/deploy_frame.ps1 takes the
+# headset's); they are deleted from the run unless the stereo test passes on the same commit (the
+# hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a rerun of the stereo
+# test alone does not bring them back ("Re-run all jobs" does).
+# A version: the owner's button (Actions > CI > Run workflow on main, "исправление" or "новое": the
+# newest version tag's last or middle number up by one), or a version tag, or a release published
+# with GitHub's form (its tag comes with it: one run takes both). The same, then, once every job
+# here has passed, the release: notes generated from the titles of the PRs merged since the last
+# version (unless the form has some), the headset's build as wormhole_vr.arm64 and as its zip, and
+# the PC's zips.
+name: CI
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Выпустить версию (только на main): исправление — последняя цифра +1, новое — средняя +1'
+        type: choice
+        options: [нет, исправление, новое]
+        default: нет
+# a newer push stops the older run (a version's run, only another version's)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version == 'исправление' || inputs.version == 'новое' }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  packages: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  image:
+    name: Образ окружения (amd64)
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      arch: amd64
+
+  image-arm64:
+    name: Образ окружения для Фрейма (arm64)
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      arch: arm64
+
+  build:
+    name: Сборки для шлема и ПК
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      frame: ${{ steps.export.outputs.frame }}
+      windows: ${{ steps.export.outputs.windows }}
+      linux: ${{ steps.export.outputs.linux }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # each build (export.sh's flags), its zip (the newest) as the step's output of that name
+      - id: export
+        run: |
+          for b in frame "frame_check --check" "windows --pc-windows" "windows_check --check --pc-windows" \
+              "linux --pc-linux" "linux_check --check --pc-linux"; do
+            set -- $b
+            tools/export.sh "${@:2}" "$GITHUB_REF_NAME"
+            echo "$1=$(basename "$(ls -t godot/build/*.zip | head -1)")" >> "$GITHUB_OUTPUT"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.frame }}
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.frame_check }}
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.windows }}
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.windows_check }}
+          archive: false
+      # the tests run the project's files: what the export leaves out only an exported build shows.
+      # The PC's Linux ones, this machine's, on the desktop (software Vulkan): each starts, prints
+      # its commit (main.gd) and runs 300 frames without a script or shader error
+      - name: The PC's Linux builds run
+        run: |
+          for z in "${{ steps.export.outputs.linux }}" "${{ steps.export.outputs.linux_check }}"; do
+            d=$(mktemp -d)
+            unzip -q "godot/build/$z" -d "$d"
+            echo "$z:"
+            XDG_DATA_HOME=$d timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" \
+              "$d/wormhole_vr.x86_64" --xr-mode off --quit-after 300 > "$d/log" 2>&1 || { tail -20 "$d/log"; exit 1; }
+            grep "^build: " "$d/log"
+            if grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$d/log"; then exit 1; fi
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.linux }}
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.linux_check }}
+          archive: false
+
+  stereo:
+    name: Стерео-тест
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: OUT="$PWD/stereo" tools/test_stereo.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stereo-images
+          path: stereo/
+
+  # the builds go unless the stereo test passed (above)
+  unsafe:
+    name: Удаление сборок, если стерео-тест не прошёл
+    needs: [build, stereo]
+    if: always() && needs.stereo.result != 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("wormhole_vr_")) | "\(.id) \(.name)"' |
+          while read -r id name; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            echo "deleted $name"
+          done
+
+  tests:
+    name: Тесты в Godot
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: OUT="$PWD/test-logs" tools/test.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs
+          path: test-logs/
+
+  openxr:
+    name: Приложение через OpenXR
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: tools/test_openxr.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openxr-logs
+          path: .wt/.out/
+          include-hidden-files: true
+
+  ref:
+    name: Точность шейдеров и гравитации
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 ref/test_gpu.py
+      - if: ${{ !cancelled() }}
+        run: python3 ref/test_gravity.py
+
+  # what the headset's shader compiler makes of the shaders, in the job's summary; it fails on a
+  # shader the compiler refuses
+  adreno:
+    name: Компилятор шлема
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: |
+          for a in "" --paths --fov; do
+            echo "### tools/adreno_stats.sh $a"
+            echo '```'
+            tools/adreno_stats.sh $a
+            echo '```'
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # the version the button asks for: its tag, from the newest one, at once (the release makes it)
+  version:
+    name: Номер версии
+    if: github.event_name == 'workflow_dispatch' && inputs.version != 'нет'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KIND: ${{ inputs.version }}
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "a version comes only from main, not $GITHUB_REF_NAME"; exit 1; }
+          tags=$(gh api --paginate "repos/$GH_REPO/git/matching-refs/tags/v" \
+            --jq '.[] | "\(.ref | ltrimstr("refs/tags/")) \(.object.sha)"')
+          if grep " $GITHUB_SHA$" <<<"$tags"; then echo "main's commit has a version already"; exit 1; fi
+          last=$(cut -d' ' -f1 <<<"$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          IFS=. read -r major minor patch <<<"${last:-v0.0.0}"
+          major=${major#v}
+          case $KIND in
+            исправление) tag=v$major.$minor.$((patch + 1)) ;;
+            новое) tag=v$major.$((minor + 1)).0 ;;
+          esac
+          echo "${last:-none} → $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # on every push the builds are gathered as for a release; published only for a version
+  release:
+    name: Релиз (публикация — только для версии)
+    needs: [build, stereo, tests, openxr, ref, adreno, version]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wormhole_vr_*
+          path: dl
+          skip-decompress: true
+      - env:
+          FRAME: ${{ needs.build.outputs.frame }}
+          WINDOWS: ${{ needs.build.outputs.windows }}
+          LINUX: ${{ needs.build.outputs.linux }}
+        run: |
+          mkdir out
+          for z in "$FRAME" "$WINDOWS" "$LINUX"; do
+            f=$(find dl -type f -name "$z" | head -1)
+            [ -n "$f" ] || { echo "no $z among:"; find dl; exit 1; }
+            cp "$f" out/
+          done
+          unzip -o "out/$FRAME" wormhole_vr.arm64 -d out
+          ls -la out
+      - if: needs.version.outputs.tag != '' || github.event_name == 'release' || github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEW: ${{ needs.version.outputs.tag }}
+        run: |
+          if [ -n "$NEW" ]; then
+            gh release create "$NEW" --target "$GITHUB_SHA" --generate-notes --title "$NEW" out/*
+          else
+            tag=$GITHUB_REF_NAME
+            gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --verify-tag --generate-notes --title "$tag"
+            gh release upload "$tag" out/* --clobber
+          fi

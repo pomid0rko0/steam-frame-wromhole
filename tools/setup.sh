@@ -4,9 +4,11 @@
 # Software Vulkan (lavapipe) and xvfb are needed to render without a GPU or a display, EGL for
 # ref/'s GPU checks, Monado to run the app through a real OpenXR runtime without a headset.
 # The steps (steps= below) don't depend on each other and run at once; each line of output starts
-# with its step's name. Then, last (adreno), the Steam Frame's Vulkan driver (Mesa's Turnip for
-# Adreno 750) is built from source with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the
-# headset's shader compiler makes of the renderer's shaders).
+# with its step's name. Then, after apt (after= below: they need its compilers and headers), pip,
+# which builds from source what has no wheel for this machine (moderngl and glcontext on arm64),
+# and last adreno: the Steam Frame's Vulkan driver (Mesa's Turnip for Adreno 750) built from source
+# with Mesa's "noop" drm-shim, for tools/adreno_stats.sh (what the headset's shader compiler makes
+# of the renderer's shaders).
 # No package has the drm-shim (built once).
 # On the Steam Frame all of it goes into tools/box.sh's container, where the tools run
 # (tools/env.sh).
@@ -48,24 +50,35 @@ get_godot() {
 }
 
 get_templates() {
-	[ ! -f "$TPL/linux_release.arm64" ] || return 0
-	echo "downloading export templates (the release's file for every platform: one is kept)"
+	[ ! -f "$TPL/linux_release.arm64" ] || [ ! -f "$TPL/linux_release.x86_64" ] \
+		|| [ ! -f "$TPL/windows_release_x86_64.exe" ] || return 0
+	echo "downloading export templates (the release's file for every platform: those of the presets are kept)"
 	fetch "$REL/Godot_v$V-stable_export_templates.tpz" "$BIN/templates.tpz"
 	# one unzip per core, into a side folder: an interrupted run leaves no half-filled $TPL
 	rm -rf "$TPL.part"
 	mkdir -p "$TPL.part" "$TPL"
-	# only what the one export preset (Linux arm64) takes
-	unzip -Z1 "$BIN/templates.tpz" | grep -E '/(linux_(debug|release)\.arm64|version\.txt|icudt[^/]*)$' \
+	# only what the export presets take: the Frame's Linux arm64, the PC's Linux and Windows x86_64
+	unzip -Z1 "$BIN/templates.tpz" \
+		| grep -E '/(linux_(debug|release)\.(arm64|x86_64)|windows_(debug|release)_x86_64\.exe|version\.txt|icudt[^/]*)$' \
 		| xargs -P "$(nproc)" -n 1 unzip -ojq "$BIN/templates.tpz" -d "$TPL.part"
 	mv -f "$TPL.part"/* "$TPL/"
 	rmdir "$TPL.part"
 	rm "$BIN/templates.tpz"
 }
 
+# pip into the system's Python: Ubuntu from 23.04 refuses that without the flag, which older pip
+# does not know (grep reads the whole help: -q's early exit would fail the pipe)
+pip_system() {
+	if pip install --help | grep -- --break-system-packages >/dev/null; then
+		pip install --quiet --break-system-packages "$@"
+	else
+		pip install --quiet "$@"
+	fi
+}
+
 # One pip for all four: PyPI through the cloud session's proxy is slow per connection.
 get_pip() {
-	pip install --quiet --break-system-packages numpy scipy pillow moderngl 2>/dev/null \
-		|| pip install --quiet numpy scipy pillow moderngl
+	pip_system numpy scipy pillow moderngl
 }
 
 # what Mesa's build needs (Turnip, X11 for Godot's window, the drm-shim)
@@ -113,7 +126,7 @@ get_adreno() {
 	[ ! -f "$SHIM" ] || return 0
 	# Mesa wants meson 1.4 or newer, which the system may lack
 	python3 -c "import mesonbuild.coredata as c, sys; sys.exit(tuple(map(int, c.version.split('.')[:2])) < (1, 4))" 2>/dev/null \
-		|| pip install --quiet --break-system-packages "meson>=1.4,<1.9" 2>/dev/null || pip install --quiet "meson>=1.4,<1.9"
+		|| pip_system "meson>=1.4,<1.9"
 	local src=$BIN/mesa-src tar=$BIN/mesa.tar.xz u
 	rm -rf "$src" "$BIN/mesa-build"
 	for u in https://archive.mesa3d.org/mesa-$MESA_V.tar.xz \
@@ -161,12 +174,12 @@ prefix() {   # name: puts it in front of every line
 	local l
 	while IFS= read -r l || [ -n "$l" ]; do printf '%s: %s\n' "$1" "$l"; done
 }
-steps=(godot templates pip apt)
-adreno=1
+steps=(godot templates apt)
+after=(pip adreno)
 if [ $# != 0 ]; then   # or only the steps named: tools/setup.sh godot templates
 	steps=()
-	adreno=0
-	for s; do if [ "$s" = adreno ]; then adreno=1; else steps+=("$s"); fi; done
+	after=()
+	for s; do case $s in pip|adreno) after+=("$s") ;; *) steps+=("$s") ;; esac; done
 fi
 pids=()
 # Steps in the background don't get Ctrl-C from the terminal: on it, stop them here. `set -m`
@@ -181,8 +194,7 @@ done
 failed=""
 for i in "${!steps[@]}"; do wait "${pids[$i]}" || failed="$failed ${steps[$i]}"; done
 [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
-# after apt: it needs the packages that step installs
-[ $adreno = 0 ] || get_adreno 2>&1 | prefix adreno
+for s in "${after[@]}"; do get_$s 2>&1 | prefix "$s"; done
 
 # also on PATH: the tests fall back to it when this script ran outside the repo (a cloud
 # environment's copy: reuse above)

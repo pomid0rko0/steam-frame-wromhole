@@ -7,25 +7,43 @@
 #     one .arm64, to attach to the chat; tools/deploy_frame.bat on the PC puts it on the Frame. The
 #     commit keeps each build's name its own: a browser saves a second file of the same name as
 #     "... (1).zip", and the PC's tools would take the first
+# The PC's builds, which run on a PC with SteamVR and stream to the headset, always go into a zip:
+# godot/build/wormhole_vr_<label>_<commit>_pc_windows.zip with wormhole_vr.exe, ..._pc_linux.zip
+# with wormhole_vr.x86_64.
 # The build carries its commit (godot/build.json while it exports, "+" after it if godot/ differs
-# from it): main.gd prints it at the start, so the headset's log says which build ran.
-#   tools/export.sh [--check] [label]      (label: the branch's name by default)
+# from it): main.gd prints it at the start, so the log says which build ran.
+#   tools/export.sh [--check] [--pc-windows | --pc-linux] [label]   (label: the branch's name by default)
 # --check: the build for the one-eye check, with the stereo check scene on (its own export preset,
-# whose feature "check" main.show_check reads).
+# whose feature "check" main.show_check reads; "_check" after the label).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/repo.sh"
-BUILD=$ROOT/godot/build/wormhole_vr.arm64
-if [ "${1:-}" = --godot ]; then   # the export itself (the preset's name), in the container on the Frame
+if [ "${1:-}" = --godot ]; then   # the export itself (preset, file), in the container on the Frame
 	. "$ROOT/tools/env.sh"
 	[ -x "$GODOT" ] || { echo "no Godot: run tools/setup.sh"; exit 2; }
 	import_scripts
 	cd "$ROOT/godot"
 	mkdir -p build
-	exec "$GODOT" --headless --path . --export-release "$2" build/wormhole_vr.arm64
+	exec "$GODOT" --headless --path . --export-release "$2" "build/$3"
 fi
 CHECK=""
-[ "${1:-}" = --check ] && { CHECK=1; shift; }
+TARGET=steam_frame
+while [ $# -gt 0 ]; do
+	case $1 in
+		--check) CHECK=1 ;;
+		--pc-windows) TARGET=pc_windows ;;
+		--pc-linux) TARGET=pc_linux ;;
+		*) break ;;
+	esac
+	shift
+done
+case $TARGET in   # the preset's name and machine, the file it makes
+	steam_frame) NAME="Steam Frame"; MACHINE="Linux arm64"; FILE=wormhole_vr.arm64 ;;
+	pc_windows) NAME="PC, streamed to the headset"; MACHINE="Windows x86_64"; FILE=wormhole_vr.exe ;;
+	pc_linux) NAME="PC, streamed to the headset"; MACHINE="Linux x86_64"; FILE=wormhole_vr.x86_64 ;;
+esac
+PRESET="$NAME${CHECK:+, the one-eye check} ($MACHINE)"
+BUILD=$ROOT/godot/build/$FILE
 # the label: the branch checked out, else the task's (its worktree, .wt/<branch>, is detached)
 LABEL=${1:-$(git -C "$ROOT" symbolic-ref --short -q HEAD || true)}
 case $ROOT in "$REPO"/.wt/*) [ -n "$LABEL" ] || LABEL=${ROOT#"$REPO"/.wt/} ;; esac
@@ -33,10 +51,9 @@ case $ROOT in "$REPO"/.wt/*) [ -n "$LABEL" ] || LABEL=${ROOT#"$REPO"/.wt/} ;; es
 LABEL=$(tr '/' '-' <<<"$LABEL")${CHECK:+_check}
 COMMIT=$(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet HEAD -- godot || echo +)
 printf '{"commit": "%s"}\n' "$COMMIT" > "$ROOT/godot/build.json"
-PRESET="Steam Frame${CHECK:+, the one-eye check} (Linux arm64)"
 rm -f "$BUILD"
 log=$(mktemp)
-"$ROOT/tools/box.sh" "$ROOT/tools/export.sh" --godot "$PRESET" > "$log" 2>&1 || true
+"$ROOT/tools/box.sh" "$ROOT/tools/export.sh" --godot "$PRESET" "$FILE" > "$log" 2>&1 || true
 rm -f "$ROOT/godot/build.json"
 if [ ! -s "$BUILD" ] || grep -qE "SCRIPT ERROR|SHADER ERROR|^ERROR" "$log"; then
 	grep -E "ERROR" -A3 "$log" || tail -20 "$log"
@@ -45,7 +62,7 @@ if [ ! -s "$BUILD" ] || grep -qE "SCRIPT ERROR|SHADER ERROR|^ERROR" "$log"; then
 	exit 1
 fi
 rm -f "$log"
-if grep -qsx 'ID=steamos' /etc/os-release; then
+if [ $TARGET = steam_frame ] && grep -qsx 'ID=steamos' /etc/os-release; then
 	DEST=$HOME/wormhole-vr
 	mkdir -p "$DEST"
 	cp "$BUILD" "$DEST/wormhole_vr.arm64.new"
@@ -55,9 +72,9 @@ if grep -qsx 'ID=steamos' /etc/os-release; then
 	grep -aqs "$DEST/wormhole_vr.arm64" "$HOME"/.local/share/Steam/userdata/*/config/shortcuts.vdf \
 		|| echo "not in the Steam library yet: steamos-add-to-steam $DEST/wormhole_vr.arm64 adds it (once)"
 else
-	zip=$ROOT/godot/build/wormhole_vr_${LABEL}_${COMMIT}_steam_frame.zip
+	zip=$ROOT/godot/build/wormhole_vr_${LABEL}_${COMMIT}_$TARGET.zip
 	rm -f "$zip"
 	(cd "$ROOT/godot/build" && python3 -c 'import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z: z.write("wormhole_vr.arm64")' "$zip")
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z: z.write(sys.argv[2])' "$zip" "$FILE")
 	echo "$zip: attach it to the chat"
 fi
