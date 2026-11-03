@@ -5,7 +5,8 @@
 # are the run's files at once, named as export.sh names them (tools/deploy_frame.ps1 takes the
 # headset's); they are deleted from the run unless the stereo test passes on the same commit (the
 # hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a rerun of the stereo
-# test alone does not bring them back ("Re-run all jobs" does).
+# test alone does not bring them back ("Re-run all jobs" does). «Все проверки» (all) is the run's
+# verdict, the one check main's ruleset requires.
 # A version: the owner's button (Actions > CI > Run workflow on main, "исправление" or "новое": the
 # newest version tag's last or middle number up by one), or a version tag, or a release published
 # with GitHub's form (its tag comes with it: one run takes both). The same, then, once every job
@@ -308,3 +309,21 @@ jobs:
             gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --verify-tag --generate-notes --title "$tag"
             gh release upload "$tag" out/* --clobber
           fi
+
+  # the run's verdict: every job above but unsafe and version passed. A required check that is
+  # skipped counts on GitHub as passed, and every test is skipped when its image fails, so main's
+  # ruleset requires this one alone; here skipped or cancelled is not passed (this job runs even in
+  # a cancelled run).
+  all:
+    name: Все проверки
+    needs: [image, image-arm64, build, stereo, tests, openxr, ref, adreno, release]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          bad=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          [ -z "$bad" ] || { echo "$bad"; exit 1; }
+          echo "every check passed"

@@ -28,12 +28,16 @@ keep and what was learnt about it: the comment at the top of its file.
   (`cleanup-2`), rather than a synonym.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
-  «Проверки»), its notes the titles of the PRs merged since the last version.
+  «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
+  PRs, each squashed into one commit once CI's «Все проверки» passed on a branch up to date with
+  `main` (its ruleset): nothing is pushed to `main` itself. A PR that changes what the headset runs
+  (`godot/` but `godot/tests/`, `tools/setup.sh`, `tools/export.sh`) the owner merges, or you when
+  they say so in the chat; any other you merge yourself then.
 - **A PR's title is its line in those notes,** which the owner reads: in Russian, what changes for
   the person in the headset (what they see or can do, what got faster), not how it is done; a PR
   that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
   does changes, the title changes with it. The description: what to check in the headset (a yes/no
-  they can see), what the tests and CI found, what is left.
+  they can see), what the tests and CI found, what is left. The two are the PR's commit in `main`.
 - **CI checks every push** (README, «Проверки»): both builds and every test, each on a machine of
   its own, on exactly the commit pushed. Push what you deliver; that run is the check of record,
   also of the tests you didn't run yourself. Watch it: in a cloud session subscribe to the PR, whose
