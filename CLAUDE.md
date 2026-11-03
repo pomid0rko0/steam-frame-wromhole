@@ -21,8 +21,8 @@ keep and what was learnt about it: the comment at the top of its file.
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
 - **One wish per chat,** on a branch you name yourself, started from `origin/main` after `git fetch`
-  (a cloud session's local `main` can be days old) or the branch `docs/wishlist.md` gives for the
-  wish; not the branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
+  (a cloud session's local `main` can be days old) or the branch the wish's issue gives; not the
+  branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
   as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
   origin already has a branch by that name, add what this one does differently, or a number
   (`cleanup-2`), rather than a synonym.
@@ -47,7 +47,15 @@ keep and what was learnt about it: the comment at the top of its file.
   the tool or test that gives them. A change that makes a statement or a number stale fixes or
   removes it in the same branch.
 - **Docs don't retell the code.** README and `docs/` hold only what the code can't say: what the
-  project is, how to run, install and check it, the maths, the wishes.
+  project is, how to run, install and check it, the maths.
+- **Wishes and bugs are the repository's issues,** in Russian, first what the person in the headset
+  sees or can do, then how. Labels: the section, the difficulty (просто, отладка, исследование: README,
+  «Документация»), ошибка, скорость; a big one's steps are its sub-issues. A PR that does one says
+  `Closes #N` in its description; a bug or a wish found and not done goes into an issue of its own.
+  An issue names the code as it is: a branch that renames or changes what an open issue names
+  fixes that issue too (search the issues for the name). An issue or comment you write ends with
+  «🤖 *Написал Claude (Claude Code); на GitHub показан от имени владельца.*»: GitHub shows it as the
+  owner's and drops the usual footer.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
 - **No work is worth anything by itself.** Nothing is kept only because it was here before you or
