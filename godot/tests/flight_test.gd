@@ -1,7 +1,8 @@
 extends SceneTree
 ## Flight (viewer.gd) through the desktop keys (the code paths the sticks, triggers and bumpers
-## drive), run with --fixed-fps 60; exit status 1 on any failure:
-##   godot --path . --fixed-fps 60 -s res://tests/flight_test.gd
+## drive), run with --fixed-fps 60 in a small window (nothing here looks at the picture, and a frame
+## costs by its pixels); exit status 1 on any failure:
+##   godot --path . --resolution 160x90 --fixed-fps 60 -s res://tests/flight_test.gd
 ## 1. Space for half a second flies 2 m straight up from the start; let go, with gravity the head
 ##    falls from the 4 m/s up it had and the feet land when and where an independent integration of
 ##    docs/gravity.md's field in chart A says, the room turning upright as viewer.gd's top says (to

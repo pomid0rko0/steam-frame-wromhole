@@ -43,7 +43,7 @@ DATA=$(mktemp -d)    # a fresh user:// each run: Godot's pipeline cache would sk
 SHOTS=$(mktemp -d)
 trap 'rm -rf "$LOG" "$DATA" "$SHOTS"' EXIT
 ARGS=("$SHOTS/s")
-[ "$SCENE" != res://tests/multiview_check.gd ] || ARGS=("$SHOTS/f" app 0 fov)
+[ "$SCENE" != res://tests/multiview_check.gd ] || ARGS=("$SHOTS" 0 f+fov:app)
 turnip "$DATA" || exit 2
 cd "$ROOT/godot"
 import_scripts
