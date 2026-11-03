@@ -12,8 +12,9 @@ keep and what was learnt about it: the comment at the top of its file.
   Flatpak `flatpak-spawn --host` is refused), or in a cloud session (an Ubuntu container, no
   headset), while the owner wears the headset. The tools find out where they run.
 - **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session attach
-  its zip to the chat. CI's run of a pushed commit has the same zips (README, «Проверки»): link the
-  run too. Say what to look at. **Never start the app, SteamVR, `vrcmd` or any window yourself:** it
+  its zip to the chat; `--pc-windows` makes the build that runs on the owner's PC and streams to the
+  headset (README, «Запуск»). CI's run of a pushed commit has the same zips (README, «Проверки»):
+  link the run too. Say what to look at. **Never start the app, SteamVR, `vrcmd` or any window yourself:** it
   takes the view the owner is in.
 - **The owner can't judge test images or numbers:** verifying is your job. What they check in the
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).

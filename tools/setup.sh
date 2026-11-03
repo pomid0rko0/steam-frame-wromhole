@@ -48,14 +48,16 @@ get_godot() {
 }
 
 get_templates() {
-	[ ! -f "$TPL/linux_release.arm64" ] || return 0
-	echo "downloading export templates (the release's file for every platform: one is kept)"
+	[ ! -f "$TPL/linux_release.arm64" ] || [ ! -f "$TPL/linux_release.x86_64" ] \
+		|| [ ! -f "$TPL/windows_release_x86_64.exe" ] || return 0
+	echo "downloading export templates (the release's file for every platform: those of the presets are kept)"
 	fetch "$REL/Godot_v$V-stable_export_templates.tpz" "$BIN/templates.tpz"
 	# one unzip per core, into a side folder: an interrupted run leaves no half-filled $TPL
 	rm -rf "$TPL.part"
 	mkdir -p "$TPL.part" "$TPL"
-	# only what the one export preset (Linux arm64) takes
-	unzip -Z1 "$BIN/templates.tpz" | grep -E '/(linux_(debug|release)\.arm64|version\.txt|icudt[^/]*)$' \
+	# only what the export presets take: the Frame's Linux arm64, the PC's Linux and Windows x86_64
+	unzip -Z1 "$BIN/templates.tpz" \
+		| grep -E '/(linux_(debug|release)\.(arm64|x86_64)|windows_(debug|release)_x86_64\.exe|version\.txt|icudt[^/]*)$' \
 		| xargs -P "$(nproc)" -n 1 unzip -ojq "$BIN/templates.tpz" -d "$TPL.part"
 	mv -f "$TPL.part"/* "$TPL/"
 	rmdir "$TPL.part"

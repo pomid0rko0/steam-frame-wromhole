@@ -1,13 +1,15 @@
-# On every push to a branch: the headset's builds and every test, each test on a machine of its
-# own (the OpenXR test then runs alone, as tools/test_openxr.sh needs), in the tests' environment
-# (image.yml: its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it).
-# The builds are the run's files at once, named as tools/export.sh names them, which
-# tools/deploy_frame.ps1 takes; they are deleted from the run unless the stereo test passes on the
-# same commit (the hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a
-# rerun of the stereo test alone does not bring them back ("Re-run all jobs" does).
+# On every push to a branch: the builds and every test, each test on a machine of its own (the
+# OpenXR test then runs alone, as tools/test_openxr.sh needs), in the tests' environment (image.yml:
+# its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it).
+# The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
+# are the run's files at once, named as export.sh names them (tools/deploy_frame.ps1 takes the
+# headset's); they are deleted from the run unless the stereo test passes on the same commit (the
+# hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a rerun of the stereo
+# test alone does not bring them back ("Re-run all jobs" does).
 # On a version tag, or a release published on GitHub (its tag comes with it: one run takes both),
 # the same, then the release: notes generated from the merged PRs' titles if GitHub's form made
-# none, the build attached as wormhole_vr.arm64 and as the zip, once every job here has passed.
+# none, the headset's build as wormhole_vr.arm64 and as its zip, and the PC's zips, once every job
+# here has passed.
 name: CI
 on:
   push:
@@ -45,7 +47,7 @@ jobs:
       arch: arm64
 
   build:
-    name: Сборка для шлема
+    name: Сборки для шлема и ПК
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -55,17 +57,19 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
-      zip: ${{ steps.build.outputs.zip }}
+      frame: ${{ steps.frame.outputs.zip }}
+      windows: ${{ steps.windows.outputs.zip }}
+      linux: ${{ steps.linux.outputs.zip }}
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - id: build
+      - id: frame
         run: |
           tools/export.sh "$GITHUB_REF_NAME"
           echo "zip=$(basename godot/build/wormhole_vr_*_steam_frame.zip)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
-          path: godot/build/${{ steps.build.outputs.zip }}
+          path: godot/build/${{ steps.frame.outputs.zip }}
           archive: false
       - id: check
         run: |
@@ -74,6 +78,32 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           path: godot/build/${{ steps.check.outputs.zip }}
+          archive: false
+      - id: windows
+        run: |
+          tools/export.sh --pc-windows "$GITHUB_REF_NAME"
+          echo "zip=$(basename godot/build/wormhole_vr_*_pc_windows.zip)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.windows.outputs.zip }}
+          archive: false
+      - id: linux
+        run: |
+          tools/export.sh --pc-linux "$GITHUB_REF_NAME"
+          echo "zip=$(basename godot/build/wormhole_vr_*_pc_linux.zip)" >> "$GITHUB_OUTPUT"
+      # the tests run the project's files: what the export leaves out only an exported build shows.
+      # The PC's Linux one, this machine's, on the desktop (software Vulkan): it starts, prints its
+      # commit (main.gd) and runs 300 frames without a script or shader error
+      - name: The PC's Linux build runs
+        run: |
+          d=$(mktemp -d)
+          XDG_DATA_HOME=$d timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" \
+            godot/build/wormhole_vr.x86_64 --xr-mode off --quit-after 300 > "$d/log" 2>&1 || { tail -20 "$d/log"; exit 1; }
+          grep "^build: " "$d/log"
+          ! grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$d/log"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.linux.outputs.zip }}
           archive: false
 
   stereo:
@@ -98,7 +128,7 @@ jobs:
 
   # the builds go unless the stereo test passed (above)
   unsafe:
-    name: Удаление сборки, если стерео-тест не прошёл
+    name: Удаление сборок, если стерео-тест не прошёл
     needs: [build, stereo]
     if: always() && needs.stereo.result != 'success'
     runs-on: ubuntu-24.04
@@ -109,7 +139,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
-            --jq '.artifacts[] | select(.name | endswith("_steam_frame.zip")) | "\(.id) \(.name)"' |
+            --jq '.artifacts[] | select(.name | startswith("wormhole_vr_")) | "\(.id) \(.name)"' |
           while read -r id name; do
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
             echo "deleted $name"
@@ -195,7 +225,7 @@ jobs:
             echo '```'
           done | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # on every push the build is unpacked as for a release; published only for a version
+  # on every push the builds are gathered as for a release; published only for a version
   release:
     name: Релиз (публикация — только для версии)
     needs: [build, stereo, tests, openxr, ref, adreno]
@@ -206,21 +236,27 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.build.outputs.zip }}
+          pattern: wormhole_vr_*
           path: dl
           skip-decompress: true
       - env:
-          ZIP: ${{ needs.build.outputs.zip }}
+          FRAME: ${{ needs.build.outputs.frame }}
+          WINDOWS: ${{ needs.build.outputs.windows }}
+          LINUX: ${{ needs.build.outputs.linux }}
         run: |
-          ls -la dl
-          unzip -o "dl/$ZIP" -d dl
-          [ -s dl/wormhole_vr.arm64 ]
+          mkdir out
+          for z in "$FRAME" "$WINDOWS" "$LINUX"; do
+            f=$(find dl -type f -name "$z" | head -1)
+            [ -n "$f" ] || { echo "no $z among:"; find dl; exit 1; }
+            cp "$f" out/
+          done
+          unzip -o "out/$FRAME" wormhole_vr.arm64 -d out
+          ls -la out
       - if: github.event_name == 'release' || github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          ZIP: ${{ needs.build.outputs.zip }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
-          gh release upload "$TAG" dl/wormhole_vr.arm64 "dl/$ZIP" --clobber
+          gh release upload "$TAG" out/* --clobber
