@@ -1,7 +1,8 @@
 extends SceneTree
 ## Stick walking and turning through the desktop keys (the same code paths the sticks and
-## buttons drive), run with --fixed-fps 60; exit status 1 on any failure:
-##   godot --path . --fixed-fps 60 -s res://tests/walking_test.gd
+## buttons drive), run with --fixed-fps 60 in a small window (nothing here looks at the picture, and
+## a frame costs by its pixels); exit status 1 on any failure:
+##   godot --path . --resolution 160x90 --fixed-fps 60 -s res://tests/walking_test.gd
 ## 1. W for one second walks 1.5 m toward the wormhole (chart A: x from 10 to 8.5)
 ## 2. E for one second turns smoothly 90 degrees to the right, Q for half a second 45 back
 ## 3. Tab switches to snaps: E snap-turns 30 degrees to the right (once per push), Q back
