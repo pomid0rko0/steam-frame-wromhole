@@ -1,0 +1,57 @@
+# The form for what the owner sees go wrong in the headset, filled in from the phone: an agent gets
+# where to look (the place, what was being done), which build (its file name carries the commit) and
+# the run's log. The first question is whether the stereo is broken: then the build is not put on.
+name: Ошибка в шлеме
+description: Что-то в шлеме выглядит или работает не так
+labels: ["ошибка"]
+body:
+  - type: dropdown
+    id: eyes
+    attributes:
+      label: Двоится или больно глазам?
+      description: Если да — сразу снимите шлем и не надевайте эту сборку, пока агент не найдёт причину.
+      options:
+        - Нет
+        - Да
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что видно
+      description: Что не так, когда появляется, как часто.
+      placeholder: У горла на миг появляются большие острые чёрные фигуры.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Где и что делали
+      description: Мир A или B, у горла, в горле, куда смотрели; шли, летели, бросали, было ли открыто меню.
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: Как запущено
+      options:
+        - В шлеме
+        - С ПК, стримом в шлем
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Сборка
+      description: Имя zip-файла (в нём ветка и коммит) или номер версии. Не помните — оставьте пустым, агент найдёт в логе.
+      placeholder: wormhole_vr_main_18ffaa5_steam_frame.zip
+  - type: textarea
+    id: media
+    attributes:
+      label: Снимок или видео
+      description: Перетащите сюда снимок экрана шлема или фото.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Лог
+      description: 'Сборка в шлеме — файл запуска из папки wormhole_vr_logs в «Загрузках» после двойного щелчка по tools/frame_logs.bat на ПК; сборка с ПК — из %APPDATA%\Godot\app_userdata\Wormhole VR\logs. Перетащите файл сюда.'

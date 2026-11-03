@@ -49,8 +49,11 @@ keep and what was learnt about it: the comment at the top of its file.
 - **Docs don't retell the code.** README and `docs/` hold only what the code can't say: what the
   project is, how to run, install and check it, the maths.
 - **Wishes and bugs are the repository's issues,** in Russian, first what the person in the headset
-  sees or can do, then how. Labels: the section, the difficulty (просто, отладка, исследование: README,
-  «Документация»), ошибка, скорость; a big one's steps are its sub-issues. A PR that does one says
+  sees or can do, then how. Labels: the section, the difficulty (просто, отладка, исследование),
+  ошибка, скорость; each with its colour and meaning in `.github/labels.json`, which the Labels
+  workflow applies on `main` (a new label goes there). A big one's steps are its sub-issues. The
+  owner's reports from the headset come through the form «Ошибка в шлеме»
+  (`.github/ISSUE_TEMPLATE/headset-bug.yml`): read its build and log first. A PR that does one says
   `Closes #N` in its description; a bug or a wish found and not done goes into an issue of its own.
   An issue names the code as it is: a branch that renames or changes what an open issue names
   fixes that issue too (search the issues for the name). An issue or comment you write ends with
