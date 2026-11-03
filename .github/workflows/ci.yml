@@ -57,53 +57,58 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
-      frame: ${{ steps.frame.outputs.zip }}
-      windows: ${{ steps.windows.outputs.zip }}
-      linux: ${{ steps.linux.outputs.zip }}
+      frame: ${{ steps.export.outputs.frame }}
+      windows: ${{ steps.export.outputs.windows }}
+      linux: ${{ steps.export.outputs.linux }}
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - id: frame
+      # each build (export.sh's flags), its zip (the newest) as the step's output of that name
+      - id: export
         run: |
-          tools/export.sh "$GITHUB_REF_NAME"
-          echo "zip=$(basename godot/build/wormhole_vr_*_steam_frame.zip)" >> "$GITHUB_OUTPUT"
+          for b in frame "frame_check --check" "windows --pc-windows" "windows_check --check --pc-windows" \
+              "linux --pc-linux" "linux_check --check --pc-linux"; do
+            set -- $b
+            tools/export.sh "${@:2}" "$GITHUB_REF_NAME"
+            echo "$1=$(basename "$(ls -t godot/build/*.zip | head -1)")" >> "$GITHUB_OUTPUT"
+          done
       - uses: actions/upload-artifact@v7
         with:
-          path: godot/build/${{ steps.frame.outputs.zip }}
+          path: godot/build/${{ steps.export.outputs.frame }}
           archive: false
-      - id: check
-        run: |
-          tools/export.sh --check "$GITHUB_REF_NAME"
-          echo "zip=$(basename godot/build/wormhole_vr_*_check_*_steam_frame.zip)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
-          path: godot/build/${{ steps.check.outputs.zip }}
+          path: godot/build/${{ steps.export.outputs.frame_check }}
           archive: false
-      - id: windows
-        run: |
-          tools/export.sh --pc-windows "$GITHUB_REF_NAME"
-          echo "zip=$(basename godot/build/wormhole_vr_*_pc_windows.zip)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
-          path: godot/build/${{ steps.windows.outputs.zip }}
+          path: godot/build/${{ steps.export.outputs.windows }}
           archive: false
-      - id: linux
-        run: |
-          tools/export.sh --pc-linux "$GITHUB_REF_NAME"
-          echo "zip=$(basename godot/build/wormhole_vr_*_pc_linux.zip)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.windows_check }}
+          archive: false
       # the tests run the project's files: what the export leaves out only an exported build shows.
-      # The PC's Linux one, this machine's, on the desktop (software Vulkan): it starts, prints its
-      # commit (main.gd) and runs 300 frames without a script or shader error
-      - name: The PC's Linux build runs
+      # The PC's Linux ones, this machine's, on the desktop (software Vulkan): each starts, prints
+      # its commit (main.gd) and runs 300 frames without a script or shader error
+      - name: The PC's Linux builds run
         run: |
-          d=$(mktemp -d)
-          XDG_DATA_HOME=$d timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" \
-            godot/build/wormhole_vr.x86_64 --xr-mode off --quit-after 300 > "$d/log" 2>&1 || { tail -20 "$d/log"; exit 1; }
-          grep "^build: " "$d/log"
-          ! grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$d/log"
+          for z in "${{ steps.export.outputs.linux }}" "${{ steps.export.outputs.linux_check }}"; do
+            d=$(mktemp -d)
+            unzip -q "godot/build/$z" -d "$d"
+            echo "$z:"
+            XDG_DATA_HOME=$d timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" \
+              "$d/wormhole_vr.x86_64" --xr-mode off --quit-after 300 > "$d/log" 2>&1 || { tail -20 "$d/log"; exit 1; }
+            grep "^build: " "$d/log"
+            if grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$d/log"; then exit 1; fi
+          done
       - uses: actions/upload-artifact@v7
         with:
-          path: godot/build/${{ steps.linux.outputs.zip }}
+          path: godot/build/${{ steps.export.outputs.linux }}
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: godot/build/${{ steps.export.outputs.linux_check }}
           archive: false
 
   stereo:
