@@ -19,7 +19,7 @@ extends Node
 ## lines): it fills in the frames between on the same GPU, so our frame at the same pose costs more,
 ## and it can stay there until the frame gets cheaper or the rate is switched there and back. The
 ## Steam overlay and SteamVR's camera view do the same. The app could end it at once only by
-## switching the rate there and back; it doesn't (docs/wishlist.md); cheaper frames make it rarer.
+## switching the rate there and back; it doesn't (issue #99); cheaper frames make it rarer.
 ##
 ## The log has the GPU's clock because a GPU that lowers it makes the same frame take longer; on
 ## the Frame the readings (one a second) showed its top clock while frames were too slow. The GPU
