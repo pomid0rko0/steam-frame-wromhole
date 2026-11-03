@@ -7,6 +7,8 @@ extends SceneTree
 ##   godot --path . --resolution 1280x720 -s res://tests/shots.gd -- out_prefix [gravity|arrows|zone] [names...]
 ## zone: the toys away, bodies in the curved zone instead (ZONE_BODIES). Writes out_prefix_<place>.png.
 
+const U := preload("res://tests/util.gd")
+
 # [name, the feet's chart A place (z: flying that high), looking toward (chart A), flown on toward
 # it (m, a geodesic), the cube before the eyes]
 const PLACES := [["start", Vector3(10.0, 0.0, 0.0), Vector3(0.0, 0.0, 5.0), 0.0, false],
@@ -77,7 +79,7 @@ func _process(_delta: float) -> bool:
 	while place < PLACES.size() and not names.is_empty() and not names.has(PLACES[place][0]):
 		place += 1
 	if place >= PLACES.size():
-		quit()
+		U.finish(self)
 		return false
 	var p: Array = PLACES[place]
 	var at: Vector3 = p[1]

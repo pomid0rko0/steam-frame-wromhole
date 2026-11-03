@@ -9,6 +9,8 @@ extends SceneTree
 ## test of the ray's plane each, an intersection where it passes).
 ##   godot --path . --resolution 320x180 -s res://tests/floor_paths.gd
 
+const U := preload("res://tests/util.gd")
+
 const START := 4.0
 const WAIT := 1.5
 # the branches' conditions, as written there
@@ -72,7 +74,7 @@ func _process(delta: float) -> bool:
 	vi += 1
 	if vi >= shaders.size():
 		print("variant end")
-		quit()
+		U.finish(self)
 		return true
 	print("variant ", names[vi])
 	main.renderer.floor_mats[0].shader = shaders[vi]

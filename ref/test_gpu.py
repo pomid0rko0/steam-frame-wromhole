@@ -46,12 +46,16 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
 float32; the GPU here is given them so written.
-Exit status 1 on any failure.
+Each throat's checks run in a process of their own (a GPU context and random draws of its own,
+seeded by its place in PROFILES), as many at once as there are cores; their lines come throat by
+throat. Exit status 1 on any failure.
    python3 ref/test_gpu.py [numbers profile images exit zone eye]     (all, or those checks)"""
 import copy
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
@@ -1146,32 +1150,67 @@ def numbers_check():
                          f'{count} numbers in {files} files, {len(changed)} changed' + ''.join(f'\n    {c}' for c in changed)))
 
 
-def main(checks=('numbers', 'profile', 'images', 'exit', 'zone', 'eye')):
+CHECKS = ('numbers', 'profile', 'images', 'exit', 'zone', 'eye')
+
+
+def throat_checks(index, checks):
+    """PROFILES' index-th throat's checks, on a GPU context of its own, with its own random draws."""
     ctx = moderngl.create_standalone_context(backend='egl', require=430)
-    rng = np.random.default_rng(1)
+    rng = np.random.default_rng(1 + index)
+    name, prof = list(PROFILES.items())[index]
+    fails = 0
+    S = Space(*prof)
+    S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
+    gpu = Gpu(ctx, S)
+    gpu_nan = Gpu(ctx, S, NAN_SRC)
+    if 'profile' in checks:
+        fails += profile_checks(name, S, gpu, gpu_nan, rng)
+    if 'images' in checks:
+        fails += image_checks(name, S, gpu, gpu_nan, rng)
+    if 'exit' in checks:
+        # the table's on the same rays, and the checks after see the same draws as without it
+        same = copy.deepcopy(rng)
+        fails += exit_checks(name, S, gpu, rng)
+        fails += exit_checks(name, S, gpu, same, table=True)
+    if 'zone' in checks:
+        fails += zone_checks(name, S, gpu, rng)
+        fails += zone_mesh_checks(name, S, gpu, rng)
+    if name == 'the app' and 'eye' in checks:
+        fails += eye_checks(S, gpu, rng)
+    return fails
+
+
+def main(checks=CHECKS):
+    """The numbers here, then every throat in a process of its own (this script with --throat), as
+    many at once as there are cores, each one's output kept in a file till it is printed in turn."""
     fails = numbers_check() if 'numbers' in checks else 0
-    for name, prof in PROFILES.items():
-        S = Space(*prof)
-        S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
-        gpu = Gpu(ctx, S)
-        gpu_nan = Gpu(ctx, S, NAN_SRC)
-        if 'profile' in checks:
-            fails += profile_checks(name, S, gpu, gpu_nan, rng)
-        if 'images' in checks:
-            fails += image_checks(name, S, gpu, gpu_nan, rng)
-        if 'exit' in checks:
-            # the table's on the same rays, and the checks after see the same draws as without it
-            same = copy.deepcopy(rng)
-            fails += exit_checks(name, S, gpu, rng)
-            fails += exit_checks(name, S, gpu, same, table=True)
-        if 'zone' in checks:
-            fails += zone_checks(name, S, gpu, rng)
-            fails += zone_mesh_checks(name, S, gpu, rng)
-        if name == 'the app' and 'eye' in checks:
-            fails += eye_checks(S, gpu, rng)
+    n = len(PROFILES) if set(checks) - {'numbers'} else 0
+    width = max(1, min(len(PROFILES), len(os.sched_getaffinity(0))))
+    runs, started = [], 0
+    for i in range(n):
+        while started < n and started < i + width:
+            out = tempfile.TemporaryFile('w+')
+            runs.append((subprocess.Popen([sys.executable, __file__, '--throat', str(started), *checks],
+                                          stdout=out, stderr=subprocess.STDOUT, text=True), out))
+            started += 1
+        proc, out = runs[i]
+        proc.wait()
+        out.seek(0)
+        text = out.read()
+        last = re.findall(r'^FAILURES: (\d+)$', text, re.M)
+        print(re.sub(r'^FAILURES: \d+\n?', '', text, flags=re.M), end='', flush=True)
+        if proc.returncode not in (0, 1) or not last:
+            print(f'FAIL {list(PROFILES)[i]}: its checks ended with status {proc.returncode}', flush=True)
+            fails += 1
+        else:
+            fails += int(last[-1])
     print(f'FAILURES: {fails}')
     return fails
 
 
 if __name__ == '__main__':
-    sys.exit(1 if main(sys.argv[1:] or ('numbers', 'profile', 'images', 'exit', 'zone', 'eye')) else 0)
+    if sys.argv[1:2] == ['--throat']:
+        f = throat_checks(int(sys.argv[2]), sys.argv[3:] or CHECKS)
+        print(f'FAILURES: {f}')
+        sys.exit(1 if f else 0)
+    sys.exit(1 if main(sys.argv[1:] or CHECKS) else 0)

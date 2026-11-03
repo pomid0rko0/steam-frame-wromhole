@@ -47,10 +47,11 @@ ARGS=("$SHOTS/s")
 turnip "$DATA" || exit 2
 cd "$ROOT/godot"
 import_scripts
+# godot_x: Godot can hang in its own exit after the scene's last line (env.sh); everything this
+# reads is in the log by then
 d=$(x_display 950)
-XDG_DATA_HOME=$DATA env "${TURNIP[@]}" MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=$STAGES,nocache \
-	timeout 300 xvfb-run -n $d -s "-screen 0 1280x720x24" "$GODOT" --path . \
-	--resolution 320x180 -s "$SCENE" -- "${ARGS[@]}" > "$LOG" 2>&1
+( export XDG_DATA_HOME=$DATA "${TURNIP[@]}" MESA_SHADER_CACHE_DISABLE=true IR3_SHADER_DEBUG=$STAGES,nocache
+  godot_x $d "$LOG" 300 --path . --resolution 320x180 -s "$SCENE" -- "${ARGS[@]}" )
 free_display $d
 [ -z "${KEEP_LOG:-}" ] || cp "$LOG" "$KEEP_LOG"
 if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; exit 1; fi
