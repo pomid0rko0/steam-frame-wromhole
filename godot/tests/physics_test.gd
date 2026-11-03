@@ -1,6 +1,8 @@
 extends SceneTree
-## Ball and cube physics checks (desktop, run with --fixed-fps 60), exit status 1 on any failure:
-##   godot --path . --fixed-fps 60 -s res://tests/physics_test.gd [-- shot.png]
+## Ball and cube physics checks (desktop, run with --fixed-fps 60 in a small window: the checks look
+## at no picture, and a frame costs by its pixels; shot.png, the window at the end, as big as
+## --resolution gives), exit status 1 on any failure:
+##   godot --path . --resolution 160x90 --fixed-fps 60 -s res://tests/physics_test.gd [-- shot.png]
 ## 1. the demo's balls and cubes at rest on the floors of universes A and B stay at rest
 ## 2. energy 1/2|U|^2 + g phi is conserved in free flight into the mouth, through the throat
 ## 3. a ball rolled along universe A's floor passes under the mouth and stays on the floor in A
