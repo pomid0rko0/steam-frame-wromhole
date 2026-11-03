@@ -26,9 +26,9 @@ keep and what was learnt about it: the comment at the top of its file.
   as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
   origin already has a branch by that name, add what this one does differently, or a number
   (`cleanup-2`), rather than a synonym.
-- **`main` and versions:** `main` is what the owner checked in the headset; versions are git tags
-  the owner sets on such a commit, and CI makes each one a release (README, «Проверки») whose notes
-  are the titles of the PRs merged since the last one.
+- **`main` and versions:** `main` is what the owner checked in the headset; versions are the
+  owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
+  «Проверки»), its notes the titles of the PRs merged since the last version.
 - **A PR's title is its line in those notes,** which the owner reads: in Russian, what changes for
   the person in the headset (what they see or can do, what got faster), not how it is done; a PR
   that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch

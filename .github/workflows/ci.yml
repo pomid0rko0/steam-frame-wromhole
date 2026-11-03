@@ -6,10 +6,12 @@
 # headset's); they are deleted from the run unless the stereo test passes on the same commit (the
 # hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a rerun of the stereo
 # test alone does not bring them back ("Re-run all jobs" does).
-# On a version tag, or a release published on GitHub (its tag comes with it: one run takes both),
-# the same, then the release: notes generated from the merged PRs' titles if GitHub's form made
-# none, the headset's build as wormhole_vr.arm64 and as its zip, and the PC's zips, once every job
-# here has passed.
+# A version: the owner's button (Actions > CI > Run workflow on main, "исправление" or "новое": the
+# newest version tag's last or middle number up by one), or a version tag, or a release published
+# with GitHub's form (its tag comes with it: one run takes both). The same, then, once every job
+# here has passed, the release: notes generated from the titles of the PRs merged since the last
+# version (unless the form has some), the headset's build as wormhole_vr.arm64 and as its zip, and
+# the PC's zips.
 name: CI
 on:
   push:
@@ -18,8 +20,15 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Выпустить версию (только на main): исправление — последняя цифра +1, новое — средняя +1'
+        type: choice
+        options: [нет, исправление, новое]
+        default: нет
+# a newer push stops the older run (a version's run, only another version's)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version == 'исправление' || inputs.version == 'новое' }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -230,10 +239,39 @@ jobs:
             echo '```'
           done | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # the version the button asks for: its tag, from the newest one, at once (the release makes it)
+  version:
+    name: Номер версии
+    if: github.event_name == 'workflow_dispatch' && inputs.version != 'нет'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KIND: ${{ inputs.version }}
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "a version comes only from main, not $GITHUB_REF_NAME"; exit 1; }
+          tags=$(gh api --paginate "repos/$GH_REPO/git/matching-refs/tags/v" \
+            --jq '.[] | "\(.ref | ltrimstr("refs/tags/")) \(.object.sha)"')
+          if grep " $GITHUB_SHA$" <<<"$tags"; then echo "main's commit has a version already"; exit 1; fi
+          last=$(cut -d' ' -f1 <<<"$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          IFS=. read -r major minor patch <<<"${last:-v0.0.0}"
+          major=${major#v}
+          case $KIND in
+            исправление) tag=v$major.$minor.$((patch + 1)) ;;
+            новое) tag=v$major.$((minor + 1)).0 ;;
+          esac
+          echo "${last:-none} → $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   # on every push the builds are gathered as for a release; published only for a version
   release:
     name: Релиз (публикация — только для версии)
-    needs: [build, stereo, tests, openxr, ref, adreno]
+    needs: [build, stereo, tests, openxr, ref, adreno, version]
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -257,11 +295,16 @@ jobs:
           done
           unzip -o "out/$FRAME" wormhole_vr.arm64 -d out
           ls -la out
-      - if: github.event_name == 'release' || github.ref_type == 'tag'
+      - if: needs.version.outputs.tag != '' || github.event_name == 'release' || github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          NEW: ${{ needs.version.outputs.tag }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
-          gh release upload "$TAG" out/* --clobber
+          if [ -n "$NEW" ]; then
+            gh release create "$NEW" --target "$GITHUB_SHA" --generate-notes --title "$NEW" out/*
+          else
+            tag=$GITHUB_REF_NAME
+            gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --verify-tag --generate-notes --title "$tag"
+            gh release upload "$tag" out/* --clobber
+          fi
