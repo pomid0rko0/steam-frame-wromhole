@@ -1,0 +1,29 @@
+# The issues' labels as .github/labels.json has them (name, colour, description), on main when it
+# changes or by hand (Actions > Labels > Run workflow). A label the file doesn't name stays as it is.
+name: Labels
+on:
+  push:
+    branches: [main]
+    paths: ['.github/labels.json', '.github/workflows/labels.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  labels:
+    name: Метки
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          jq -r '.[] | [.name, .color, .description] | @tsv' .github/labels.json |
+          while IFS=$'\t' read -r name color description; do
+            gh label create "$name" --color "$color" --description "$description" --force
+          done
