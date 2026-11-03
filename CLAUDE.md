@@ -26,7 +26,8 @@ keep and what was learnt about it: the comment at the top of its file.
   (`claude/…`, `ccr-…`). The owner allows pushing to it. Its name is `<type>/<issue>-<words>`: the
   change's type as in Conventional Commits (`feat`, `fix`, `perf`, `refactor`, `test`, `ci`,
   `docs`…), the wish's issue (one said in the chat gets its issue first) and a few English words
-  (`fix/43-cube-tearing`, `feat/47-throat-shape`).
+  (`fix/43-cube-tearing`, `feat/47-throat-shape`). Its commits are Conventional Commits in English
+  (`fix: keep the cube whole by the eye's axis`).
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
@@ -34,9 +35,10 @@ keep and what was learnt about it: the comment at the top of its file.
   `main` (its ruleset): nothing is pushed to `main` itself. A PR that changes what the headset runs
   (`godot/` but `godot/tests/`, `tools/setup.sh`, `tools/export.sh`) the owner merges, or you when
   they say so in the chat; any other you merge yourself then.
-- **A PR's title is its line in those notes,** which the owner reads: in Russian, what changes for
-  the person in the headset (what they see or can do, what got faster), not how it is done; a PR
-  that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
+- **A PR's title is its line in those notes,** which the owner reads: a Conventional Commit's
+  header, the branch's type, then in Russian what changes for the person in the headset (what they
+  see or can do, what got faster), not how it is done (`feat: форма горла в меню`); a PR that
+  changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
   does changes, the title changes with it. The description: what to check in the headset (a yes/no
   they can see), what the tests and CI found, what is left. The two are the PR's commit in `main`.
 - **CI checks every push** (README, «Проверки»): both builds and every test, shared out over seven
