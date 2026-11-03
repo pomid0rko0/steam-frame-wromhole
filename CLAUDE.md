@@ -27,7 +27,8 @@ keep and what was learnt about it: the comment at the top of its file.
   [Conventional Branch](https://conventionalbranch.org/), `feat` and `fix` as in the commits; the
   description is the wish's issue (one said in the chat gets its issue first) and a few English
   words: `feat/issue-47-throat-shape`, `fix/issue-43-cube-tearing`. Its commits follow
-  [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), in English.
+  [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), the description in
+  Russian, as the PR's title that becomes their commit in `main` (below).
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
