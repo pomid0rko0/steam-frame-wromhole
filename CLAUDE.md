@@ -20,12 +20,16 @@ keep and what was learnt about it: the comment at the top of its file.
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
-- **One wish per chat,** on a branch you name yourself, started from `origin/main` after `git fetch`
-  (a cloud session's local `main` can be days old) or the branch the wish's issue gives; not the
-  branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
-  as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
-  origin already has a branch by that name, add what this one does differently, or a number
-  (`cleanup-2`), rather than a synonym.
+- **One wish per chat,** on a branch you name yourself (the next rule), started from `origin/main`
+  after `git fetch` (a cloud session's local `main` can be days old) or the branch the wish's issue
+  gives; not the branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows
+  pushing to the branch you name.
+- **A branch's name says what it does, verb first,** in the code's words, lowercase, joined by
+  hyphens, as short as still says it: `add-throat-knobs`, `fix-cube-tearing`,
+  `speed-up-zone-edge`. The owner tells builds apart by it: it is in each build's zip. The same
+  action takes the same verb: `add`, `fix`, `speed-up`, `remove`, `rewrite`. If origin already has
+  a branch by that name, add what this one does differently, or a number (`speed-up-lens-2`),
+  rather than a synonym.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
