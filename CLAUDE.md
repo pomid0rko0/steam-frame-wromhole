@@ -20,12 +20,23 @@ keep and what was learnt about it: the comment at the top of its file.
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
-- **One wish per chat,** on a branch you name yourself, started from `origin/main` after `git fetch`
-  (a cloud session's local `main` can be days old) or the branch the wish's issue gives; not the
-  branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
-  as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
-  origin already has a branch by that name, add what this one does differently, or a number
-  (`cleanup-2`), rather than a synonym.
+- **One wish per chat,** on a branch you name yourself (the next rule), started from `origin/main`
+  after `git fetch` (a cloud session's local `main` can be days old) or the branch the wish's issue
+  gives; not the branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows
+  pushing to the branch you name.
+- **A branch's name is the part, then what becomes of it:** two to four lowercase English words
+  joined by hyphens (`throat-knobs`, `toys-pull-to-hand`, `ci-faster`). The owner tells builds
+  apart by it: it is in the name of each build's zip (`tools/export.sh`). The part is what the owner
+  would call it: in the headset what they see, use or get (`throat`, `floor`, `toys`, `hands`,
+  `walking`, `flight`, `menu`, `foveation`, `stereo`, `log`), else what the branch changes (`ci`,
+  `tests`, `tools`, `docs`, `issues`, `rules` for this file). A part keeps the word it had before:
+  look at the branches of the PRs so far, as merged branches are deleted (the GitHub MCP's
+  `list_pull_requests` with `state: all`; on the Frame `gh pr list -s all`). The same kind of
+  change takes the same word: `faster` for the same in less time (a frame, CI, a tool), `fix-` and
+  what was wrong for a bug (`toys-fix-tearing`), `anew` for a part written again from scratch;
+  else what is new in it. Not one word (`gpu`, `swift`), nor only how it is done
+  (`compute-tracer`). If a branch here ever had that name, add what this one does differently, or
+  a number (`throat-faster-2`), rather than a synonym.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
