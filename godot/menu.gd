@@ -22,6 +22,15 @@ const SETTINGS := "user://settings.cfg"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const FALLS := ["с гравитацией", "без гравитации"]  # main.viewer.gravity true, false
+# the throat's shapes offered (main.set_shape), metres: its radius (WormholeSpace's rho0), its
+# length (the cylinder's, 2 (h - fillet): its fillets start where it ends, so a shape has no crease)
+# and its fillet's radius; main.SHAPE's among them. What draws and moves holds for each
+# (ref/test_gpu.py takes the extremes, tests/shape_test.gd every one). The fillet no sharper than
+# the video's: a cube in the curved zone is meshed as one small against the space's bend
+# (zone.gdshaderinc), and a toy's is a quarter of a metre across, half its edge
+const RADII := [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0]
+const LENGTHS := [0.0, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 15.0, 20.0, 30.0]
+const FILLETS := [1.0, 1.5, 2.0, 3.0, 4.0]
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
 const HINT := "крестовина или левый стик: выбрать, менять\nA — нажать · B — закрыть"
@@ -578,11 +587,17 @@ func set_strip(on: bool) -> void:
 	refresh()
 
 
-## The settings kept: a setting is written once chosen, so one never chosen follows the default.
+## The settings kept: a setting is written once chosen, so one never chosen follows the default
+## (the throat's shape: once other than main.SHAPE).
 func _save() -> void:
 	var cfg := _load()
 	cfg.set_value("ui", "strip", strip_on)
 	cfg.set_value("ui", "beam", main.hands.beam)
+	var shape := shape_chosen()
+	if shape != Main.SHAPE:
+		cfg.set_value("throat", "shape", shape)
+	elif cfg.has_section_key("throat", "shape"):
+		cfg.erase_section_key("throat", "shape")
 	if xr:
 		_keep(cfg, "eye", render_scale, scale_chosen)
 		_keep(cfg, "foveation_level", foveation, foveation_chosen)
@@ -606,6 +621,56 @@ static func _load() -> ConfigFile:
 		if cfg.has_section_key("render", k):
 			cfg.erase_section_key("render", k)
 	return cfg
+
+
+## The throat's shape kept, each of its numbers the nearest the menu offers; main.SHAPE if none.
+static func kept_shape() -> Vector3:
+	var v: Variant = _load().get_value("throat", "shape", Main.SHAPE)
+	if not v is Vector3:
+		return Main.SHAPE
+	return shape_of(_nearest(RADII, v.x), _nearest(LENGTHS, length_of(v)), _nearest(FILLETS, v.z))
+
+
+## The shape (WormholeSpace's rho0, h, fillet) of the menu's numbers: radius, length, fillet.
+static func shape_of(radius: float, length: float, fillet: float) -> Vector3:
+	return Vector3(radius, 0.5 * length + fillet, fillet)
+
+
+## The menu's length of a shape: its cylinder's (none: 0).
+static func length_of(v: Vector3) -> float:
+	return maxf(2.0 * (v.y - v.z), 0.0)
+
+
+static func _nearest(values: Array, x: float) -> float:
+	var best: float = values[0]
+	for v: float in values:
+		if absf(v - x) < absf(best - x):
+			best = v
+	return best
+
+
+## The throat's shape chosen: the one asked for, or else the one in effect.
+func shape_chosen() -> Vector3:
+	return main.shape_next if main.shape_pending() else main.space.shape()
+
+
+## Its number axis (0 radius, 1 length, 2 fillet) set to one the menu offers, the others kept;
+## kept for the next start.
+func choose_shape(axis: int, value: float) -> void:
+	var v := shape_chosen()
+	var k := Vector3(v.x, length_of(v), v.z)
+	k[axis] = value
+	main.set_shape(shape_of(k.x, k.y, k.z))
+	_save()
+	print("menu: the throat's %s %.2f m" % [["radius", "length", "fillet"][axis], value])
+	refresh()
+
+
+## Metres as the menu writes them: "0,25 м", "3 м".
+static func metres(v: float) -> String:
+	var t := "%.2f" % v
+	t = t.rstrip("0").rstrip(".")
+	return t.replace(".", ",") + " м"
 
 
 func _set_foveation(level: int) -> void:
@@ -728,7 +793,9 @@ func _update_strip() -> void:
 
 ## Every row, top to bottom; _layout leaves out those not shown here.
 func _make_rows() -> Array[Row]:
-	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
+	return [ShapeRow.new(self, "radius", "радиус горла", 0, RADII), ShapeRow.new(self, "length", "длина горла", 1, LENGTHS),
+			ShapeRow.new(self, "fillet", "скругление", 2, FILLETS),
+			RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"), ZonesRow.new(self, "zones", "зоны фовеации"),
 			GazeRow.new(self, "gaze", "точка взгляда"), BeamRow.new(self, "beam", "луч прицела"),
 			GravRow.new(self, "grav", "гравитация"), FlyRow.new(self, "fly", "полёт"),
@@ -787,6 +854,49 @@ class Row:
 	## A's own action instead of a value: true if there is one (done).
 	func act() -> bool:
 		return false
+
+
+## One number of the throat's shape (main.set_shape): its radius, its length (the cylinder's) or its
+## fillet's radius, among values. Put in once built (main._reshape): waiting till then.
+class ShapeRow extends Row:
+	var axis: int
+	var values: Array
+
+	func _init(p_menu: Menu, p_key: String, p_title: String, p_axis: int, p_values: Array) -> void:
+		super(p_menu, p_key, p_title)
+		axis = p_axis
+		values = p_values
+
+	func count() -> int:
+		return values.size()
+
+	## The nearest value (main.SHAPE and a kept shape are among them).
+	func current() -> int:
+		var x := _of(menu.shape_chosen())
+		var best := 0
+		for i in values.size():
+			if absf(values[i] - x) < absf(values[best] - x):
+				best = i
+		return best
+
+	func apply(i: int) -> void:
+		menu.choose_shape(axis, values[i])
+
+	func text(i: int) -> String:
+		return Menu.metres(values[i])
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+	func waiting() -> bool:
+		return menu.main.shape_pending() and _of(menu.main.shape_next) != _of(menu.main.space.shape())
+
+	## The next value on A would remake the world (the toys start over) for a press nobody meant so.
+	func steps_on_a() -> bool:
+		return false
+
+	func _of(v: Vector3) -> float:
+		return Menu.length_of(v) if axis == 1 else v[axis]
 
 
 ## The refresh rate (frame_rate.gd).

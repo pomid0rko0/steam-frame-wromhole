@@ -36,7 +36,7 @@ func _initialize() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	for pr in PROFILES:
-		sp = WormholeSpace.new(pr[0], pr[1], pr[2], pr[2] + pr[0] + 1.0)
+		sp = WormholeSpace.new(pr[0], pr[1], pr[2])
 		var worst_p := 0.0
 		var worst_f := 0.0
 		for i in CASES:

@@ -6,7 +6,7 @@ import re
 import sys
 import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
-from geo import Space as Wormhole, app_profile
+from geo import Space as Wormhole, app_profile, lift_of
 from gravity import Gravity, solve_2d
 
 PROFILES = {                      # (rho0, h, R) in metres
@@ -64,8 +64,7 @@ for name, (rho0, h, R) in PROFILES.items():
 
 W = Wormhole(*app_profile())
 G = Gravity(W)
-src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
-LIFT = float(re.search(r'^const LIFT := ([\d.]+)', src, re.M).group(1))
+LIFT = lift_of(app_profile())
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'ball_world.gd')).read()
 RR = float(re.search(r'^const ROLLING_RESISTANCE := ([\d.]+)', src, re.M).group(1))
 

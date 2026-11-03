@@ -18,15 +18,12 @@ const CUBE_COLOR := Color(0.85, 0.1, 0.9)
 
 
 ## Godot's green lines under overlay (nodes Grid, Ball1.., Cube), the red balls and the cube to the
-## renderer, and the scene's static objects taken away: Godot's floor lines would be drawn over
+## renderer (fit), and the scene's static objects taken away: Godot's floor lines would be drawn over
 ## them where the floor is hidden.
 static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> void:
 	var floor_mat := ShaderMaterial.new()
 	floor_mat.shader = load("res://shaders/check_grid.gdshader")
 	assert(floor_mat.shader.code.contains("balls[%d]" % BALLS.size()), "check_grid.gdshader's balls[] holds BALLS")
-	var zone := Vector3(0.0, 0.0, space.lift)        # the throat's centre in chart A
-	floor_mat.set_shader_parameter("rout", space.Rout)
-	floor_mat.set_shader_parameter("zone", zone - Vector3(0.0, 0.0, 0.002))
 	floor_mat.render_priority = 10
 	var bl := PackedVector4Array()
 	for c in BALLS:
@@ -46,23 +43,17 @@ static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> 
 	var ball_mat := ShaderMaterial.new()
 	ball_mat.shader = load("res://shaders/check_ball.gdshader")
 	ball_mat.render_priority = 11
-	ball_mat.set_shader_parameter("rout", space.Rout)
-	var pos := PackedVector4Array()
-	var col := PackedVector4Array()
-	for c in BALLS:
-		pos.append(Vector4(c.x, c.y, c.z - space.lift, space.h))     # R^4 point of sheet A
-		col.append(Vector4(BALL_COLOR.r, BALL_COLOR.g, BALL_COLOR.b, BALL_RADIUS))
+	for i in BALLS.size():
 		var s := SphereMesh.new()
 		s.radius = BALL_RADIUS
 		s.height = 2.0 * BALL_RADIUS
 		s.radial_segments = Renderer.BALL_SEGMENTS      # the renderer's ball mesh: the same faces
 		s.rings = Renderer.BALL_RINGS
 		var m := MeshInstance3D.new()
-		m.name = "Ball%d" % pos.size()
+		m.name = "Ball%d" % (i + 1)
 		m.mesh = s
 		m.material_override = ball_mat.duplicate()
-		m.material_override.set_shader_parameter("zone", zone - c)
-		m.position = c
+		m.position = BALLS[i]
 		overlay.add_child(m)
 	# the cube: Godot draws its edges green, the renderer its 4D box
 	var box := MeshInstance3D.new()
@@ -72,16 +63,37 @@ static func build(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> 
 	box.material_override = ShaderMaterial.new()
 	box.material_override.shader = load("res://shaders/check_cube.gdshader")
 	box.material_override.set_shader_parameter("half", CUBE_HALF)
-	box.material_override.set_shader_parameter("rout", space.Rout)
-	box.material_override.set_shader_parameter("zone", Basis(Vector3(0.0, 0.0, 1.0), CUBE_YAW).inverse() * (zone - CUBE))
 	box.material_override.render_priority = 11
 	box.transform = Transform3D(Basis(Vector3(0.0, 0.0, 1.0), CUBE_YAW), CUBE)
 	overlay.add_child(box)
+	fit(overlay, space, renderer)
+	renderer.show_scene(false)
+
+
+## What hangs on the throat's shape: where Godot's lines stop at the curved zone's ball (its centre
+## and radius in chart A), and the balls' and the cube's points of R^4 (sheet A, lift under the
+## centre) for the renderer.
+static func fit(overlay: Node3D, space: WormholeSpace, renderer: Renderer) -> void:
+	var zone := Vector3(0.0, 0.0, space.lift)        # the throat's centre in chart A
+	var floor_mat: ShaderMaterial = (overlay.get_node("Grid") as MeshInstance3D).material_override
+	floor_mat.set_shader_parameter("rout", space.Rout)
+	floor_mat.set_shader_parameter("zone", zone - Vector3(0.0, 0.0, 0.002))
+	var pos := PackedVector4Array()
+	var col := PackedVector4Array()
+	for i in BALLS.size():
+		var c: Vector3 = BALLS[i]
+		pos.append(Vector4(c.x, c.y, c.z - space.lift, space.h))     # R^4 point of sheet A
+		col.append(Vector4(BALL_COLOR.r, BALL_COLOR.g, BALL_COLOR.b, BALL_RADIUS))
+		var m: ShaderMaterial = (overlay.get_node("Ball%d" % (i + 1)) as MeshInstance3D).material_override
+		m.set_shader_parameter("rout", space.Rout)
+		m.set_shader_parameter("zone", zone - c)
+	var box: ShaderMaterial = (overlay.get_node("Cube") as MeshInstance3D).material_override
+	box.set_shader_parameter("rout", space.Rout)
+	box.set_shader_parameter("zone", Basis(Vector3(0.0, 0.0, 1.0), CUBE_YAW).inverse() * (zone - CUBE))
 	var axes := PackedVector4Array([Vector4(cos(CUBE_YAW), sin(CUBE_YAW), 0.0, 0.0),
 			Vector4(-sin(CUBE_YAW), cos(CUBE_YAW), 0.0, 0.0)])
 	renderer.set_objects(pos, col, PackedVector4Array([Vector4(CUBE.x, CUBE.y, CUBE.z - space.lift, space.h)]), axes,
 			PackedVector4Array([Vector4(CUBE_COLOR.r, CUBE_COLOR.g, CUBE_COLOR.b, CUBE_HALF)]))
-	renderer.show_scene(false)
 
 
 ## The pictures of the stereo test draw only parts of it (tests/multiview_check.gd): the overlay's

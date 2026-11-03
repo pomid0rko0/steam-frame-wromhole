@@ -9,7 +9,7 @@ extends SceneTree
 ## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
 ## renderer's white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|zones|probe|lens|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|zones|probe|lens|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov] [shape=radius,length,fillet]
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
@@ -25,6 +25,7 @@ extends SceneTree
 ## fov: foveated rendering on (foveation.gd) at FOV_LEVELS[case], in case 1 with the eyes tracked
 ## looking off the middle (FOV_GAZE); in mode "app" each eye's fovea goes into out_prefix_fovea.json
 ## (Foveation.fovea: [g's pixel x, y, r0, m] per eye), for tools/compare/fovea.py.
+## shape: the app starts with that throat (util.gd's start_shape).
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
@@ -61,6 +62,7 @@ func _initialize() -> void:
 	plain = args.slice(3).has("plain")
 	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
 	fov = args.slice(3).has("fov")
+	U.start_shape()
 	hmd = U.headset(mini(case, 1), -25.0)
 	if fov and case == 1:
 		hmd.gaze = FOV_GAZE.normalized()

@@ -1,7 +1,7 @@
 extends SceneTree
 ## Stereo where light is bent by the wormhole, where there is no Godot geometry to compare with: the
 ## simulated headset (util.gd's case 1: canted eyes, asymmetric frusta, a turned and displaced
-## head) stands or flies at a place of PLACES with red balls and green cubes round the head and at
+## head) stands or flies at one of its places with red balls and green cubes round the head and at
 ## fixed places of the space (WORLD: in the throat, on its far side, in universe B, behind the
 ## mouth: seen through the lens and in the zone, every image), and each eye's picture is saved with
 ## what tools/compare/curved.py needs to trace that eye's rays itself, independently of the shaders:
@@ -11,40 +11,31 @@ extends SceneTree
 ## seen through the lens, and a ball crosses the edge of the zone's disc in the picture from the start
 ## (EDGE_BALL): drawn by its mesh outside the disc and by the filtered texture inside it, it must not
 ## part there. tools/compare/curved.py then allows each pixel's texel size more (the json's fovea).
-##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov]
+## With a shape (util.gd's start_shape), the app starts with that throat, and the places and the
+## bodies at fixed places are where they are against it (places, WORLD_BALLS, WORLD_CUBES, EDGE_BALL).
+##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov] [shape=radius,length,fillet]
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
 const U := preload("res://tests/util.gd")
-# [the feet's place on universe A's floor (chart x, y), the direction they face (chart x, y),
-# flights from there (main.viewer: off the floor, then each a geodesic along the head's x right, y
-# up, -z ahead, the room's axes carried along), a turn of the room to the right after, in degrees,
-# the head's pitch in degrees (util.gd's headset)]: standing at the start looking up at the mouth;
-# level with the throat's centre 9 m out; at the curved zone's edge; in A's fillet; in the throat
-# looking along it and sideways; out in universe B looking back at the mouth; far off, a control;
-# under the mouth looking up into it
-const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
-		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0)], 0.0, 0.0],
-		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -4.6)], 0.0, -5.0],
-		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0],
-		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0],
-		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 90.0, -10.0],
-		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 180.0, 0.0],
-		[Vector2(24.0, 9.0), Vector2(1.0, 0.3), [], 0.0, -10.0],
-		[Vector2(0.6, 0.4), Vector2(-1.0, 0.0), [], 0.0, 75.0]]
+const OUT := 5.0                # m: the flights start this far out of the curved zone, on the line through the throat's centre
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
 const CUBES := [[Vector3(0.35, 0.15, -0.6), 0.1, Vector3(0.4, 0.6, 0.1)], [Vector3(-0.4, -0.5, -2.6), 0.28, Vector3(-0.2, 0.9, 0.3)]]
-# bodies at points (l, n) of the space: balls [l, n, radius], cubes [l, n, half size, a turn about
-# n's tangent plane]: on the throat's far side from the start, in it near its top, in B's fillet,
-# out in B through the throat from the start, out in A behind the mouth
-const WORLD_BALLS := [[0.3, Vector3(-1.0, 0.05, 0.1), 0.4], [1.5, Vector3(0.1, -0.2, 1.0), 0.3],
-		[-9.0, Vector3(1.0, 0.25, -0.35), 0.45]]
+# bodies at points (l, n) of the space, l as a place against the curved zone (WormholeSpace.l_of: at
+# the video's throat l = 0.3, 1.5, -9; -3, 7.5): balls [place, n, radius], cubes [place, n, half
+# size, a turn about n's tangent plane]: on the throat's far side from the start, in it near its
+# top, out in B through the throat from the start; in B's half of the throat, out in A behind the
+# mouth
+const WORLD_BALLS := [[Vector2(0.054, 0.0), Vector3(-1.0, 0.05, 0.1), 0.4], [Vector2(0.27, 0.0), Vector3(0.1, -0.2, 1.0), 0.3],
+		[Vector2(-1.0, -3.43), Vector3(1.0, 0.25, -0.35), 0.45]]
+const WORLD_CUBES := [[Vector2(-0.54, 0.0), Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [Vector2(1.0, 1.93), Vector3(-1.0, 0.35, 0.15), 0.4, 0.3]]
 # with fov: out in A behind the mouth across the edge of the zone's disc in the picture from the
-# start (part of it seen straight, part through the lens); its images near the photon sphere, thin
-# rings, are left to the places without
-const EDGE_BALL := [11.62, Vector3(-6.64, 7.2, 2.26), 1.2]
-const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1.0, 0.35, 0.15), 0.4, 0.3]]
+# start (part of it seen straight, part through the lens; _edge_ball): [its radius, its distance
+# from the head at the start in the head's distances from the throat's centre, how far past the
+# disc's edge its centre is seen (rad)]; its images near the photon sphere, thin rings, are left to
+# the places without
+const EDGE_BALL := [1.2, 1.8, 0.0025]
 # and on the line through the head and the throat's centre, where a body's images close into rings:
 # [m toward the centre from the head (l less), radius or half size, a turn about that line]
 const AXIS_BALL := [1.1, 0.1, 0.0]
@@ -61,9 +52,34 @@ var frames := 0
 var place: Array
 
 
+## The places at the throat sp: [the feet's place on universe A's floor (chart x, y), the direction
+## they face (chart x, y), flights from there (main.viewer: off the floor, then each a geodesic along
+## the head's x right, y up, -z ahead, the room's axes carried along), a turn of the room to the right
+## after, in degrees, the head's pitch in degrees (util.gd's headset)]: standing at the start looking
+## up at the mouth; level with the throat's centre OUT out of the curved zone; at the zone's edge
+## (0.4 m out); in A's fillet (0.38 of it in); in the throat (l at 0.28 of L) looking along it and
+## sideways; out in universe B (4.86 m out) looking back at the mouth; far off, a control; under
+## the mouth looking up into it. At the video's throat the flights are 3.4 m up from 9 m out, then
+## 4.6, 5.6, 9, 9 and 21 m on.
+static func places(sp: WormholeSpace) -> Array:
+	var x := sp.Rout + OUT
+	var up := Vector3(0.0, sp.lift - 1.6, 0.0)
+	var on := func(d: float) -> Vector3: return Vector3(0.0, 0.0, -d)
+	return [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
+		[Vector2(x, 0.0), Vector2(-1.0, 0.0), [up], 0.0, 0.0],
+		[Vector2(x, 0.3), Vector2(-1.0, 0.0), [up, on.call(OUT - 0.4)], 0.0, -5.0],
+		[Vector2(x, 0.3), Vector2(-1.0, 0.0), [up, on.call(OUT + 0.38 * (sp.L - sp.Lc))], 0.0, -5.0],
+		[Vector2(x, 0.0), Vector2(-1.0, 0.0), [up, on.call(OUT + 0.72 * sp.L)], 0.0, -10.0],
+		[Vector2(x, 0.0), Vector2(-1.0, 0.0), [up, on.call(OUT + 0.72 * sp.L)], 90.0, -10.0],
+		[Vector2(x, 0.0), Vector2(-1.0, 0.0), [up, on.call(OUT + 2.0 * sp.L + 4.86)], 180.0, 0.0],
+		[Vector2(24.0, 9.0), Vector2(1.0, 0.3), [], 0.0, -10.0],
+		[Vector2(0.6, 0.4), Vector2(-1.0, 0.0), [], 0.0, 75.0]]
+
+
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
-	place = PLACES[int(args[1])]
+	var shape := U.start_shape()
+	place = places(WormholeSpace.new(shape.x, shape.y, shape.z))[int(args[1])]
 	hmd = U.headset(1, place[4], Vector2i(640, 640))
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
@@ -146,17 +162,22 @@ func _bodies() -> void:
 	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
 	for c: Array in NEAR_AXIS_CUBES:
 		_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
-	for b: Array in WORLD_BALLS + ([EDGE_BALL] if _fov() else []):
-		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
+	for b: Array in WORLD_BALLS:
+		pos.append(sp.embed(sp.l_of(b[0]), (b[1] as Vector3).normalized()))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
+	if _fov():
+		var e := _edge_ball(sp)
+		pos.append(sp.embed(e[0], e[1]))
+		col.append(Vector4(4.0, 0.0, 0.0, EDGE_BALL[0]))
 	for c: Array in WORLD_CUBES:
 		var n: Vector3 = (c[1] as Vector3).normalized()
-		var C := sp.embed(c[0], n)
+		var l := sp.l_of(c[0])
+		var C := sp.embed(l, n)
 		var e1 := _normal_to(n)
 		var e2 := n.cross(e1)
 		var a: float = c[3]
 		for ax in [cos(a) * e1 + sin(a) * e2, -sin(a) * e1 + cos(a) * e2]:
-			axes.append(sp.embed_vector(c[0], n, Vector4(0.0, ax.x, ax.y, ax.z)).normalized())
+			axes.append(sp.embed_vector(l, n, Vector4(0.0, ax.x, ax.y, ax.z)).normalized())
 		cpos.append(C)
 		ccol.append(Vector4(0.0, 4.0, 0.0, c[2]))
 	main.toys.enabled = false
@@ -169,6 +190,18 @@ var _objects := []
 
 static func _fov() -> bool:
 	return OS.get_cmdline_user_args().has("fov")
+
+
+## EDGE_BALL's (l, n): from the head at the start (chart A, main.START_POS 1.6 m up), the line to the
+## throat's centre turned toward chart y by the zone's disc's angular radius and EDGE_BALL[2] more.
+static func _edge_ball(sp: WormholeSpace) -> Array:
+	var eye := Main.START_POS + Vector3(0.0, 0.0, 1.6)
+	var to := Vector3(0.0, 0.0, sp.lift) - eye
+	var d := to.length()
+	var u := to / d
+	var w := (Vector3(0.0, 1.0, 0.0) - u.y * u).normalized()
+	var a := asin(sp.Rout / d) + EDGE_BALL[2]
+	return sp.point_from_chart(1.0, eye + EDGE_BALL[1] * d * (cos(a) * u + sin(a) * w))
 
 
 ## A cube next to eye c[0]'s axis (NEAR_AXIS_CUBES): its centre c[1] toward the throat's centre from

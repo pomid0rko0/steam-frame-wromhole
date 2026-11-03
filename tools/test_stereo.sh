@@ -61,8 +61,21 @@ for c in 0 1; do
 done
 # where light is bent: at the start looking up at the lifted throat, level with it, at the curved
 # zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
-# a control, under the mouth looking up (curved_check.gd's PLACES)
+# a control, under the mouth looking up (curved_check.gd's places)
 for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
+# the same at other throats the menu offers (its numbers: radius, length, fillet; util.gd's
+# start_shape), as far from the video's as they go: a narrow throat with no cylinder and a wide
+# fillet, a wide one with a long cylinder and the sharpest fillet; there also the stereo check
+# scene, cases 0 and 1
+SHAPES="1,0,4 8,30,1"
+k=0
+for s in $SHAPES; do
+	for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/s${k}crv$p" $p shape=$s; done
+	for c in 0 1; do
+		for m in app lens floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/s${k}chk$c" $m $c shape=$s; done
+	done
+	k=$((k + 1))
+done
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do render -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
@@ -113,13 +126,29 @@ for c in 0 1; do
 done
 # the traced rays take minutes a place (more in the throat, where they go round it): JOBS at once,
 # their verdicts in order
-for c in crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6; do
+shaped=""
+k=0
+for s in $SHAPES; do
+	for p in 0 1 2 3 4 5 6 7 8; do shaped="$shaped s${k}crv$p"; done
+	k=$((k + 1))
+done
+for c in crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 $shaped; do
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
 	python3 "$CMP/curved.py" "$OUT/$c" > "$LOGS/$c.cmp" 2>&1 &
 done
 wait
 for p in 0 1 2 3 4 5 6 7 8; do
 	verdict "simulated headset, place $p where light is bent: balls, cubes and the floor against traced rays, every image, each eye" cat "$LOGS/crv$p.cmp"
+done
+k=0
+for s in $SHAPES; do
+	for p in 0 1 2 3 4 5 6 7 8; do
+		verdict "throat $s (radius, length, fillet), place $p where light is bent: the same" cat "$LOGS/s${k}crv$p.cmp"
+	done
+	for c in 0 1; do
+		verdict "throat $s, case $c: stereo check scene (green on white, red and magenta)" python3 "$CMP/check_scene.py" "$OUT/s${k}chk$c"
+	done
+	k=$((k + 1))
 done
 for p in 0 6; do
 	verdict "simulated headset, place $p where light is bent, our own foveation: the same" cat "$LOGS/crf$p.cmp"

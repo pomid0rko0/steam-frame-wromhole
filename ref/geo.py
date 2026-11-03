@@ -27,19 +27,31 @@ import numpy as np
 from scipy import integrate
 
 
-def _main_const(k):
-    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'main.gd')).read()
-    return float(re.search(r'^const %s := ([\d.]+)' % k, src, re.M).group(1))
+GODOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot')
+
+
+def _godot(name):
+    return open(os.path.join(GODOT, name)).read()
 
 
 def app_profile():
-    """The app's throat, (rho0, h, R) in metres: godot/main.gd's THROAT_RADIUS, HALF_LENGTH, FILLET."""
-    return tuple(_main_const(k) for k in ('THROAT_RADIUS', 'HALF_LENGTH', 'FILLET'))
+    """The app's throat until the menu sets another, (rho0, h, R) in metres: godot/main.gd's SHAPE."""
+    m = re.search(r'^const SHAPE := Vector3\(([^)]*)\)', _godot('main.gd'), re.M)
+    return tuple(float(x) for x in m.group(1).split(','))
 
 
-def app_lift():
-    """The throat's centre above the floor in metres: godot/main.gd's LIFT."""
-    return _main_const('LIFT')
+def menu_values(name):
+    """One of the throat's numbers as godot/menu.gd offers them (RADII; LENGTHS, the cylinder's,
+    2 (h - R); FILLETS), metres."""
+    m = re.search(r'^const %s := \[([^\]]*)\]' % name, _godot('menu.gd'), re.M)
+    return [float(x) for x in m.group(1).split(',')]
+
+
+def lift_of(profile):
+    """The throat's centre above the floor in metres for profile (rho0, h, R): its curved zone's radius
+    rho0 + R and WormholeSpace.CLEARANCE under it."""
+    c = float(re.search(r'^const CLEARANCE := ([\d.]+)', _godot('wormhole_space.gd'), re.M).group(1))
+    return profile[0] + profile[2] + c
 
 
 class Space:

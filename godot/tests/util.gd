@@ -72,6 +72,20 @@ static func finish(tree: SceneTree, hmd: XRInterface = null, trackers: Array = [
 	tree.quit(1 if fails > 0 else 0)
 
 
+## The throat's shape a test is given (an argument shape=radius,length,fillet: the menu's numbers,
+## Menu.shape_of), or main.SHAPE; kept in the settings, so the app starts with it (Menu.kept_shape).
+static func start_shape() -> Vector3:
+	var v := Main.SHAPE
+	for a: String in OS.get_cmdline_user_args():
+		if a.begins_with("shape="):
+			var k := a.trim_prefix("shape=").split_floats(",")
+			v = Menu.shape_of(k[0], k[1], k[2])
+	var cfg := ConfigFile.new()
+	cfg.set_value("throat", "shape", v)
+	cfg.save(Menu.SETTINGS)
+	return v
+
+
 ## A key press or release, as the desktop's input: seen from the next frame on, or at once with
 ## flush (for a test that calls main._process itself).
 static func key(code: Key, down: bool, flush := false) -> void:

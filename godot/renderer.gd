@@ -164,7 +164,6 @@ func _ready() -> void:
 		m.shader = SCENE_SHADER
 		m.set_shader_parameter("sheet", side)
 		scene_mats.append(m)
-	upload_space()
 	floor_quad = MeshInstance3D.new()
 	var q := QuadMesh.new()
 	q.size = Vector2(2.0, 2.0)
@@ -182,13 +181,11 @@ func _ready() -> void:
 		zone.append(_multimesh(grid, zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
 	for mm in [balls, cubes] + zone:
 		play.add_child(mm)
-	_lens_statics()
-	_upload_lens(PackedVector4Array(), PackedVector4Array())
 	for k in 2:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
 		play.add_child(mi)
-	arrows = _images(_arrow_mesh(), arrow_mat)
+	arrows = _images(ArrayMesh.new(), arrow_mat)
 	arrows.visible = false
 	play.add_child(arrows)
 	var tube := _beam_mesh()
@@ -201,6 +198,7 @@ func _ready() -> void:
 		m.set_shader_parameter("beam_n", 2)
 		beams.append(b)
 		play.add_child(b)
+	upload_space(prepare(space))
 
 
 ## The first frames also draw the gravity views' floor and lines and the beams: their pipelines
@@ -236,23 +234,39 @@ func materials() -> Array[ShaderMaterial]:
 	return out
 
 
-## The throat's shape and what is built for it (WormholeSpace.set_profile's list): the profile,
-## the sweep table, the floor's lift and gravity there. Slow in GDScript: not per frame.
-func upload_space() -> void:
-	var tab := space.sweep_table()
-	var tex := ImageTexture.create_from_image(tab.image)
-	_sweep_tex = tex
+## What is built for a throat's shape that takes long (a tenth of a second and more in GDScript):
+## the sweep table (WormholeSpace.sweep_table) and the gravity view's field lines (_arrow_arrays).
+## It reads only sp and makes nothing of the RenderingServer's: off the main thread (main.set_shape).
+static func prepare(sp: WormholeSpace) -> Dictionary:
+	return {"table": sp.sweep_table(), "arrows": _arrow_arrays(sp)}
+
+
+## The throat's shape (space's now) to the shaders, with what prepare built for it: the profile, the
+## sweep table, the floor's lift and gravity there, the field lines; the scene's static objects in the
+## lens list (their R^4 points hang from lift). A few uniforms, the table's 256 x 64 texels and the
+## lines' mesh: one frame's work.
+func upload_space(prep: Dictionary) -> void:
+	var tab: Dictionary = prep.table
+	if _sweep_tex == null:
+		_sweep_tex = ImageTexture.create_from_image(tab.image)
+	else:
+		_sweep_tex.update(tab.image)        # the same size and format: the shaders keep the texture
 	_sweep_axes = tab.axes
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
 	for fx in [foveation, zone_sections]:
 		fx.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
-				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
+				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, _sweep_tex,
 				Vector2(space.lift, space.grav_beta))
+	var lines := ArrayMesh.new()
+	lines.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, prep.arrows)
+	arrows.multimesh.mesh = lines
+	_lens_statics()
+	_upload_lens(_lens_toys[0], _lens_toys[1])
 
 
-var _sweep_tex: Texture2D
+var _sweep_tex: ImageTexture
 var _sweep_axes := Vector4.ZERO
 
 
@@ -648,70 +662,74 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 
 
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
-## LINE_* and ARROW_*). Vertices as points of the space: n in the vertex, l in UV.x (body.gdshaderinc,
-## ARROWS); each line and arrow twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1).
-## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
-func _arrow_mesh() -> ArrayMesh:
+## LINE_* and ARROW_*), as a mesh's arrays (prepare: off the main thread). Vertices as points of the
+## space: n in the vertex, l in UV.x (body.gdshaderinc, ARROWS); each line and arrow twice, its
+## outline (COLOR.a 0) and itself over it (COLOR.a 1). Points of the surface n.x = 0 are (l, beta),
+## n = (0, cos beta, sin beta).
+static func _arrow_arrays(sp: WormholeSpace) -> Array:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var top := space.Rout + LINE_TOP
-	var reach := space.Rout + LINE_REACH
+	var top := sp.Rout + LINE_TOP
+	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
 	for side in [1.0, -1.0]:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
 			var rr := Vector2(y, top).length()
-			var pts := _field_line(side * (rr - space.Rout + space.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
+			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
 			if pts.size() < 2:
 				continue
-			_line(st, pts, true)
-			_line(st, pts, false)
+			_line(sp, st, pts, true)
+			_line(sp, st, pts, false)
 	st.index()          # shared corners once (_scene_mesh)
-	return st.commit()
+	return st.commit_to_arrays()
 
 
 ## The force at (l, beta) of the surface n.x = 0 (metric dl^2 + r^2 dbeta^2): its parts along l and
 ## along beta (per metre), in g.
-func _force(l: float, beta: float) -> Vector2:
-	var F := -space.potential_grad(l, Vector3(0.0, cos(beta), sin(beta)))
+static func _force(sp: WormholeSpace, l: float, beta: float) -> Vector2:
+	var F := -sp.potential_grad(l, Vector3(0.0, cos(beta), sin(beta)))
 	return Vector2(F.x, Vector3(F.y, F.z, F.w).dot(Vector3(0.0, -sin(beta), cos(beta))))
+
+
+## The force's direction at (l, beta) as (dl, dbeta) per metre along it; zero where there is none.
+static func _along(sp: WormholeSpace, l: float, beta: float) -> Vector2:
+	var f := _force(sp, l, beta)
+	var g := f.length()
+	return Vector2(f.x, f.y / sp.r(l)) / g if g > 1e-6 else Vector2.ZERO
 
 
 ## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (where the
 ## height goes through 0) or out past rmax from the throat's centre: its points [l, beta, g].
-func _field_line(l: float, beta: float, rmax: float) -> Array:
-	var dir := func(ll: float, bb: float) -> Vector2:
-		var f := _force(ll, bb)
-		var g := f.length()
-		return Vector2(f.x, f.y / space.r(ll)) / g if g > 1e-6 else Vector2.ZERO
-	var pts := [[l, beta, _force(l, beta).length()]]
+static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -> Array:
+	var pts := [[l, beta, _force(sp, l, beta).length()]]
 	for i in LINE_MAX_STEPS:
 		var p := Vector2(l, beta)
-		var k1: Vector2 = dir.call(p.x, p.y)
+		var k1 := _along(sp, p.x, p.y)
 		if k1 == Vector2.ZERO:
 			break
-		var k2: Vector2 = dir.call(p.x + 0.5 * LINE_DS * k1.x, p.y + 0.5 * LINE_DS * k1.y)
-		var k3: Vector2 = dir.call(p.x + 0.5 * LINE_DS * k2.x, p.y + 0.5 * LINE_DS * k2.y)
-		var k4: Vector2 = dir.call(p.x + LINE_DS * k3.x, p.y + LINE_DS * k3.y)
+		var k2 := _along(sp, p.x + 0.5 * LINE_DS * k1.x, p.y + 0.5 * LINE_DS * k1.y)
+		var k3 := _along(sp, p.x + 0.5 * LINE_DS * k2.x, p.y + 0.5 * LINE_DS * k2.y)
+		var k4 := _along(sp, p.x + LINE_DS * k3.x, p.y + LINE_DS * k3.y)
 		var q := p + LINE_DS / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-		var h0 := space.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
-		var h1 := space.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
+		var h0 := sp.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
+		var h1 := sp.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
 		if h1 <= 0.0:
 			# onto the floor: the step's part that gets there
 			q = p.lerp(q, h0 / (h0 - h1))
-			pts.append([q.x, q.y, _force(q.x, q.y).length()])
+			pts.append([q.x, q.y, _force(sp, q.x, q.y).length()])
 			break
-		if space.r(q.x) > rmax:
+		if sp.r(q.x) > rmax:
 			break
 		l = q.x
 		beta = q.y
-		pts.append([l, beta, _force(l, beta).length()])
+		pts.append([l, beta, _force(sp, l, beta).length()])
 	return pts
 
 
 ## A line through pts ([l, beta, g]) LINE_WIDTH to each side, with an arrow every ARROW_GAP along
 ## it, in the colour of g where each point is; rim: its outline instead, ARROW_RIM wider all round.
-func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
+static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> void:
 	var grow := ARROW_RIM if rim else 0.0
 	var w := LINE_WIDTH + grow
 	# the strip: two vertices a point
@@ -720,7 +738,7 @@ func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
 		var a: Array = pts[maxi(i - 1, 0)]
 		var b: Array = pts[mini(i + 1, pts.size() - 1)]
 		var p: Array = pts[i]
-		var rr := space.r(p[0])
+		var rr := sp.r(p[0])
 		var t := Vector2(b[0] - a[0], (b[1] - a[1]) * rr).normalized()
 		var side := Vector2(-t.y, t.x)
 		var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(p[2]), 1.0)
@@ -735,7 +753,7 @@ func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
 	for i in range(1, pts.size()):
 		var a: Array = pts[i - 1]
 		var b: Array = pts[i]
-		var rr := space.r(0.5 * (a[0] + b[0]))
+		var rr := sp.r(0.5 * (a[0] + b[0]))
 		var d := Vector2(b[0] - a[0], (b[1] - a[1]) * rr)
 		var len := d.length()
 		while len > 0.0 and next <= s + len:

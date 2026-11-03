@@ -22,10 +22,10 @@ func check(name: String, good: bool, got: Variant = "") -> void:
 func _off_place(where: Variant) -> float:
 	var sp: WormholeSpace = main.space
 	var v := main.viewer
-	if where is float and not is_inf(where):
+	if where is Vector2:
 		var hp := v.head(main.camera.transform.origin.y)
-		return 1e9 if v.standing else (sp.embed(hp[0], hp[1]) - sp.embed(where, Vector3(1.0, 0.0, 0.0))).length()
-	var at: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
+		return 1e9 if v.standing else (sp.embed(hp[0], hp[1]) - sp.embed(sp.l_of(where), Vector3(1.0, 0.0, 0.0))).length()
+	var at: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else main.bench._floor_place(where)
 	var p := sp.point_from_chart(at.z, Vector3(at.x, at.y, 0.0))
 	return 1e9 if not v.standing else (sp.embed(v.l, v.n) - sp.embed(p[0], p[1])).length()
 

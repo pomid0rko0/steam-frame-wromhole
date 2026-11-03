@@ -1,6 +1,7 @@
 class_name Main
 extends Node3D
-## Real-time wormhole for VR (README.md, docs/). The throat hangs LIFT over the floor; the renderer
+## Real-time wormhole for VR (README.md, docs/). The throat hangs over the floor, its curved zone
+## WormholeSpace.CLEARANCE above it, in the shape the menu sets (set_shape); the renderer
 ## (renderer.gd) draws every image of each body along the geodesics of the wormhole space, the
 ## curved zone as a lens per pixel; this script builds the scene and moves the viewer through that
 ## curved space: walking in the room, with the sticks along the floor and flying off it as a ship
@@ -20,7 +21,8 @@ extends Node3D
 ## and the stereo check scene (check_scene.gd). Each frame (_process): the menu takes its buttons,
 ## then the turn, the reset and the gravity view's button, the body's motion (_locomotion), the free
 ## toys (pushed by the hands where they were), the hands and what they hold, and last the toys and
-## the head to the renderer: a toy let go now starts from the hand.
+## the head to the renderer: a toy let go now starts from the hand. A new shape of the throat, built
+## off the main thread, goes in before all that (_reshape).
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -39,11 +41,9 @@ extends Node3D
 ## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
 ## (_log_profiles): in the headset it is our Frame profile.
 
-# the video's throat (docs/geometry.md, «Пространство»)
-const THROAT_RADIUS := 3.0
-const HALF_LENGTH := 5.0
-const FILLET := 1.0
-const LIFT := 5.0                   # m: the throat's centre above the floor (above the curved zone's radius, 4 m)
+# the throat until the menu sets another (WormholeSpace's rho0, h, fillet): the video's (docs/geometry.md,
+# «Пространство»)
+const SHAPE := Vector3(3.0, 5.0, 1.0)
 const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
 const FLY_SPEED := 4.0              # flying: metres per second at full stick or trigger
@@ -59,7 +59,7 @@ const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
 const GAZE_HOLD := 0.5              # s the foveation's fovea stays where the eyes last looked while they are not tracked (a blink)
 
-var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET, LIFT)
+var space := _space_of(Menu.kept_shape())
 var viewer := Viewer.new(space)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
 var toys := Toys.new(space, scene)
@@ -110,6 +110,9 @@ var started_us := 0
 const WARM_FOVEATION := [0, 1]
 var warm := 0                   # frames of it done
 var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n, frame] (the speed check's cube)
+var shape_next := Vector3.ZERO  # the throat's shape asked for (set_shape), not yet in effect; ZERO none
+var _build_task := -1           # WorkerThreadPool's task building one, or -1
+var _built: Array = []          # what it built: [WormholeSpace, Renderer.prepare's]
 
 
 func _ready() -> void:
@@ -117,6 +120,7 @@ func _ready() -> void:
 	var build: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://build.json")) \
 			if FileAccess.file_exists("res://build.json") else null
 	print("build: ", build.get("commit", "?") if build is Dictionary else "the source, not an export")
+	print("throat: ", shape_text())
 	xr = XRServer.find_interface(xr_name)
 	var host: Node = self
 	if xr and xr.is_initialized():
@@ -232,6 +236,15 @@ func _process(delta: float) -> void:
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
 		place(START_POS, START_FORWARD)
+	if _build_task >= 0 and WorkerThreadPool.is_task_completed(_build_task):
+		WorkerThreadPool.wait_for_task_completion(_build_task)
+		_build_task = -1
+		var b := _built
+		_built = []
+		if shape_next == b[0].shape():
+			shape_next = Vector3.ZERO
+			_reshape(b[0], b[1])
+		_next_build()                   # one asked for meanwhile (that one was not put in)
 	if in_xr:
 		_log_profiles()
 		if warm <= WARM_FOVEATION.size():
@@ -335,7 +348,7 @@ func place(pos: Vector3, forward: Vector3, side := 1.0, pitch := 0.0, roll := 0.
 
 
 ## Fly, at rest, with the head at l on the axis through the throat's centre (n = +x: in chart A the
-## line (x, 0, LIFT), in chart B (-x, 0, LIFT)), the room upright in chart A's axes, looking yaw
+## line (x, 0, lift), in chart B (-x, 0, lift)), the room upright in chart A's axes, looking yaw
 ## degrees to the right of the direction of falling l (toward the throat at l > 0, away from it at
 ## l < 0; the head's own yaw is taken out); the view turned pitch degrees up and roll degrees about
 ## the line of sight (right side up) on top of the head's own: the speed check. Along the axis the
@@ -425,8 +438,70 @@ func view_text() -> String:
 				rad_to_deg(atan2(x, z)), rad_to_deg(atan2(y, Vector2(x, z).length()))]
 	var target: Viewport = xr_view if in_xr else get_viewport()
 	var px := Vector2i(target.get_visible_rect().size)
-	return out + "; gravity view %d, foveation %d, picture %dx%d, menu %s" % [renderer.gravity_view,
-			foveation.level, px.x, px.y, "open" if menu.open else "closed"]
+	return out + "; gravity view %d, foveation %d, picture %dx%d, menu %s; throat: radius %.2f m, length %.2f m, fillet %.2f m" % [
+			renderer.gravity_view, foveation.level, px.x, px.y, "open" if menu.open else "closed", space.rho0,
+			Menu.length_of(space.shape()), space.fillet]
+
+
+## The throat's shape from now on: (rho0, h, fillet) in metres (WormholeSpace). What is built for it
+## takes a tenth of a second and more (WormholeSpace.new's gravity, Renderer.prepare): a stall the
+## headset's compositor answers with half rate, so it is built on a worker thread, and put in at the
+## start of the frame after it is done (_reshape). Asked again meanwhile, the last ask is built next.
+func set_shape(v: Vector3) -> void:
+	shape_next = v
+	_next_build()
+
+
+## A shape asked for and not yet in effect (being built, or waiting for it).
+func shape_pending() -> bool:
+	return shape_next != Vector3.ZERO
+
+
+func _next_build() -> void:
+	if _build_task >= 0 or shape_next == Vector3.ZERO:
+		return
+	if shape_next == space.shape():
+		shape_next = Vector3.ZERO
+		return
+	_build_task = WorkerThreadPool.add_task(_build.bind(shape_next), false, "the throat's shape")
+
+
+## On the worker: only what is its own until the main thread takes it (_process).
+func _build(v: Vector3) -> void:
+	var s := _space_of(v)
+	_built = [s, Renderer.prepare(s)]
+
+
+static func _space_of(v: Vector3) -> WormholeSpace:
+	return WormholeSpace.new(v.x, v.y, v.z)
+
+
+## The new shape in, all in this frame: the space every part holds takes it; the viewer stays
+## where it is in terms both shapes have (Viewer.shape_free); the renderer gets what was built; the
+## toys start over at their places (Toys.spawn: the demo's throw and drop are aimed at this throat),
+## or the stereo check's scene is put again (CheckScene.fit).
+func _reshape(s: WormholeSpace, prep: Dictionary) -> void:
+	var height := camera.transform.origin.y
+	var kept := viewer.shape_free(height)
+	space.take(s)
+	viewer.put_back(kept, height)
+	hands.forget_motion()
+	renderer.upload_space(prep)
+	if overlay:
+		CheckScene.fit(overlay, space, renderer)
+	elif toys.enabled:
+		hands.empty()
+		toys.spawn()
+		draw_toys()
+	_update_chart_map()
+	menu.refresh()
+	print("throat: %s; %s" % [shape_text(), "standing" if viewer.standing else "flying, the head at l %.2f" % viewer.head(height)[0]])
+
+
+## The shape for the log, in the menu's numbers (the length: the cylinder's).
+func shape_text() -> String:
+	return "radius %.2f m, length %.2f m, fillet %.2f m (h %.2f m), the curved zone %.2f m round, its centre %.2f m over the floor" % [
+			space.rho0, Menu.length_of(space.shape()), space.fillet, space.h, space.Rout, space.lift]
 
 
 func set_gravity_view(view: int) -> void:
@@ -457,6 +532,13 @@ func _face_head() -> void:
 	viewer.turn(-atan2(hf.x, -hf.y))
 	prev_head = Vector2(camera.position.x, camera.position.z)
 	_update_chart_map()
+
+
+## A build still running when the app quits: it ends first (it holds nothing of the scene's).
+func _exit_tree() -> void:
+	if _build_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_build_task)
+		_build_task = -1
 
 
 func _unhandled_input(event: InputEvent) -> void:

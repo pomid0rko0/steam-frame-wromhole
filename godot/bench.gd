@@ -30,38 +30,47 @@ extends Node
 ## Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
-# Where a pose is (_put): START, standing at main.START_POS facing the wormhole; Vector3(x, y, side),
-# standing on universe side's floor at chart (x, y), facing the point under the throat's centre;
-# a float, the head at that l on the axis through the throat's centre (main.place_on_axis: flying,
-# main.LIFT over the floor, facing the throat at l > 0 and away from it at l < 0). Degrees to the
-# right and up are from there. The values are metres chosen against this throat's curved zone (edge
-# L, radius Rout) and main.LIFT, which WormholeSpace.set_profile's list names.
+# Where a pose is (_put), against the throat's shape whatever it is (main.set_shape): START, standing
+# at main.START_POS facing the wormhole; Vector3(x, y, side), standing on universe side's floor at
+# chart (x, y) times the curved zone's radius Rout, facing the point under the throat's centre; a
+# Vector2, the head on the axis through the throat's centre at that place against the curved zone
+# (WormholeSpace.l_of: (share of L, 0) in it, (+-1, +-metres beyond its edge) out of it;
+# main.place_on_axis: flying, facing the throat at l > 0 and away from it at l < 0). Degrees to the
+# right and up are from there. At the video's throat (L 5.57 m, Rout 4 m) the places on the axis
+# are at l = 6.2, 5, 4, 2.5, 0 m...
 const START := INF
-const UNDER_A := Vector3(2.5, 0.0, 1.0)     # on A's floor under the mouth, the head just below the curved zone
-const UNDER_A_IN := Vector3(0.5, 0.0, 1.0)  # right under the throat's centre: the head in the curved zone
-const UNDER_B := Vector3(-2.5, 0.0, -1.0)   # on B's floor under its mouth
+const UNDER_A := Vector3(0.625, 0.0, 1.0)     # on A's floor under the mouth (the head just below the curved zone at the video's throat)
+const UNDER_A_IN := Vector3(0.125, 0.0, 1.0)  # right under the throat's centre: the head in the curved zone
+const UNDER_B := Vector3(-0.625, 0.0, -1.0)   # on B's floor under its mouth
+const OUT_A := Vector2(1.0, 0.6)              # flying 0.6 m outside the curved zone: the wormhole fills the view
+const EDGE_A := Vector2(0.9, 0.0)             # inside, at the edge: every ray starts in the curved zone
+const MIDDLE := Vector2.ZERO                  # in the throat's middle
+const EDGE_B := -EDGE_A
+const OUT_B := -OUT_A
 const PLACES := [   # the comparison's poses: [where, degrees to the right, degrees up]
 	[START, 0.0, 0.0],      # the mouth over the floor ahead
 	[UNDER_A, 0.0, 60.0],   # looking up into the mouth
 	[UNDER_A_IN, 0.0, 80.0],
-	[6.2, 0.0, 0.0],        # flying just outside the curved zone: the wormhole fills the view
-	[6.2, 60.0, 0.0],
-	[5.0, 0.0, 0.0],        # inside, at the edge: every ray starts in the curved zone
-	[5.0, 90.0, 0.0],
-	[5.0, 180.0, 0.0],      # facing away
-	[5.0, 0.0, -35.0],      # down at the floor
-	[0.0, 0.0, 0.0],        # in the throat, looking along it
-	[0.0, 90.0, 0.0],       # in the throat, looking sideways round it
-	[-5.0, 180.0, 0.0],     # world B, at the edge, facing the throat (boxes where A has pillars)
-	[-6.2, 180.0, 0.0],     # world B, just outside the curved zone, facing the throat
+	[OUT_A, 0.0, 0.0],
+	[OUT_A, 60.0, 0.0],
+	[EDGE_A, 0.0, 0.0],
+	[EDGE_A, 90.0, 0.0],
+	[EDGE_A, 180.0, 0.0],   # facing away
+	[EDGE_A, 0.0, -35.0],   # down at the floor
+	[MIDDLE, 0.0, 0.0],     # in the throat, looking along it
+	[MIDDLE, 90.0, 0.0],    # in the throat, looking sideways round it
+	[EDGE_B, 180.0, 0.0],   # world B, at the edge, facing the throat (boxes where A has pillars)
+	[OUT_B, 180.0, 0.0],    # world B, just outside the curved zone, facing the throat
 	[UNDER_B, 0.0, 60.0],   # on B's floor, looking up into its mouth
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
 const PREPARE := 2.0            # s each variant runs before the timing (its pipelines are compiled)
 const TOUR_RATE := 144.0
-const TOUR_AT := [START, UNDER_A, 8.0, 6.2, 5.0, 4.0, 2.5, 0.0, -2.5, -5.0, -6.2, UNDER_B]   # sweeping round
-const TOUR_FLY := 12.0          # l: the tour's flight from here along the axis, through the throat to -6.2
+# sweeping round at these (the axis's: at the video's throat l = 8, 6.2, 5, 4, 2.5, 0, -2.5, -5, -6.2)
+const TOUR_AT := [START, UNDER_A, Vector2(1.0, 2.4), OUT_A, EDGE_A, Vector2(0.72, 0.0), Vector2(0.45, 0.0), MIDDLE,
+		Vector2(-0.45, 0.0), EDGE_B, OUT_B, UNDER_B]
+const TOUR_FLY := Vector2(1.0, 6.4)   # the tour's flight from here along the axis, through the throat to OUT_B
 const TOUR_PITCH := [-60.0, -30.0, 0.0, 30.0, 60.0]
 const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
@@ -143,15 +152,15 @@ func _make_tour() -> Array[Step]:
 			var y0 := 0.0 if i % 2 == 0 else 180.0
 			t.append(_st(at, at, y0, 180.0 - y0, TOUR_PITCH[i], SWEEP,
 					"%s, %.0f deg up, sweeping round" % [_name(at), TOUR_PITCH[i]], i == 0))
-	t.append(_st(TOUR_FLY, -6.2, 0.0, 720.0, 0.0, 15.0, "flying along the axis through the throat, turning and nodding", true, 30.0))
-	t.append(_st(-6.2, TOUR_FLY, 180.0, -540.0, 0.0, 15.0, "flying back, turning, nodding and tilting", true, 30.0, 20.0))
-	for l in [6.2, 5.0, 0.0]:
-		t.append(_st(l, l, 0.0, 360.0, 0.0, 4.0, "%s, turning round (yaw)" % _name(l), true))
-		t.append(_st(l, l, 0.0, 0.0, 0.0, 6.0, "%s, nodding 60 deg (pitch)" % _name(l), false, 60.0))
-		t.append(_st(l, l, 0.0, 0.0, 0.0, 4.0, "%s, tilting 30 deg (roll)" % _name(l), false, 0.0, 30.0))
+	t.append(_st(TOUR_FLY, OUT_B, 0.0, 720.0, 0.0, 15.0, "flying along the axis through the throat, turning and nodding", true, 30.0))
+	t.append(_st(OUT_B, TOUR_FLY, 180.0, -540.0, 0.0, 15.0, "flying back, turning, nodding and tilting", true, 30.0, 20.0))
+	for at in [OUT_A, EDGE_A, MIDDLE]:
+		t.append(_st(at, at, 0.0, 360.0, 0.0, 4.0, "%s, turning round (yaw)" % _name(at), true))
+		t.append(_st(at, at, 0.0, 0.0, 0.0, 6.0, "%s, nodding 60 deg (pitch)" % _name(at), false, 60.0))
+		t.append(_st(at, at, 0.0, 0.0, 0.0, 4.0, "%s, tilting 30 deg (roll)" % _name(at), false, 0.0, 30.0))
 	# the worst case: a cube right before the eyes, in the throat and at the curved zone's edge
-	for l in [6.2, 5.0, 4.0, 0.0, -5.0]:
-		var st := _st(l, l, 0.0, 360.0, 0.0, 4.0, "%s, a cube at the eyes, turning round and nodding" % _name(l), true, 40.0)
+	for at in [OUT_A, EDGE_A, Vector2(0.72, 0.0), MIDDLE, EDGE_B]:
+		var st := _st(at, at, 0.0, 360.0, 0.0, 4.0, "%s, a cube at the eyes, turning round and nodding" % _name(at), true, 40.0)
 		st.near = true
 		t.append(st)
 	return t
@@ -160,36 +169,43 @@ func _make_tour() -> Array[Step]:
 ## The viewer at a pose (where: PLACES' top), turned yaw degrees right, the view pitch degrees up
 ## and roll degrees about the line of sight.
 func _put(where: Variant, yaw: float, pitch: float, roll := 0.0) -> void:
-	if where is float and not is_inf(where):
-		main.place_on_axis(where, yaw, pitch, roll)
+	if where is Vector2:
+		main.place_on_axis(main.space.l_of(where), yaw, pitch, roll)
 		return
-	var stand: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
+	var stand: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else _floor_place(where)
 	var xy := Vector2(stand.x, stand.y)
 	var fwd: Vector2 = Vector2(main.START_FORWARD.x, main.START_FORWARD.y) if where is float else -xy.normalized()
 	fwd = fwd.rotated(-deg_to_rad(yaw))      # to the right: clockwise in either chart (main.place's right)
 	main.place(Vector3(xy.x, xy.y, 0.0), Vector3(fwd.x, fwd.y, 0.0), stand.z, pitch, roll)
 
 
+## A standing place (Vector3: x, y in curved-zone radii) on the floor in metres: (x, y, side).
+func _floor_place(where: Vector3) -> Vector3:
+	return Vector3(where.x * main.space.Rout, where.y * main.space.Rout, where.z)
+
+
 ## A pose's place in words, for the log.
 func _name(where: Variant) -> String:
 	if where is float:
-		return "the start" if is_inf(where) else "on the axis at l %.1f m" % where
-	var v: Vector3 = where
+		return "the start"
+	if where is Vector2:
+		return "on the axis at l %.1f m" % main.space.l_of(where)
+	var v := _floor_place(where)
 	return "on %s's floor at (%.1f, %.1f)" % ["A" if v.z > 0.0 else "B", v.x, v.y]
 
 
 ## The l of a pose's place: the head's on the axis, the feet's standing (the "tf" lines).
 func _l(where: Variant) -> float:
-	if where is float and not is_inf(where):
-		return where
-	var v: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
+	if where is Vector2:
+		return main.space.l_of(where)
+	var v: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else _floor_place(where)
 	return main.space.point_from_chart(v.z, Vector3(v.x, v.y, 0.0))[0]
 
 
-## Between two places of a step: along the axis if both are on it, else the first.
+## Between two places of a step: along the axis if both are on it (linear in l), else the first.
 static func _between(a: Variant, b: Variant, k: float) -> Variant:
-	if a is float and b is float and not is_inf(a) and not is_inf(b):
-		return lerpf(a, b, k)
+	if a is Vector2 and b is Vector2:
+		return (a as Vector2).lerp(b, k)
 	return a
 
 
@@ -494,11 +510,12 @@ func _ru(at: Variant, yaw: float, pitch: float) -> String:
 	if at is Vector3:
 		where = "на полу под горлом"
 		b = (at as Vector3).z < 0.0
-	elif not is_inf(at):
-		var a := absf(at as float)
+	elif at is Vector2:
+		var l := main.space.l_of(at)
+		var a := absf(l)
 		where = "в полёте " + ("снаружи у края" if a >= main.space.L else ("на краю зоны" if a >= main.space.Lc else "в горле"))
-		b = at < 0.0
-		y = fposmod(yaw if at >= 0.0 else 180.0 - yaw, 360.0)
+		b = l < 0.0
+		y = fposmod(yaw if l >= 0.0 else 180.0 - yaw, 360.0)
 	if b:
 		where += " (мир B)"
 	y = minf(y, 360.0 - y)

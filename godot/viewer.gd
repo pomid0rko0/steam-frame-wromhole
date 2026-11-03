@@ -321,6 +321,32 @@ func set_state(p: Array) -> void:
 	V = p[4]
 
 
+## Where the body is in terms every shape of the throat has, for a change of shape (main._reshape;
+## height: the head's in the room): standing, the feet's place on the floor and the room's axes in
+## its chart (the floor stays where it is, the throat changes over it); flying, the head's place
+## against the curved zone (WormholeSpace.zone_place: its share of the zone, or as far beyond it) and
+## its n, with the room's axes and the velocity there as they are, (U_l, u) being orthonormal in every
+## shape.
+func shape_free(height: float) -> Array:
+	if standing:
+		var side := signf(l)
+		var c := space.chart_position(l, n)
+		return [true, side, Vector2(c.x, c.y), WormholeSpace.vector_to_chart(side, n, frame[0]),
+				WormholeSpace.vector_to_chart(side, n, frame[2])]
+	var hp := head(height)
+	return [false, space.zone_place(hp[0]), hp[1], hp[2], V]
+
+
+## Back where shape_free said, in the space's shape now.
+func put_back(p: Array, height: float) -> void:
+	_head_of = []                   # the head's place was the old shape's
+	if p[0]:
+		stand_at(p[1], p[2], p[3], p[4])
+		return
+	fly_at(space.l_of(p[1]), p[2], p[3], height)
+	V = p[4]
+
+
 ## Flying, the feet within LIMIT of the throat's centre: back on that sphere, the velocity's part
 ## outward taken away (standing: move keeps them in).
 func _keep_in() -> void:

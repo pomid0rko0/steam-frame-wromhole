@@ -9,10 +9,14 @@ extends RefCounted
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 ##
 ## The floor is the plane lift below the throat's centre in each flat universe (R^4's z = -lift
-## in either sheet); lift > Rout, so it stays out of the curved zone. The charts (chart_position)
-## put it at z = 0: chart A is R^4's xyz in sheet A raised by lift, chart B the same in sheet B,
-## mirrored in x.
+## in either sheet); lift = Rout + CLEARANCE, so it stays out of the curved zone whatever its shape.
+## The charts (chart_position) put it at z = 0: chart A is R^4's xyz in sheet A raised by lift,
+## chart B the same in sheet B, mirrored in x.
+##
+## One object holds one shape at a time: a change of shape builds a new one off the main thread,
+## and every holder of this one sees it once it takes it (take; main._reshape).
 
+const CLEARANCE := 1.0  # m: the curved zone's bottom above the floor
 const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet radii (it takes none elsewhere)
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
 const GRAV_SUB := 2      # RK4 steps between nodes
@@ -33,17 +37,10 @@ var grav_beta := 0.0
 var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_NODES, interleaved
 
 
-func _init(throat_radius: float, half_length: float, fillet_radius: float, p_lift: float) -> void:
-	set_profile(throat_radius, half_length, fillet_radius)
-	lift = p_lift
-	assert(lift > Rout, "the floor must stay out of the curved zone")
-
-
-## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
-## the shape (Renderer.upload_space: the profile, the sweep table, the gravity's numbers; the field
-## lines), and keep lift above Rout and what stands in chart coordinates (godot/scene.json's objects,
-## the toys' places, CheckScene's, main.START_POS, bench.gd's places) out of the curved zone.
-func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
+## The throat's shape (docs/geometry.md, «Пространство»): its radius rho0, half its length h
+## (sheets A and B at w = +-h) and its fillet's radius, metres, each > 0; the floor CLEARANCE under
+## the curved zone; gravity's numbers.
+func _init(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length
 	fillet = fillet_radius
@@ -51,7 +48,45 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	th0 = asin(maxf(1.0 - h / fillet, 0.0))
 	L = Lc + fillet * (PI / 2.0 - th0)
 	Rout = rho0 + fillet
+	lift = Rout + CLEARANCE
 	_build_gravity()
+
+
+## The shape (rho0, h, fillet).
+func shape() -> Vector3:
+	return Vector3(rho0, h, fillet)
+
+
+## Become other's shape (a space built for it: what is built in _init). Holders of this object see it
+## from now on; what they built for the old one (the renderer's tables, the bodies' places) is theirs
+## to redo (main._reshape).
+func take(other: WormholeSpace) -> void:
+	rho0 = other.rho0
+	h = other.h
+	fillet = other.fillet
+	Lc = other.Lc
+	th0 = other.th0
+	L = other.L
+	Rout = other.Rout
+	lift = other.lift
+	grav_a = other.grav_a
+	grav_k = other.grav_k
+	grav_beta = other.grav_beta
+	_grav_tab = other._grav_tab
+
+
+## Where l is against the curved zone, in terms every shape has: (l / L, 0) in it, (+-1, +-the metres
+## beyond its edge) out of it, the sign its side's; l_of gives l back: x L + y. A point kept through a
+## change of shape stays at its share of the zone, or as far beyond it (Viewer.shape_free); places
+## chosen against the zone (bench.gd's, the tests') are given so.
+func zone_place(l: float) -> Vector2:
+	if absf(l) < L:
+		return Vector2(l / L, 0.0)
+	return Vector2(signf(l), l - signf(l) * L)
+
+
+func l_of(place: Vector2) -> float:
+	return place.x * L + place.y
 
 
 func _theta(al: float) -> float:

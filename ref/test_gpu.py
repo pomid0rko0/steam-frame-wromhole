@@ -1,7 +1,7 @@
 """The shaders' geometry (godot/shaders/geo.gdshaderinc and zone.gdshaderinc) on a GPU, float32,
 against float64: headless (EGL), as a compute shader, with the table and series built as
-WormholeSpace.sweep_table builds them (ref/geo.py), on three throats: the app's, h = R, a crease
-(h < R). Every sin and cos goes through the headset driver's range reduction (TURNIP below), and the
+WormholeSpace.sweep_table builds them (ref/geo.py), on throats (PROFILES): the app's, h = R and the
+menu's extremes (menu_extremes). Every sin and cos goes through the headset driver's range reduction (TURNIP below), and the
 table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
   which way the eye sees a point, the first image (geo_see): rays shot by DOP853 from an eye to a
@@ -56,7 +56,7 @@ import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from scipy import optimize
-from geo import Space, shoot, app_profile, app_lift, leave
+from geo import Space, shoot, app_profile, menu_values, lift_of, leave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHADERS = os.path.join(HERE, '..', 'godot', 'shaders')
@@ -105,8 +105,26 @@ INC = INC.replace('const int GEO_ITERS', 'int g_rays = 0;\nconst int GEO_ITERS',
 assert INC.count('if (i >= GEO_ITERS + nbad) break;') == 1
 INC = INC.replace('if (i >= GEO_ITERS + nbad) break;', 'if (i >= GEO_ITERS + nbad) break;\n\t\t\t\tg_rays = i + 1;')
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
-PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
-LIFT = app_lift()           # the floor at z = -LIFT (every profile's zone, radius Rout = 4 m, above it)
+
+
+def menu_extremes():
+    """The shapes the menu offers (godot/menu.gd: radius rho0, the cylinder's length 2 (h - R), the
+    fillet's R) whose two ratios, R / rho0 and h / R, which alone shape the space up to its size, go
+    furthest: the corners of the menu's box that are corners of the region its shapes cover in those
+    ratios (in logarithms); each at its own size."""
+    from scipy.spatial import ConvexHull
+    corners = [(r, 0.5 * l + f, f) for r in (min(menu_values('RADII')), max(menu_values('RADII')))
+               for l in (min(menu_values('LENGTHS')), max(menu_values('LENGTHS')))
+               for f in (min(menu_values('FILLETS')), max(menu_values('FILLETS')))]
+    hull = ConvexHull([(np.log(f / r), np.log(h / f)) for r, h, f in corners])
+    return [corners[i] for i in sorted(hull.vertices)]
+
+
+PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0)}
+PROFILES.update({'the menu\'s (%g, %g, %g)' % p: p for p in menu_extremes()})
+# WH_PROFILES="rho0,h,R;...": these instead (a shape to look at)
+if os.environ.get('WH_PROFILES'):
+    PROFILES = {'(%s)' % p: tuple(float(x) for x in p.split(',')) for p in os.environ['WH_PROFILES'].split(';')}
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
 # radians of direction (the headset's pixel is about 1e-3: half a pixel 5e-4), metres; a ray's length
 # only orders bodies in depth and hazes the floor: a share of it
@@ -256,7 +274,7 @@ class Gpu:
         p['g_prof'] = (S.rho0, S.R, S.Lc, S.L)
         p['g_prof2'] = (S.Rout, S.u0, S.rmin, S.th0)
         p['g_tabx'] = (S.t0, 1 / (S.t1 - S.t0), NB, NV)
-        p['g_lift'] = LIFT
+        p['g_lift'] = S.lift
 
     def run(self, mode, rows, in_per=2, out_per=1):
         rows = np.asarray(rows, 'f4').reshape(-1, 4 * in_per)
@@ -510,15 +528,15 @@ class Exit:
         return (True, sheet), psi, way, S.Rout * nx, (np.sqrt(max((S.Rout - b) * (S.Rout + b), 0.0)) * nx + b * tx) / S.Rout
 
 
-def floor_of(pos, dir_, way):
+def floor_of(S, pos, dir_, way):
     """Where the straight line from pos along dir meets the floor: (xy, its way from the eye), or None."""
     if dir_[2] >= 0:
         return None
-    t = (-LIFT - pos[2]) / dir_[2]
+    t = (-S.lift - pos[2]) / dir_[2]
     return pos[:2] + t * dir_[:2], way + t
 
 
-def compare(ref, g):
+def compare(S, ref, g):
     """The GPU's way out g = (hit, sheet, way, floor's way), pos, dir, floor's xy against the reference's
     ((hit, sheet), psi, way, pos, dir): (same universe, pos's angle, dir's angle, way's share of the
     limit, floor: None if both see the sky or the floor beyond FLOOR_SEEN, its share of the limit if
@@ -528,7 +546,7 @@ def compare(ref, g):
     same = key == (g[0][0] > 0.5, float(g[0][1]))
     pa, da = angle(g[1][:3], pos), angle(g[2][:3], dir_)
     werr = abs(g[0][2] - way) / (1e-3 + LENGTH_REL * way)
-    fr = floor_of(pos, dir_, way)
+    fr = floor_of(S, pos, dir_, way)
     if (fr is None) != (g[0][3] < 0):
         fl = 'horizon' if abs(dir_[2]) <= da + 1e-7 else 'flip'
     elif fr is None or (fr[1] > FLOOR_SEEN and g[0][3] > FLOOR_SEEN):
@@ -551,7 +569,7 @@ def passes(c):
     return exit_ok(c) and floor_ok(c)
 
 
-def backward(X, g):
+def backward(S, X, g):
     """An ill-posed ray: the launch within ALPHA_TOL whose way out is the GPU's (its universe, then
     its turn: the GPU's exit point's angle in the plane plus whole turns, bisected on each stretch of
     launches into that universe, where the turn is monotonic; the whole turns picked by the way when
@@ -614,7 +632,7 @@ def backward(X, g):
                 d = optimize.brentq(lambda d: X.at(d)[1] - target, d0, d1, xtol=1e-18, rtol=1e-15)
             else:
                 d = d0 if abs(p0 - target) < abs(p1 - target) else d1
-            c = compare(X.at(d), g)
+            c = compare(S, X.at(d), g)
             if passes(c) and (best is None or abs(d) < best[0]):
                 best = (abs(d), c)
     return best
@@ -630,7 +648,7 @@ def exit_checks(name, S, gpu, rng, table=False):
         side = 1.0 if el >= 0 else -1.0
         re = float(S.r(el))
         en, t = frame(rng)
-        if re * en[2] < -LIFT + 0.1:         # an eye under the floor: none
+        if re * en[2] < -S.lift + 0.1:         # an eye under the floor: none
             continue
         kind = len(rows) % 4
         alpha = launch_rmin(S, re, rng) if kind == 3 else launch(rng, kind < 2)
@@ -652,16 +670,16 @@ def exit_checks(name, S, gpu, rng, table=False):
         lim_w = 1e-3 + LENGTH_REL * ref[2]
         around = [X.at(d) for d in (-ALPHA_TOL, ALPHA_TOL)]
         if all(a[0] == ref[0] and abs(a[1] - ref[1]) <= 0.5 * DIRECTION and abs(a[2] - ref[2]) <= 0.5 * lim_w for a in around):
-            c = compare(ref, g)
+            c = compare(S, ref, g)
             if exit_ok(c):
                 worst['pa'] = max(worst['pa'], c[1]); worst['da'] = max(worst['da'], c[2]); worst['werr'] = max(worst['werr'], c[3])
             else:
                 wrong.append((k, row, g, ref, c))
         else:
             ill += 1
-            bw = backward(X, g)
+            bw = backward(S, X, g)
             if bw is None:
-                wrong.append((k, row, g, ref, compare(ref, g)))
+                wrong.append((k, row, g, ref, compare(S, ref, g)))
                 continue
             worst['back'] = max(worst['back'], bw[0])
             c = bw[1]
@@ -1152,6 +1170,7 @@ def main(checks=('numbers', 'profile', 'images', 'exit', 'zone', 'eye')):
     fails = numbers_check() if 'numbers' in checks else 0
     for name, prof in PROFILES.items():
         S = Space(*prof)
+        S.lift = lift_of(prof)      # the floor at z = -lift, CLEARANCE under the zone
         S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
         gpu = Gpu(ctx, S)
         gpu_nan = Gpu(ctx, S, NAN_SRC)

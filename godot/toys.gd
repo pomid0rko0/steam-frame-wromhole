@@ -9,7 +9,7 @@ extends RefCounted
 ## anywhere. A moment after the start a cube and a ball are thrown from chest height: the cube lands
 ## in front of the mouth and slides to a stop, the ball flies up into the mouth, through the throat,
 ## and comes out in universe B, where it lands on the floor. Then a ball is dropped into the throat's
-## top (DROP_AT). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
+## top (drop_place). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
 ## charts (WormholeSpace's top: the floor at z = 0) and keep out of the curved zone and scene.json's
 ## objects.
 ##
@@ -23,9 +23,14 @@ extends RefCounted
 ## The drop: along the axis over the throat's centre the potential is even in l (docs/gravity.md,
 ## «Сквозь горло»): dropped straight there, a ball falls through the throat into universe B, rises over
 ## B's mouth as high as it fell from, falls back and so on, A and B by turns. That way is unstable
-## across: DROP_AT is 20 cm off it, and the ball, through to B and rising there, tips off the throat's
+## across: the drop is DROP_OFF off it, and the ball, through to B and rising there, tips off the throat's
 ## top and falls past B's mouth onto B's floor, and the floor's push rolls it away from under the
 ## mouth (tests/physics_test.gd, 7).
+##
+## The throw and the drop are aimed at the throat's shape (main.set_shape: the toys start over then):
+## the ball's flight, as without air, passes over the throat's centre at THROW_AIM times its radius,
+## the drop starts DROP_OVER over the curved zone. At the video's throat (main.SHAPE) that is what
+## tests/physics_test.gd checks.
 
 const BALL_COLORS := [Color(0.92, 0.25, 0.2), Color(0.2, 0.6, 0.95), Color(0.98, 0.8, 0.2),
 		Color(0.3, 0.85, 0.4), Color(0.75, 0.35, 0.9), Color(0.95, 0.55, 0.15)]
@@ -35,13 +40,22 @@ const GLOW := Color(1.0, 0.55, 0.1)     # a toy a hand aims at or pulls is drawn
 const GLOW_NEAR := Color(0.2, 0.85, 1.0)  # or toward this, if its own colour is near GLOW
 const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
 const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
-const DROP_AT := Vector3(0.0, -0.2, 10.5)   # chart A: 1.5 m over the curved zone, 20 cm off the throat's axis
+const DROP_OVER := 1.5         # m over the curved zone's top (chart A), DROP_OFF along y off the throat's axis
+const DROP_OFF := -0.2          # m
 const DROP_RADIUS := 0.35       # m
 const DROP_COLOR := Color(0.95, 0.95, 0.97)
 # at rest, chart A: balls [x, y, radius] (in front, 8.5 m off the point under the throat's centre,
 # and right under it), cubes [x, y, half size, yaw]
 const BALLS_A := [[8.4, -1.5, 0.25], [8.4, 1.5, 0.25], [0.0, 0.0, 0.35]]
 const CUBES_A := [[5.5, 2.4, 0.3, 0.35], [3.0, -2.2, 0.3, -0.5], [-2.0, 1.8, 0.25, 0.8]]
+# the throw from chest height in front of the start (chart A): the cube [where, velocity, its spin
+# (rad/s, its axes), half size, a turn of its axes (euler)], the ball [where, radius] and its flight
+# THROW_TIME s to the plane over the throat's centre (x = 0), there THROW_AIM throat radii off the
+# centre (chart y, z), as without air
+const THROW_CUBE := [Vector3(9.0, -1.9, 1.4), Vector3(-2.8, -0.55, 1.0), Vector3(2.5, -3.0, 1.5), 0.25, Vector3(0.4, 0.3, 0.2)]
+const THROW_BALL := [Vector3(9.0, -2.0, 1.4), 0.25]
+const THROW_TIME := 0.9         # s
+const THROW_AIM := Vector2(0.4, 0.3)
 const HEAD_HEIGHT := 1.6        # m: the head at the start, for the line of sight through the throat
 const RING_RADIUS := 0.4        # m: the ball on that line in universe B
 const RING_CUBE_Y := 1.3        # m: the cube beside it, along chart B's y,
@@ -105,25 +119,39 @@ func step(delta: float, hands: Array[BallWorld.Ball]) -> void:
 ## slides to a stop, and a ball, from the left, up into the mouth and through the throat (this
 ## file's top).
 func throw() -> Array[BallWorld.Body]:
-	var p := space.point_from_chart(1.0, Vector3(9.0, -1.9, 1.4))
-	var b := Basis.from_euler(Vector3(0.4, 0.3, 0.2))
+	var p := space.point_from_chart(1.0, THROW_CUBE[0])
+	var b := Basis.from_euler(THROW_CUBE[4])
 	var F := []
 	for ax in [b.x, b.y, b.z]:
 		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
-	var cube := world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
-			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
-	var q := space.point_from_chart(1.0, Vector3(9.0, -2.0, 1.4))
-	var ball := world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-10.0, 3.5, 9.5)), 0.25, BALL_COLORS[5])
+	var cube := world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], THROW_CUBE[1]),
+			F, THROW_CUBE[2], THROW_CUBE[3], CUBE_COLORS[1])
+	var from: Vector3 = THROW_BALL[0]
+	var aim := Vector3(0.0, THROW_AIM.x * space.rho0, space.lift + THROW_AIM.y * space.rho0)
+	var v := (aim - from) / THROW_TIME + Vector3(0.0, 0.0, 0.5 * BallWorld.GRAVITY * THROW_TIME)
+	var q := space.point_from_chart(1.0, from)
+	var ball := world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], v), THROW_BALL[1], BALL_COLORS[5])
 	print("toys: thrown")
 	var out: Array[BallWorld.Body] = [cube, ball]
 	return out
 
 
+## Where the throw's cube and ball start (chart A) and how far they reach (a cube's half diagonal, a
+## ball's radius): out of the curved zone at every shape (tests/shape_test.gd).
+static func throw_starts() -> Array:
+	return [[THROW_CUBE[0], THROW_CUBE[3] * sqrt(3.0)], [THROW_BALL[0], THROW_BALL[1]]]
+
+
 ## A white ball let go over the throat's top (this file's top).
 func drop() -> BallWorld.Ball:
-	var p := space.point_from_chart(1.0, DROP_AT)
+	var p := space.point_from_chart(1.0, drop_place())
 	print("toys: a ball dropped into the throat's top")
 	return world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
+
+
+## Where the drop starts, chart A: DROP_OVER over the curved zone's top, DROP_OFF off its axis.
+func drop_place() -> Vector3:
+	return Vector3(0.0, DROP_OFF, space.lift + space.Rout + DROP_OVER)
 
 
 ## A ball at rest on the floor of universe side at chart position pos.
