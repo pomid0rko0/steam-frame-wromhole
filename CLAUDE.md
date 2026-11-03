@@ -23,11 +23,12 @@ keep and what was learnt about it: the comment at the top of its file.
 - **One wish per chat,** on a branch you name yourself, started from `origin/main` after `git fetch`
   (a cloud session's local `main` can be days old) or the branch the wish's issue gives; not the
   branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the
-  branch you name. The name says what the branch does, verb first, in as few lowercase English
-  words joined by hyphens as say it (`add-throat-knobs`, `fix-cube-tearing`,
-  `speed-up-zone-edge`); the same action takes the same verb. If origin already has a branch by
-  that name, add what this one does differently, or a number (`speed-up-lens-2`), rather than a
-  synonym.
+  branch you name. The owner reads its name everywhere, mostly without the PR's title, so it says
+  the wish as they would say it in English, not how it is done (that is found later and may
+  change, the name can't): a verb first, in as few lowercase words joined by hyphens as say it
+  (`add-throat-shape-to-menu`, `fix-cube-tearing`, `speed-up-zone-edge`, not `cheaper-lens`); the
+  same action takes the same verb. If origin already has a branch by that name, add what this one
+  does differently, or a number (`speed-up-zone-edge-2`), rather than a synonym.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
