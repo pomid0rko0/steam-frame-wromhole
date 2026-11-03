@@ -1,6 +1,8 @@
 # On every push to a branch: the builds and every test, each test on a machine of its own (the
 # OpenXR test then runs alone, as tools/test_openxr.sh needs), in the tests' environment (image.yml:
-# its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it).
+# its amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it). A branch that
+# differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
+# («Что изменилось», changes); main, a version, a tag and a release always get them all.
 # The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
 # are the run's files at once, named as export.sh names them (tools/deploy_frame.ps1 takes the
 # headset's); they are deleted from the run unless the stereo test passes on the same commit (the
@@ -38,8 +40,33 @@ defaults:
   run:
     shell: bash
 jobs:
+  # full: whether the run builds and checks (above). The branch's own changes are those since it
+  # left main, renames as the old path and the new one (a file moved into docs/ left its old place).
+  changes:
+    name: Что изменилось
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.diff.outputs.full }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          full=true
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = branch ] && [ "$GITHUB_REF_NAME" != main ]; then
+            files=$(git -c core.quotePath=false diff --no-renames --name-only "$(git merge-base origin/main HEAD)" HEAD)
+            echo "since main:"; echo "$files"
+            grep -q -v -E '\.md$|^docs/|^$' <<<"$files" || full=false
+          fi
+          [ $full = true ] || echo "only Markdown and docs/ differ from main: nothing to build or check" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+
   image:
     name: Образ окружения (amd64)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     uses: ./.github/workflows/image.yml
     permissions:
       contents: read
@@ -49,6 +76,8 @@ jobs:
 
   image-arm64:
     name: Образ окружения для Фрейма (arm64)
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     uses: ./.github/workflows/image.yml
     permissions:
       contents: read
@@ -141,11 +170,11 @@ jobs:
           name: stereo-images
           path: stereo/
 
-  # the builds go unless the stereo test passed (above)
+  # the builds go unless the stereo test passed (above); skipped, it had no builds to go with it
   unsafe:
     name: Удаление сборок, если стерео-тест не прошёл
     needs: [build, stereo]
-    if: always() && needs.stereo.result != 'success'
+    if: always() && needs.stereo.result != 'success' && needs.stereo.result != 'skipped'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -268,11 +297,11 @@ jobs:
           echo "${last:-none} → $tag" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-  # on every push the builds are gathered as for a release; published only for a version
+  # on every push that builds the builds are gathered as for a release; published only for a version
   release:
     name: Релиз (публикация — только для версии)
-    needs: [build, stereo, tests, openxr, ref, adreno, version]
-    if: ${{ !cancelled() && !failure() }}
+    needs: [changes, build, stereo, tests, openxr, ref, adreno, version]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -310,13 +339,14 @@ jobs:
             gh release upload "$tag" out/* --clobber
           fi
 
-  # the run's verdict: every job above but unsafe and version passed. A required check that is
-  # skipped counts on GitHub as passed, and every test is skipped when its image fails, so main's
-  # ruleset requires this one alone; here skipped or cancelled is not passed (this job runs even in
-  # a cancelled run).
+  # the run's verdict: changes passed, and every job above but unsafe and version passed, or, where
+  # changes found nothing to check, was skipped. A required check that is skipped counts on GitHub
+  # as passed, and every test is skipped when its image fails, so main's ruleset requires this one
+  # alone; here skipped is passed only by changes' word, cancelled never (this job runs even in a
+  # cancelled run).
   all:
     name: Все проверки
-    needs: [image, image-arm64, build, stereo, tests, openxr, ref, adreno, release]
+    needs: [changes, image, image-arm64, build, stereo, tests, openxr, ref, adreno, release]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -324,6 +354,9 @@ jobs:
       - env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          bad=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          [ "$(jq -r '.changes.outputs.full' <<<"$NEEDS")" = false ] && ok='["success", "skipped"]' || ok='["success"]'
+          bad=$(jq -r --argjson ok "$ok" 'to_entries[]
+            | select(if .key == "changes" then .value.result != "success" else (.value.result | IN($ok[])) | not end)
+            | "\(.key): \(.value.result)"' <<<"$NEEDS")
           [ -z "$bad" ] || { echo "$bad"; exit 1; }
-          echo "every check passed"
+          [ "$ok" = '["success"]' ] && echo "every check passed" || echo "nothing to check: only Markdown and docs/ differ from main"
