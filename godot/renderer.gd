@@ -32,8 +32,7 @@ extends Node3D
 # a ShaderMaterial keeps only the uniforms its shader has, so one material switched between them
 # would lose the gravity table
 const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
-# under our own foveation the quad only samples floor_fov's texture (either gravity view's: it works
-# both out)
+# under foveation the quad only samples its texture (either gravity view's: it works both out)
 const FLOOR_SAMPLE_SHADER := preload("res://shaders/floor_sample.gdshader")
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
@@ -108,7 +107,7 @@ var statics: Array[MeshInstance3D] = []
 var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
-var floor_fov := FloorFov.new()  # our own foveation's floor (on the camera's compositor: Main)
+var foveation := Foveation.new()   # the floor coarser away from the gaze (on the camera's compositor: Main)
 var zone_sections := ZoneSections.new()   # the zone bodies' meshes (on the camera's compositor too)
 var gravity_view := 0           # 0 off, 1 the floor coloured by gravity, 2 also arrows of its field
 var toy_count := 0              # balls and cubes drawn (set_objects)
@@ -132,7 +131,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	floor_mat = floor_mats[0]
 	floor_sample_mat.shader = FLOOR_SAMPLE_SHADER
 	floor_sample_mat.render_priority = FLOOR_PRIORITY
-	floor_fov.sample_mat = floor_sample_mat
+	foveation.sample_mat = floor_sample_mat
+	foveation.xr = xr
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
 	# the meshes' nodes: ZoneSections' slots, balls' first, then cubes', each the fine mesh's rows,
@@ -170,7 +170,7 @@ func _ready() -> void:
 	q.size = Vector2(2.0, 2.0)
 	floor_quad.mesh = q
 	_floor_material()
-	floor_fov.toggled.connect(_floor_material)
+	foveation.toggled.connect(_floor_material)
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
@@ -216,10 +216,10 @@ func _process(_delta: float) -> void:
 		_floor_material()
 
 
-## The floor's quad's material: our own foveation's while floor_fov is on (it samples its texture),
+## The floor's quad's material: foveation's while it is on (it samples its texture),
 ## else the gravity view's per-pixel floor (the warm frames: the gravity floor's, to compile it).
 func _floor_material() -> void:
-	floor_quad.material_override = floor_mats[1] if _warm > 0 else (floor_sample_mat if floor_fov.enabled else floor_mat)
+	floor_quad.material_override = floor_mats[1] if _warm > 0 else (floor_sample_mat if foveation.enabled else floor_mat)
 
 
 var _warm := 3                  # frames left drawing the gravity views and the beams (_process)
@@ -246,7 +246,7 @@ func upload_space() -> void:
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
-	for fx in [floor_fov, zone_sections]:
+	for fx in [foveation, zone_sections]:
 		fx.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
 				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
 				Vector2(space.lift, space.grav_beta))
@@ -278,7 +278,7 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		m.set_shader_parameter("head_n", n)
 		m.set_shader_parameter("head_f", f)
 		m.set_shader_parameter("head_pos", head_pos)
-	floor_fov.set_head(l, n, f, head_pos)
+	foveation.set_head(l, n, f, head_pos)
 	zone_sections.set_head(l, n, f, head_pos)
 
 
@@ -426,7 +426,7 @@ func _upload_lens(toys_a: PackedVector4Array, toys_b: PackedVector4Array) -> voi
 	for m in floor_mats:
 		m.set_shader_parameter("lens_body", rows)
 		m.set_shader_parameter("lens_n", Vector2(ca, cb))
-	floor_fov.set_lens(rows, Vector2(ca, cb))
+	foveation.set_lens(rows, Vector2(ca, cb))
 
 
 var _lens_toys := [PackedVector4Array(), PackedVector4Array()]
@@ -479,7 +479,7 @@ func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
 	floor_mat = floor_mats[mini(gravity_view, 1)]
 	_floor_material()
-	floor_fov.gravity = gravity_view > 0
+	foveation.gravity = gravity_view > 0
 	arrows.visible = gravity_view == 2
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 

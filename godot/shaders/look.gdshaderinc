@@ -24,7 +24,7 @@ float look_checker(vec2 p, vec2 w, vec2 iw) {
 
 // the floor's colour from its pattern coordinates q (a chart's x, y: a checker of metre cells with
 // white lines) and their footprints fw (per pixel), the pixel px of the picture's pixels across (1
-// but in floor_fov's coarser texels); base: the checker's two colours
+// but in foveation's coarser texels); base: the checker's two colours
 vec3 look_floor(vec2 q, vec2 fw, float px, vec3 lightc, vec3 darkc) {
 	fw = max(fw, vec2(1e-4));
 	vec2 iw = 1.0 / fw;

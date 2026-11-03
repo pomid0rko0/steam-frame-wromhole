@@ -23,13 +23,15 @@ Checks per eye:
     its centre meets this kind next with the other kind taken out (near the photon sphere both kinds' images, thinner than a pixel,
     lie in one band, and a hair off the front one shows the one behind);
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
-    haze) against the picture's colour, away from the cells' edges and lines: AGREE of them at least
-    (where FLOOR_MIN of them are usable).
+    haze) against the picture's colour, away from the cells' edges and lines (by the pixel's
+    footprint on the floor, and under foveation by two of its texel's: the cell's edge filtered over
+    the texel, then between neighbouring texels), where the texel's footprint leaves the checker its
+    full contrast: AGREE of them at least (where FLOOR_MIN of them are usable).
    python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)
-Rendered with our own foveation (the json's fovea: its strength k; floor_fov.gd), the floor and what
-is seen through the lens come from a texture whose texel at clip (x, y) from the picture's middle
-spans sqrt(1 + (k x)^2) by sqrt(1 + (k y)^2) pixels: there MAX_EDGE, MAX_OFFSET and the grid's
-reach are that many times the larger.
+Rendered with foveation (the json's fovea: each eye's g x, y, r0 and m, foveation.gd's warp), the
+floor and what is seen through the lens come from a texture whose texel at r pixels from g spans
+sqrt(1 + (m (r - r0))^2) pixels along r beyond r0 (fewer across), one within: there MAX_EDGE,
+MAX_OFFSET and the grid's reach are that many times the larger.
 With CURVED_DIFF=1 in the environment it also writes prefix_diff_left.png, _right.png: the picture
 dimmed, the traced bodies' pixels the picture lacks bright, the picture's the trace lacks dark, those
 beyond MAX_EDGE yellow, the grid's lacking rays white."""
@@ -55,7 +57,7 @@ GRID = 4
 
 pre = sys.argv[1]
 D = json.load(open(pre + '.json'))
-FOVEA = float(D.get('fovea', 0.0))
+FOVEA = D.get('fovea') or None
 rho0, h, R = D['profile']
 lift = D['lift']
 Lc = max(h - R, 0.0)
@@ -315,9 +317,12 @@ for side_i, eye_name in enumerate(('left', 'right')):
     gy, gx = np.mgrid[0:H:GRID, 0:W:GRID]
     gy = gy.ravel(); gx = gx.ravel()
     gk, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, gx.astype(float), gy.astype(float)), axes))
-    # each pixel's texel size (our own foveation, FOVEA), 1 without
-    cx = (np.arange(W) + 0.5) / W * 2 - 1; cy = (np.arange(H) + 0.5) / H * 2 - 1
-    texel = np.maximum(np.sqrt(1 + (FOVEA * cx[None, :]) ** 2), np.sqrt(1 + (FOVEA * cy[:, None]) ** 2))
+    # each pixel's texel size (foveation, FOVEA: along r, the larger), 1 without
+    texel = np.ones((H, W))
+    if FOVEA:
+        fgx, fgy, fr0, fm = FOVEA[4 * side_i:4 * side_i + 4]
+        r = np.hypot(np.arange(W)[None, :] + 0.5 - fgx, np.arange(H)[:, None] + 0.5 - fgy)
+        texel = np.where(r > fr0, np.sqrt(1 + (fm * (r - fr0)) ** 2), 1.0)
     reach = int(np.ceil(MAX_EDGE * texel.max())) + 1
     near_red = ndimage.binary_dilation(red, iterations=reach)
     near_green = ndimage.binary_dilation(green, iterations=reach)
@@ -409,8 +414,10 @@ for side_i, eye_name in enumerate(('left', 'right')):
     q = chart_xy(hl, hn)
     qq = q[:m]
     fw = np.maximum(np.abs(q[m:2 * m] - qq), np.abs(q[2 * m:] - qq))
+    ft = fw * texel[fy, fx][:, None]                         # its texel's
     frac = np.abs(qq - np.round(qq))                         # cell units to the nearest edge or line
-    good &= np.all(frac > np.maximum(4 * fw, 0.06), axis=1) & np.all(fw < 0.08, axis=1) & (way[:m] < 35)
+    good &= (np.all(frac > np.maximum(np.maximum(4 * fw, 2 * ft), 0.06), axis=1) & np.all(fw < 0.08, axis=1)
+             & np.all(ft < 0.2, axis=1) & (way[:m] < 35))
     parity = (np.floor(qq[:, 0]) + np.floor(qq[:, 1])).astype(int) % 2
     cols = look_floor(hl[:m], way[:m])
     pix = img[fy, fx].astype(float)

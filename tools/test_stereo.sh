@@ -63,7 +63,7 @@ done
 # zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
 # a control, under the mouth looking up (curved_check.gd's PLACES)
 for p in 0 1 2 3 4 5 6 7 8; do render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
-# the same with our own foveation (floor_fov.gd), where bodies cross the edge of the zone's disc: at
+# the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do render -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 # the stereo check scene, also flying (cases 4 and 5)
@@ -82,14 +82,15 @@ for v in gravity arrows; do
 		for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
 	done
 done
-# foveated rendering on (Foveation.set_level): SteamVR's level in even cases (the 3D scene in a
-# render pass of its own), our own in odd ones, narrow in case 1 and wide in case 3 (floor_fov.gd:
-# the floor coarser away from the picture's middle, the bodies as ever)
+# foveated rendering on (foveation.gd: the floor coarser away from where the eyes look, the bodies
+# as ever), each case at its level, in case 1 with the eyes tracked looking off the middle
+# (multiview_check.gd's FOV_LEVELS, FOV_GAZE); case 1 also with the coarse texels tinted, to look at
 for c in 0 1 2 3; do
 	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
 done
+render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov1" zones 1 fov
 for c in 0 1 2 3; do
-	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
+	for m in app floor domain probe; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
 done
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
@@ -142,14 +143,15 @@ for c in 0 1 2 3; do
 	verdict "simulated headset, case $c: floor lines, gravity view: the arrows, without the balls" python3 "$CMP/check_scene.py" "$OUT/arp$c" --floor-only
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: stereo check scene, foveation on" python3 "$CMP/check_scene.py" "$OUT/fov$c"
+	verdict "simulated headset, case $c: stereo check scene, foveation on (the floor's lines in the fovea)" python3 "$CMP/check_scene.py" "$OUT/fov$c" --fovea
 done
 for c in 0 1 2 3; do
-	verdict "simulated headset, case $c: floor lines, without the balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only
+	verdict "simulated headset, case $c: floor lines in the fovea, without the balls, foveation on" python3 "$CMP/check_scene.py" "$OUT/fpl$c" --floor-only --fovea
 done
-# the split pass changes nothing in the picture: each image with SteamVR's foveation on against the
-# same off (our own changes the floor away from the middle: the checks above line it up)
-verdict "SteamVR's foveation on: the same pictures as off" python3 "$CMP/same_images.py" "$OUT" chk0:fov0 chk2:fov2 pln0:fpl0 pln2:fpl2
+# foveation moves nothing: where the eyes look the picture is the same as without it, and away
+# from there, where the floor is softer, every pixel takes the colour worked out at its place (the
+# probe), so the checks above in the fovea hold all over
+verdict "foveation: the fovea as without it, and every pixel of the floor from its own place, each eye" python3 "$CMP/fovea.py" "$OUT" chk0:fov0 chk1:fov1 chk2:fov2 chk3:fov3 pln0:fpl0 pln1:fpl1 pln2:fpl2 pln3:fpl3
 
 echo
 echo "images: $OUT"

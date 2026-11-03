@@ -7,7 +7,7 @@ extends SceneTree
 ## what tools/compare/curved.py needs to trace that eye's rays itself, independently of the shaders:
 ## the head as the renderer got it, each eye's pose and frustum, the bodies. The scene's static
 ## objects are hidden: the traced rays don't know them, and a reddish one would count as a ball.
-## With fov, our own foveation (floor_fov.gd, the menu's default level) draws the floor and what is
+## With fov, foveation (foveation.gd, the menu's default level) draws the floor and what is
 ## seen through the lens, and a ball crosses the edge of the zone's disc in the picture from the start
 ## (EDGE_BALL): drawn by its mesh outside the disc and by the filtered texture inside it, it must not
 ## part there. tools/compare/curved.py then allows each pixel's texel size more (the json's fovea).
@@ -230,7 +230,7 @@ func _dump(path: String) -> void:
 		"head": {"l": hp[0], "n": _v3(hp[1]), "frame": [_v4(f[0]), _v4(f[1]), _v4(f[2])],
 			"pos": _v3(main.camera.transform.origin)},
 		"eyes": eyes, "balls": [], "cubes": [],
-		"fovea": FloorFov.STRENGTH[main.foveation.level] if main.foveation.level in FloorFov.STRENGTH else 0.0}
+		"fovea": Array(main.foveation.fovea) if main.foveation.level > 0 else []}
 	for i in _objects[0].size():
 		d.balls.append({"c": _v4(_objects[0][i]), "r": _objects[1][i].w})
 	for i in _objects[2].size():

@@ -9,8 +9,8 @@
 //
 // Per pixel: the ray's way out of the zone (geo_exit, geo.gdshaderinc), then along the straight line
 // what it meets (lens_trace, lens.gdshaderinc) and its colour. Each eye (geo_eye) is worked out per
-// corner in vertex() and handed on flat. Under our own foveation (floor_fov.gd) the same per texel
-// of its texture (floor_fov.gdshaderinc), and the quad is drawn with floor_sample.gdshader instead.
+// corner in vertex() and handed on flat. Under foveation (foveation.gd) the same per texel of its
+// texture (foveation.gdshaderinc), and the quad is drawn with floor_sample.gdshader instead.
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
 #include "res://shaders/geo_uniforms.gdshaderinc"

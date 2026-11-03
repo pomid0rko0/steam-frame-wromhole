@@ -1,5 +1,5 @@
-// What a pixel's ray meets, and its colour (after look.gdshaderinc), for the floor's quad (floor.gdshaderinc) and our own foveation's
-// compute shader (floor_fov.gdshaderinc): docs/geometry.md, «Как рисуется кадр». After geo_exit
+// What a pixel's ray meets, and its colour (after look.gdshaderinc), for the floor's quad (floor.gdshaderinc) and foveation's
+// compute shader (foveation.gdshaderinc): docs/geometry.md, «Как рисуется кадр». After geo_exit
 // (geo.gdshaderinc) the ray is a straight line in universe A or B; along it the floor (R^4's z =
 // -lift), the sky, and, if it came through the curved zone, the bodies out in the flat universes
 // (Renderer's lens list: those seen straight from an eye outside are drawn as meshes, in front of

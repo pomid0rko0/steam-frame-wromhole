@@ -89,7 +89,7 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	cull_tex.texture_rd_rid = _cull
 
 
-## The space and its table (Renderer.upload_space), as FloorFov.set_space takes them.
+## The space and its table (Renderer.upload_space), as Foveation.set_space takes them.
 func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, floor_: Vector2) -> void:
 	_mutex.lock()
 	_space = PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,

@@ -167,7 +167,7 @@ void main() {
 		outp[O + 2] = vec4(dir, 0.0);
 		outp[O + 3] = vec4(pos.xy + max(ft, 0.0) * dir.xy, 0.0, 0.0);
 	} else if (mode == 10) {    // as 5, the way across by the eye's table (geo_xt): its texels k and k + 1
-		// worked out here as floor_fov's table pass works them out; and 1 in the floor's point's .w if
+		// worked out here as foveation's table pass works them out; and 1 in the floor's point's .w if
 		// the ray took the table's line, not geo_exit_way
 		float al = abs(a.x);
 		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));

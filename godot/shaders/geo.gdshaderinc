@@ -576,7 +576,7 @@ bool geo_exit(float el, vec3 eye, vec3 en, vec4 D, out vec3 pos, out vec3 dir, o
 }
 
 // ---------------------------------------------------------------- the way out by a table
-// Our own foveation's floor (floor_fov.gdshaderinc) works the way out of the zone out for every
+// Foveation's floor (foveation.gdshaderinc) works the way out of the zone out for every
 // texel of its picture, and from inside the zone every one goes through it. For one eye a ray's way
 // across hangs only on its sigma and whether it starts outward (geo_exit_way): so each frame a row
 // per eye and start (outward, inward) holds it (besides its way along the cylinder, which a texel

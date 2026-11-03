@@ -34,7 +34,7 @@ extends Node
 ## (RenderingServer.frame_post_draw), main's script in it by part (Main.PARTS), and the wait from
 ## there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
 ## The GPU time by part (_read_parts): from the frame's GPU timestamps, the viewport's begin and end
-## (Godot's, as it measures the viewport) and our own foveation's passes (floor_fov.gd's TS_*):
+## (Godot's, as it measures the viewport) and foveation's passes (foveation.gd's TS_*):
 ## before them (Godot's setup), the eyes and the way out's table, our floor's texture, and the rest
 ## (the 3D pass: the bodies, those in the curved zone too, the floor's quad, the menu, the output),
 ## averaged over the second in its line, with the dearest frame's of the second (a frame over the
@@ -385,7 +385,7 @@ func _read_parts() -> bool:
 	var at := {}
 	for i in rd.get_captured_timestamps_count():
 		at[rd.get_captured_timestamp_name(i)] = rd.get_captured_timestamp_gpu_time(i)
-	var names := ["vp_begin_" + vp, FloorFov.TS_BEGIN, FloorFov.TS_TABLE, FloorFov.TS_END, "vp_end_" + vp]
+	var names := ["vp_begin_" + vp, Foveation.TS_BEGIN, Foveation.TS_TABLE, Foveation.TS_END, "vp_end_" + vp]
 	parts_last = PackedFloat32Array()
 	for k in names.size():
 		if not at.has(names[k]):

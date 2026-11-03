@@ -69,8 +69,8 @@ func _process(_d: float) -> bool:
 			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1):
 				check("the segment's cube before the eyes", false, b.plan[b.step].y)
 				started = false
-			if main.foveation.level != v.foveation or main.foveation.split_pass.enabled != ((v.foveation > 0 and v.foveation <= Foveation.LEVELS) or v.split):
-				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.split_pass.enabled])
+			if main.foveation.level != v.foveation or main.foveation.enabled != (v.foveation > 0):
+				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.enabled])
 				started = false
 		if not b.running:
 			check("finished", true, "%d frames" % frames)
@@ -84,7 +84,7 @@ func _process(_d: float) -> bool:
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
-			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.split_pass.enabled)
+			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)
 			return true

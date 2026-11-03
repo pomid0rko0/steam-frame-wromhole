@@ -15,13 +15,12 @@ extends Node3D
 ## The parts: the space's geometry (wormhole_space.gd), the viewer's body (viewer.gd), the renderer
 ## (renderer.gd), the demo's balls and cubes in gravity through the wormhole (toys.gd,
 ## ball_world.gd), the hands that grab, throw and pull them (hands.gd), the zone bodies' meshes once
-## a frame (zone_sections.gd), foveated rendering (foveation.gd, split_pass.gd, floor_fov.gd), the
-## menu and the line under it (menu.gd) with the measured frame rate (frame_rate.gd,
-## rate_meter.gd), the speed check (bench.gd) and the stereo check scene (check_scene.gd). Each
-## frame (_process): the menu takes its buttons, then the turn, the reset and the gravity view's
-## button, the body's motion (_locomotion), the free toys (pushed by the hands where they were), the
-## hands and what they hold, and last the toys and the head to the renderer: a toy let go now starts
-## from the hand.
+## a frame (zone_sections.gd), foveated rendering (foveation.gd), the menu and the line under it
+## (menu.gd) with the measured frame rate (frame_rate.gd, rate_meter.gd), the speed check (bench.gd)
+## and the stereo check scene (check_scene.gd). Each frame (_process): the menu takes its buttons,
+## then the turn, the reset and the gravity view's button, the body's motion (_locomotion), the free
+## toys (pushed by the hands where they were), the hands and what they hold, and last the toys and
+## the head to the renderer: a toy let go now starts from the hand.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -58,6 +57,7 @@ const NEAR := 0.01                  # m: the camera's near plane: what comes clo
 const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
+const GAZE_HOLD := 0.5              # s the foveation's fovea stays where the eyes last looked while they are not tracked (a blink)
 
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET, LIFT)
 var viewer := Viewer.new(space)
@@ -82,6 +82,8 @@ var left_hand: XRController3D   # at their aim pose: the buttons and sticks (XR 
 var right_hand: XRController3D
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
 var gaze_dot: MeshInstance3D    # drawn where they look, if the menu says so
+var gaze_dir := Vector3.FORWARD # where they look in the head's space, for the foveation's fovea
+var gaze_lost := INF            # s since they were last tracked
 var prev_head := Vector2.ZERO
 var recentered := false         # the runtime moved the play space: not a step
 var await_pose := false         # XR: place the viewer once head tracking delivers a pose
@@ -102,11 +104,10 @@ var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lin
 const PARTS := ["input and motion", "head", "toys", "hands", "drawing", "to the shaders"]
 var parts_ms := PackedFloat32Array([0, 0, 0, 0, 0, 0])
 var started_us := 0
-# the first frames are drawn with each kind of foveation pass in turn (none, SteamVR's map, our own
-# map: Foveation.set_level), then the menu's: their pipelines compile while the app starts, not at
-# the first switch in the menu (a stall on the Frame, and SteamVR at half rate after it); Renderer
-# does the same for the gravity views
-const WARM_FOVEATION := [0, Foveation.LEVELS, Foveation.LEVELS + 2]
+# the first frames are drawn without foveation and with it (Foveation.set_level), then with the
+# menu's: its pipelines compile while the app starts, not at the first switch in the menu (a stall
+# on the Frame, and SteamVR at half rate after it); Renderer does the same for the gravity views
+const WARM_FOVEATION := [0, 1]
 var warm := 0                   # frames of it done
 var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n, frame] (the speed check's cube)
 
@@ -141,7 +142,6 @@ func _ready() -> void:
 	else:
 		xr = null
 	var target: Viewport = xr_view if in_xr else get_viewport()
-	foveation = Foveation.new(target, xr)
 
 	origin = XROrigin3D.new()
 	host.add_child(origin)
@@ -155,8 +155,9 @@ func _ready() -> void:
 		camera.position = Vector3(0.0, DESKTOP_HEAD_HEIGHT, 0.0)
 	renderer = Renderer.new(space, scene, xr, xr_view)
 	camera.add_child(renderer)
-	foveation.floor_fov = renderer.floor_fov
-	camera.compositor.compositor_effects = [foveation.split_pass, renderer.floor_fov, renderer.zone_sections]
+	foveation = renderer.foveation
+	foveation.target = target
+	camera.compositor.compositor_effects = [foveation, renderer.zone_sections]
 
 	rate = FrameRate.new()
 	rate.main = self
@@ -204,7 +205,7 @@ func _add_controllers() -> void:
 		else:
 			right_hand = c
 	# the eyes' gaze, from SteamVR's eye tracking: in the log's lines, and a dot drawn there on
-	# request (the menu), to see whether the sharp middle of the foveation follows it
+	# request (the menu), to see whether the foveation's fovea follows it
 	gaze = XRNode3D.new()
 	gaze.tracker = &"/user/eyes_ext"
 	gaze.pose = &"eye_gaze_pose"
@@ -265,10 +266,15 @@ func _process(delta: float) -> void:
 		_update_chart_map()
 	if gaze_dot and gaze_dot.visible:
 		gaze_dot.position = gaze.transform.origin - gaze.transform.basis.z * GAZE_DOT_DIST
+	# the foveation's fovea where the eyes look, in the head's space; without eye tracking ahead
 	if gaze and gaze.get_has_tracking_data():
-		renderer.floor_fov.set_gaze(gaze.transform.origin - gaze.transform.basis.z * 10.0, true)
+		gaze_dir = camera.transform.basis.inverse() * -gaze.transform.basis.z
+		gaze_lost = 0.0
 	else:
-		renderer.floor_fov.set_gaze(Vector3.ZERO, false)
+		gaze_lost += delta
+		if gaze_lost > GAZE_HOLD:
+			gaze_dir = Vector3.FORWARD
+	foveation.set_gaze(gaze_dir, gaze_lost <= GAZE_HOLD)
 
 	# the head along up from the feet; the shader moves from the head to each eye
 	var t1 := Time.get_ticks_usec()

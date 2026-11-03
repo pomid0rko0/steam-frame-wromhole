@@ -9,6 +9,8 @@ var eyes: Array[Transform3D] = []      # each eye relative to the head
 var frusta: Array[Vector4] = []        # tan of the half-angles: left, right, bottom, top
 var size := Vector2i(1000, 1100)
 var tracker: XRPositionalTracker
+var gaze := Vector3.ZERO               # where the eyes look, in the head's space; zero: no eye tracking
+var eyes_tracker: XRPositionalTracker  # main.gaze's, while gaze is set
 var ready_ok := false
 
 
@@ -46,6 +48,9 @@ func _initialize() -> bool:
 
 func _uninitialize() -> void:
 	ready_ok = false
+	if eyes_tracker:
+		XRServer.remove_tracker(eyes_tracker)
+		eyes_tracker = null
 
 
 func _get_tracking_status() -> XRInterface.TrackingStatus:
@@ -88,3 +93,10 @@ func _pre_draw_viewport(_render_target: RID) -> bool:
 
 func _publish() -> void:
 	tracker.set_pose(&"default", head, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
+	if gaze != Vector3.ZERO:
+		if eyes_tracker == null:
+			eyes_tracker = XRPositionalTracker.new()
+			eyes_tracker.name = &"/user/eyes_ext"
+			XRServer.add_tracker(eyes_tracker)
+		var look := Transform3D(Basis.looking_at(gaze), Vector3.ZERO)
+		eyes_tracker.set_pose(&"eye_gaze_pose", head * look, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)

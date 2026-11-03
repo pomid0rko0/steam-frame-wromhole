@@ -21,9 +21,6 @@ GODOT=${GODOT:-$ROOT/tools/.bin/godot}
 # this tree's tools/.bin
 MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
 [ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
-# Each eye's pixels a side in the headset at the menu's 100%: the Frame's screen (Menu.FRAME_EYE),
-# whatever SteamVR's resolution setting for the app; the headset log's "refresh:" lines ("eye WxH")
-HEADSET_EYE=2160
 OUTS=$REPO/.wt/.out
 mkdir -p "$OUTS"
 # runs' folders a day old go: nothing else deletes them (the tools' timeouts end a run sooner)

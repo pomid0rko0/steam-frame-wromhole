@@ -1,13 +1,15 @@
 extends SceneTree
 ## The in-headset stereo check scene (check_scene.gd) through the simulated headset
-## (tests/fake_hmd.gd): mode "app" hides Godot's green overlay, "lens" is "app" with blue where the
+## (tests/fake_hmd.gd): mode "app" hides Godot's green overlay, "zones" is "app" with foveation's
+## coarse texels tinted (Foveation.show), "probe" with foveation's probe (each floor pixel blue,
+## red by how far from its place it took its colour: foveation.gd), "lens" is "app" with blue where the
 ## floor's quad draws what comes through the curved zone (floor.gdshaderinc's lens_mark: the app's
 ## images of the balls and the cube there have no green, tools/compare/check_scene.py leaves them
 ## out), "floor" shows only its floor lines,
 ## "domain" fills the area where it may draw floor lines, "balls" shows only its ball grids, "cube"
 ## only the cube's edges, "both" all of it. Comparing them shows whether green lands exactly on the
 ## renderer's white lines, red balls and magenta cube.
-##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
+##   godot --path . -s res://tests/multiview_check.gd -- out_prefix app|zones|probe|lens|floor|domain|balls|cube|both case [plain|gravity|arrows] [fov]
 ## case 0 and 1: util.gd's headset; 2: as 1, then the head walks and turns in the room for ten
 ## frames (HEAD_STEP each) before the capture; 3: as 1, then the left stick walks forward and right
 ## (keys W, D), the right stick snaps right (key E), and after a switch to smooth turns (Tab) turns
@@ -20,13 +22,13 @@ extends SceneTree
 ## plain: without the renderer's balls and cube; only the floor lines can be compared then.
 ## gravity, arrows: the gravity views "floor" and "floor and field lines" (Renderer.GRAVITY_VIEWS: the
 ## floor coloured by gravity, also the field lines with their arrows).
-## fov: foveated rendering on (the runtime's strongest in even cases: the 3D scene in a render pass
-## of its own, the viewport asking for a density map; software Vulkan has none, so what this tests
-## is that the split pass draws everything where it was; our own in odd ones: narrow in 1, wide in 3).
+## fov: foveated rendering on (foveation.gd) at FOV_LEVELS[case], in case 1 with the eyes tracked
+## looking off the middle (FOV_GAZE); in mode "app" each eye's fovea goes into out_prefix_fovea.json
+## (Foveation.fovea: [g's pixel x, y, r0, m] per eye), for tools/compare/fovea.py.
 
 const U := preload("res://tests/util.gd")
 # the overlay's nodes each mode shows (CheckScene.show_only)
-const SHOWN := {"app": [], "lens": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
+const SHOWN := {"app": [], "zones": [], "probe": [], "lens": [], "floor": ["Grid"], "domain": ["Grid"], "balls": ["Ball"], "cube": ["Cube"],
 		"both": ["Grid", "Ball", "Cube"]}
 # case 2: the head's step in the room each frame
 const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04, 0.0, -0.05))
@@ -34,6 +36,11 @@ const HEAD_STEP := Transform3D(Basis(Vector3.UP, deg_to_rad(-3.5)), Vector3(0.04
 const KEYS := [[5, KEY_W, true], [5, KEY_D, true], [15, KEY_W, false], [15, KEY_D, false],
 		[16, KEY_E, true], [18, KEY_E, false], [19, KEY_TAB, true], [20, KEY_TAB, false],
 		[21, KEY_Q, true], [21, KEY_W, true], [31, KEY_Q, false], [31, KEY_W, false]]
+# fov: the level by case (Foveation.LEVELS' index + 1: in case 0 a fovea round the picture's middle
+# that reaches the floor's lines, the strongest's there is sky and the throat), and where the eyes
+# look in case 1 (the head's space)
+const FOV_LEVELS := [3, 5, 5, 1, 5, 5]
+const FOV_GAZE := Vector3(0.25, 0.15, -1.0)
 const KEYS_4 := [[5, KEY_SPACE, true], [5, KEY_W, true], [15, KEY_W, false], [16, KEY_E, true], [18, KEY_E, false],
 		[19, KEY_K, true], [21, KEY_K, false], [22, KEY_L, true], [24, KEY_L, false], [25, KEY_SPACE, false]]
 
@@ -55,6 +62,8 @@ func _initialize() -> void:
 	gravity = 1 if args.slice(3).has("gravity") else (2 if args.slice(3).has("arrows") else 0)
 	fov = args.slice(3).has("fov")
 	hmd = U.headset(mini(case, 1), -25.0)
+	if fov and case == 1:
+		hmd.gaze = FOV_GAZE.normalized()
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.show_check = true
@@ -79,6 +88,11 @@ func _process(_delta: float) -> bool:
 		main.menu.visible = false        # it follows the head: in every view
 		if plain:
 			main.renderer.set_objects(PackedVector4Array(), PackedVector4Array())
+		if mode == "zones":
+			main.foveation.show = true
+		if mode == "probe":
+			main.foveation.probe = true
+			main.renderer.floor_sample_mat.set_shader_parameter("fov_probe", true)
 		if mode == "lens":
 			for m in main.renderer.floor_mats:
 				m.set_shader_parameter("lens_mark", true)
@@ -88,10 +102,8 @@ func _process(_delta: float) -> bool:
 		if mode == "domain":
 			main.overlay.get_node("Grid").material_override.set_shader_parameter("solid", true)
 	if frames == 6 and fov:
-		# after main's first frames, which set each kind of foveation in turn and then the menu's:
-		# SteamVR's level in even cases, our own (floor_fov.gd) in odd ones: narrow, the menu's
-		# default, in case 1, wide in case 3
-		main.foveation.set_level(Foveation.LEVELS if case % 2 == 0 else (Menu.DEFAULT_FOVEATION if case == 1 else 4))
+		# after main's first frames, which set foveation off and on and then the menu's
+		main.foveation.set_level(FOV_LEVELS[case])
 		print("foveation ", main.foveation.level)
 	if case == 2 and frames >= 5 and frames < 15:
 		hmd.head = HEAD_STEP * hmd.head
@@ -103,6 +115,9 @@ func _process(_delta: float) -> bool:
 		if case >= 4:
 			print("flying %s, the feet %.3f m over the floor" % [not main.viewer.standing, main.viewer.height()])
 		U.save_eyes(main, OS.get_cmdline_user_args()[0], mode)
+		if fov and mode == "app":
+			var f := FileAccess.open(OS.get_cmdline_user_args()[0] + "_fovea.json", FileAccess.WRITE)
+			f.store_string(JSON.stringify(Array(main.foveation.fovea)))
 		print("saved ", mode)
 		U.finish(self, hmd)
 		return true
