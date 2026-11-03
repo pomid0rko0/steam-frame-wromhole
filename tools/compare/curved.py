@@ -27,7 +27,8 @@ Checks per eye:
     footprint on the floor, and under foveation by two of its texel's: the cell's edge filtered over
     the texel, then between neighbouring texels), where the texel's footprint leaves the checker its
     full contrast: AGREE of them at least (where FLOOR_MIN of them are usable).
-   python3 tools/compare/curved.py prefix      (prefix.json, prefix_app_left.png, prefix_app_right.png)
+   python3 tools/compare/curved.py prefix [left|right]   (prefix.json, prefix_app_left.png, prefix_app_right.png;
+                                                          an eye named: that eye alone)
 Rendered with foveation (the json's fovea: each eye's g x, y, r0 and m, foveation.gd's warp), the
 floor and what is seen through the lens come from a texture whose texel at r pixels from g spans
 sqrt(1 + (m (r - r0))^2) pixels along r beyond r0 (fewer across), one within: there MAX_EDGE,
@@ -56,6 +57,7 @@ FLOOR_MIN = 100         # fewer usable floor samples (a view without much floor)
 GRID = 4
 
 pre = sys.argv[1]
+EYES = sys.argv[2:3] or ['left', 'right']
 D = json.load(open(pre + '.json'))
 FOVEA = D.get('fovea') or None
 rho0, h, R = D['profile']
@@ -307,6 +309,8 @@ def chart_xy(l, n):
 
 ok = True
 for side_i, eye_name in enumerate(('left', 'right')):
+    if eye_name not in EYES:
+        continue
     e = D['eyes'][side_i]
     img = np.asarray(Image.open(f'{pre}_app_{eye_name}.png').convert('RGB'), int)
     l0, n0, axes = eye_of(e)

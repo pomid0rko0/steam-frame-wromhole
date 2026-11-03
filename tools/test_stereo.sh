@@ -7,7 +7,8 @@
 #   tools/test_stereo.sh            (GODOT=path/to/godot to override the binary, OUT=dir for images:
 #                                    default a new one under .wt/.out each run, printed at the end;
 #                                    JOBS=n renders at once; UNITS="..." only those of the suite's
-#                                    parts, ALL_UNITS below: CI shares them out among its machines)
+#                                    parts, ALL_UNITS below; PART=n the parts of tools/stereo_parts.txt's
+#                                    line n, CI's share of them among its machines)
 # Exit status 0 only if every check passes.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -32,6 +33,15 @@ JOBS=${JOBS:-$(nproc)}
 # gravity view (gravityN)
 ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 check0 check1 check2
 check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
+if [ -n "${PART:-}" ]; then
+	# CI's share: every part on exactly one of its lines, or a part would go unchecked
+	parts=$(grep -v '^#' "$ROOT/tools/stereo_parts.txt")
+	[ "$(echo $parts | tr ' ' '\n' | sort)" = "$(echo $ALL_UNITS | tr ' ' '\n' | sort)" ] \
+		|| { echo "tools/stereo_parts.txt does not hold every part exactly once: $(echo $ALL_UNITS)"; exit 2; }
+	UNITS=$(sed -n "${PART}p" <<<"$parts")
+	[ -n "$UNITS" ] || { echo "no line $PART in tools/stereo_parts.txt"; exit 2; }
+	echo "part $PART: $UNITS"
+fi
 UNITS=$(echo ${UNITS:-$ALL_UNITS})
 for u in $UNITS; do
 	[[ " $(echo $ALL_UNITS) " == *" $u "* ]] || { echo "no part $u: $(echo $ALL_UNITS)"; exit 2; }
@@ -52,7 +62,13 @@ render() {   # a Godot test script, in the background; with TRACE=name its rays 
 	  godot_x $d "$LOGS/$i.log" $LIMIT --path . "$@"
 	  echo "$? $*" > "$LOGS/$i.status"
 	  free_display $d
-	  [ -z "$trace" ] || python3 "$CMP/curved.py" "$OUT/$trace" > "$LOGS/$trace.cmp" 2>&1 ) &
+	  [ -z "$trace" ] || {
+		# each eye in a process of its own, then their lines and one verdict
+		for eye in left right; do python3 "$CMP/curved.py" "$OUT/$trace" $eye > "$LOGS/$trace.$eye" 2>&1 & done
+		wait
+		grep -vhxE "PASS|FAIL" "$LOGS/$trace.left" "$LOGS/$trace.right"
+		grep -qx PASS "$LOGS/$trace.left" && grep -qx PASS "$LOGS/$trace.right" && echo PASS || echo FAIL
+	  } > "$LOGS/$trace.cmp" 2>&1 ) &
 }
 verdict() {   # name, comparison command...
 	local name=$1; shift
@@ -64,8 +80,8 @@ verdict() {   # name, comparison command...
 # where light is bent: at the start looking up at the lifted throat, level with it, at the curved
 # zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
 # a control, under the mouth looking up (curved_check.gd's PLACES); first, as their rays, traced
-# after each (tools/compare/curved.py), take minutes a place on one core (more in the throat, where
-# they go round it), beside the other renders
+# after each (tools/compare/curved.py, each eye on a core of its own), take minutes a place (more in
+# the throat, where they go round it), beside the other renders
 for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=crv$p render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it

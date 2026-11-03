@@ -38,11 +38,12 @@ keep and what was learnt about it: the comment at the top of its file.
   that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
   does changes, the title changes with it. The description: what to check in the headset (a yes/no
   they can see), what the tests and CI found, what is left. The two are the PR's commit in `main`.
-- **CI checks every push** (README, «Проверки»): both builds and every test, each on a machine of
-  its own, on exactly the commit pushed; a branch that differs from `main` only in Markdown and
-  `docs/` gets none, as nothing reads them. Push what you deliver; that run is the check of record,
-  also of the tests you didn't run yourself. Watch it: in a cloud session subscribe to the PR, whose
-  activity brings CI's failures; on the Frame `gh run watch`. A red run is yours to fix.
+- **CI checks every push** (README, «Проверки»): both builds and every test, shared out over seven
+  machines (the stereo test in parts, `tools/stereo_parts.txt`), on exactly the commit pushed; a
+  branch that differs from `main` only in Markdown and `docs/` gets none, as nothing reads them. Push
+  what you deliver; that run is the check of record, also of the tests you didn't run yourself.
+  Watch it: in a cloud session subscribe to the PR, whose activity brings CI's failures; on the
+  Frame `gh run watch`. A red run is yours to fix.
 - **Docs say what is true now.** README, `docs/` and code comments describe the code as it is: no
   history (git and the PRs keep it), no versions, numbers only as measured on the current code, with
   the tool or test that gives them. A change that makes a statement or a number stale fixes or
