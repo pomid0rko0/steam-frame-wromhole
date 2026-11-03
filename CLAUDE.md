@@ -20,12 +20,15 @@ keep and what was learnt about it: the comment at the top of its file.
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README.md).
 - **Tests stay off the headset:** on the Frame whatever runs Godot or opens a GPU goes through
   `tools/box.sh` (its top says why and how); never start `tools/.bin/godot` on the Frame without it.
-- **One wish per chat,** on a branch you name yourself, started from `origin/main` after `git fetch`
-  (a cloud session's local `main` can be days old) or the branch the wish's issue gives; not the
-  branch a cloud session makes for itself (`claude/…`, `ccr-…`). The owner allows pushing to the branch you name. The name says what the branch does, in
-  as few lowercase English words joined by hyphens as say it (`throat-shape`, `pull-to-hand`). If
-  origin already has a branch by that name, add what this one does differently, or a number
-  (`cleanup-2`), rather than a synonym.
+- **One wish per chat,** on its own branch, started from `origin/main` after `git fetch` (a cloud
+  session's local `main` can be days old), or the issue's branch if it has one
+  (`git branch -r --list 'origin/*/issue-<N>-*'`); not the branch a cloud session makes for itself
+  (`claude/…`, `ccr-…`). The owner allows pushing to it. Its name follows
+  [Conventional Branch](https://conventionalbranch.org/), `feat` and `fix` as in the commits; the
+  description is the wish's issue (one said in the chat gets its issue first) and a few English
+  words: `feat/issue-47-throat-shape`, `fix/issue-43-cube-tearing`. Its commits follow
+  [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), the description in
+  Russian, as the PR's title that becomes their commit in `main` (below).
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
@@ -33,9 +36,10 @@ keep and what was learnt about it: the comment at the top of its file.
   `main` (its ruleset): nothing is pushed to `main` itself. A PR that changes what the headset runs
   (`godot/` but `godot/tests/`, `tools/setup.sh`, `tools/export.sh`) the owner merges, or you when
   they say so in the chat; any other you merge yourself then.
-- **A PR's title is its line in those notes,** which the owner reads: in Russian, what changes for
-  the person in the headset (what they see or can do, what got faster), not how it is done; a PR
-  that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
+- **A PR's title is its line in those notes,** which the owner reads: a Conventional Commit's
+  header, its type, then in Russian what changes for the person in the headset (what they
+  see or can do, what got faster), not how it is done (`feat: форма горла в меню`); a PR that
+  changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
   does changes, the title changes with it. The description: what to check in the headset (a yes/no
   they can see), what the tests and CI found, what is left. The two are the PR's commit in `main`.
 - **CI checks every push** (README, «Проверки»): both builds and every test, shared out over seven
