@@ -1,10 +1,11 @@
 # On every push to a branch: the builds and every test, in the tests' environment (image.yml: its
 # amd64 image; the arm64 one, for the Frame's tools/box.sh, is made beside it), shared out over
-# seven machines that end at about the same time: the builds, then the OpenXR test alone (as
-# tools/test_openxr.sh needs), then a share of the stereo test; the Godot tests and the headset's
-# compiler, then a share; the shaders' accuracy, alone, as its time differs from machine to machine
-# (3.5 to 7 minutes); four more machines of the stereo test alone (tools/stereo_parts.txt: the
-# shares, PART=n). A branch that
+# eleven machines that end at about the same time: the builds, then a share of the stereo test; the
+# OpenXR test alone (as tools/test_openxr.sh needs); the Godot tests, then a share; the headset's
+# compiler, then a share; the shaders' accuracy in two, alone (ref/test_gpu.py's pieces take all of
+# a machine's cores): the bodies' meshes in the zone (its check zone, three pieces of minutes each)
+# and the rest with the gravity's; five more machines of the stereo test alone, each with one of
+# the five longest curved places (tools/stereo_parts.txt: the shares, PART=n). A branch that
 # differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
 # («Что изменилось», changes); main, a version, a tag and a release always get them all.
 # The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
@@ -90,7 +91,7 @@ jobs:
       arch: arm64
 
   build:
-    name: Сборки для шлема и ПК, OpenXR, стерео-тест 1
+    name: Сборки для шлема и ПК, стерео-тест 1
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -154,15 +155,6 @@ jobs:
         with:
           path: godot/build/${{ steps.export.outputs.linux_check }}
           archive: false
-      - id: openxr
-        if: ${{ !cancelled() }}
-        run: tools/test_openxr.sh
-      - if: ${{ !cancelled() && steps.openxr.outcome == 'failure' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: openxr-logs
-          path: .wt/.out/
-          include-hidden-files: true
       - id: stereo
         if: ${{ !cancelled() }}
         run: PART=1 OUT="$PWD/stereo" tools/test_stereo.sh
@@ -178,7 +170,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [3, 4, 5, 6]
+        part: [4, 5, 6, 7, 8]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     container:
@@ -199,10 +191,11 @@ jobs:
   # the builds go unless every share of the stereo test passed (above); with no builds made, nothing
   unsafe:
     name: Удаление сборок, если стерео-тест не прошёл
-    needs: [build, tests, stereo]
+    needs: [build, tests, adreno, stereo]
     if: >-
       always() && needs.build.result != 'skipped' && (needs.stereo.result != 'success'
-      || needs.build.outputs.stereo != 'success' || needs.tests.outputs.stereo != 'success')
+      || needs.build.outputs.stereo != 'success' || needs.tests.outputs.stereo != 'success'
+      || needs.adreno.outputs.stereo != 'success')
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -217,10 +210,31 @@ jobs:
             echo "deleted $name"
           done
 
-  # what the headset's shader compiler makes of the shaders goes into the job's summary; it fails on
-  # a shader the compiler refuses
+  # main through the real OpenXR path, alone on its machine (its frames are judged against Monado's
+  # display)
+  openxr:
+    name: Приложение через OpenXR
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: tools/test_openxr.sh
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openxr-logs
+          path: .wt/.out/
+          include-hidden-files: true
+
   tests:
-    name: Тесты в Godot, компилятор шлема, стерео-тест 2
+    name: Тесты в Godot, стерео-тест 2
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -241,14 +255,6 @@ jobs:
         with:
           name: test-logs
           path: test-logs/
-      - if: ${{ !cancelled() }}
-        run: |
-          for a in "" --paths --fov; do
-            echo "### tools/adreno_stats.sh $a"
-            echo '```'
-            tools/adreno_stats.sh $a
-            echo '```'
-          done | tee -a "$GITHUB_STEP_SUMMARY"
       - id: stereo
         if: ${{ !cancelled() }}
         run: PART=2 OUT="$PWD/stereo" tools/test_stereo.sh
@@ -257,6 +263,55 @@ jobs:
         with:
           name: stereo-images-2
           path: stereo/
+
+  # what the headset's shader compiler makes of the shaders goes into the job's summary; it fails on
+  # a shader the compiler refuses
+  adreno:
+    name: Компилятор шлема, стерео-тест 3
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      stereo: ${{ steps.stereo.outcome }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: |
+          for a in "" --paths --fov; do
+            echo "### tools/adreno_stats.sh $a"
+            echo '```'
+            tools/adreno_stats.sh $a
+            echo '```'
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+      - id: stereo
+        if: ${{ !cancelled() }}
+        run: PART=3 OUT="$PWD/stereo" tools/test_stereo.sh
+      - if: ${{ !cancelled() && steps.stereo.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: stereo-images-3
+          path: stereo/
+
+  # ref/test_gpu.py in two: its check zone (the bodies' meshes in the zone, the longest pieces) on a
+  # machine of its own, the rest with the gravity's on another
+  ref-zone:
+    name: Точность шейдеров, сетки тел в зоне
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 ref/test_gpu.py zone
 
   ref:
     name: Точность шейдеров и гравитации
@@ -270,7 +325,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - run: python3 ref/test_gpu.py
+      - run: python3 ref/test_gpu.py numbers profile images exit eye
       - if: ${{ !cancelled() }}
         run: python3 ref/test_gravity.py
 
@@ -305,7 +360,7 @@ jobs:
   # on every push that builds the builds are gathered as for a release; published only for a version
   release:
     name: Релиз (публикация — только для версии)
-    needs: [changes, build, tests, ref, stereo, version]
+    needs: [changes, build, openxr, tests, adreno, ref-zone, ref, stereo, version]
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.full == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -351,7 +406,7 @@ jobs:
   # cancelled run).
   all:
     name: Все проверки
-    needs: [changes, image, image-arm64, build, tests, ref, stereo, release]
+    needs: [changes, image, image-arm64, build, openxr, tests, adreno, ref-zone, ref, stereo, release]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -38,7 +38,7 @@ keep and what was learnt about it: the comment at the top of its file.
   that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
   does changes, the title changes with it. The description: what to check in the headset (a yes/no
   they can see), what the tests and CI found, what is left. The two are the PR's commit in `main`.
-- **CI checks every push** (README, «Проверки»): both builds and every test, shared out over seven
+- **CI checks every push** (README, «Проверки»): both builds and every test, shared out over eleven
   machines (the stereo test in parts, `tools/stereo_parts.txt`), on exactly the commit pushed; a
   branch that differs from `main` only in Markdown and `docs/` gets none, as nothing reads them. Push
   what you deliver; that run is the check of record, also of the tests you didn't run yourself.
