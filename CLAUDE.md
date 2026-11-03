@@ -58,9 +58,10 @@ keep and what was learnt about it: the comment at the top of its file.
   (`.github/ISSUE_TEMPLATE/headset-bug.yml`): read its build and log first. A PR that does one says
   `Closes #N` in its description; a bug or a wish found and not done goes into an issue of its own.
   An issue names the code as it is: a branch that renames or changes what an open issue names
-  fixes that issue too (search the issues for the name). An issue or comment you write ends with
+  fixes that issue too (search the issues for the name). An issue you write ends with
   «🤖 *Написал Claude (Claude Code); на GitHub показан от имени владельца.*»: GitHub shows it as the
-  owner's and drops the usual footer.
+  owner's and drops the usual footer from an issue's body. A comment gets that footer from GitHub
+  itself: add nothing to it.
 - **A number's source, by its meaning:** before writing a number, check what exactly the counter,
   test or tool measures and in what unit, not only that it prints that number.
 - **No work is worth anything by itself.** Nothing is kept only because it was here before you or
