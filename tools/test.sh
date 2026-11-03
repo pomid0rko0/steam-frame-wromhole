@@ -1,8 +1,8 @@
 #!/bin/bash
 # The Godot tests, godot/tests/<name>_test.gd, each with the flags its header gives (its line
 # "##   godot <flags> -s res://tests/<name>_test.gd"), JOBS at a time (default: one per core; on the
-# Frame tools/box.sh sets it), each with its own X display and user data; then a line per test,
-# with what failed.
+# Frame tools/box.sh sets it), each with its own X display and user data, but Godot's shader cache
+# shared (env.sh, shaders_in); then a line per test, with what failed.
 #   tools/test.sh                  all of them
 #   tools/test.sh grab walking_xr  those named
 # Exit status 0 only if each one exits 0 with no script or shader error (one that hangs in Godot's own
@@ -43,9 +43,12 @@ for t in "${names[@]}"; do
 	(
 		start=$SECONDS
 		export XDG_DATA_HOME=$DATA/$t
+		shaders_in "$DATA/shaders" "$XDG_DATA_HOME"
 		godot_x $d "$OUT/$t.log" $LIMIT --path . $flags -s "res://$f"
-		echo "$? $((SECONDS - start))" > "$DATA/$t.status"
+		code=$?
+		echo "$code $((SECONDS - start))" > "$DATA/$t.status"
 		free_display $d
+		[ $code != 0 ] || shaders_out "$DATA/shaders" "$XDG_DATA_HOME"
 	) &
 done
 wait

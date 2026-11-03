@@ -1,11 +1,15 @@
 # CI's share of tools/test_stereo.sh among its machines: line n is the parts (UNITS) PART=n runs.
-# Shared out by each part's cost as tools/test_stereo.sh's own timings give it, so that every machine
-# (the first two also with other checks first: ci.yml) ends at about the same time; the four longest
-# curved places, in and by the throat, each first on a machine of its own. Every part exactly once (the
-# test checks).
-crf6 check4 headset
-crv7 crv8 check5 crv6 desktop crv0
-crv4 gravity0 gravity3
-crv5 check3 gravity1
-crv3 crv1 check0 gravity2
-crv2 crf0 check1 check2
+# Shared out by each part's cost as tools/test_stereo.sh's own timings give it (its last lines: a
+# part's renders' seconds and its traces'), so that every machine ends at about the same time: the
+# first three run theirs after other checks (ci.yml: the builds, the Godot tests, the headset's
+# compiler) and so take a few renders; the five longest curved places, in and by the throat, are
+# each on a machine of its own with a shorter one, their eyes' traces then four processes on four
+# cores. Every part exactly once (the test checks).
+desktop headset check4
+crf0 check5 gravity1
+gravity2 gravity3
+crv4 crv7 check0
+crv5 crf6 check1
+crv3 crv1 check2
+crv2 crv0 check3
+crv8 crv6 gravity0

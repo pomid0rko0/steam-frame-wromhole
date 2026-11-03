@@ -62,6 +62,28 @@ x_display() {
 	echo "$d"
 }
 free_display() { rmdir "/tmp/.wormhole-X$1" 2>/dev/null || true; }
+# Godot's shader cache (its user data's shader_cache: each shader compiled to SPIR-V, a file under a
+# hash of its source) is half of what a test's Godot run costs when it starts empty
+# (tests/multiview_hmd.gd: 29 s of CPU, 14 s with the cache; the Vulkan pipeline cache saves nothing on
+# lavapipe). So a tool's runs share theirs through a folder, $1 below: shaders_in puts a copy of it
+# into a run's own user data ($2, the run's XDG_DATA_HOME: its settings and logs stay its own) before
+# the run, shaders_out what the run compiled into it after a run that passed (one that failed may have
+# been stopped halfway through a file). Godot writes a cache file in place: a run never writes the
+# shared folder itself, and a file goes in under a name of its own and is then renamed, so a copy never
+# takes half of one.
+CACHE_DIR="godot/app_userdata/Wormhole VR/shader_cache"   # project.godot's config/name
+shaders_in() {
+	mkdir -p "$1" "$2/$CACHE_DIR"
+	cp -r "$1/." "$2/$CACHE_DIR/"
+}
+shaders_out() {
+	local c="$2/$CACHE_DIR" f
+	( cd "$c" && find . -type f -name '*.cache' ) | while read -r f; do
+		[ -e "$1/$f" ] && continue
+		mkdir -p "$(dirname "$1/$f")"
+		cp "$c/$f" "$1/$f.$BASHPID" && mv -f "$1/$f.$BASHPID" "$1/$f"
+	done
+}
 # A Godot run of a test script on X display $1, its output into the file $2, for at most $3 s; the
 # rest are Godot's arguments. Exit status Godot's, 124 past the limit. Godot 4.7.2 can hang in its
 # own shutdown after a script has quit: the main thread waits on its worker pool, whose workers all

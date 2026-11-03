@@ -1,6 +1,7 @@
 extends SceneTree
 ## Same check as multiview_sphere.gd, its ball, without multiview: an ordinary camera at the head.
-##   godot --path . --resolution 960x1080 -s res://tests/desktop_sphere.gd -- out_prefix app|mesh
+## Godot's ball first (mode "mesh"), then the app's (mode "app"), each saved as out_prefix_<mode>.png.
+##   godot --path . --resolution 960x1080 -s res://tests/desktop_sphere.gd -- out_prefix
 
 const U := preload("res://tests/util.gd")
 const CHART := preload("res://tests/multiview_sphere.gd").CHART
@@ -8,11 +9,10 @@ const RADIUS := preload("res://tests/multiview_sphere.gd").RADIUS
 
 var main: Main
 var frames := 0
-var mode: String
+var ball: MeshInstance3D
 
 
 func _initialize() -> void:
-	mode = OS.get_cmdline_user_args()[1]
 	main = load("res://main.tscn").instantiate() as Main
 	main.toys.enabled = false            # this test draws its own ball
 	main.xr_name = "none"
@@ -28,17 +28,22 @@ func _process(_delta: float) -> bool:
 		main.camera.basis = Basis.IDENTITY
 		main.place(main.START_POS, main.START_FORWARD)      # chart to play: multiview_sphere.gd
 	if frames == 3:
-		if mode == "app":
-			var pos := PackedVector4Array([Vector4(CHART.x, CHART.y, CHART.z - main.space.lift, main.space.h)])
-			main.renderer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
-		else:
-			var m := U.red(U.sphere(RADIUS))
-			m.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)
-			main.origin.add_child(m)
+		ball = U.red(U.sphere(RADIUS))
+		ball.position = Vector3(CHART.y, CHART.z, CHART.x - main.START_POS.x)
+		main.origin.add_child(ball)
 	if frames == 10:
-		var img := root.get_texture().get_image()
-		img.convert(Image.FORMAT_RGB8)
-		img.save_png(OS.get_cmdline_user_args()[0] + "_" + mode + ".png")
+		_save("mesh")
+		ball.visible = false
+		var pos := PackedVector4Array([Vector4(CHART.x, CHART.y, CHART.z - main.space.lift, main.space.h)])
+		main.renderer.set_objects(pos, PackedVector4Array([Vector4(1.0, 0.0, 0.0, RADIUS)]))
+	if frames == 12:
+		_save("app")
 		U.finish(self)
 		return true
 	return false
+
+
+func _save(mode: String) -> void:
+	var img := root.get_texture().get_image()
+	img.convert(Image.FORMAT_RGB8)
+	img.save_png(OS.get_cmdline_user_args()[0] + "_" + mode + ".png")

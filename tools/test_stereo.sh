@@ -22,8 +22,8 @@ failed=0
 import_scripts
 
 # The renders are independent Godot runs: they go in parallel, JOBS at a time (default: one per
-# core; on the Frame tools/box.sh sets it), each with its own X display and its own user data
-# (Godot's shader cache), then the comparisons run in order. A render that does not exit 0 within
+# core; on the Frame tools/box.sh sets it), each with its own X display and its own user data, but
+# Godot's shader cache shared (env.sh, shaders_in), then the comparisons run in order. A render that does not exit 0 within
 # LIMIT seconds fails the suite; one that hangs in Godot's own exit after its verdict ends with that
 # verdict (env.sh's godot_x).
 JOBS=${JOBS:-$(nproc)}
@@ -51,24 +51,30 @@ LIMIT=600
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 n=0
-render() {   # a Godot test script, in the background; with TRACE=name its rays traced after it
+render() {   # part, a Godot test script, in the background; with TRACE=1 the part's rays traced after it
 	n=$((n + 1))
 	while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
-	local i=$n trace=${TRACE:-}
-	mkdir -p "$LOGS/data$i"
+	local i=$n unit=$1 trace=${TRACE:-}
+	shift
 	local d
 	d=$(x_display 90)   # its own X display
 	( export XDG_DATA_HOME=$LOGS/data$i
+	  t=$SECONDS
+	  shaders_in "$LOGS/shaders" "$XDG_DATA_HOME"
 	  godot_x $d "$LOGS/$i.log" $LIMIT --path . "$@"
-	  echo "$? $*" > "$LOGS/$i.status"
+	  code=$?
+	  echo "$code $unit $((SECONDS - t)) $*" > "$LOGS/$i.status"
 	  free_display $d
+	  [ $code != 0 ] || shaders_out "$LOGS/shaders" "$XDG_DATA_HOME"
 	  [ -z "$trace" ] || {
 		# each eye in a process of its own, then their lines and one verdict
-		for eye in left right; do python3 "$CMP/curved.py" "$OUT/$trace" $eye > "$LOGS/$trace.$eye" 2>&1 & done
+		t=$SECONDS
+		for eye in left right; do python3 "$CMP/curved.py" "$OUT/$unit" $eye > "$LOGS/$unit.$eye" 2>&1 & done
 		wait
-		grep -vhxE "PASS|FAIL" "$LOGS/$trace.left" "$LOGS/$trace.right"
-		grep -qx PASS "$LOGS/$trace.left" && grep -qx PASS "$LOGS/$trace.right" && echo PASS || echo FAIL
-	  } > "$LOGS/$trace.cmp" 2>&1 ) &
+		echo $((SECONDS - t)) > "$LOGS/$unit.time"
+		grep -vhxE "PASS|FAIL" "$LOGS/$unit.left" "$LOGS/$unit.right"
+		grep -qx PASS "$LOGS/$unit.left" && grep -qx PASS "$LOGS/$unit.right" && echo PASS || echo FAIL
+	  } > "$LOGS/$unit.cmp" 2>&1 ) &
 }
 verdict() {   # name, comparison command...
 	local name=$1; shift
@@ -82,54 +88,38 @@ verdict() {   # name, comparison command...
 # a control, under the mouth looking up (curved_check.gd's PLACES); first, as their rays, traced
 # after each (tools/compare/curved.py, each eye on a core of its own), take minutes a place (more in
 # the throat, where they go round it), beside the other renders
-for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=crv$p render -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
+for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=1 render crv$p -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
-for p in 0 6; do want crf$p && TRACE=crf$p render -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
+for p in 0 6; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 if want desktop; then
-	for m in app mesh; do render --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk" $m; done
-	for m in app mesh; do render --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph" $m; done
+	render desktop --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"
+	render desktop --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph"
 fi
 # balls and turned cubes (the toys' kinds; multiview_hmd.gd's PLACES), and the hands' beams, drawn
-# by the app against Godot's own where light goes straight (lens: the rest, left out)
+# by the app against Godot's own where light goes straight (lens: the rest, left out); a case a run
 for c in 0 1; do
 	want headset || break
-	for m in app mesh lens; do
-		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/hmd$c" $m $c balls
-		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/cub$c" $m $c cubes
-		render --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT/bea$c" $m $c beams
-	done
+	render headset --resolution 640x360 -s res://tests/multiview_hmd.gd -- "$OUT" $c balls:hmd$c cubes:cub$c beams:bea$c
 done
-# the stereo check scene, also flying (cases 4 and 5)
+# the stereo check scene (multiview_check.gd, a case a run), also flying (cases 4 and 5): chk with the
+# balls and the cube, pln the same floor lines without them; with foveated rendering on (foveation.gd:
+# the floor coarser away from where the eyes look, the bodies as ever) fov and fpl, each case at its
+# level, in case 1 with the eyes tracked looking off the middle (multiview_check.gd's FOV_LEVELS,
+# FOV_GAZE), case 1 also with the coarse texels tinted, to look at
 for c in 0 1 2 3 4 5; do
 	want check$c || continue
-	for m in app lens floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/chk$c" $m $c; done
+	g="chk$c:app,lens,floor,domain,balls,cube,both pln$c+plain:app,floor,domain"
+	[ $c -ge 4 ] || g="$g fov$c+fov:app,floor,domain,balls,cube,both$([ $c = 1 ] && echo ,zones) fpl$c+plain+fov:app,floor,domain,probe"
+	render check$c --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT" $c $g
 done
-# the same floor lines without the balls and the cube
-for c in 0 1 2 3 4 5; do
-	want check$c || continue
-	for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/pln$c" $m $c plain; done
-done
-# the gravity view (main.set_gravity_view): the floor coloured by gravity, then also the arrows;
-# with the balls and the cube, and without them (plain)
-for v in gravity arrows; do
-	for c in 0 1 2 3; do
-		want gravity$c || continue
-		for m in app lens floor domain balls cube; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:3}$c" $m $c $v; done
-		for m in app floor domain; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/${v:0:2}p$c" $m $c $v plain; done
-	done
-done
-# foveated rendering on (foveation.gd: the floor coarser away from where the eyes look, the bodies
-# as ever), each case at its level, in case 1 with the eyes tracked looking off the middle
-# (multiview_check.gd's FOV_LEVELS, FOV_GAZE); case 1 also with the coarse texels tinted, to look at
+# the gravity view (main.set_gravity_view): the floor coloured by gravity (gra), then also the arrows
+# (arr); with the balls and the cube, and without them (grp, arp)
 for c in 0 1 2 3; do
-	want check$c || continue
-	for m in app floor domain balls cube both; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov$c" $m $c fov; done
-done
-want check1 && render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fov1" zones 1 fov
-for c in 0 1 2 3; do
-	want check$c || continue
-	for m in app floor domain probe; do render --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT/fpl$c" $m $c plain fov; done
+	want gravity$c || continue
+	render gravity$c --resolution 640x360 --fixed-fps 60 -s res://tests/multiview_check.gd -- "$OUT" $c \
+		gra$c+gravity:app,lens,floor,domain,balls,cube arr$c+arrows:app,lens,floor,domain,balls,cube \
+		grp$c+gravity+plain:app,floor,domain arp$c+arrows+plain:app,floor,domain
 done
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
@@ -137,7 +127,7 @@ if cat "$LOGS"/*.log | grep -qE "SCRIPT ERROR|SHADER ERROR"; then
 	cat "$LOGS"/*.log | grep -E "SCRIPT ERROR|SHADER ERROR" -A3; failed=1
 fi
 for f in "$LOGS"/*.status; do
-	read -r code args < "$f"
+	read -r code unit secs args < "$f"
 	[ "$code" = 0 ] || { echo "render exit status $code: $args"; tail -3 "${f%.status}.log"; failed=1; }
 	grep -q "^godot_x: still in Godot's exit" "${f%.status}.log" && echo "render hung in Godot's exit after its verdict, killed: $args"
 done
@@ -201,7 +191,13 @@ for c in 0 1 2 3; do want check$c && pairs="$pairs chk$c:fov$c"; done
 for c in 0 1 2 3; do want check$c && pairs="$pairs pln$c:fpl$c"; done
 [ -z "$pairs" ] || verdict "foveation: the fovea as without it, and every pixel of the floor from its own place, each eye" python3 "$CMP/fovea.py" "$OUT" $pairs
 
+# what each part took, its renders' seconds (each from its start to its end, JOBS at once) and its
+# traces': tools/stereo_parts.txt shares the parts out by these
 echo
+echo "seconds by part, renders+traces ($JOBS at once on $(nproc) cores):$(for u in $UNITS; do
+	printf ' %s %s+%s' $u "$(cat "$LOGS"/*.status | awk -v u=$u '$2 == u { s += $3 } END { print s + 0 }')" \
+		"$(cat "$LOGS/$u.time" 2>/dev/null || echo 0)"
+done)"
 echo "images: $OUT"
 if [ $failed -eq 0 ]; then echo "ALL PASS"; else echo "FAILED"; fi
 exit $failed

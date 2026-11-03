@@ -2,8 +2,9 @@ extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
 ## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
 ## cube before the eyes drawn in its own), logs a line per place, and gives back the foveation, the
-## cube and where the viewer stood. The menu has its row.
-##   godot --path . -s res://tests/bench_test.gd
+## cube and where the viewer stood. The menu has its row. In a small window: nothing here looks at
+## the picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
+##   godot --path . --resolution 160x90 -s res://tests/bench_test.gd
 
 const U := preload("res://tests/util.gd")
 
