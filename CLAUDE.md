@@ -29,8 +29,9 @@ keep and what was learnt about it: the comment at the top of its file.
 - **`main` and versions:** `main` is what the owner checked in the headset; versions are the
   owner's: their button in GitHub's Actions tags such a commit and CI releases it (README,
   «Проверки»), its notes the titles of the PRs merged since the last version. `main` takes only
-  PRs, the owner merging them, each squashed into one commit, once CI's «Все проверки» passed on a
-  branch up to date with `main` (its ruleset): nothing is pushed to `main` itself.
+  PRs, merged by the owner or by you when they say so in the chat, each squashed into one commit,
+  once CI's «Все проверки» passed on a branch up to date with `main` (its ruleset): nothing is pushed
+  to `main` itself.
 - **A PR's title is its line in those notes,** which the owner reads: in Russian, what changes for
   the person in the headset (what they see or can do, what got faster), not how it is done; a PR
   that changes nothing in the headset says what it changes (tests, tools, docs). When what the branch
