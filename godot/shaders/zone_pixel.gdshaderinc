@@ -59,13 +59,13 @@ float zone_px_rate(ZoneRay z, float a, float q) {
 	float r = geo_r(a);
 	float ga = zone_px_gap(z, a);
 	if (z.ao > 0.0) ga = max(ga, abs(geo_drdw(a).x) * q * q);
-	return 2.0 * abs(q) * z.b / (r * sqrt(max(ga * (r + z.b), 1e-30)));
+	return 2.0 * abs(q) * z.b / (r * sqrt(max(ga * (r + z.b), GEO_TINY)));
 }
 
 // the cubic on [q1, q2] with values p1, p2 and rates d1, d2 at its ends
 float zone_px_cubic(float q, vec2 qs, vec2 ps, vec2 ds) {
 	float H = qs.y - qs.x;
-	float x = clamp((q - qs.x) / max(H, 1e-20), 0.0, 1.0);
+	float x = clamp((q - qs.x) / max(H, GEO_TINY20), 0.0, 1.0);
 	float x2 = x * x, x3 = x2 * x;
 	return (2.0 * x3 - 3.0 * x2 + 1.0) * ps.x + (x3 - 2.0 * x2 + x) * H * ds.x
 			+ (3.0 * x2 - 2.0 * x3) * ps.y + (x3 - x2) * H * ds.y;
@@ -225,7 +225,7 @@ bool zone_pixel_trace(float el, vec3 eye, vec3 en, vec4 D, out vec3 colour, out 
 						float f0 = zone_px_out(z, qh, zone_px_cubic(qh, qs, ps, ds) + e, C, rr);
 						float f1 = zone_px_out(z, qh + dq, zone_px_cubic(qh + dq, qs, ps, ds) + e, C, rr);
 						float sl = (f1 - f0) / dq;
-						if (abs(sl) < 1e-20) break;
+						if (abs(sl) < GEO_TINY20) break;
 						qh = clamp(qh - f0 / sl, w1, w2);
 					}
 					ok = zone_px_out(z, qh, zone_px_cubic(qh, qs, ps, ds) + e, C, rr) < 1e-3 * rr;
@@ -240,7 +240,7 @@ bool zone_pixel_trace(float el, vec3 eye, vec3 en, vec4 D, out vec3 colour, out 
 				float rm = geo_r(am);
 				float gm = max(zone_px_gap(z, am), 0.0);
 				if (z.ao > 0.0) gm = max(gm, abs(geo_drdw(am).x) * 0.25 * (qh + qh0) * (qh + qh0));
-				best_len = wh.y + (qh - qh0) * abs(qh + qh0) * rm / sqrt(max(gm * (rm + z.b), 1e-30));
+				best_len = wh.y + (qh - qh0) * abs(qh + qh0) * rm / sqrt(max(gm * (rm + z.b), GEO_TINY));
 				best = qh;
 				bestP = P;
 				bestC = C;
@@ -269,10 +269,10 @@ bool zone_pixel_trace(float el, vec3 eye, vec3 en, vec4 D, out vec3 colour, out 
 	vec4 s4 = look_sun4(best_l);
 	vec4 sun = s4 - dot(s4, Np) * Np;
 	vec4 up4 = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
-	vec4 n = nrm * inversesqrt(max(dot(nrm, nrm), 1e-20));
-	float nl = dot(n, sun) * inversesqrt(max(dot(sun, sun), 1e-20));
-	float up = dot(n, up4) * inversesqrt(max(dot(up4, up4), 1e-20));
-	float nv = -dot(n, arrive) * inversesqrt(max(dot(arrive, arrive), 1e-20));
+	vec4 n = nrm * inversesqrt(max(dot(nrm, nrm), GEO_TINY20));
+	float nl = dot(n, sun) * inversesqrt(max(dot(sun, sun), GEO_TINY20));
+	float up = dot(n, up4) * inversesqrt(max(dot(up4, up4), GEO_TINY20));
+	float nv = -dot(n, arrive) * inversesqrt(max(dot(arrive, arrive), GEO_TINY20));
 	colour = look_body(best_col, nl, up, nv, best_l);
 	way = best_len;
 	return geo_finite(colour.r + colour.g + colour.b + way);
