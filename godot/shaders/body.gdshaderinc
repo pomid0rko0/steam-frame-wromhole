@@ -301,7 +301,8 @@ void vertex() {
 	v_l = pl;
 	v_h = P.z + g_lift;
 	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
-	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
+	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex (ZONE: in a
+	// node of the table about it)
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 #ifdef ZONE
 	// and orange where a cube's section's steps came out not a number (zone_cube_section)
@@ -342,7 +343,7 @@ void fragment() {
 #ifdef ZONE
 	// a pixel whose numbers came out none is no part of the surface: a triangle of next to no area
 	// (a cube's strip between two columns on one corner's azimuth, zone_cube_azimuth: its vertices
-	// all on that azimuth's line in the view, each placed by its own search) gets one now and then,
+	// all on that azimuth's line in the view, each placed on its own) gets one now and then,
 	// its varyings no numbers. Dropped after the derivatives, which take its neighbours; by the bits
 	// (geo_finite): a compiler may take a comparison as if no number were NaN
 	if (!geo_finite(col.r + col.g + col.b)) discard;
