@@ -34,12 +34,13 @@ extends Node
 ## (RenderingServer.frame_post_draw), main's script in it by part (Main.PARTS), and the wait from
 ## there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
 ## The GPU time by part (_read_parts): from the frame's GPU timestamps, the viewport's begin and end
-## (Godot's, as it measures the viewport) and foveation's passes (foveation.gd's TS_*):
-## before them (Godot's setup), the eyes and the way out's table, our floor's texture, and the rest
-## (the 3D pass: the bodies, those in the curved zone too, the floor's quad, the menu, the output),
-## averaged over the second in its line, with the dearest frame's of the second (a frame over the
-## budget sends SteamVR to half rate: which part was it), and the last frame read in a late frame's;
-## with our own foveation off, none. Like the GPU time, they belong to a frame two before. The line
+## (Godot's, as it measures the viewport), foveation's passes (foveation.gd's TS_*) and the zone's
+## bodies' nodes (zone_sections.gd's TS_*), each where it ran: before them (Godot's setup), the eyes
+## and the way out's table, our floor's texture, the nodes, and the rest (the 3D pass: the bodies,
+## those in the curved zone too, the floor's quad, the menu, the output), averaged over the second
+## in its line, with the dearest frame's of the second (a frame over the budget sends SteamVR to half
+## rate: which part was it), and the last frame read in a late frame's. Like the GPU time, they
+## belong to a frame two before. The line
 ## also has the longest stretch of a frame on the main thread in the second (before_ms).
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
@@ -87,6 +88,9 @@ var seconds: Array[Second] = []   # the last few at the current rate
 var t := 0.0                    # s of this second so far
 var now := Second.new()         # and its counts (shown and refreshes: _second)
 var rate := 0.0                 # measured, Hz
+# the GPU time's parts (_read_parts): with our own foveation off its two are nought, and the nodes'
+# with no body in the zone
+const PARTS := ["before ours", "the eyes and the way out's table", "our floor", "the zone's bodies' nodes", "the rest (the 3D pass)"]
 var parts_frame := -1           # the frame whose GPU timestamps were read last (_read_parts)
 var parts_last := PackedFloat32Array()   # its GPU time by part, ms (empty: none)
 var reported := 0.0             # what the runtime says, Hz (read once a second)
@@ -374,7 +378,7 @@ func _on_drawn() -> void:
 
 
 ## The GPU time by part (this file's top) of the newest frame whose timestamps are back, into
-## parts_last; false if none is newer than the last read, or our own foveation drew none.
+## parts_last (PARTS); false if none is newer than the last read.
 func _read_parts() -> bool:
 	var rd := RenderingServer.get_rendering_device()
 	if rd == null or rd.get_captured_timestamps_frame() == parts_frame:
@@ -385,20 +389,31 @@ func _read_parts() -> bool:
 	var at := {}
 	for i in rd.get_captured_timestamps_count():
 		at[rd.get_captured_timestamp_name(i)] = rd.get_captured_timestamp_gpu_time(i)
-	var names := ["vp_begin_" + vp, Foveation.TS_BEGIN, Foveation.TS_TABLE, Foveation.TS_END, "vp_end_" + vp]
-	parts_last = PackedFloat32Array()
-	for k in names.size():
-		if not at.has(names[k]):
-			return false
-	for k in names.size() - 1:
-		parts_last.append((at[names[k + 1]] - at[names[k]]) / 1e6)
+	var vb := "vp_begin_" + vp
+	var ve := "vp_end_" + vp
+	if not (at.has(vb) and at.has(ve)):
+		return false
+	parts_last = PackedFloat32Array([0, 0, 0, 0, 0])
+	var first: int = -1             # the first of our passes' marks
+	if at.has(Foveation.TS_BEGIN) and at.has(Foveation.TS_TABLE) and at.has(Foveation.TS_END):
+		parts_last[1] = (at[Foveation.TS_TABLE] - at[Foveation.TS_BEGIN]) / 1e6
+		parts_last[2] = (at[Foveation.TS_END] - at[Foveation.TS_TABLE]) / 1e6
+		first = at[Foveation.TS_BEGIN]
+	if at.has(ZoneSections.TS_BEGIN) and at.has(ZoneSections.TS_END):
+		parts_last[3] = (at[ZoneSections.TS_END] - at[ZoneSections.TS_BEGIN]) / 1e6
+		first = at[ZoneSections.TS_BEGIN] if first < 0 else mini(first, at[ZoneSections.TS_BEGIN])
+	parts_last[0] = (first - at[vb]) / 1e6 if first >= 0 else 0.0
+	parts_last[4] = (at[ve] - at[vb]) / 1e6 - parts_last[0] - parts_last[1] - parts_last[2] - parts_last[3]
 	return true
 
 
 func _parts_text(p: PackedFloat32Array) -> String:
-	if p.size() != 4:
-		return "none (our own foveation off)"
-	return "before ours %.2f, the eyes and the way out's table %.2f, our floor %.2f, the rest (the 3D pass) %.2f ms" % [p[0], p[1], p[2], p[3]]
+	if p.size() != PARTS.size():
+		return "none"
+	var out := []
+	for i in p.size():
+		out.append("%s %.2f" % [PARTS[i], p[i]])
+	return ", ".join(out) + " ms"
 
 
 ## The frame before on the main thread (this file's top): ms from main's start to drawn, main's
@@ -523,7 +538,7 @@ class Second:
 	var drawn := 0                  # frames Godot drew
 	var gpu := 0.0                  # their GPU ms, summed
 	var gpu_max := 0.0
-	var parts := PackedFloat32Array([0, 0, 0, 0])   # their GPU ms by part (_read_parts), summed
+	var parts := PackedFloat32Array([0, 0, 0, 0, 0])   # their GPU ms by part (_read_parts, PARTS), summed
 	var parts_n := 0                # frames in parts
 	var parts_max := PackedFloat32Array()   # the GPU time by part of the dearest of them
 	var parts_max_sum := 0.0

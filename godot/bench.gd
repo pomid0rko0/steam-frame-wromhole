@@ -14,7 +14,8 @@ extends Node
 ## SteamVR's half rate after a late frame (below).
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
-## and the frame is timed on the GPU (the median frame of each segment), this build's renderer each
+## and the frame is timed on the GPU (the median frame of each segment, and of each of its parts:
+## FrameRate.PARTS), this build's renderer each
 ## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
 ## the eyes (NEAR_CUBE: a body near the eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
@@ -98,10 +99,14 @@ var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
 var gpu_ms: Array = []          # this segment's frames
+var part_ms: Array = []         # and their GPU time by part (FrameRate.PARTS), as read
+var part_frame := -1            # the last frame whose parts were taken (FrameRate.parts_frame)
 var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
                                 # a hitch of the system does not move it)
+var part_results: Array = []    # the same by part: per place, per variant, per segment its medians
+var _zone_counts: Array[Vector2i] = []   # per place: the balls and cubes in the zone with the cube there
 var tour: Array[Step] = []      # the tour's steps (_make_tour)
 var tour_results: Array[Tally] = []   # per step
 var meter := RateMeter.new()    # fed by main.rate each frame
@@ -227,14 +232,20 @@ func start() -> void:
 		order += back
 	plan.clear()
 	results.clear()
+	part_results.clear()
+	_zone_counts.clear()
 	tour = _make_tour()
 	tour_results.clear()
 	verdict = ""
 	for i in PLACES.size():
 		var r := []
+		var pr := []
 		for v in variants:
 			r.append([])
+			pr.append([])
 		results.append(r)
+		part_results.append(pr)
+		_zone_counts.append(Vector2i.ZERO)
 		for v: int in order:
 			plan.append(Vector2i(i, v))
 	step = -1
@@ -319,6 +330,10 @@ func _segment() -> void:
 	if gpu_ms.is_empty():
 		_clock()
 	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
+	var rate: FrameRate = main.rate
+	if rate.parts_frame != part_frame and rate.parts_last.size() == FrameRate.PARTS.size():
+		part_frame = rate.parts_frame
+		part_ms.append(rate.parts_last)
 	if phase_t >= warm + time:
 		_clock()
 		_end_segment()
@@ -343,6 +358,8 @@ func _begin(i: int) -> void:
 	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
+	part_ms.clear()
+	part_frame = main.rate.parts_frame
 	if i == 0 or plan[i].x != plan[i - 1].x:
 		clock_lo = 0
 		clock_hi = 0
@@ -353,6 +370,14 @@ func _end_segment() -> void:
 	var r: Array = results[plan[step].x]
 	gpu_ms.sort()
 	r[plan[step].y].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
+	if near:
+		_zone_counts[plan[step].x] = main.renderer.zone_count
+	var med := PackedFloat32Array()
+	for k in FrameRate.PARTS.size():
+		var xs := part_ms.map(func(p: PackedFloat32Array) -> float: return p[k])
+		xs.sort()
+		med.append(xs[xs.size() / 2] if not xs.is_empty() else 0.0)
+	part_results[plan[step].x][plan[step].y].append(med)
 	var last := step + 1 >= plan.size() or plan[step + 1].x != plan[step].x
 	if not last:
 		return
@@ -367,6 +392,17 @@ func _end_segment() -> void:
 		segs.append(_list(r[v]))
 	print("bench: %s, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
 			% [_name(place[0]), place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
+	# by part: each variant's mean over its segments of their medians, ms (FrameRate.PARTS)
+	var by := []
+	for v in variants.size():
+		var segs_v: Array = part_results[plan[step].x][v]
+		var m := []
+		for k in FrameRate.PARTS.size():
+			m.append("%.2f" % _mean(segs_v.map(func(p: PackedFloat32Array) -> float: return p[k])))
+		by.append("%d: %s" % [v + 1, " ".join(m)])
+	var zc: Vector2i = _zone_counts[plan[step].x]
+	print("bench parts: %s, %.0f deg right, %.0f deg up (%s): %s; with the cube before the eyes, in the curved zone %d balls, %d cubes"
+			% [_name(place[0]), place[1], place[2], ", ".join(FrameRate.PARTS), "; ".join(by), zc.x, zc.y])
 
 
 func _compared() -> void:
