@@ -1015,6 +1015,10 @@ class ShapeRow extends Row:
 	func waiting() -> bool:
 		return menu.main.reshaping()
 
+	## A changes nothing here: a press meant for another row must not reshape the throat
+	func steps_on_a() -> bool:
+		return false
+
 
 ## Back to the video's throat (main.THROAT_RADIUS, HALF_LENGTH, FILLET).
 class VideoShapeRow extends Row:
