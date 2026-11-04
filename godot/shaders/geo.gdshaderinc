@@ -427,8 +427,11 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 			float dls = side * dl;                    // dl/ds in the true l
 			vec3 tau = -scd.x * en + scd.y * t;       // toward growing angle at pn
 			vec4 arr = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
-			// the search's ray if any was finite
-			float lens = res.y;
+			// the search's ray if any was finite. Its length with the turns it falls short of: a point
+			// a hair from the cylinder's end many turns round is reached by a ray closer to r_min than
+			// float32 tells (its direction that of r_min's to the last digit), and a turn more there is
+			// r_min^2 / b of length, r_min
+			float lens = res.y + (delta - res.x) * rmin;
 			found = geo_finite(lens + dca + dsa + arr.x + arr.y + arr.z + arr.w) && lens > 0.0 && lens < 1e7;
 			len = lens;
 			arrive = arr;
