@@ -151,13 +151,17 @@ vec2 geo_between(float b, float sigma, float a1, float gap1, float a2, float gap
 		out_ += vec2(b / g_prof.x, g_prof.x) * ((min(a2, Lc) - a1) / max(k, 1e-12));
 	}
 	if (a2 > Lc && a1 < L) {
+		// u at either end: a ray that turns on the fillet (sigma >= u0) has u = sigma + gap / 2R
+		// there (r - b = 2R (u - sigma)), exact by the gap; from |l| u keeps only |l|'s float32 digits,
+		// which on a long throat (|l| tens of metres) are fewer than a point next to the turn needs
 		float ul = max(sigma, g_prof2.y);
+		bool turns = sigma >= g_prof2.y;
 		bool lo = origin || a1 <= Lc;
-		float u1 = lo ? ul : geo_u(a1);
 		float d1 = lo ? ul - sigma : gap1 / R2;
+		float u1 = lo ? ul : (turns ? sigma + d1 : geo_u(a1));
 		bool whole = a2 >= L;
-		float u2 = whole ? 0.5 : geo_u(a2);
 		float d2 = whole ? (g_prof2.x - b) / R2 : gap2 / R2;
+		float u2 = whole ? 0.5 : (turns ? sigma + d2 : geo_u(a2));
 		out_ += geo_fillet(b, sigma, u1, d1, u2, d2, lo, whole);
 	}
 	if (a2 > L) {
