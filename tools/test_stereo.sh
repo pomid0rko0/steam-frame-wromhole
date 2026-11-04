@@ -92,10 +92,12 @@ for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=1 render crv$p -s res://tests
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
-# the same on the menu's other throats (corners of WormholeSpace.fits' box: rho0,h,R and a place),
-# set at run time as the menu sets them: the narrowest and shortest from the start, the narrowest and
-# longest in the throat looking along it, the widest and shortest (h = R) from B looking back
-SHAPES=("2,1,1 0" "2,40,1 4" "3,1,1 6")
+# the same on other throats the menu offers (rho0,h,R and a place), set at run time as the menu sets
+# them: the narrowest and shortest from the start; a narrow and long one level with it outside (the
+# tracer follows rays up to RAY_MAX: through the longest cylinder of the menu they go farther, which
+# ref/test_gpu.py checks on its own); the widest and shortest (h = R) in A's fillet. A place's flights
+# are metres of the video's throat: one through the throat would come out under B's floor on another
+SHAPES=("2,1,1 0" "2,10,1 1" "3,1,1 3")
 for k in 0 1 2; do
 	read -r shape p <<<"${SHAPES[$k]}"
 	want shp$k && TRACE=1 render shp$k -s res://tests/curved_check.gd -- "$OUT/shp$k" $p shape=$shape
