@@ -19,9 +19,9 @@ things must line up the same way, and the stereo test must check it.
 
 - **What they have:** a Valve Steam Frame (standalone VR headset, SteamOS), a Windows 11 PC and an
   Android phone on one Wi-Fi (often the phone's hotspot); SSH into the Frame takes a password.
-- **You run** on the Frame, in a VSCodium outside Flatpak (`~/Applications/VSCodium`; inside the
-  Flatpak `flatpak-spawn --host` is refused), or in a cloud session (an Ubuntu container, no
-  headset), while the owner wears the headset. The tools find out where they run.
+- **You run** on the Frame, in a VSCodium outside Flatpak (inside it `flatpak-spawn --host` is
+  refused), or in a cloud session (an Ubuntu container, no headset), while the owner wears the
+  headset. The tools find out where they run.
 - **Never start the app, SteamVR, `vrcmd` or any window yourself:** it takes the view the owner is
   in. On the Frame whatever runs Godot or opens a GPU goes through `tools/box.sh` (its top says why
   and how); `tools/.bin/godot` never runs there without it.
