@@ -651,3 +651,106 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 	return zone_cube_section(uv.y, rows, round_axis, ax, dsg, en, a1, a2, t, sct.y * a2 - sct.x * a1,
 			scm.y * a1 + scm.x * a2, scm.y * a2 - scm.x * a1, az.y, za, zb, C, E1, E2, E3, N, size, none);
 }
+
+// ---------------------------------------------------------------- the paths by a table
+// A vertex of a body's image j takes its geodesic from a table worked out once a frame for each eye
+// and body (zone_sections.gdshaderinc, PATHS), not by geo_see_to's search. The space is spherically
+// symmetric, so the way from the eye to a point hangs only on the point's l and on the turn psi
+// (alpha + 2 pi k or 2 pi (k + 1) - alpha) its image takes in its plane through the centre: in that
+// plane, (X, Y) = len (cos a, sin a), a the launch angle from the eye's outward radial toward the
+// turn. That map is smooth everywhere, the eye too (the inverse of the exponential map at the eye:
+// on the plane's surface, whose curvature is nowhere positive, one geodesic a class), and close to
+// linear once the rays wind round the photon sphere. A body's table: ZONE_PL nodes along l over its
+// reach and a margin each way, ZONE_PQ along q = asinh psi, from one node below psi = 0 (the turn the
+// other way: (X, -Y)) to past the images' last turn, evenly in each; a node holds (X, Y, dl/ds at the
+// point as the eye's side counts l, fell: geo_see_to's). A vertex takes the cubic through 4 x 4
+// nodes about it, both ways (Lagrange's: its error goes as the 4th power of the steps); the steps
+// set against the error: ref/test_gpu.py. Where geo_see_to takes a closed form (the segment, the
+// cylinder unrolled), the vertex takes that.
+const int ZONE_PL = 16;
+const int ZONE_PQ = 100;
+
+// A body's table's frame (C its centre, reach the chord its points are within, psi_max the turn of
+// its images' last): (l at its node 1, the step along l, the step along q, 0). Node (i, k) is at l =
+// .x + (i - 1) .y, q = (k - 1) .z; the stretch from node 1 to ZONE_PL - 2 holds the body's l, and
+// from node 1 to ZONE_PQ - 2 the turns from 0 to psi_max.
+vec4 zone_path_frame(vec4 C, float reach, float psi_max) {
+	vec3 n;
+	float lc = geo_l_of(C, n);
+	float rl = 1.1 * reach + 0.01;     // a point's l within its geodesic distance of C's, a hair more than the chord
+	return vec4(lc - rl, 2.0 * rl / float(ZONE_PL - 3), log(psi_max + sqrt(psi_max * psi_max + 1.0)) / float(ZONE_PQ - 3), 0.0);
+}
+
+// node (i, k)'s place in the table of frame f (zone_path_frame): (l, psi)
+vec2 zone_path_at(vec4 f, int i, int k) {
+	float q = float(k - 1) * f.z;
+	return vec2(f.x + float(i - 1) * f.y, 0.5 * (exp(q) - exp(-q)));
+}
+
+// The node at l and turn psi (negative: the other way) for the eye at (el, en): (X, Y, dl/ds at the
+// point on the eye's side, fell) as the table's top has them, by geo_see_to.
+vec4 zone_path_node(float el, vec3 en, float l, float psi) {
+	vec3 t = normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	float ap = abs(psi);
+	vec2 sc = geo_sincos(ap);
+	vec3 pn = sc.y * en + sc.x * t;
+	float len, fell;
+	vec4 arr;
+	vec4 d = geo_see_to(el, en, l, pn, t, ap, ap <= GEO_PI, len, arr, fell);
+	float side = el < 0.0 ? -1.0 : 1.0;
+	vec2 dd = geo_drdw(l);
+	// dl/ds at the point: arrive's part along d/dl there, (dd.x pn, dd.y) (the rest is across it)
+	float dls = dot(arr, vec4(dd.x * pn, dd.y));
+	return vec4(len * side * d.x, (psi < 0.0 ? -len : len) * dot(d.yzw, t), side * dls, fell);
+}
+
+// Lagrange's weights of the nodes at -1, 0, 1, 2 at x (between 0 and 1)
+vec4 zone_lagrange(float x) {
+	float a = x + 1.0, b = x - 1.0, c = x - 2.0;
+	return vec4(-x * b * c, 3.0 * a * b * c, -3.0 * a * x * c, a * x * b) / 6.0;
+}
+
+// Image j of the point (pl, pn), alpha off the eye's axis toward t, as geo_see_image gives it (the
+// launch direction, len, arrive; fell: the most of its nodes'), by geo_see_to's closed forms or else
+// the body's table: tab's rows from row0 (its slot's), layer (the eye's), and at column ZONE_PQ of row0 its frame
+// (zone_path_frame).
+vec4 zone_path_see(sampler2DArray tab, int row0, int layer, float el, vec3 en, float pl, vec3 pn, vec3 t, float alpha, int j, out float len, out vec4 arrive, out float fell) {
+	float k = float(j / 2);
+	bool far = (j & 1) == 1;
+	float target = far ? 2.0 * GEO_PI * (k + 1.0) - alpha : alpha + 2.0 * GEO_PI * k;
+	vec3 tt = far ? -t : t;
+	vec4 dir = vec4(0.0);
+	len = 0.0;
+	arrive = vec4(0.0);
+	fell = 0.0;
+	// what geo_see_to takes at once: the segment, the line on the cylinder unrolled
+	float side = el < 0.0 ? -1.0 : 1.0;
+	float le = abs(el), lp = side * pl;
+	float re = geo_r(le);
+	if (j == 0 && le >= g_prof.w && lp >= g_prof.w && geo_see_segment(side, re, en, geo_r(lp), pn, dir, len, arrive)) return dir;
+	vec2 scd = geo_sincos(target);
+	if (le <= g_prof.z && abs(lp) <= g_prof.z) return geo_see_unrolled(side, le, lp, re, en, tt, target, scd, len, arrive);
+	vec4 f = texelFetch(tab, ivec3(ZONE_PQ, row0, layer), 0);
+	float fl = (pl - f.x) / f.y;
+	int i = clamp(int(floor(fl)), 0, ZONE_PL - 4);
+	float fq = log(target + sqrt(target * target + 1.0)) / f.z;
+	int c = clamp(int(floor(fq)), 0, ZONE_PQ - 4);
+	vec4 wl = zone_lagrange(fl - float(i)), wq = zone_lagrange(fq - float(c));
+	vec3 s = vec3(0.0);
+	for (int a = 0; a < 4; a++) {
+		vec3 row = vec3(0.0);
+		for (int b = 0; b < 4; b++) {
+			vec4 v = texelFetch(tab, ivec3(c + b, row0 + i + a, layer), 0);
+			row += wq[b] * v.xyz;
+			fell = max(fell, v.w);
+		}
+		s += wl[a] * row;
+	}
+	len = length(s.xy);
+	vec2 cs = s.xy / max(len, GEO_TINY20);
+	// arriving: along d/dl there by dl/ds, the rest toward growing angle (geo_see_to's arrive)
+	float dls = side * clamp(s.z, -1.0, 1.0);
+	vec2 dd = geo_drdw(pl);
+	arrive = vec4(dls * dd.x * pn + sqrt(max(1.0 - dls * dls, 0.0)) * (scd.y * tt - scd.x * en), dls * dd.y);
+	return vec4(side * cs.x, cs.y * tt);
+}

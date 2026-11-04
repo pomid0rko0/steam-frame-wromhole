@@ -9,8 +9,9 @@ extends Node3D
 ##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
 ##   the zone's ball is dropped.
 ## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
-##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body worked out once a
-##   frame for each eye (zone_sections.gd), each image's vertices only find their geodesics.
+##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body and each body's table
+##   of the ways light takes from each eye worked out once a frame (zone_sections.gd), each image's
+##   vertices only take their geodesics from that table.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -148,6 +149,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
 		m.set_shader_parameter("zone_nodes", zone_sections.tex)
 		m.set_shader_parameter("zone_cull", zone_sections.cull_tex)
+		m.set_shader_parameter("zone_paths", zone_sections.path_tex)
 		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
 		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
