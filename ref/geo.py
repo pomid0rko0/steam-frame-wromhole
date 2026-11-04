@@ -42,6 +42,22 @@ def app_lift():
     return _main_const('LIFT')
 
 
+def menu_corners():
+    """The corners of the box of shapes the menu offers, each (rho0, h, R) in metres with h >= R:
+    godot/wormhole_space.gd's SHAPE_MIN and SHAPE_MAX (WormholeSpace.fits)."""
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'wormhole_space.gd')).read()
+    lo, hi = ([float(x) for x in re.search(r'^const %s := \[([^\]]*)\]' % k, src, re.M).group(1).split(',')]
+              for k in ('SHAPE_MIN', 'SHAPE_MAX'))
+    out = []
+    for r in sorted({lo[0], hi[0]}):
+        for h in sorted({lo[1], hi[1]}):
+            for R in sorted({lo[2], hi[2]}):
+                c = (r, max(h, R), R)
+                if c not in out:
+                    out.append(c)
+    return out
+
+
 class Space:
     def __init__(self, rho0=3.0, h=5.0, R=1.0):
         self.rho0, self.h, self.R = rho0, h, R

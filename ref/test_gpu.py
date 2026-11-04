@@ -1,6 +1,7 @@
 """The shaders' geometry (godot/shaders/geo.gdshaderinc and zone.gdshaderinc) on a GPU, float32,
 against float64: headless (EGL), as a compute shader, with the table and series built as
-WormholeSpace.sweep_table builds them (ref/geo.py), on three throats: the app's, h = R, a crease
+WormholeSpace.sweep_table builds them (ref/geo.py), on the app's throat at the start, the corners
+of the box of shapes the menu offers (WormholeSpace.fits; h = R among them) and a throat with a crease
 (h < R). Every sin and cos goes through the headset driver's range reduction (TURNIP below), and the
 table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
@@ -68,7 +69,7 @@ import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from scipy import optimize
-from geo import Space, shoot, app_profile, app_lift, leave
+from geo import Space, shoot, app_profile, app_lift, leave, menu_corners
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHADERS = os.path.join(HERE, '..', 'godot', 'shaders')
@@ -117,7 +118,10 @@ INC = INC.replace('const int GEO_ITERS', 'int g_rays = 0;\nconst int GEO_ITERS',
 assert INC.count('if (i >= GEO_ITERS + nbad) break;') == 1
 INC = INC.replace('if (i >= GEO_ITERS + nbad) break;', 'if (i >= GEO_ITERS + nbad) break;\n\t\t\t\tg_rays = i + 1;')
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
-PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0)}
+# the app's at the start, the corners of the menu's box of shapes (h = R among them), a crease
+PROFILES = {'the app': app_profile(),
+            **{'menu %g; %g; %g' % c: c for c in menu_corners() if c != app_profile()},
+            'crease, h < R': (3.0, 0.4, 1.0)}
 LIFT = app_lift()           # the floor at z = -LIFT (every profile's zone, radius Rout = 4 m, above it)
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
 # radians of direction (the headset's pixel is about 1e-3: half a pixel 5e-4), metres; a ray's length

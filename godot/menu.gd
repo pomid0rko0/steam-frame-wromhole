@@ -25,6 +25,13 @@ const FALLS := ["с гравитацией", "без гравитации"]  # m
 const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
 const HINT := "крестовина или левый стик: выбрать, менять\nA — нажать · B — закрыть"
+# the throat's shape rows' values, metres (ShapeRow): those WormholeSpace.fits takes are offered
+const RADII := [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0,
+		3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0]
+const DISTANCES := [0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 14.0, 16.0, 20.0,
+		25.0, 30.0, 40.0, 50.0, 60.0, 80.0, 100.0]     # between the worlds: 2h
+const FILLETS := [0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5,
+		1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0]
 const SETTLE := 0.5             # s a value stepped to waits before it takes effect
 const NOTICE_TIME := 2.0        # s a notice stays on the line below (notice)
 const REPEAT_AFTER := 0.4       # s a direction is held before it repeats
@@ -66,6 +73,7 @@ var placed := false
 var render_scale := 1.0         # the eye's size chosen, a share of full_eye (the speed check sets 100% meanwhile)
 var foveation := 0              # the foveation level chosen (the speed check sets others meanwhile)
 var scale_chosen := false       # chosen in the menu, now or before (kept): else the default
+var shape_chosen := false       # the throat's shape too
 var foveation_chosen := false
 var runtime_eye := Vector2.ZERO # each eye's picture as the runtime recommends it (SteamVR: its resolution setting for the app)
 var full_eye := 0               # pixels a side at 100%: the Frame's screen under SteamVR, else the runtime's own
@@ -132,6 +140,8 @@ func _ready() -> void:
 	strip_label.width = STRIP_WRAP / PIXEL
 	var cfg := _load()
 	strip_on = bool(cfg.get_value("ui", "strip", true))
+	shape_chosen = cfg.has_section("shape")
+	shape = main.shape_now()
 	main.hands.beam = bool(cfg.get_value("ui", "beam", false))
 	if xr:
 		runtime_eye = xr.get_render_target_size() / xr.render_target_size_multiplier
@@ -586,6 +596,13 @@ func _save() -> void:
 	if xr:
 		_keep(cfg, "eye", render_scale, scale_chosen)
 		_keep(cfg, "foveation_level", foveation, foveation_chosen)
+	if cfg.has_section("shape"):
+		cfg.erase_section("shape")
+	if shape_chosen:
+		var s := shape
+		cfg.set_value("shape", "radius", s.x)
+		cfg.set_value("shape", "distance", 2.0 * s.y)
+		cfg.set_value("shape", "fillet", s.z)
 	cfg.save(SETTINGS)
 
 
@@ -606,6 +623,40 @@ static func _load() -> ConfigFile:
 		if cfg.has_section_key("render", k):
 			cfg.erase_section_key("render", k)
 	return cfg
+
+
+## The throat's shape the menu last asked for (main.reshape takes it a little later): the rows show
+## this one.
+var shape := Vector3.ZERO       # (rho0, h, R) as main.shape_now
+
+
+## The throat's shape kept from the last run if the method takes it, else the video's
+## (main.THROAT_RADIUS, HALF_LENGTH, FILLET).
+static func saved_shape() -> Vector3:
+	var cfg := _load()
+	var s := Vector3(Main.THROAT_RADIUS, Main.HALF_LENGTH, Main.FILLET)
+	if cfg.has_section("shape"):
+		var k := Vector3(float(cfg.get_value("shape", "radius", s.x)), 0.5 * float(cfg.get_value("shape", "distance", 2.0 * s.y)),
+				float(cfg.get_value("shape", "fillet", s.z)))
+		if WormholeSpace.fits(k.x, k.y, k.z, Main.LIFT):
+			s = k
+	return s
+
+
+## A new shape from a row (or the video's again: chosen false), kept for the next start.
+func set_shape(s: Vector3, chosen := true) -> void:
+	shape = s
+	shape_chosen = chosen
+	main.reshape(s)
+	_save()
+	print("menu: the throat's shape asked for: radius %.2f m, worlds %.2f m apart, fillet %.2f m" % [s.x, 2.0 * s.y, s.z])
+	refresh()
+
+
+## Metres as the menu writes them: "0,25 м", "3 м".
+static func metres(x: float) -> String:
+	var t := ("%.2f" % x).rstrip("0").rstrip(".")
+	return t.replace(".", ",") + " м"
 
 
 func _set_foveation(level: int) -> void:
@@ -728,7 +779,9 @@ func _update_strip() -> void:
 
 ## Every row, top to bottom; _layout leaves out those not shown here.
 func _make_rows() -> Array[Row]:
-	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
+	return [ShapeRow.new(self, "radius", "радиус горла", 0, RADII), ShapeRow.new(self, "distance", "между мирами", 1, DISTANCES),
+			ShapeRow.new(self, "fillet", "скругление", 2, FILLETS), VideoShapeRow.new(self, "video", "форма"),
+			RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"), ZonesRow.new(self, "zones", "зоны фовеации"),
 			GazeRow.new(self, "gaze", "точка взгляда"), BeamRow.new(self, "beam", "луч прицела"),
 			GravRow.new(self, "grav", "гравитация"), FlyRow.new(self, "fly", "полёт"),
@@ -906,6 +959,81 @@ class GazeRow extends Row:
 
 	func text(i: int) -> String:
 		return OFF_ON[i]
+
+
+## One of the throat's three sizes (docs/geometry.md, «Пространство»: part 0 the throat's radius
+## rho0, 1 the distance between the worlds 2h, 2 the fillet R): the values of ladder that
+## WormholeSpace.fits takes with the other two as they are.
+class ShapeRow extends Row:
+	var part := 0
+	var ladder: Array = []
+
+	func _init(p_menu: Menu, p_key: String, p_title: String, p_part: int, p_ladder: Array) -> void:
+		super(p_menu, p_key, p_title)
+		part = p_part
+		ladder = p_ladder
+
+	func _with(v: float) -> Vector3:
+		var s := menu.shape
+		s[part] = 0.5 * v if part == 1 else v
+		return s
+
+	func values() -> Array:
+		var out := []
+		for v: float in ladder:
+			var s := _with(v)
+			if WormholeSpace.fits(s.x, s.y, s.z, Main.LIFT):
+				out.append(v)
+		return out
+
+	func count() -> int:
+		return maxi(values().size(), 1)
+
+	## The value nearest the shape's own (which may be off the ladder: the video's is on it)
+	func current() -> int:
+		var s := menu.shape
+		var mine: float = 2.0 * s.y if part == 1 else s[part]
+		var vs := values()
+		var best := 0
+		for i in vs.size():
+			if absf(vs[i] - mine) < absf(vs[best] - mine):
+				best = i
+		return best
+
+	func apply(i: int) -> void:
+		var vs := values()
+		if i < vs.size():
+			menu.set_shape(_with(vs[i]))
+
+	func text(i: int) -> String:
+		var vs := values()
+		return Menu.metres(vs[i]) if i < vs.size() else "—"
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+	func waiting() -> bool:
+		return menu.main.reshaping()
+
+
+## Back to the video's throat (main.THROAT_RADIUS, HALF_LENGTH, FILLET).
+class VideoShapeRow extends Row:
+	func count() -> int:
+		return 1
+
+	func text(_i: int) -> String:
+		return "как в видео" if menu.shape == Menu._video() else "вернуть как в видео"
+
+	func enabled() -> bool:
+		return not menu.main.hold and menu.shape != Menu._video()
+
+	func act() -> bool:
+		menu.set_shape(Menu._video(), false)
+		return true
+
+
+static func _video() -> Vector3:
+	return Vector3(Main.THROAT_RADIUS, Main.HALF_LENGTH, Main.FILLET)
 
 
 ## How gravity is shown (docs/gravity.md).

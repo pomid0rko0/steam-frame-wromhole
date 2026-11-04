@@ -39,7 +39,8 @@ extends Node3D
 ## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
 ## (_log_profiles): in the headset it is our Frame profile.
 
-# the video's throat (docs/geometry.md, «Пространство»)
+# the video's throat (docs/geometry.md, «Пространство»): the shape at the first start; the menu's
+# shape rows change it (reshape) and keep it for the next
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
@@ -110,6 +111,9 @@ var started_us := 0
 const WARM_FOVEATION := [0, 1]
 var warm := 0                   # frames of it done
 var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n, frame] (the speed check's cube)
+var _shape_task := -1           # WorkerThreadPool's task building a new shape (reshape), -1 none
+var _shape_built := {}          # what it built (_build_shape)
+var _shape_want := Vector3.ZERO # a shape asked for while one was building: built next
 
 
 func _ready() -> void:
@@ -142,6 +146,10 @@ func _ready() -> void:
 	else:
 		xr = null
 	var target: Viewport = xr_view if in_xr else get_viewport()
+	var shape := Menu.saved_shape()
+	if shape != shape_now():
+		space.set_profile(shape.x, shape.y, shape.z)
+	print("throat: ", _shape_text())
 
 	origin = XROrigin3D.new()
 	host.add_child(origin)
@@ -228,6 +236,12 @@ func _add_controllers() -> void:
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	started_us = t0
+	if _shape_task >= 0 and WorkerThreadPool.is_task_completed(_shape_task):
+		WorkerThreadPool.wait_for_task_completion(_shape_task)
+		_shape_task = -1
+		_take_shape(_shape_built)
+		if _shape_want != Vector3.ZERO:
+			_start_shape()
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
@@ -448,6 +462,71 @@ func set_smooth_turn(on: bool) -> void:
 	smooth_turn = on
 	print("right stick turns ", "smoothly" if smooth_turn else "in %d-degree snaps" % roundi(rad_to_deg(SNAP_ANGLE)))
 	menu.refresh()
+
+
+## The throat's shape: (throat radius, half the distance between the worlds, fillet), metres
+## (docs/geometry.md, «Пространство»: rho0, h, R).
+func shape_now() -> Vector3:
+	return Vector3(space.rho0, space.h, space.fillet)
+
+
+## A new shape (one WormholeSpace.fits): a space of it, its sweep table and its field lines are built
+## on a worker thread (_build_shape: a few tenths of a second, the frames go on with the old shape),
+## then it all takes effect in one frame (_take_shape). Asked for while one builds, it waits for it.
+func reshape(shape: Vector3) -> void:
+	assert(WormholeSpace.fits(shape.x, shape.y, shape.z, LIFT), "a shape the method takes")
+	_shape_want = shape
+	if _shape_task < 0:
+		_start_shape()
+
+
+## A shape is being built or waits to be (the menu shows its rows waiting).
+func reshaping() -> bool:
+	return _shape_task >= 0
+
+
+func _start_shape() -> void:
+	var s := _shape_want
+	_shape_want = Vector3.ZERO
+	_shape_built = {}
+	_shape_task = WorkerThreadPool.add_task(_build_shape.bind(s), false, "throat shape")
+
+
+## On a worker thread: reads nothing of the app's, only makes new things.
+func _build_shape(s: Vector3) -> void:
+	var sp := WormholeSpace.new(s.x, s.y, s.z, LIFT)
+	_shape_built = {"space": sp, "table": sp.sweep_table(), "arrows": Renderer.arrow_arrays(sp)}
+
+
+## The built shape in effect: the space takes its numbers, the renderer its table and lines. The
+## body stays where it was against the curved zone (WormholeSpace.carried_l: standing, at the same
+## place of the floor), the hands let go, the toys start the demo again, and the one-eye check's
+## scene is built again.
+func _take_shape(b: Dictionary) -> void:
+	var L0 := space.L
+	var R0 := space.Rout
+	space.take_profile(b.space)
+	var st := viewer.get_state()
+	st[0] = space.carried_l(st[0], L0, R0)
+	viewer.set_state(st)
+	renderer.set_space(b.table, b.arrows)
+	hands.empty()
+	hands.forget_motion()
+	if overlay:
+		for c in overlay.get_children():
+			c.free()
+		CheckScene.build(overlay, space, renderer)
+	elif toys.enabled:
+		toys.spawn()
+		draw_toys()
+	_update_chart_map()
+	print("throat: ", _shape_text())
+	menu.refresh()
+
+
+func _shape_text() -> String:
+	return "radius %.2f m, worlds %.2f m apart, fillet %.2f m (through the curved zone %.2f m, its radius %.2f m)" \
+			% [space.rho0, 2.0 * space.h, space.fillet, 2.0 * space.L, space.Rout]
 
 
 ## Turn the frame so that the head's current yaw looks along its forward (play-space forward

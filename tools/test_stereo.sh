@@ -28,11 +28,11 @@ import_scripts
 # verdict (env.sh's godot_x).
 JOBS=${JOBS:-$(nproc)}
 # the suite's parts, each its renders with their verdicts: Godot's own ball (desktop), the headset's
-# balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation), each
-# case of the stereo check scene with its floor lines and foveation (checkN), each case of the
-# gravity view (gravityN)
-ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 check0 check1 check2
-check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
+# balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation; shpN
+# on the menu's other throats), each case of the stereo check scene with its floor lines and
+# foveation (checkN), each case of the gravity view (gravityN)
+ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 shp0 shp1 shp2 check0
+check1 check2 check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
 if [ -n "${PART:-}" ]; then
 	# CI's share: every part on exactly one of its lines, or a part would go unchecked
 	parts=$(grep -v '^#' "$ROOT/tools/stereo_parts.txt")
@@ -92,6 +92,14 @@ for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=1 render crv$p -s res://tests
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
+# the same on the menu's other throats (corners of WormholeSpace.fits' box: rho0,h,R and a place),
+# set at run time as the menu sets them: the narrowest and shortest from the start, the narrowest and
+# longest in the throat looking along it, the widest and shortest (h = R) from B looking back
+SHAPES=("2,1,1 0" "2,40,1 4" "3,1,1 6")
+for k in 0 1 2; do
+	read -r shape p <<<"${SHAPES[$k]}"
+	want shp$k && TRACE=1 render shp$k -s res://tests/curved_check.gd -- "$OUT/shp$k" $p shape=$shape
+done
 if want desktop; then
 	render desktop --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"
 	render desktop --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph"
@@ -150,6 +158,11 @@ done
 for p in 0 6; do
 	want crf$p || continue
 	verdict "simulated headset, place $p where light is bent, our own foveation: the same" cat "$LOGS/crf$p.cmp"
+done
+for k in 0 1 2; do
+	want shp$k || continue
+	read -r shape p <<<"${SHAPES[$k]}"
+	verdict "simulated headset, the throat $shape m set at run time, place $p: the same" cat "$LOGS/shp$k.cmp"
 done
 for c in 0 1 2 3 4 5; do
 	want check$c || continue

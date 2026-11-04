@@ -39,10 +39,10 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float, p_lif
 	assert(lift > Rout, "the floor must stay out of the curved zone")
 
 
-## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
-## the shape (Renderer.upload_space: the profile, the sweep table, the gravity's numbers; the field
-## lines), and keep lift above Rout and what stands in chart coordinates (godot/scene.json's objects,
-## the toys' places, CheckScene's, main.START_POS, bench.gd's places) out of the curved zone.
+## The throat's shape. At run time main.reshape changes it: it builds a space of the new shape off
+## the main thread and then, in one frame, takes its numbers here (take_profile) and rebuilds what
+## is built for the shape (Renderer.set_space: the profile, the sweep table, the gravity's numbers,
+## the field lines). What the method needs of a shape: fits.
 func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length
@@ -52,6 +52,59 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	L = Lc + fillet * (PI / 2.0 - th0)
 	Rout = rho0 + fillet
 	_build_gravity()
+
+
+# The shapes the method is checked on: ref/test_gpu.py's throats are this box's corners (its
+# PROFILES), and the floor is out of the curved zone in all of them (lift > Rout). The menu's shape
+# rows offer these. Past them the checks fail: a fillet of 0.5 m puts vertices of cubes in the curved
+# zone tens of metres off, one of 1.5 m on a throat of 3 m bends rays off by a hundredth of a pixel
+# and more as it grows, on a throat of 1.5 m cubes' sections lose corners; h < R (a crease) is issue
+# #118.
+const SHAPE_MIN := [2.0, 1.0, 1.0]     # m: rho0, h, R
+const SHAPE_MAX := [3.0, 40.0, 1.0]
+
+
+## A shape (rho0, h, R) the method takes with the floor lift under the throat's centre.
+static func fits(throat_radius: float, half_length: float, fillet_radius: float, p_lift: float) -> bool:
+	var s := [throat_radius, half_length, fillet_radius]
+	for k in 3:
+		if s[k] < SHAPE_MIN[k] - 1e-9 or s[k] > SHAPE_MAX[k] + 1e-9:
+			return false
+	return half_length >= fillet_radius - 1e-9 and throat_radius + fillet_radius < p_lift
+
+
+## The shape and its gravity from o (a space of the same lift, made with the new shape), at once:
+## what holds this space sees the new shape from now on.
+func take_profile(o: WormholeSpace) -> void:
+	rho0 = o.rho0
+	h = o.h
+	fillet = o.fillet
+	Lc = o.Lc
+	th0 = o.th0
+	L = o.L
+	Rout = o.Rout
+	grav_a = o.grav_a
+	grav_k = o.grav_k
+	grav_beta = o.grav_beta
+	_grav_tab = o._grav_tab
+
+
+## The curved zone of the shape (rho0, h, R): (its edge L, its radius Rout).
+static func zone_of(throat_radius: float, half_length: float, fillet_radius: float) -> Vector2:
+	var t := asin(maxf(1.0 - half_length / fillet_radius, 0.0))
+	return Vector2(maxf(half_length - fillet_radius, 0.0) + fillet_radius * (PI / 2.0 - t), throat_radius + fillet_radius)
+
+
+## Where a point at l of the space before a change of shape (its zone's edge L0, radius Rout0) is
+## after it, in this one, n the same: out of both curved zones at the same chart place; within
+## them at the same share of the way from the throat's middle to where both are flat (chart radius
+## max(Rout0, Rout)). A frame (U_l, u) there stays as it is: orthonormal in either.
+func carried_l(l: float, L0: float, Rout0: float) -> float:
+	var e := maxf(Rout, Rout0)
+	var e0 := L0 + e - Rout0            # |l| of chart radius e before
+	var e1 := L + e - Rout              # and now
+	var al := absf(l)
+	return signf(l) * (al - e0 + e1 if al >= e0 else al * e1 / e0)
 
 
 func _theta(al: float) -> float:

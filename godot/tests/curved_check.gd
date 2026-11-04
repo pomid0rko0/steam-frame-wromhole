@@ -11,7 +11,8 @@ extends SceneTree
 ## seen through the lens, and a ball crosses the edge of the zone's disc in the picture from the start
 ## (EDGE_BALL): drawn by its mesh outside the disc and by the filtered texture inside it, it must not
 ## part there. tools/compare/curved.py then allows each pixel's texel size more (the json's fovea).
-##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov]
+## With shape=rho0,h,R, on that throat, set at run time first (main.reshape, as the menu does).
+##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov] [shape=rho0,h,R]
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
 const U := preload("res://tests/util.gd")
@@ -58,12 +59,18 @@ const NEAR_AXIS_CUBES := [[0, 1.7, 0.2, 0, 0.003], [1, 2.4, 0.15, 1, -0.003]]
 var main: Main
 var hmd
 var frames := 0
+var lag := 0                    # frames a new shape took to build (shape)
 var place: Array
+var shape := Vector3.ZERO
 
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	place = PLACES[int(args[1])]
+	for a in args:
+		if a.begins_with("shape="):
+			var v := a.trim_prefix("shape=").split_floats(",")
+			shape = Vector3(v[0], v[1], v[2])
 	hmd = U.headset(1, place[4], Vector2i(640, 640))
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
@@ -74,7 +81,13 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	frames += 1
-	if frames == 3:
+	if frames == 2 and shape != Vector3.ZERO:
+		main.reshape(shape)
+	if main.reshaping():
+		lag += 1
+		return false
+	var f := frames - lag
+	if f == 3:
 		main.menu.visible = false
 		main.renderer.show_scene(false)
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
@@ -88,13 +101,13 @@ func _process(_delta: float) -> bool:
 			var hp := v.head(hmd.head.origin.y)
 			print("flying: the head at l %.2f, %.2f m over the floor" % [hp[0], main.space.height(hp[0], hp[1])])
 		main.hold = true
-	if frames == 5:
+	if f == 5:
 		_bodies()
-	if frames == 6 and _fov():
+	if f == 6 and _fov():
 		# after main's first frames, which set each kind of foveation in turn
 		main.foveation.set_level(Menu.DEFAULT_FOVEATION)
 		print("foveation ", main.foveation.level)
-	if frames == 14:
+	if f == 14:
 		var prefix: String = OS.get_cmdline_user_args()[0]
 		U.save_eyes(main, prefix, "app")
 		_dump(prefix + ".json")

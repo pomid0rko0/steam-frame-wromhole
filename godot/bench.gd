@@ -34,8 +34,9 @@ const RateMeter := preload("res://rate_meter.gd")
 # standing on universe side's floor at chart (x, y), facing the point under the throat's centre;
 # a float, the head at that l on the axis through the throat's centre (main.place_on_axis: flying,
 # main.LIFT over the floor, facing the throat at l > 0 and away from it at l < 0). Degrees to the
-# right and up are from there. The values are metres chosen against this throat's curved zone (edge
-# L, radius Rout) and main.LIFT, which WormholeSpace.set_profile's list names.
+# right and up are from there. The values are metres chosen against the video's throat's curved zone
+# (edge L 5.57 m, radius Rout 4 m) and main.LIFT; on another throat a place on the axis is the same
+# place against its curved zone (_axis: WormholeSpace.carried_l), a place on the floor the same.
 const START := INF
 const UNDER_A := Vector3(2.5, 0.0, 1.0)     # on A's floor under the mouth, the head just below the curved zone
 const UNDER_A_IN := Vector3(0.5, 0.0, 1.0)  # right under the throat's centre: the head in the curved zone
@@ -161,13 +162,19 @@ func _make_tour() -> Array[Step]:
 ## and roll degrees about the line of sight.
 func _put(where: Variant, yaw: float, pitch: float, roll := 0.0) -> void:
 	if where is float and not is_inf(where):
-		main.place_on_axis(where, yaw, pitch, roll)
+		main.place_on_axis(_axis(where), yaw, pitch, roll)
 		return
 	var stand: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
 	var xy := Vector2(stand.x, stand.y)
 	var fwd: Vector2 = Vector2(main.START_FORWARD.x, main.START_FORWARD.y) if where is float else -xy.normalized()
 	fwd = fwd.rotated(-deg_to_rad(yaw))      # to the right: clockwise in either chart (main.place's right)
 	main.place(Vector3(xy.x, xy.y, 0.0), Vector3(fwd.x, fwd.y, 0.0), stand.z, pitch, roll)
+
+
+## A place on the axis (l of the video's throat) on the throat there is now.
+func _axis(at: float) -> float:
+	var v := WormholeSpace.zone_of(Main.THROAT_RADIUS, Main.HALF_LENGTH, Main.FILLET)
+	return main.space.carried_l(at, v.x, v.y)
 
 
 ## A pose's place in words, for the log.
@@ -181,7 +188,7 @@ func _name(where: Variant) -> String:
 ## The l of a pose's place: the head's on the axis, the feet's standing (the "tf" lines).
 func _l(where: Variant) -> float:
 	if where is float and not is_inf(where):
-		return where
+		return _axis(where)
 	var v: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
 	return main.space.point_from_chart(v.z, Vector3(v.x, v.y, 0.0))[0]
 
@@ -495,7 +502,7 @@ func _ru(at: Variant, yaw: float, pitch: float) -> String:
 		where = "на полу под горлом"
 		b = (at as Vector3).z < 0.0
 	elif not is_inf(at):
-		var a := absf(at as float)
+		var a := absf(_axis(at as float))
 		where = "в полёте " + ("снаружи у края" if a >= main.space.L else ("на краю зоны" if a >= main.space.Lc else "в горле"))
 		b = at < 0.0
 		y = fposmod(yaw if at >= 0.0 else 180.0 - yaw, 360.0)
