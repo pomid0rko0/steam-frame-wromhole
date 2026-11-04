@@ -10,7 +10,9 @@ extends Node3D
 ##   the zone's ball is dropped.
 ## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
 ##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body worked out once a
-##   frame for each eye (zone_sections.gd), each image's vertices only find their geodesics.
+##   frame for each eye (zone_sections.gd), each image's vertices only find their geodesics. With
+##   zone_pixel (the speed check's comparison) the balls among them are found per pixel instead,
+##   every image at once (zone_pixel.gdshader, before the meshes, at the depth of the light's way).
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -34,6 +36,9 @@ extends Node3D
 const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
 # under foveation the quad only samples its texture (either gravity view's: it works both out)
 const FLOOR_SAMPLE_SHADER := preload("res://shaders/floor_sample.gdshader")
+# the balls in the curved zone found per pixel (zone_pixel): a quad drawn before every body
+const ZONE_PX_SHADER := preload("res://shaders/zone_pixel.gdshader")
+const ZONE_PX_PRIORITY := -100
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
@@ -94,6 +99,12 @@ var xr_view: SubViewport        # where XR renders; null on the desktop
 var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
 var floor_mat: ShaderMaterial   # the one drawn (gravity_view) without our own foveation
 var floor_sample_mat := ShaderMaterial.new()   # the one drawn with it (FLOOR_SAMPLE_SHADER)
+var zone_px_mat := ShaderMaterial.new()        # the balls in the zone per pixel (ZONE_PX_SHADER)
+var zone_px_quad: MeshInstance3D
+# The balls in the curved zone found per pixel (zone_pixel.gdshaderinc, a quad of their own drawn
+# before every body) instead of drawn as meshes, one per image: the speed check's comparison
+# (bench.gd); from the next set_objects on.
+var zone_pixel := false
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var zone_mats: Array[ShaderMaterial] = []   # balls fine, coarse, cubes fine, coarse
@@ -131,6 +142,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	floor_mat = floor_mats[0]
 	floor_sample_mat.shader = FLOOR_SAMPLE_SHADER
 	floor_sample_mat.render_priority = FLOOR_PRIORITY
+	zone_px_mat.shader = ZONE_PX_SHADER
+	zone_px_mat.render_priority = ZONE_PX_PRIORITY
 	foveation.sample_mat = floor_sample_mat
 	foveation.xr = xr
 	ball_mat.shader = BALL_SHADER
@@ -174,6 +187,13 @@ func _ready() -> void:
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
+	zone_px_quad = MeshInstance3D.new()
+	zone_px_quad.mesh = q
+	zone_px_quad.material_override = zone_px_mat
+	zone_px_quad.extra_cull_margin = 16384.0
+	zone_px_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	zone_px_quad.visible = false
+	add_child(zone_px_quad)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
 	for k in 4:
@@ -232,6 +252,7 @@ func materials() -> Array[ShaderMaterial]:
 	out.append_array(zone_mats)
 	out.append_array(beam_mats)
 	out.append_array(floor_mats)
+	out.append(zone_px_mat)
 	out.append_array(scene_mats)
 	return out
 
@@ -298,11 +319,18 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	var lens_b := PackedVector4Array()
 	var zone_rows := PackedVector4Array()       # ZoneSections' slots: balls' first, cubes' from MAX_BALLS
 	zone_rows.resize(4 * (MAX_BALLS + MAX_CUBES))
+	var px := zone_pixel
+	var px_rows := PackedVector4Array()         # the balls in the zone for the floor's quad (zone_pixel)
+	var npx := 0
 	for i in n:
 		var C := pos[i]
 		var e := _tangent_pair(C)
 		var c := _linear(col[i])
 		var out := out_of_zone(C, col[i].w)
+		if not out and px:
+			px_rows.append_array([C, Vector4(c.r, c.g, c.b, col[i].w)])
+			npx += 1
+			continue
 		_place(0, out, flat[0] if out else inz[0], pack(C, e[0], e[1]), c)
 		if not out:
 			var k: int = 4 * inz[0]
@@ -350,8 +378,12 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
 	_upload_lens(lens_a, lens_b)
+	px_rows.resize(2 * MAX_BALLS)
+	zone_px_mat.set_shader_parameter("zone_ball", px_rows)
+	zone_px_mat.set_shader_parameter("zone_balls", npx)
+	zone_px_quad.visible = npx > 0
 	toy_count = n + nc
-	zone_count = Vector2i(inz[0], inz[1])
+	zone_count = Vector2i(inz[0] + npx, inz[1])
 	ball_col = col.slice(0, n)
 	bodies.clear()
 	for i in n:

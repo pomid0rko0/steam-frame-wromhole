@@ -11,7 +11,9 @@ extends SceneTree
 ## seen through the lens, and a ball crosses the edge of the zone's disc in the picture from the start
 ## (EDGE_BALL): drawn by its mesh outside the disc and by the filtered texture inside it, it must not
 ## part there. tools/compare/curved.py then allows each pixel's texel size more (the json's fovea).
-##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov]
+## With pixel, the balls in the zone are found per pixel (Renderer.zone_pixel) instead of drawn as
+## meshes.
+##   godot --path . -s res://tests/curved_check.gd -- out_prefix place [fov] [pixel]
 ## Writes out_prefix_app_left.png, _right.png and out_prefix.json.
 
 const U := preload("res://tests/util.gd")
@@ -89,6 +91,8 @@ func _process(_delta: float) -> bool:
 			print("flying: the head at l %.2f, %.2f m over the floor" % [hp[0], main.space.height(hp[0], hp[1])])
 		main.hold = true
 	if frames == 5:
+		if _pixel():
+			main.renderer.zone_pixel = true      # the balls in the zone found per pixel
 		_bodies()
 	if frames == 6 and _fov():
 		# after main's first frames, which set each kind of foveation in turn
@@ -169,6 +173,10 @@ var _objects := []
 
 static func _fov() -> bool:
 	return OS.get_cmdline_user_args().has("fov")
+
+
+static func _pixel() -> bool:
+	return OS.get_cmdline_user_args().has("pixel")
 
 
 ## A cube next to eye c[0]'s axis (NEAR_AXIS_CUBES): its centre c[1] toward the throat's centre from
