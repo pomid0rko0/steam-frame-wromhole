@@ -6,8 +6,9 @@
 # a machine's cores): the bodies' meshes in the zone (its check zone, three pieces of minutes each)
 # and the rest with the gravity's; five more machines of the stereo test alone, each with one of
 # the five longest curved places (tools/stereo_parts.txt: the shares, PART=n). A branch that
-# differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
-# («Что изменилось», changes); main, a version, a tag and a release always get them all.
+# differs from main only in Markdown (*.md), docs/ and .claude/ (the agent's settings) gets none of
+# them, as no check reads those («Что изменилось», changes); main, a version, a tag and a release
+# always get them all.
 # The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
 # are the run's files at once, named as export.sh names them (tools/deploy_frame.ps1 takes the
 # headset's); they are deleted from the run unless the stereo test passes on the same commit (the
@@ -63,9 +64,9 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = branch ] && [ "$GITHUB_REF_NAME" != main ]; then
             files=$(git -c core.quotePath=false diff --no-renames --name-only "$(git merge-base origin/main HEAD)" HEAD)
             echo "since main:"; echo "$files"
-            grep -q -v -E '\.md$|^docs/|^$' <<<"$files" || full=false
+            grep -q -v -E '\.md$|^docs/|^\.claude/|^$' <<<"$files" || full=false
           fi
-          [ $full = true ] || echo "only Markdown and docs/ differ from main: nothing to build or check" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ $full = true ] || echo "only Markdown, docs/ and .claude/ differ from main: nothing to build or check" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "full=$full" >> "$GITHUB_OUTPUT"
 
   image:
@@ -419,4 +420,4 @@ jobs:
             | select(if .key == "changes" then .value.result != "success" else (.value.result | IN($ok[])) | not end)
             | "\(.key): \(.value.result)"' <<<"$NEEDS")
           [ -z "$bad" ] || { echo "$bad"; exit 1; }
-          [ "$ok" = '["success"]' ] && echo "every check passed" || echo "nothing to check: only Markdown and docs/ differ from main"
+          [ "$ok" = '["success"]' ] && echo "every check passed" || echo "nothing to check: only Markdown, docs/ and .claude/ differ from main"
