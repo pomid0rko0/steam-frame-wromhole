@@ -28,7 +28,7 @@ extends CompositorEffect
 
 const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a slot
 # the GPU timestamps of this pass (RenderingDevice.capture_timestamp), before and after it: the
-# nodes' part of the frame's GPU time (frame_rate.gd)
+# nodes' and tables' part of the frame's GPU time (frame_rate.gd)
 const TS_BEGIN := "zone nodes begin"
 const TS_END := "zone nodes end"
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
