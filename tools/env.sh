@@ -3,24 +3,15 @@
 # On a machine without apt (the Frame's SteamOS) it runs the calling script again, with its
 # arguments, in tools/box.sh's container (box.sh says why; without podman it stops), and the script
 # goes on there past this line. Elsewhere (a cloud session, the container) it sets GODOT, the
-# Godot the tools run, MESA, the Frame's driver setup.sh builds, OUTS, where runs keep their files
-# (in the repository: the host sees them too), import_scripts and x_display.
-# A task's worktree (.wt/<branch>, tools/box.sh) takes the repository's own tools/.bin, which git
-# does not hold.
+# Godot the tools run (setup.sh's, the godot on PATH), MESA, the Frame's driver setup.sh builds next
+# to it, OUTS, where runs keep their files (in the repository: the host sees them too),
+# import_scripts and x_display.
 . "$ROOT/tools/repo.sh"
-if [ "$REPO" != "$ROOT" ] && [ ! -e "$ROOT/tools/.bin" ]; then
-	mkdir -p "$REPO/tools/.bin"
-	ln -sfn "$REPO/tools/.bin" "$ROOT/tools/.bin"
-fi
 if ! command -v apt-get >/dev/null; then
 	exec "$ROOT/tools/box.sh" "$(readlink -f "$0")" "$@"
 fi
-GODOT=${GODOT:-$ROOT/tools/.bin/godot}
-[ -x "$GODOT" ] || GODOT=$(command -v godot || true)
-# setup.sh puts it next to Godot: where the environment ran setup.sh from elsewhere, that is not
-# this tree's tools/.bin
-MESA=${MESA:-$ROOT/tools/.bin/mesa-fd}
-[ -d "$MESA" ] || MESA=$(dirname "$(readlink -f "$GODOT")")/mesa-fd
+GODOT=${GODOT:-$(command -v godot || true)}
+MESA=${MESA:-$(dirname "$(readlink -f "$GODOT")")/mesa-fd}
 OUTS=$REPO/.wt/.out
 mkdir -p "$OUTS"
 # runs' folders a day old go: nothing else deletes them (the tools' timeouts end a run sooner)

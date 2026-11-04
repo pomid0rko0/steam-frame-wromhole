@@ -24,7 +24,7 @@ things must line up the same way, and the stereo test must check it.
   headset. The tools find out where they run.
 - **Never start the app, SteamVR, `vrcmd` or any window yourself:** it takes the view the owner is
   in. On the Frame whatever runs Godot or opens a GPU goes through `tools/box.sh` (its top says why
-  and how); `tools/.bin/godot` never runs there without it.
+  and how), never straight on the Frame.
 - **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session
   attach its zip to the chat. `--pc-windows` makes the build that runs on the owner's PC and
   streams to the headset (README, «Запуск»). CI's run of the pushed commit has the same zips: link
@@ -42,11 +42,12 @@ things must line up the same way, and the stereo test must check it.
 
 ## Commands
 
-Nothing to set up: the tools find Godot and the rest themselves (`tools/env.sh`). A cloud
-environment has them installed by its setup script, a copy of `tools/setup.sh`; on the Frame
-`tools/box.sh` sets its container up. If a tool in a cloud session says something is missing,
-tell the owner which step of `setup.sh` the environment lacks. Install nothing by hand: what the
-work needs goes into `setup.sh`.
+Nothing to set up: the tools find Godot and the rest themselves (`tools/env.sh`: the `godot` on
+PATH, the Frame's driver next to it). A cloud environment has them installed by its setup script, a
+copy of `tools/setup.sh`; on the Frame `tools/box.sh` sets its container up. If a tool in a cloud
+session says something is missing, the environment's copy lacks a step of `setup.sh`: tell the
+owner which, and that they paste the current `setup.sh` into the environment's setup script.
+Install nothing by hand: what the work needs goes into `setup.sh`.
 
 - **Runs of minutes**, so in the background: `tools/test_stereo.sh`, `tools/test.sh`,
   `tools/test_openxr.sh` (alone: its top says why), `python3 ref/test_gpu.py`, `tools/test_box.sh`
@@ -73,11 +74,11 @@ work needs goes into `setup.sh`.
 
 - **One wish per chat, on its own branch,** started from `origin/main` after `git fetch` (a cloud
   session's local `main` can be days old), or the issue's branch if it has one
-  (`git branch -r --list 'origin/*/issue-<N>-*'`); not the branch a cloud session makes for itself
+  (`git branch -r --list 'origin/*/<N>-*'`); not the branch a cloud session makes for itself
   (`claude/…`, `ccr-…`). The owner allows pushing to it. Its name follows
   [Conventional Branch](https://conventionalbranch.org/), `feat` and `fix` as in the commits; the
-  description is the wish's issue (one said in the chat gets its issue first) and a few English
-  words: `feat/issue-47-throat-shape`, `fix/issue-43-cube-tearing`. Its commits follow
+  description is the wish's issue number (one said in the chat gets its issue first) and a few
+  English words: `feat/47-throat-shape`, `fix/43-cube-tearing`. Its commits follow
   [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), the description in
   Russian, like the PR's title.
 - **A PR's title and description become its one commit in `main`;** the title is also its line in
