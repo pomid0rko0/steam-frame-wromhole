@@ -10,9 +10,11 @@ extends CompositorEffect
 ## not once per vertex of each of the 20 images. A cube's section is the dear part (its corners on
 ## the space, the edges its half-surface cuts, Newton's steps onto each corner and face).
 ##
-## And which images of each body are drawn at all (zone_sections.gdshaderinc, IMAGES): one thinner
-## across than CULL_PX of a pixel is not, its vertices go out of the picture at once (cull_tex),
-## and so is none whose body is not the one the pass took (a slot not worked out this frame).
+## And which images of each body are drawn at all (zone_sections.gdshaderinc, IMAGES): every one up
+## to the first within CULL_PX of a pixel of the limit they close in on round the photon sphere
+## (need: beyond, as many as Renderer.ZONE_TAIL, the tail's meshes), and of the first images those
+## not thinner across than CULL_PX of a pixel; the rest's vertices go out of the picture at once
+## (cull_tex), and so do those of a body the pass did not take (a slot not worked out this frame).
 ##
 ## On the XR camera's compositor (on the desktop the window's camera's), before the opaque pass,
 ## every frame whatever the foveation. Renderer hands it the space's numbers, the head each frame
@@ -33,8 +35,9 @@ var _sets := {}
 var _ubo: RID                       # Params
 var _bodies: RID                    # Bodies
 var _tex: RID
-var _cull: RID                      # images x slots, a layer per eye
-var _images := 0                    # images a body (Renderer.ZONE_IMAGES)
+var _cull: RID                      # (images + need) x slots, a layer per eye
+var _images := 0                    # images a body by the two meshes (Renderer.ZONE_IMAGES)
+var _turns := 0                     # turns round the throat whose images may be drawn (need's search)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture (named by geo.gdshaderinc, not read)
 var _grid := Vector4.ZERO           # columns, the fine mesh's rows, the coarse mesh's, a slot's rows
@@ -54,8 +57,9 @@ func _init() -> void:
 
 
 ## The meshes (Renderer._zone_mesh): columns, the fine and the coarse mesh's rows (the same for
-## balls and cubes), the slots: balls, then cubes, and the images a body. Once, before the first frame.
-func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: int, images: int) -> void:
+## balls and cubes), the slots: balls, then cubes, the images a body by those meshes and in all
+## (with the tail's). Once, before the first frame.
+func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: int, images: int, all_images: int) -> void:
 	var slot_rows := fine_rows + coarse_rows + 2
 	assert(4 * (balls + cubes) <= BODY_ROWS)
 	_grid = Vector4(columns, fine_rows, coarse_rows, slot_rows)
@@ -76,15 +80,16 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	tex.texture_rd_rid = _tex
 	# no image drawn until the pass has said which: a texel of noughts is no body's
 	_images = images
+	_turns = (all_images + 1) / 2
 	var c := RDTextureFormat.new()
 	c.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	c.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
-	c.width = images
+	c.width = images + 1
 	c.height = _slots
 	c.array_layers = 2
 	c.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
 	var zero := PackedByteArray()
-	zero.resize(16 * images * _slots)
+	zero.resize(16 * (images + 1) * _slots)
 	_cull = _rd.texture_create(c, RDTextureView.new(), [zero, zero])
 	cull_tex.texture_rd_rid = _cull
 
@@ -210,7 +215,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	for v in 2:
 		var proj := data.get_view_projection(mini(v, views - 1))
 		px.append(minf(absf(2.0 / (proj.x.x * size.x)), absf(2.0 / (proj.y.y * size.y))))   # y may be flipped
-	p.append_array([px[0], px[1], CULL_PX, 0.0])
+	p.append_array([px[0], px[1], CULL_PX, float(_turns)])
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	var nodes := int(_grid.x + 1.0) * int(_grid.y + _grid.z + 2.0)
@@ -231,5 +236,5 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var ipc := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
 	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
-	_rd.compute_list_dispatch(cl, int(ceil(_images / 32.0)), counts.x + counts.y, views)
+	_rd.compute_list_dispatch(cl, int(ceil((_images + 1) / 32.0)), counts.x + counts.y, views)
 	_rd.compute_list_end()

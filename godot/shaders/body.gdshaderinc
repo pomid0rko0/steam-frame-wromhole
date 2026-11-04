@@ -16,7 +16,8 @@
 //     cube [-1, 1]^3, each point taken along the space's normal at C.
 //     Below the floor they are hidden: the floor hides whatever is below it.
 //   ZONE (zone_ball.gdshader, zone_cube.gdshader): toys in the curved zone, each drawn once per image
-//     (zone_first, zone_images), as a mesh made anew for each view round the line
+//     (zone_first, zone_images; past the first ZONE_IMAGES the tail's, zone_tail: each body's own
+//     count of images, its numbers from zone_body, zone_colour by slot), as a mesh made anew for each view round the line
 //     through its eye and the centre (the axis): there the images of a point fold into a ring (an
 //     Einstein ring), and a triangle across the axis would join a point's image on one side with its
 //     neighbour's on the other. So the mesh is a grid (VERTEX.xy in [0, 1]^2) of the azimuth theta
@@ -68,6 +69,14 @@ uniform float sheet = 1.0;       // the universe: A +1, B -1
 #ifdef ZONE
 uniform int zone_first = 0;      // instance i draws image zone_first + i % zone_images (Renderer)
 uniform int zone_images = 1;
+// the tail (Renderer.ZONE_TAIL): images from zone_first on, body b's from instance zone_tail_at[b]
+// to zone_tail_at[b + 1] (this kind's bodies, its slots from zone_slot), each body's centre, axes
+// and (size) in zone_body (four a slot, all slots), its (colour, size) in zone_colour
+uniform bool zone_tail = false;
+uniform int zone_tail_at[13];
+uniform vec4 zone_body[80];
+uniform vec4 zone_colour[20];
+uniform int zone_need = 20;      // zone_cull's column with each body's need (Renderer.ZONE_IMAGES)
 uniform float zone_round = 48.0; // the mesh's points round a section and azimuths (Renderer._zone_mesh)
 uniform float zone_columns = 64.0;
 // the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this kind's
@@ -116,6 +125,7 @@ varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
 
 void vertex() {
 	vec4 P;
+	vec4 custom = INSTANCE_CUSTOM;
 #ifndef CUBE
 	vec4 nrm;
 #endif
@@ -123,24 +133,40 @@ void vertex() {
 	float el;
 	vec3 en;
 	vec4 ex, ey, ez;
-	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
-	int image = zone_first + INSTANCE_ID % zone_images;
-	int slot = zone_slot + INSTANCE_ID / zone_images;
-	vec4 C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
-	vec4 E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);
-	vec4 E2 = vec4(MODEL_MATRIX[2].z, MODEL_MATRIX[3].xyz);
+	int image, slot;
+	vec4 C, E1, E2;
+	if (zone_tail) {
+		int b = 0;
+		for (int k = 1; k < 12; k++) {
+			if (INSTANCE_ID >= zone_tail_at[k] && INSTANCE_ID < zone_tail_at[k + 1]) b = k;
+		}
+		image = zone_first + INSTANCE_ID - zone_tail_at[b];
+		slot = zone_slot + b;
+		C = zone_body[4 * slot];
+		E1 = zone_body[4 * slot + 1];
+		E2 = zone_body[4 * slot + 2];
+		custom = zone_colour[slot];
+	} else {
+		image = zone_first + INSTANCE_ID % zone_images;
+		slot = zone_slot + INSTANCE_ID / zone_images;
+		C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
+		E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);
+		E2 = vec4(MODEL_MATRIX[2].z, MODEL_MATRIX[3].xyz);
+	}
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
-	float size = INSTANCE_CUSTOM.a;
+	float size = custom.a;
 	float pl = 0.0;
 	float len = 0.0, fell = 0.0;
 	vec4 arrive = vec4(0.0);
 	bool none = false;            // the section's steps came out not a number (zone_vertex)
-	// an image the pass leaves out (thinner than a share of a pixel), or of a body it did not take
-	// this frame (a slot not worked out: its nodes are another's, or none): every vertex out of the
-	// picture at the centre, no triangle drawn, no geodesic sought
-	vec4 cull = texelFetch(zone_cull, ivec3(image, slot, int(VIEW_INDEX)), 0);
-	if (cull.w > 0.5 && all(equal(cull.xyz, C.xyz))) {
+	// an image the pass leaves out (past need, and thinner than a share of a pixel), or of a body it
+	// did not take this frame (a slot not worked out: its nodes are another's, or none): every
+	// vertex out of the picture at the centre, no triangle drawn, no geodesic sought
+	vec4 need = texelFetch(zone_cull, ivec3(zone_need, slot, int(VIEW_INDEX)), 0);
+	vec4 cull = zone_tail ? need : texelFetch(zone_cull, ivec3(image, slot, int(VIEW_INDEX)), 0);
+	if ((float(image) < need.w || (!zone_tail && cull.w > 0.5)) && all(equal(cull.xyz, C.xyz)) && all(equal(need.xyz, C.xyz))) {
+		geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
 		// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
 		ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
 		int row = slot * zone_slot_rows + zone_row + node.y;
@@ -266,7 +292,7 @@ void vertex() {
 #else
 	vec4 Np = geo_normal(P);
 #ifdef TOY
-	v_col = INSTANCE_CUSTOM.rgb;
+	v_col = custom.rgb;
 #if defined(CUBE) && !defined(ZONE)
 	v_box = VERTEX;
 #endif

@@ -9,8 +9,10 @@ extends Node3D
 ##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
 ##   the zone's ball is dropped.
 ## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
-##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body worked out once a
-##   frame for each eye (zone_sections.gd), each image's vertices only find their geodesics.
+##   geodesic (body.gdshaderinc), one per image, as many as the zone's pass finds needed (up to the
+##   first within a quarter of a pixel of the limit they close in on: ZONE_IMAGES, then the tail);
+##   the meshes' nodes on the body worked out once a frame for each eye (zone_sections.gd), each
+##   image's vertices only find their geodesics.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -39,7 +41,7 @@ const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
-# a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
+# a body in the curved zone: its first images (the first ZONE_FINE on the fine mesh, the rest, thin
 # rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
 # azimuths about the eye's axis, points round each section. Seen from the throat's cylinder, a
 # body's k-th turn round it is a ring that thins only as 1 / k
@@ -48,6 +50,14 @@ const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
+# and past them, as many as the zone's pass finds needed (zone_sections.gdshaderinc, IMAGES: up to
+# the first within a quarter of a pixel of the limit they close in on), at most ZONE_TAIL a body,
+# each a thin arc on the tail's mesh: every TAIL_STRIDE-th node of the coarse one. A body's tail is
+# drawn as far as _tail_images says (its vertices past need go out of the picture at once): from
+# the throat's cylinder the k-th turn is only about 1 / k of a turn off the limit (issue #141)
+const ZONE_TAIL := 2048
+const TAIL_STRIDE := Vector2i(2, 3)   # azimuths, points round a section
+const TAIL_PX := 0.6e-3         # rad: a pixel _tail_images takes (the Frame's at 150 %: more than needed)
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
@@ -103,6 +113,9 @@ var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new
 var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
 var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
+var tail_mats: Array[ShaderMaterial] = []   # their tails: balls', cubes'
+var tails: Array[MultiMeshInstance3D] = []
+var _head_l := 0.0              # the head's l (set_head)
 var statics: Array[MeshInstance3D] = []
 var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
@@ -138,7 +151,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# the meshes' nodes: ZoneSections' slots, balls' first, then cubes', each the fine mesh's rows,
 	# then the coarse one's (both kinds' meshes alike: one grid for its compute shader)
 	assert(ZONE_AZIMUTHS[0] == ZONE_AZIMUTHS[1])
-	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES, ZONE_IMAGES)
+	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES, ZONE_IMAGES, ZONE_IMAGES + ZONE_TAIL)
 	for k in 4:
 		var m := ShaderMaterial.new()
 		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
@@ -151,7 +164,22 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
 		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
+		m.set_shader_parameter("zone_need", ZONE_IMAGES)
 		zone_mats.append(m)
+	for k in 2:
+		var m := ShaderMaterial.new()
+		m.shader = ZONE_BALL_SHADER if k == 0 else ZONE_CUBE_SHADER
+		m.set_shader_parameter("zone_tail", true)
+		m.set_shader_parameter("zone_first", ZONE_IMAGES)
+		m.set_shader_parameter("zone_round", float(ZONE_ROUND_COARSE))
+		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k]))
+		m.set_shader_parameter("zone_nodes", zone_sections.tex)
+		m.set_shader_parameter("zone_cull", zone_sections.cull_tex)
+		m.set_shader_parameter("zone_slot", 0 if k == 0 else MAX_BALLS)
+		m.set_shader_parameter("zone_row", ZONE_ROUND + 1)
+		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
+		m.set_shader_parameter("zone_need", ZONE_IMAGES)
+		tail_mats.append(m)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
@@ -180,7 +208,10 @@ func _ready() -> void:
 		var images := ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE
 		var grid := _zone_mesh(ZONE_AZIMUTHS[k / 2], ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE)
 		zone.append(_multimesh(grid, zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
-	for mm in [balls, cubes] + zone:
+	for k in 2:
+		var grid := _zone_mesh(ZONE_AZIMUTHS[k] / TAIL_STRIDE.x, ZONE_ROUND_COARSE / TAIL_STRIDE.y)
+		tails.append(_multimesh(grid, tail_mats[k], (MAX_BALLS if k == 0 else MAX_CUBES) * ZONE_TAIL))
+	for mm in [balls, cubes] + zone + tails:
 		play.add_child(mm)
 	_lens_statics()
 	_upload_lens(PackedVector4Array(), PackedVector4Array())
@@ -230,6 +261,7 @@ var _beam_on: Array[bool] = [false, false]
 func materials() -> Array[ShaderMaterial]:
 	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]
 	out.append_array(zone_mats)
+	out.append_array(tail_mats)
 	out.append_array(beam_mats)
 	out.append_array(floor_mats)
 	out.append_array(scene_mats)
@@ -269,6 +301,7 @@ func _space_params(m: ShaderMaterial) -> void:
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there (the play
 ## space's axes) and its place in the room; the shaders put each view's eye there.
 func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
+	_head_l = l
 	var f := PackedVector4Array(hf)
 	for m in materials():
 		var k := beam_mats.find(m)
@@ -298,6 +331,8 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	var lens_b := PackedVector4Array()
 	var zone_rows := PackedVector4Array()       # ZoneSections' slots: balls' first, cubes' from MAX_BALLS
 	zone_rows.resize(4 * (MAX_BALLS + MAX_CUBES))
+	var zone_cols := PackedVector4Array()       # and their (colour, size), for the tails
+	zone_cols.resize(MAX_BALLS + MAX_CUBES)
 	for i in n:
 		var C := pos[i]
 		var e := _tangent_pair(C)
@@ -310,6 +345,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k + 1] = e[0]
 			zone_rows[k + 2] = e[1]
 			zone_rows[k + 3] = Vector4(col[i].w, 0.0, 0.0, 0.0)
+			zone_cols[inz[0]] = Vector4(c.r, c.g, c.b, col[i].w)
 		if out:
 			flat[0] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 0.0), Vector4(1.0, 0.0, 0.0, col[i].w),
@@ -334,6 +370,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k + 1] = E1
 			zone_rows[k + 2] = E2
 			zone_rows[k + 3] = Vector4(half, 0.0, 0.0, 0.0)
+			zone_cols[MAX_BALLS + inz[1]] = Vector4(c.r, c.g, c.b, half)
 		if out:
 			flat[1] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 2.0), Vector4(E1.x, E1.y, E1.z, half),
@@ -348,6 +385,22 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	cubes.multimesh.visible_instance_count = flat[1]
 	for k in 4:
 		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
+	# the tails: each body's as far as _tail_images says, its numbers by slot
+	for k in 2:
+		var first := 0 if k == 0 else MAX_BALLS
+		var at := PackedInt32Array()
+		at.resize(13)
+		var total := 0
+		for b in inz[k]:
+			at[b] = total
+			var size: float = zone_rows[4 * (first + b) + 3].x
+			total += _tail_images(zone_rows[4 * (first + b)], size if k == 0 else size * sqrt(3.0))
+		for b in range(inz[k], 13):
+			at[b] = total
+		tail_mats[k].set_shader_parameter("zone_tail_at", at)
+		tail_mats[k].set_shader_parameter("zone_body", zone_rows)
+		tail_mats[k].set_shader_parameter("zone_colour", zone_cols)
+		tails[k].multimesh.visible_instance_count = total
 	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
@@ -369,6 +422,30 @@ func _place(kind: int, out: bool, k: int, xf: Transform3D, c: Color) -> void:
 		for j in count:
 			mm.set_instance_transform(k * count + j, xf)
 			mm.set_instance_custom_data(k * count + j, c)
+
+
+## How many of a body's images past the first ZONE_IMAGES to draw at most (round C, a point of R^4,
+## reaching reach), from where the head is: the zone's pass finds how many are needed and drops the
+## rest at once, so this only bounds the work, by the turns round the throat's cylinder after which
+## the images lie within a quarter of a TAIL_PX pixel of their limit, half again. From inside the
+## cylinder, along dl of it, the k-th turn is dl / (2 pi rho0 k) off the limit (a straight line on
+## the cylinder unrolled). From outside, through all of it (2 Lc), a ray turning k times has
+## rho0^2 - b^2 = (2 Lc / 2 pi k)^2, and b off r_min by that over 2 rho0 is an angle of that over
+## sqrt(r^2 - rho0^2) at the head (r its distance from the centre). No cylinder (h <= R): none.
+func _tail_images(C: Vector4, reach: float) -> int:
+	var Lc := space.Lc
+	if Lc <= 0.0:
+		return 0
+	var rho0 := space.rho0
+	var eps := 0.25 * TAIL_PX
+	var k := 0.0
+	if absf(_head_l) < Lc:
+		var p := space.point_of(C)
+		k = (absf(clampf(p[0], -Lc, Lc) - _head_l) + reach) / (TAU * rho0 * eps)
+	else:
+		var r := space.r(absf(_head_l))
+		k = 2.0 * Lc / (PI * sqrt(8.0 * rho0 * sqrt(maxf(r * r - rho0 * rho0, 1e-6)) * eps))
+	return clampi(int(ceil(2.0 * 1.5 * k)) + 2 - ZONE_IMAGES, 0, ZONE_TAIL)
 
 
 ## A body round C (a point of R^4) reaching reach (chord) stays out of the curved zone's ball, in a
