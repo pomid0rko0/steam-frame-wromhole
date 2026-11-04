@@ -42,10 +42,11 @@ things must line up the same way, and the stereo test must check it.
 
 ## Commands
 
-In a cloud session run `tools/setup.sh` once at the start: it only links `tools/.bin` to the
-environment's install; if it starts downloading or building, tell the owner which step the
-environment lacks. On the Frame there is nothing to run: `tools/box.sh` sets its container up by
-itself. Install nothing by hand: what the work needs goes into `setup.sh`.
+Nothing to set up: the tools find Godot and the rest themselves (`tools/env.sh`). A cloud
+environment has them installed by its setup script, a copy of `tools/setup.sh`; on the Frame
+`tools/box.sh` sets its container up. If a tool in a cloud session says something is missing,
+tell the owner which step of `setup.sh` the environment lacks. Install nothing by hand: what the
+work needs goes into `setup.sh`.
 
 - **Runs of minutes**, so in the background: `tools/test_stereo.sh`, `tools/test.sh`,
   `tools/test_openxr.sh` (alone: its top says why), `python3 ref/test_gpu.py`, `tools/test_box.sh`
