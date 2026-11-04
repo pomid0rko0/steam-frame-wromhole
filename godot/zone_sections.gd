@@ -21,6 +21,10 @@ extends CompositorEffect
 ## renders with.
 
 const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a slot
+# the GPU timestamps of this pass (RenderingDevice.capture_timestamp), before and after it: the
+# nodes' part of the frame's GPU time (frame_rate.gd)
+const TS_BEGIN := "zone nodes begin"
+const TS_END := "zone nodes end"
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
@@ -214,6 +218,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	var nodes := int(_grid.x + 1.0) * int(_grid.y + _grid.z + 2.0)
+	_rd.capture_timestamp(TS_BEGIN)
 	var cl := _rd.compute_list_begin()
 	for k in 2:
 		var n := counts.x if k == 0 else counts.y
@@ -233,3 +238,4 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
 	_rd.compute_list_dispatch(cl, int(ceil(_images / 32.0)), counts.x + counts.y, views)
 	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_END)
