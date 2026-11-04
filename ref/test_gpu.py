@@ -55,7 +55,10 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Off on a throat with a crease (h < R) until issue #118 (CREASE_OFF): the cubes' meshes in the zone
 and a ball's surface. The zone's steps take the profile smooth, and there cubes across the crease
-came out with vertices hundreds of metres off, a ball next to it off its chord by 5.8e-5 m.
+came out with vertices hundreds of metres off, a ball next to it off its chord by 5.8e-5 m. And
+until #145 (CREASE_PATHS_OFF) the paths by a body's table: the rays that turn before the crease turn
+by no more than the one that grazes it, beyond that the way hugs the crease, and the table's cubic
+smooths the kink between (4e-3 rad off).
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
 float32; the GPU here is given them so written.
 Each throat's checks run in pieces, each in a process of its own (a GPU context and random draws
@@ -344,10 +347,14 @@ def check(name, ok, detail):
 CREASE_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/118'
 
 
-def crease_off(name, S, what):
-    """True (and a SKIP line) where the throat has a crease: the check what is off (CREASE_OFF)."""
+# and the paths by a body's table, next to the largest turn the rays that turn before the crease take
+CREASE_PATHS_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/145'
+
+
+def crease_off(name, S, what, issue=CREASE_OFF):
+    """True (and a SKIP line) where the throat has a crease: the check what is off (until issue)."""
     if S.th0 > 0:
-        print(f'SKIP {name}: {what}  off on a throat with a crease until {CREASE_OFF}', flush=True)
+        print(f'SKIP {name}: {what}  off on a throat with a crease until {issue}', flush=True)
     return S.th0 > 0
 
 
@@ -532,6 +539,8 @@ def image_checks(name, S, gpu, gpu_nan, rng):
 def path_checks(name, S, gpu, rng):
     """A body's table of the ways from an eye (zone_path_see): bodies about eyes as image_checks puts
     them, points along shot rays through each, every image up to the last drawn."""
+    if crease_off(name, S, 'the paths by a body\'s table', CREASE_PATHS_OFF):
+        return 0
     fails = 0
     places = eye_places(S)
     psi_max = np.pi * ZONE_IMAGES
