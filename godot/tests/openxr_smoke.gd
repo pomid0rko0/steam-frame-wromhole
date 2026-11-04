@@ -197,7 +197,7 @@ func _process(_delta: float) -> bool:
 		U.check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
-		U.check("speed check: back where it stood, no cube before the eyes", absf(pose[0] - b.saved_pose[0]) < 1e-3 and b.near == "")
+		U.check("speed check: back where it stood, no cube before the eyes", absf(pose[0] - b.saved_pose[0]) < 1e-3 and not b.near)
 		U.check("speed check: the rate set back", r.desired == bench_stored)
 		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 		U.check("speed check: the menu says it is done (the tour's result)", p.bench_text.contains("Гц"))

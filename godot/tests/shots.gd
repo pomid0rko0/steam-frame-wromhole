@@ -97,7 +97,7 @@ func _process(_delta: float) -> bool:
 	if p[3] > 0.0:
 		v.take_off()
 		v.move(p[3] * (cos(pitch) * -(v.frame[2] as Vector4) + sin(pitch) * (v.frame[1] as Vector4)))
-	main.bench.near = "cube" if p[4] else ""
+	main.bench.near = p[4]
 	wait = 3
 	return false
 

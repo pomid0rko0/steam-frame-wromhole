@@ -1,9 +1,8 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
 ## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
-## cube or the ball before the eyes drawn in its own, the balls in the zone per pixel in theirs),
-## logs a line per place, and gives back the foveation, the body, the balls' way and where the
-## viewer stood. The menu has its row. In a small window: nothing here looks at
+## cube before the eyes drawn in its own), logs a line per place, and gives back the foveation, the
+## cube and where the viewer stood. The menu has its row. In a small window: nothing here looks at
 ## the picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
 ##   godot --path . --resolution 160x90 -s res://tests/bench_test.gd
 
@@ -37,11 +36,6 @@ func _cubes() -> int:
 	return main.renderer.bodies.filter(func(x: Array) -> bool: return x[0] == "cube").size()
 
 
-## And the balls (the hands' too).
-func _balls() -> int:
-	return main.renderer.bodies.filter(func(x: Array) -> bool: return x[0] == "ball").size()
-
-
 func _initialize() -> void:
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "none"
@@ -73,13 +67,8 @@ func _process(_d: float) -> bool:
 				check("at the place being timed", false, "%s: %.4f m off" % [b._name(place[0]), miss])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
-			var cubes := main.toys.world.cubes.size() + (1 if v.near == "cube" else 0)
-			var balls := main.toys.world.balls.size() + (1 if v.near == "ball" else 0)
-			if b.near != v.near or _cubes() != cubes or _balls() < balls:
-				check("the segment's body before the eyes", false, b.plan[b.step].y)
-				started = false
-			if main.renderer.zone_pixel != v.zone_pixel:
-				check("the segment's way of drawing the balls in the zone", false, b.plan[b.step].y)
+			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1):
+				check("the segment's cube before the eyes", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.enabled != (v.foveation > 0):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.enabled])
@@ -95,9 +84,7 @@ func _process(_d: float) -> bool:
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("no body before the eyes after it", b.near == "" and _cubes() == main.toys.world.cubes.size()
-					and not main.renderer.zone_pixel)
-			check("the menu shows the ball's result", main.menu.bench_text.contains("шар у глаз"), main.menu.bench_text)
+			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)

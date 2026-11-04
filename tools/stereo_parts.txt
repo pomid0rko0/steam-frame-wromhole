@@ -5,9 +5,9 @@
 # compiler) and so take a few renders; the five longest curved places, in and by the throat, are
 # each on a machine of its own with a shorter one, their eyes' traces then four processes on four
 # cores. Every part exactly once (the test checks).
-desktop headset check4 crp0
-crf0 check5 gravity1 crp3
-gravity2 gravity3 crp4
+desktop headset check4
+crf0 check5 gravity1
+gravity2 gravity3
 crv4 crv7 check0
 crv5 crf6 check1
 crv3 crv1 check2

@@ -15,11 +15,10 @@ extends Node
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
 ## and the frame is timed on the GPU (the median frame of each segment, and of each of its parts:
-## FrameRate.PARTS), this build's renderer each way VARIANTS lists: without foveation, at each of its
-## levels, with a cube held right before the eyes (NEAR_CUBE: a body near the eyes with the world
-## round it), and with a ball there (NEAR_BALL) drawn as meshes or found per pixel
-## (Renderer.zone_pixel; it differs only where the ball is in the curved zone), in a palindrome
-## order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
+## FrameRate.PARTS), this build's renderer each
+## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
+## the eyes (NEAR_CUBE: a body near the eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
 ##
@@ -69,18 +68,15 @@ const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
-# the comparison's variants: [label, foveation level (Foveation.set_level), the body before the
-# eyes ("", "cube", "ball"), the balls in the zone per pixel (Renderer.zone_pixel)]; the first is
-# the reference the others are compared with
-const VARIANTS := [["plain", 0, "", false], ["foveation weak", 1, "", false], ["foveation medium", 2, "", false],
-	["foveation strong", 3, "", false], ["foveation stronger", 4, "", false], ["foveation strongest", 5, "", false],
-	["a cube at the eyes", 0, "cube", false], ["a ball at the eyes, meshes", 0, "ball", false],
-	["a ball at the eyes, per pixel", 0, "ball", true]]
+# the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
+# eyes]; the first is the reference the others are compared with
+const VARIANTS := [["plain", 0, false], ["foveation weak", 1, false], ["foveation medium", 2, false],
+	["foveation strong", 3, false], ["foveation stronger", 4, false], ["foveation strongest", 5, false],
+	["a cube at the eyes", 0, true]]
 # the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
 const NEAR_CUBE := [0.4, 0.1]
-const NEAR_BALL := [0.4, 0.1]   # the ball before the eyes: [m ahead of the head, radius]
 const NEAR_COLOR := Color(0.55, 0.6, 0.95)
 
 var main: Main
@@ -92,10 +88,9 @@ var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var variants: Array[Setup] = []   # this run's (start)
-# the body before the eyes drawn (near_body: "", "cube", "ball"); set, the toys go to the renderer
-# again at once: main drew them before this node's _process, and the frame a variant starts in must
-# have its body
-var near := "":
+# the cube before the eyes is drawn (near_cube); set, the toys go to the renderer again at once:
+# main drew them before this node's _process, and the frame a variant starts in must have its cube
+var near := false:
 	set(v):
 		near = v
 		if main and main.toys.enabled:
@@ -111,8 +106,7 @@ var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
                                 # a hitch of the system does not move it)
 var part_results: Array = []    # the same by part: per place, per variant, per segment its medians
-var _zone_place: Array[bool] = []   # per place: the ball before the eyes is in the curved zone
-var _zone_counts: Array[Vector2i] = []   # per place: the balls and cubes in the zone with it there
+var _zone_counts: Array[Vector2i] = []   # per place: the balls and cubes in the zone with the cube there
 var tour: Array[Step] = []      # the tour's steps (_make_tour)
 var tour_results: Array[Tally] = []   # per step
 var meter := RateMeter.new()    # fed by main.rate each frame
@@ -126,12 +120,11 @@ var preparing := 0              # variants left to run untimed before the first 
 var verdict := ""               # the comparison's line
 
 
-## The body before the eyes while near (the comparison's variants, the tour's last rows): a cube
-## ["cube", centre, two axes (R^4), (colour, half size)], a ball ["ball", centre, (colour, radius)],
-## or [] (main.draw_toys). hp: the head as main has it ([l, n, frame]), basis: the head's in the
-## play space.
-func near_body(hp: Array, basis: Basis) -> Array:
-	if near == "":
+## The cube before the eyes while near (the comparison's variant, the tour's last rows): [centre,
+## two axes (R^4), (colour, half size)], or [] (main.draw_toys). hp: the head as main has it
+## ([l, n, frame]), basis: the head's in the play space.
+func near_cube(hp: Array, basis: Basis) -> Array:
+	if not near:
 		return []
 	var f: Array = hp[2]
 	var fwd := -basis.z
@@ -139,14 +132,11 @@ func near_body(hp: Array, basis: Basis) -> Array:
 	var right: Vector4 = basis.x.x * f[0] + basis.x.y * f[1] + basis.x.z * f[2]
 	var up: Vector4 = basis.y.x * f[0] + basis.y.y * f[1] + basis.y.z * f[2]
 	var sp: WormholeSpace = main.space
-	var ahead: float = NEAR_BALL[0] if near == "ball" else NEAR_CUBE[0]
-	var g := sp.geodesic(hp[0], hp[1], T.normalized(), ahead, [right, up])
-	if near == "ball":
-		return ["ball", sp.embed(g[0], g[1]), Vector4(NEAR_COLOR.r, NEAR_COLOR.g, NEAR_COLOR.b, NEAR_BALL[1])]
+	var g := sp.geodesic(hp[0], hp[1], T.normalized(), NEAR_CUBE[0], [right, up])
 	var e1: Vector4 = sp.embed_vector(g[0], g[1], g[2][0]).normalized()
 	var e2: Vector4 = sp.embed_vector(g[0], g[1], g[2][1])
 	e2 = (e2 - e2.dot(e1) * e1).normalized()
-	return ["cube", sp.embed(g[0], g[1]), e1, e2, Vector4(NEAR_COLOR.r, NEAR_COLOR.g, NEAR_COLOR.b, NEAR_CUBE[1])]
+	return [sp.embed(g[0], g[1]), e1, e2, Vector4(NEAR_COLOR.r, NEAR_COLOR.g, NEAR_COLOR.b, NEAR_CUBE[1])]
 
 
 
@@ -228,7 +218,7 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
+		variants.append(Setup.new(f[0], f[1], f[2]))
 	saved_pose = main.get_pose()
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
@@ -243,7 +233,6 @@ func start() -> void:
 	plan.clear()
 	results.clear()
 	part_results.clear()
-	_zone_place.clear()
 	_zone_counts.clear()
 	tour = _make_tour()
 	tour_results.clear()
@@ -256,7 +245,6 @@ func start() -> void:
 			pr.append([])
 		results.append(r)
 		part_results.append(pr)
-		_zone_place.append(false)
 		_zone_counts.append(Vector2i.ZERO)
 		for v: int in order:
 			plan.append(Vector2i(i, v))
@@ -329,9 +317,8 @@ func _prepare() -> void:
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's foveation, body and way of drawing the balls in the zone.
+## A variant's foveation and cube.
 func _use(v: Setup) -> void:
-	main.renderer.zone_pixel = v.zone_pixel
 	near = v.near
 	if main.foveation.level != v.foveation:
 		main.foveation.set_level(v.foveation)
@@ -383,9 +370,7 @@ func _end_segment() -> void:
 	var r: Array = results[plan[step].x]
 	gpu_ms.sort()
 	r[plan[step].y].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
-	if near == "ball":
-		var nb := near_body(main._head_pose, main.camera.transform.basis)
-		_zone_place[plan[step].x] = not main.renderer.out_of_zone(nb[1], NEAR_BALL[1])
+	if near:
 		_zone_counts[plan[step].x] = main.renderer.zone_count
 	var med := PackedFloat32Array()
 	for k in FrameRate.PARTS.size():
@@ -416,9 +401,8 @@ func _end_segment() -> void:
 			m.append("%.2f" % _mean(segs_v.map(func(p: PackedFloat32Array) -> float: return p[k])))
 		by.append("%d: %s" % [v + 1, " ".join(m)])
 	var zc: Vector2i = _zone_counts[plan[step].x]
-	print("bench parts: %s, %.0f deg right, %.0f deg up (%s): %s; with the ball before the eyes, in the curved zone %d balls (it %s), %d cubes"
-			% [_name(place[0]), place[1], place[2], ", ".join(FrameRate.PARTS), "; ".join(by),
-			zc.x, "among them" if _zone_place[plan[step].x] else "not", zc.y])
+	print("bench parts: %s, %.0f deg right, %.0f deg up (%s): %s; with the cube before the eyes, in the curved zone %d balls, %d cubes"
+			% [_name(place[0]), place[1], place[2], ", ".join(FrameRate.PARTS), "; ".join(by), zc.x, zc.y])
 
 
 func _compared() -> void:
@@ -431,14 +415,9 @@ func _compared() -> void:
 		if variants[v].foveation > 0:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
-	# for the menu: the slowest place without and with the cube before the eyes, and the foveation;
-	# the ball before the eyes as meshes and per pixel where it is in the zone (the places' mean)
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс" % [_worst(0), _worst(_variant("cube", false))]]
+	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс" % [_worst(0), _worst(variants.size() - 1)]]
 	parts.append("фовеация: " + ", ".join(pcts))
-	var bm := _variant("ball", false)
-	var bp := _variant("ball", true)
-	if bm >= 0 and bp >= 0:
-		parts.append("шар у глаз в зоне: сетки %.2f мс, по пикселю %.2f мс" % [_zone_mean(bm), _zone_mean(bp)])
 	verdict = " · ".join(parts)
 	if _headset():
 		_show("замер: переключаю на %.0f Гц, глаза закрыты" % TOUR_RATE)
@@ -472,7 +451,7 @@ func _tour_step(i: int) -> void:
 	step = i
 	phase_t = 0.0
 	counting = false
-	near = "cube" if tour[i].near else ""
+	near = tour[i].near
 	tour_results.append(Tally.new())
 	if tour[i].recover:
 		_put(PLACES[0][0], PLACES[0][1], PLACES[0][2])     # recover at the start
@@ -613,31 +592,10 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
-## As it runs: the foveation chosen in the menu, no body before the eyes, the balls in the zone as
-## meshes.
+## As it runs: the foveation chosen in the menu, no cube.
 func _restore() -> void:
-	main.renderer.zone_pixel = false
-	near = ""
+	near = false
 	main.foveation.set_level(menu.foveation)
-
-
-## The variant with this body before the eyes, drawn this way (VARIANTS), or -1.
-func _variant(body: String, per_pixel: bool) -> int:
-	for i in variants.size():
-		if variants[i].near == body and variants[i].zone_pixel == per_pixel:
-			return i
-	return -1
-
-
-## Variant v's mean over the places where the body before the eyes was in the curved zone, ms.
-func _zone_mean(v: int) -> float:
-	var s := 0.0
-	var n := 0
-	for i in results.size():
-		if _zone_place[i]:
-			s += _mean(results[i][v])
-			n += 1
-	return s / n if n > 0 else 0.0
 
 
 ## Variant v's slowest place, ms.
@@ -661,14 +619,12 @@ func _show(s: String) -> void:
 class Setup:
 	var label: String
 	var foveation: int              # Foveation.set_level's level
-	var near: String                # the body before the eyes: "", "cube", "ball"
-	var zone_pixel: bool            # the balls in the zone per pixel (Renderer.zone_pixel)
+	var near: bool                  # the cube before the eyes
 
-	func _init(p_label: String, p_foveation: int, p_near: String, p_zone_pixel: bool) -> void:
+	func _init(p_label: String, p_foveation: int, p_near: bool) -> void:
 		label = p_label
 		foveation = p_foveation
 		near = p_near
-		zone_pixel = p_zone_pixel
 
 
 ## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees

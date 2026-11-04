@@ -28,12 +28,11 @@ import_scripts
 # verdict (env.sh's godot_x).
 JOBS=${JOBS:-$(nproc)}
 # the suite's parts, each its renders with their verdicts: Godot's own ball (desktop), the headset's
-# balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation; crpN
-# with the balls in the zone found per pixel, Renderer.zone_pixel, the speed check's way), each
+# balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation), each
 # case of the stereo check scene with its floor lines and foveation (checkN), each case of the
 # gravity view (gravityN)
-ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 crp0 crp3 crp4 check0
-check1 check2 check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
+ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 check0 check1 check2
+check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
 if [ -n "${PART:-}" ]; then
 	# CI's share: every part on exactly one of its lines, or a part would go unchecked
 	parts=$(grep -v '^#' "$ROOT/tools/stereo_parts.txt")
@@ -93,9 +92,6 @@ for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=1 render crv$p -s res://tests
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
-# the same with the balls in the zone found per pixel (the speed check's way of them): at the start,
-# in A's fillet, in the throat
-for p in 0 3 4; do want crp$p && TRACE=1 render crp$p -s res://tests/curved_check.gd -- "$OUT/crp$p" $p pixel; done
 if want desktop; then
 	render desktop --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"
 	render desktop --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph"
@@ -154,10 +150,6 @@ done
 for p in 0 6; do
 	want crf$p || continue
 	verdict "simulated headset, place $p where light is bent, our own foveation: the same" cat "$LOGS/crf$p.cmp"
-done
-for p in 0 3 4; do
-	want crp$p || continue
-	verdict "simulated headset, place $p where light is bent, the balls in the zone per pixel: the same" cat "$LOGS/crp$p.cmp"
 done
 for c in 0 1 2 3 4 5; do
 	want check$c || continue

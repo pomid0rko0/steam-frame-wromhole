@@ -316,12 +316,7 @@ func _process(delta: float) -> void:
 
 
 func draw_toys() -> void:
-	# the speed check's body before the eyes: a ball among the hands', a cube after the toys'
-	var nb := bench.near_body(_head_pose, camera.transform.basis)
-	var hb: Array = hands.drawn()
-	if not nb.is_empty() and nb[0] == "ball":
-		hb = hb + [[nb[1], nb[2]]]
-	toys.draw(renderer, hb, nb.slice(1) if not nb.is_empty() and nb[0] == "cube" else [], hands.lit())
+	toys.draw(renderer, hands.drawn(), bench.near_cube(_head_pose, camera.transform.basis), hands.lit())
 	var b := hands.beams()
 	for i in b.size():
 		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
