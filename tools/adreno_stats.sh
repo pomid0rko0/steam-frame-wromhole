@@ -21,7 +21,7 @@
 # in the headset by default: the floor's quad then only samples their texture.
 #   tools/adreno_stats.sh [--full] [--paths | --fov]      (--full: ir3's own lines too)
 # KEEP_LOG=file keeps the compiler's whole log (on the Frame a file in the repository, which the host
-# sees too). Needs the driver from tools/setup.sh (tools/.bin/mesa-fd). Timings are not measured:
+# sees too). Needs the driver from tools/setup.sh (mesa-fd next to Godot). Timings are not measured:
 # there is no GPU; the speed check in the headset (bench.gd) measures.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

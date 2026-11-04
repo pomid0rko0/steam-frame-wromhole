@@ -1,10 +1,9 @@
 # The tests' environment as an image: Ubuntu with all of tools/setup.sh, run as a copy outside the
-# repository (its ROOT is then /: everything in /tools/.bin, godot on PATH), as a cloud
-# environment's setup script runs it; a checkout's own setup.sh takes it from there (setup.sh,
-# reuse), and the tools find Godot on PATH without it (tools/env.sh). Its name, tag and all, is
-# tools/box_image.sh's; .github/workflows/image.yml builds it into the repository's Packages, one
-# per machine: CI's jobs run in the amd64 one, tools/box.sh starts the Frame's container from the
-# arm64 one. The context is a directory with setup.sh alone.
+# repository, as a cloud environment's setup script runs it (Godot and the Frame's driver in
+# /opt/wormhole-vr, godot on PATH: the tools find them there, tools/env.sh). Its name, tag and
+# all, is tools/box_image.sh's; .github/workflows/image.yml builds it into the repository's
+# Packages, one per machine: CI's jobs run in the amd64 one, tools/box.sh starts the Frame's
+# container from the arm64 one. The context is a directory with setup.sh alone.
 FROM docker.io/library/ubuntu:24.04
 COPY setup.sh /setup.sh
 # what setup.sh itself needs to run (box.sh installs the same into plain Ubuntu)
