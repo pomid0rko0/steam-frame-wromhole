@@ -23,6 +23,15 @@ DIR=/opt/wormhole-vr   # the same on every machine, for every checkout and workt
 REL=https://github.com/godotengine/godot/releases/download/$V-stable
 GODOT=Godot_v$V-stable_linux.$(uname -m | sed 's/^aarch64$/arm64/')   # x86_64 in the cloud, arm64 on the Frame
 TPL=${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/$V.stable
+# An install elsewhere (an older image's /tools/.bin, a checkout's tools/.bin: the Frame's container
+# keeps its own when setup.sh changes) moves into DIR rather than being downloaded and built again
+# (on the Frame, Turnip on one core); what is left of it in the checkout goes.
+if [ ! -e "$DIR" ]; then
+	for old in /tools/.bin ${REPO:+"$REPO/tools/.bin"}; do
+		[ ! -d "$old/mesa-fd" ] || { mv "$old" "$DIR"; rmdir "${old%/.bin}" 2>/dev/null || true; break; }
+	done
+fi
+[ -z "${REPO:-}" ] || rm -rf "$REPO/tools/.bin" "$REPO"/.wt/*/tools/.bin
 mkdir -p "$DIR"
 
 # GitHub's release storage gives one connection a fraction of the line: eight pieces (-r) at once.
@@ -152,9 +161,6 @@ get_adreno() {
 	ninja -C "$DIR/mesa-build" install >"$DIR/mesa-build.log" 2>&1 || { tail -20 "$DIR/mesa-build.log"; return 1; }
 	rm -rf "$src" "$DIR/mesa-build" "$DIR/mesa-setup.log" "$DIR/mesa-build.log"
 }
-
-# a checkout's tools/.bin holds an install nothing reads: its space back
-[ -z "${REPO:-}" ] || rm -rf "$REPO/tools/.bin" "$REPO"/.wt/*/tools/.bin
 
 prefix() {   # name: puts it in front of every line
 	local l
