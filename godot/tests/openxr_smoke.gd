@@ -191,8 +191,13 @@ func _process(_delta: float) -> bool:
 				and not p.open)
 		U.check("speed check: the line below says how it goes", p.strip.visible and p.strip_label.text.contains("замер:"))
 	if j > 70 and not b.running:
+		# each variant at each of its places (those of the long throat only, at those)
 		var segs: int = 2 if b.variants.size() > 1 else 1
-		var timed: bool = b.results.all(func(r: Array) -> bool: return r.all(func(v: Array) -> bool: return v.size() == segs))
+		var timed := true
+		for i in b.results.size():
+			for k in b.variants.size():
+				var want: int = 0 if b.variants[k].long and not Bench._long(b.PLACES[i]) else segs
+				timed = timed and b.results[i][k].size() == want
 		U.check("speed check: every place timed", timed)
 		U.check("speed check: the tour went round, frames counted", b.tour_results.size() == b.tour.size()
 				and b.tour_results.back().refreshes > 0)
