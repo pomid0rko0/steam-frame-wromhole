@@ -16,7 +16,8 @@ extends SceneTree
 
 const U := preload("res://tests/util.gd")
 const LONG := 40.0                        # m: a long throat's cylinder
-const BUSY := 40.0                        # ms: a frame of the change's scripts at most
+const BUSY := 8.0                         # ms: main's scripts in a frame while it stretches, at most (Main.scripts_ms,
+                                          # from the menu's input on: on this machine's CPU, not the headset's)
 
 var main: Main
 var frames := 0
@@ -155,7 +156,7 @@ func _gravity() -> void:
 			for k in 2:
 				worst = maxf(worst, absf(a[k] - b[k]) / maxf(absf(b[k]), 1e-12))
 	main.set_length(Main.LENGTH)
-	U.check("gravity by the fillet's two solutions summed is the one solved for the throat", worst < 1e-9, "%.1e at most, relative" % worst)
+	U.check("gravity by the fillet's two solutions summed is the one solved for the throat", worst < 1e-9, String.num_scientific(worst) + " at most, relative")
 
 
 ## 3: flying in the cylinder and in the fillet, and a toy.
