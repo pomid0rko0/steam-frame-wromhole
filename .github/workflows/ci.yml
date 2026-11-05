@@ -3,9 +3,9 @@
 # eleven machines that end at about the same time: the builds, then a share of the stereo test; the
 # OpenXR test alone (as tools/test_openxr.sh needs); the Godot tests, then a share; the headset's
 # compiler, then a share; the shaders' accuracy in two, alone (ref/test_gpu.py's pieces take all of
-# a machine's cores): the bodies' meshes in the zone (its check zone, three pieces of minutes each)
-# and the rest with the gravity's; five more machines of the stereo test alone, each with one of
-# the five longest curved places (tools/stereo_parts.txt: the shares, PART=n). A branch that
+# a machine's cores): the bodies' meshes in the zone (its check zone, two pieces a throat) and the
+# rest with the gravity's; five more machines of the stereo test alone, the longest
+# curved places' traces each on one of them (tools/stereo_parts.txt: the shares, PART=n). A branch that
 # differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
 # («Что изменилось», changes); main, a version, a tag and a release always get them all.
 # The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
@@ -297,8 +297,8 @@ jobs:
           name: stereo-images-3
           path: stereo/
 
-  # ref/test_gpu.py in two: its check zone (the bodies' meshes in the zone, the longest pieces) on a
-  # machine of its own, the rest with the gravity's on another
+  # ref/test_gpu.py in two: its check zone (the bodies' meshes in the zone) on a machine of its own,
+  # all the others (-zone) with the gravity's on another
   ref-zone:
     name: Точность шейдеров, сетки тел в зоне
     needs: image
@@ -325,7 +325,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - run: python3 ref/test_gpu.py numbers profile images exit eye
+      - run: python3 ref/test_gpu.py -zone
       - if: ${{ !cancelled() }}
         run: python3 ref/test_gravity.py
 

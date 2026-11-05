@@ -108,9 +108,11 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, flo
 	_mutex.lock()
 	_space = PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
 			tabx.x, tabx.y, tabx.z, tabx.w])
-	_tab = RenderingServer.texture_get_rd_texture(tab.get_rid())
+	var t := RenderingServer.texture_get_rd_texture(tab.get_rid())
+	if t != _tab:
+		_tab = t
+		_sets.clear()
 	_floor = floor_
-	_sets.clear()
 	_mutex.unlock()
 
 
@@ -325,9 +327,12 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	for v in 2:
 		var vv := mini(v, views - 1)
 		var proj := corr * data.get_view_projection(vv)
-		var inv := proj.inverse()
-		for c in [inv.x, inv.y, inv.z, inv.w]:
-			p.append_array([c.x, c.y, c.z, c.w])
+		# the rays as geo_view_ray has them: by the projection's rows x, y and w alone
+		var ray := Basis(Vector3(proj.x.x, proj.x.y, proj.x.w), Vector3(proj.y.x, proj.y.y, proj.y.w),
+				Vector3(proj.z.x, proj.z.y, proj.z.w)).inverse()
+		for c in [ray.x, ray.y, ray.z]:
+			p.append_array([c.x, c.y, c.z, 0.0])
+		p.append_array([0.0, 0.0, 0.0, 1.0])
 		var eo := data.get_view_eye_offset(vv)
 		off.append_array([eo.x, eo.y, eo.z, 0.0])
 		# where the eye looks, in pixels from the picture's corner at clip (-1, -1): the gaze's

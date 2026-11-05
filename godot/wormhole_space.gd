@@ -42,7 +42,8 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float, p_lif
 ## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
 ## the shape (Renderer.upload_space: the profile, the sweep table, the gravity's numbers; the field
 ## lines), and keep lift above Rout and what stands in chart coordinates (godot/scene.json's objects,
-## the toys' places, CheckScene's, main.START_POS, bench.gd's places) out of the curved zone.
+## the toys' places, CheckScene's, main.START_POS, bench.gd's places) out of the curved zone. The
+## throat's length alone changes at run time: set_length.
 func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length
@@ -52,6 +53,33 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	L = Lc + fillet * (PI / 2.0 - th0)
 	Rout = rho0 + fillet
 	_build_gravity()
+
+
+# the throat's cylinder's longest length set_length takes, m: ref/test_gpu.py checks the method on
+# a throat this long (its PROFILES' «long»)
+const LENGTH_MAX := 80.0
+
+
+## The cylinder's length 2 Lc, from 0 (the fillets meet smoothly, h = R) to LENGTH_MAX, the radius
+## and the fillet the same: the sweep table is the same (it hangs on those alone), the gravity's
+## table is the fillet's two solutions summed afresh (_grav_sum), so a frame can take it. The
+## renderer takes it by Renderer.set_length, and what stands in the space is carried by carried_l.
+func set_length(cylinder: float) -> void:
+	assert(h >= fillet, "a length is a throat's without a crease")
+	Lc = clampf(cylinder, 0.0, LENGTH_MAX) * 0.5
+	h = Lc + fillet
+	L = Lc + fillet * PI / 2.0
+	_grav_sum()
+
+
+## Where a point at l before a change of the cylinder's length (it was 2 Lc0) is now, n the same: in
+## a universe or its fillet it goes with its mouth, in the cylinder with its length (at the same
+## share of the way from its middle): the floor's places stay, and so do a vector's parts (U_l, u).
+func carried_l(l: float, Lc0: float) -> float:
+	var al := absf(l)
+	if al >= Lc0:
+		return signf(l) * (al - Lc0 + Lc)
+	return l * Lc / Lc0
 
 
 func _theta(al: float) -> float:
@@ -467,46 +495,65 @@ func height_grad(l: float, n: Vector3) -> Vector4:
 # Gravity through the wormhole: docs/gravity.md.
 
 ## Solve the ODE for the current profile: closed form on the cylinder, RK4 over the fillet into
-## a table, then scale so that f = r + beta / r^2 outside.
+## a table, then scale so that f = r + beta / r^2 outside. The ODE is linear: over the fillet its
+## solutions from (f, p) = (1, 0) and (0, 1) at its start (p = r^2 f' the flux, continuous even across
+## the crease of h < fillet), kept (_grav_one), are summed with the cylinder's f and p there (_grav_sum).
 func _build_gravity() -> void:
 	grav_k = sqrt(2.0) / rho0
-	# f and the flux p = r^2 f' at l = Lc (p is continuous even across the crease of h < fillet)
+	var d := (L - Lc) / GRAV_NODES
+	var hs := d / GRAV_SUB
+	_grav_one = []
+	for k in 2:
+		var f := 1.0 if k == 0 else 0.0
+		var p := 1.0 - f
+		var raw := PackedFloat64Array()
+		for i in GRAV_NODES + 1:
+			var x := i * d                  # from the fillet's start: its shape there is the same at any Lc
+			var ri := r(Lc + x)
+			raw.append(f)
+			raw.append(p / (ri * ri))
+			if i == GRAV_NODES:
+				break
+			for _s in GRAV_SUB:               # RK4 for f' = p / r^2, p' = 2 f
+				var r0 := r(Lc + x)
+				var rm := r(Lc + x + 0.5 * hs)
+				var r1 := r(Lc + x + hs)
+				var f1 := p / (r0 * r0)
+				var p1 := 2.0 * f
+				var f2 := (p + 0.5 * hs * p1) / (rm * rm)
+				var p2 := 2.0 * (f + 0.5 * hs * f1)
+				var f3 := (p + 0.5 * hs * p2) / (rm * rm)
+				var p3 := 2.0 * (f + 0.5 * hs * f2)
+				var f4 := (p + hs * p3) / (r1 * r1)
+				var p4 := 2.0 * (f + hs * f3)
+				f += hs / 6.0 * (f1 + 2.0 * f2 + 2.0 * f3 + f4)
+				p += hs / 6.0 * (p1 + 2.0 * p2 + 2.0 * p3 + p4)
+				x += hs
+		_grav_one.append(raw)
+	_grav_sum()
+
+
+var _grav_one: Array = []       # the fillet's two solutions, as _grav_tab (_build_gravity)
+
+
+## The fillet's table for the cylinder's f and p at its end (cosh and its flux: 1, 0 without one), and
+## the numbers outside.
+func _grav_sum() -> void:
 	var f := 1.0
 	var p := 0.0
 	if Lc > 0.0:
 		f = cosh(grav_k * Lc)
 		p = rho0 * rho0 * grav_k * sinh(grav_k * Lc)
-	var d := (L - Lc) / GRAV_NODES
-	var hs := d / GRAV_SUB
-	var raw := PackedFloat64Array()
-	for i in GRAV_NODES + 1:
-		var l := Lc + i * d
-		raw.append(f)
-		raw.append(p / (r(l) * r(l)))
-		if i == GRAV_NODES:
-			break
-		for _s in GRAV_SUB:               # RK4 for f' = p / r^2, p' = 2 f
-			var rm := r(l + 0.5 * hs)
-			var r1 := r(l + hs)
-			var f1 := p / (r(l) * r(l))
-			var p1 := 2.0 * f
-			var f2 := (p + 0.5 * hs * p1) / (rm * rm)
-			var p2 := 2.0 * (f + 0.5 * hs * f1)
-			var f3 := (p + 0.5 * hs * p2) / (rm * rm)
-			var p3 := 2.0 * (f + 0.5 * hs * f2)
-			var f4 := (p + hs * p3) / (r1 * r1)
-			var p4 := 2.0 * (f + hs * f3)
-			f += hs / 6.0 * (f1 + 2.0 * f2 + 2.0 * f3 + f4)
-			p += hs / 6.0 * (p1 + 2.0 * p2 + 2.0 * p3 + p4)
-			l += hs
-	var fe: float = raw[2 * GRAV_NODES]                 # at l = L, where r = Rout
-	var fpe: float = raw[2 * GRAV_NODES + 1]
+	var s0: PackedFloat64Array = _grav_one[0]
+	var s1: PackedFloat64Array = _grav_one[1]
+	var fe := f * s0[2 * GRAV_NODES] + p * s1[2 * GRAV_NODES]           # at l = L, where r = Rout
+	var fpe := f * s0[2 * GRAV_NODES + 1] + p * s1[2 * GRAV_NODES + 1]
 	var a := (2.0 * fe + Rout * fpe) / (3.0 * Rout)
 	grav_beta = Rout * Rout * (fe - Rout * fpe) / (3.0 * a)
 	grav_a = 1.0 / a
-	_grav_tab = PackedFloat64Array()
-	for v in raw:
-		_grav_tab.append(v / a)
+	_grav_tab.resize(s0.size())
+	for i in s0.size():
+		_grav_tab[i] = (f * s0[i] + p * s1[i]) / a
 
 
 ## [f, df/dl] at l (docs/gravity.md's f). f is even, f' odd. On the fillet a cubic Hermite

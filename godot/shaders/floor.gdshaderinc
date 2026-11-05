@@ -32,8 +32,7 @@ void vertex() {
 	// a quad over the whole view at the far plane (reversed depth: 0), so that any body's depth wins;
 	// each corner's ray from the eye (geo_eye: in multiview not from the camera's origin)
 	POSITION = vec4(VERTEX.xy, 0.0, 1.0);
-	vec4 p = inverse(PROJECTION_MATRIX) * vec4(VERTEX.xy, 0.5, 1.0);
-	v_ray = p.xyz / p.w - EYE_OFFSET;
+	v_ray = geo_view_ray(PROJECTION_MATRIX, VERTEX.xy);
 	float el;
 	vec3 en;
 	vec4 ex, ey, ez;

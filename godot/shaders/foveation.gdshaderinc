@@ -30,7 +30,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 head_fr[3];    // head_f
 	vec4 floor_;        // (g_lift, g_beta)
 	mat4 inv_view;      // INV_VIEW_MATRIX
-	mat4 inv_proj[2];   // each eye's inverse(PROJECTION_MATRIX)
+	mat4 ray[2];        // each eye's rays: ray * (clip, 1, 0) is geo_view_ray(PROJECTION_MATRIX, clip)
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
 	vec4 warp0[2];      // each eye's g (pixels from the picture's corner at clip (-1, -1)) and c (texels)
 	vec4 warp1[2];      // each eye's r0 (pixels), m (per pixel), the texels across and down
@@ -119,8 +119,7 @@ void main() {
 	if (used) {
 		// the ray as floor.gdshaderinc's quad has it at that point of the picture
 		vec2 clip = p / fovp.pic.xy * 2.0 - 1.0;
-		vec4 pp = fovp.inv_proj[v] * vec4(clip, 0.5, 1.0);
-		vec3 d = normalize(pp.xyz / pp.w - fovp.eye_off[v].xyz);
+		vec3 d = normalize((fovp.ray[v] * vec4(clip, 1.0, 0.0)).xyz);
 		vec4 e = eyes[6u * v];
 		vec4 D = d.x * eyes[6u * v + 1u] + d.y * eyes[6u * v + 2u] + d.z * eyes[6u * v + 3u];
 		// the ray's way out of the zone as geo_exit finds it, its way across from the eye's rows
@@ -142,8 +141,7 @@ void main() {
 			way = w.y;
 		}
 		// two texels' turn: the quad filters between neighbouring texels (lens_near)
-		vec4 p2 = fovp.inv_proj[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 0.5, 1.0);
-		float ang = length(normalize(p2.xyz / p2.w - fovp.eye_off[v].xyz) - d);
+		float ang = length(normalize((fovp.ray[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 1.0, 0.0)).xyz) - d);
 		sn = lens_trace(pos, dir, sheet, way, lensed || lens_near(e.x, eye.x, D, ang));
 		a = look_ground_at(lens_floor_xy(pos, dir, sheet));
 		edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;

@@ -2,7 +2,13 @@
 traces itself, independently of the shaders' method: the eye moved from the head along a geodesic
 and its frame carried along (RK4), each pixel's ray integrated as a geodesic of the space in 3D
 (RK4, the equations of docs/geometry.md, «Движение»; steps of STEP and STEP_CYL in and near the
-curved zone, longer out in the flat universes), however many times it goes round the throat, up to RAY_MAX; the
+curved zone, longer out in the flat universes), however many times it goes round the throat, up to
+RAY_MAX. In the throat's cylinder the space is a line times a sphere of radius rho0, and a geodesic
+is uniform along l and along a great circle of the sphere: there a ray goes by that closed form,
+in steps of STEP_CYL where it may meet a body (within the body's slab of l, and of the angle round
+the throat the body spans) and in one jump to the next such place or the cylinder's end elsewhere,
+so a ray goes round the throat thousands of times (the images converging next to the line across
+it, seen from inside the cylinder); the
 balls and cubes as BallWorld defines them (chord distance in R^4; the 4D box cut by the space), met
 by each step's chord of R^4; the floor where the height r(l) n_z + lift goes through 0.
 Checks per eye:
@@ -22,6 +28,10 @@ Checks per eye:
     body's pixel its image lacks, judged by that body's outline, when a ray a quarter of a pixel off
     its centre meets this kind next with the other kind taken out (near the photon sphere both kinds' images, thinner than a pixel,
     lie in one band, and a hair off the front one shows the one behind);
+  and a body's pixel whose rays pass it by counts only if no ray within MAX_EDGE px meets that
+    kind (thin: an image thinner than a pixel, a hundredth of one at a cube's corner on the eye's
+    axis, which the rays near the pixel's centre miss and the rasterizer draws where a triangle
+    covers its centre; the ray is sought by Newton's steps on how near rays come to that kind);
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
     haze) against the picture's colour, away from the cells' edges and lines (by the pixel's
     footprint on the floor, and under foveation by two of its texel's: the cell's edge filtered over
@@ -51,10 +61,15 @@ MIN_THICK = 2.0         # and its pixels are this many times its outline's (a di
 STEP = 0.05             # m: RK4 steps on the fillets and near the zone (a chord strays 0.3 mm from
 STEP_CYL = 0.1          # the path), on the cylinder (0.4 mm); out in a flat universe a tenth of the
 STEP_MAX = 0.5          # way to the zone's edge, up to this
-RAY_MAX = 90.0          # m along a ray at most
+RAY_MAX = 30000.0       # m along a ray at most (the cylinder's jumps make a long one cheap)
 FLOOR_SAMPLES = 1500
 FLOOR_MIN = 100         # fewer usable floor samples (a view without much floor): no floor check
 GRID = 4
+THIN_STEPS = 8          # Newton's steps towards an image thinner than a pixel at most
+THIN_H = 0.01           # px: the rays off a pixel's centre for the gradient of their gap
+THIN_OVER = 1.1         # a step goes this much past where the gap's line crosses 0 (into the body)
+THIN_GRID = 17          # rays across the reach's disc round a pixel to start Newton's steps from
+THIN_STARTS = 3         # its nearest rays it starts from
 
 pre = sys.argv[1]
 EYES = sys.argv[2:3] or ['left', 'right']
@@ -223,37 +238,132 @@ def seg_box(P0, P1, C, Ax, half):
     return np.where((tin <= tout) & (u <= 1) & (tout >= 0), u, 2.0)
 
 
+def gap_ball(P0, P1, C, rad):
+    """How far outside the ball the chord P0 -> P1 comes nearest it (negative: in it)."""
+    d = P1 - P0
+    q = P0 - C
+    u = np.clip(-np.sum(q * d, -1) / np.maximum(np.sum(d * d, -1), 1e-30), 0.0, 1.0)
+    return np.linalg.norm(q + u[:, None] * d, axis=-1) - rad
+
+
+def gap_box(P0, P1, C, Ax, half):
+    """How far outside the 4D box the chord P0 -> P1 comes nearest it, in the box's own measure (the
+    largest of its slabs' distances; negative: in it). Along the chord that measure is the largest
+    of eight linear functions: its least on the chord is at an end or where two of them cross."""
+    o = (P0 - C) @ Ax.T
+    d = (P1 - P0) @ Ax.T
+    c = np.concatenate([o, -o], -1)                   # [m, 8]: c + k u
+    k = np.concatenate([d, -d], -1)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        u = (c[:, None, :] - c[:, :, None]) / (k[:, :, None] - k[:, None, :])
+    u = np.concatenate([u.reshape(len(c), -1), np.zeros((len(c), 1)), np.ones((len(c), 1))], -1)
+    u = np.where(np.isfinite(u), np.clip(u, 0.0, 1.0), 0.0)
+    g = np.max(c[:, None, :] + k[:, None, :] * u[:, :, None], -1)
+    return g.min(-1) - half
+
+
 def height(l, n):
     return r_of(l) * n[..., 2] + lift
 
 
-def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
+def cyl_go(l, n, vl, v, hs):
+    """Rays in the throat's cylinder moved hs along their geodesics, in closed form."""
+    vt = np.linalg.norm(v, axis=-1)
+    vh = v / np.maximum(vt, 1e-300)[:, None]
+    a = (vt / rho0 * hs)[:, None]
+    n2 = np.cos(a) * n + np.sin(a) * vh
+    v2 = vt[:, None] * (np.cos(a) * vh - np.sin(a) * n)
+    n2 /= np.linalg.norm(n2, axis=-1, keepdims=True)
+    return [l + vl * hs, n2, vl, v2 - np.sum(v2 * n2, -1, keepdims=True) * n2]
+
+
+def cyl_jump(l, n, vl, v, reach, left):
+    """For rays in the throat's cylinder, how far each may go before it could meet a body (reach:
+    [centre (R^4), chord distance its points keep within]) or leave the cylinder, at most left: 0
+    where it may meet one at once (in a body's slab of l and its window of angle). On the cylinder a
+    point is (rho0 n, l) in R^4, and a ray's n turns round a fixed great circle at |v| / rho0 a
+    metre: a point within chord c of C has |l - C_w| < c, and its angle round the circle from C's
+    direction in the circle's plane (A: C's distance from the centre in that plane) has a cosine at
+    least (rho0^2 + |C_xyz|^2 - c^2) / (2 rho0 A)."""
+    m = len(l)
+    out = np.minimum(left, np.where(vl > 0, (Lc - l) / np.where(vl > 0, vl, 1.0),
+                                    np.where(vl < 0, (-Lc - l) / np.where(vl < 0, vl, 1.0), np.inf)))
+    vt = np.linalg.norm(v, axis=-1)
+    vh = v / np.maximum(vt, 1e-300)[:, None]
+    om = vt / rho0
+    for C, c in reach:
+        cx = C[:3]
+        dl = l - C[3]
+        inside = np.abs(dl) < c
+        to_slab = np.where(dl < -c, np.where(vl > 0, (-c - dl) / np.where(vl > 0, vl, 1.0), np.inf),
+                           np.where(dl > c, np.where(vl < 0, (c - dl) / np.where(vl < 0, vl, 1.0), np.inf), 0.0))
+        a = n @ cx
+        b = vh @ cx
+        A = np.hypot(a, b)
+        kap = (rho0 * rho0 + cx @ cx - c * c) / np.maximum(2 * rho0 * A, 1e-300)
+        dlt = np.arccos(np.clip(kap, -1.0, 1.0))
+        phi = np.arctan2(b, a)
+        in_win = np.cos(phi) >= kap
+        to_win = np.where(in_win, 0.0, np.where(om > 1e-12, np.mod(phi - dlt, 2 * np.pi) / np.maximum(om, 1e-300), np.inf))
+        to_win = np.where(kap > 1.0, np.inf, to_win)      # its plane passes the body by
+        t = np.where(inside, to_win, to_slab)
+        out = np.minimum(out, t)
+    return np.maximum(out, 0.0)
+
+
+def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2), gap=0):
     """Rays from (l0, n0) along unit tangent vectors D4 [m, 4]: what each meets first: 1 a ball,
     2 a cube, 3 the floor (with its l, n and the way), 0 the sky, -1 still going at smax. Only the
-    body kinds in bodies are there."""
+    body kinds in bodies are there. With gap a kind (1, 2), also how near each ray's steps come to
+    a body of that kind on its way (gap_ball, gap_box: the least; negative where it meets one)."""
     m = D4.shape[0]
+    g = np.full(m, np.inf)
     l = np.full(m, l0); n = np.tile(n0, (m, 1)); vl = D4[:, 0].copy(); v = D4[:, 1:].copy()
     kind = np.full(m, -1); hit_l = np.zeros(m); hit_n = np.zeros((m, 3)); way = np.zeros(m)
     s = np.zeros(m)
     alive = np.ones(m, bool)
+    reach = ([(C, rad) for C, rad in BALLS] if 1 in bodies else []) + ([(C, 2.0 * a) for C, _, a in CUBES] if 2 in bodies else [])
     while alive.any():
         idx = np.nonzero(alive)[0]
         r = r_of(l[idx])
         al = np.abs(l[idx])
         hs = np.where(al < L + 0.5, np.where(al < Lc - 0.1, STEP_CYL, STEP), np.clip(0.1 * (r - Rout), STEP, STEP_MAX))
         st = rk4([l[idx], n[idx], vl[idx], v[idx]], hs)
+        # in the cylinder: by the closed form, a step where a body may be met, else a jump to the
+        # next such place (just short of it) or the cylinder's end
+        cyl = al < Lc - 1e-6
+        jumped = np.zeros(len(idx), bool)
+        if cyl.any():
+            ci = idx[cyl]
+            jmp = cyl_jump(l[ci], n[ci], vl[ci], v[ci], reach, smax - s[ci])
+            big = jmp > STEP_CYL
+            hc = np.where(big, jmp * (1 - 1e-9) - 1e-6, np.minimum(STEP_CYL, np.maximum(cyl_jump(l[ci], n[ci], vl[ci], v[ci], [], np.inf), 1e-9)))
+            hc = np.maximum(hc, 1e-9)
+            go = cyl_go(l[ci], n[ci], vl[ci], v[ci], hc)
+            for k in range(4):
+                st[k][cyl] = go[k]
+            hs = hs.copy()
+            hs[cyl] = hc
+            jumped[cyl] = big
         P0 = embed(l[idx], n[idx])
         P1 = embed(st[0], st[1])
         best = np.full(len(idx), 2.0)
         what = np.zeros(len(idx), int)
         if 1 in bodies:
             for C, rad in BALLS:
-                u = seg_ball(P0, P1, C, rad)
+                u = np.where(jumped, 2.0, seg_ball(P0, P1, C, rad))
                 what = np.where(u < best, 1, what); best = np.minimum(best, u)
         if 2 in bodies:
             for C, Ax, a in CUBES:
-                u = seg_box(P0, P1, C, Ax, a)
+                u = np.where(jumped, 2.0, seg_box(P0, P1, C, Ax, a))
                 what = np.where(u < best, 2, what); best = np.minimum(best, u)
+        # a jump goes nowhere near a body
+        if gap == 1:
+            for C, rad in BALLS:
+                g[idx] = np.minimum(g[idx], np.where(jumped, np.inf, gap_ball(P0, P1, C, rad)))
+        elif gap == 2:
+            for C, Ax, a in CUBES:
+                g[idx] = np.minimum(g[idx], np.where(jumped, np.inf, gap_box(P0, P1, C, Ax, a)))
         h0 = height(l[idx], n[idx]); h1 = height(st[0], st[1])
         fl = (h0 > 0) & (h1 <= 0)
         uf = np.where(fl, h0 / np.where(fl, h0 - h1, 1.0), 2.0)
@@ -277,6 +387,8 @@ def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
         kind[sky] = 0
         alive[sky] = False
         alive[idx[alive[idx] & (s[idx] >= smax)]] = False
+    if gap:
+        return kind, hit_l, hit_n, way, g
     return kind, hit_l, hit_n, way
 
 
@@ -343,6 +455,60 @@ for side_i, eye_name in enumerate(('left', 'right')):
             k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes), bodies=bodies)
             ok &= ((k == kind) == has) & (k >= 0)
         return ok
+    def thin(xs, ys, kind, reach, alone):
+        """Whether a ray within reach px of pixels (xs, ys)'s centres meets a body of that kind
+        first: an image thinner than a pixel, which the rays at the centre and a quarter off it all
+        pass by. Sought by Newton's steps on how near a ray comes to the kind's bodies (trace's gap,
+        its gradient across the picture by rays THIN_H px off), from the centre, then from the ray
+        of a grid round it (THIN_GRID across the reach) that comes nearest (the nearest stretch of
+        a ray jumps from one way round the throat to another, and with it the gap's gradient), until
+        a ray meets one (and no body of the other kind in front, but where alone: there the other
+        kind is in front, and its outline judges the pixel)."""
+        def meets(j, x, y):
+            k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, x, y), axes))
+            return (k == kind) | alone[j]
+
+        def newton(j, x, y):
+            ok = np.zeros(len(j), bool)
+            x = x.copy(); y = y.copy()
+            live = np.ones(len(j), bool)
+            for _ in range(THIN_STEPS):
+                i = np.nonzero(live)[0]
+                if len(i) == 0:
+                    break
+                m = len(i)
+                px = np.r_[x[i], x[i] + THIN_H, x[i]]; py = np.r_[y[i], y[i], y[i] + THIN_H]
+                _, _, _, _, gp = trace(l0, n0, to_tangent(n0, pixel_rays(e, px, py), axes), bodies=(kind,), gap=kind)
+                g0 = gp[:m]
+                gx_, gy_ = (gp[m:2 * m] - g0) / THIN_H, (gp[2 * m:] - g0) / THIN_H
+                met = g0 <= 0
+                if met.any():
+                    ok[i[met]] = meets(j[i[met]], x[i[met]], y[i[met]])
+                    live[i[met]] = False
+                gg = gx_ * gx_ + gy_ * gy_
+                go = ~met & np.isfinite(g0) & (gg > 0)
+                live[i[~met & ~go]] = False
+                i = i[go]
+                x[i] -= THIN_OVER * g0[go] * gx_[go] / gg[go]
+                y[i] -= THIN_OVER * g0[go] * gy_[go] / gg[go]
+                live[i[np.hypot(x[i] - xs[j[i]], y[i] - ys[j[i]]) > reach[j[i]]]] = False
+            return ok
+        everyone = np.arange(len(xs))
+        found = newton(everyone, xs.astype(float), ys.astype(float))
+        u = np.linspace(-1.0, 1.0, THIN_GRID)
+        gu, gv = [a.ravel() for a in np.meshgrid(u, u)]
+        disc = np.hypot(gu, gv) <= 1.0
+        gu, gv = gu[disc], gv[disc]
+        for j in np.nonzero(~found)[0]:
+            px, py = xs[j] + reach[j] * gu, ys[j] + reach[j] * gv
+            k, _, _, _, gp = trace(l0, n0, to_tangent(n0, pixel_rays(e, px, py), axes), bodies=(kind,), gap=kind)
+            hit = np.nonzero(gp <= 0)[0]
+            if len(hit) and meets(np.full(len(hit), j), px[hit], py[hit]).any():
+                found[j] = True
+                continue
+            b = np.argsort(gp)[:THIN_STARTS]
+            found[j] = newton(np.full(len(b), j), px[b], py[b]).any()
+        return found
     lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
     li = np.nonzero(lack)[0]
     lack[li] = steady(gx[li].astype(float), gy[li].astype(float), gk[li], True)
@@ -374,6 +540,9 @@ for side_i, eye_name in enumerate(('left', 'right')):
         other = (ref_green if code == 1 else ref_red)
         fy, fx = np.nonzero(far & A & other)
         far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), False, bodies=(code,))
+        # the picture's body where the rays pass by: its image may be thinner than a pixel
+        fy, fx = np.nonzero(far & A & ~Rf)
+        far[fy, fx] = ~thin(fx, fy, code, MAX_EDGE * texel[fy, fx], other[fy, fx])
         far_all |= far
         lab, nb = ndimage.label(ndimage.binary_dilation(Rf, iterations=2))
         worst = 0.0

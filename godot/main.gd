@@ -39,10 +39,12 @@ extends Node3D
 ## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
 ## (_log_profiles): in the headset it is our Frame profile.
 
-# the video's throat (docs/geometry.md, «Пространство»)
+# the video's throat (docs/geometry.md, «Пространство»); its cylinder's length the menu changes
+# (set_length) and keeps for the next start
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
+const LENGTH := 2.0 * (HALF_LENGTH - FILLET)   # m: the video's cylinder
 const LIFT := 5.0                   # m: the throat's centre above the floor (above the curved zone's radius, 4 m)
 const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
@@ -54,6 +56,8 @@ const TILT_SPEED := deg_to_rad(60.0)   # flying: pitch per second at full stick,
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const NEAR := 0.01                  # m: the camera's near plane: what comes closer to an eye is cut
+const FAR := 4000.0                 # m: the far plane (far over near well under float32's 1e7, or Godot can't
+                                    # read it back from the projection); the tail's deeper images: zone_tail
 const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
@@ -142,11 +146,14 @@ func _ready() -> void:
 	else:
 		xr = null
 	var target: Viewport = xr_view if in_xr else get_viewport()
+	space.set_length(Menu.saved_length(LENGTH))
+	print("throat: ", length_text())
 
 	origin = XROrigin3D.new()
 	host.add_child(origin)
 	camera = XRCamera3D.new()
 	camera.near = NEAR
+	camera.far = FAR
 	camera.compositor = Compositor.new()
 	origin.add_child(camera)
 	if in_xr:
@@ -316,7 +323,7 @@ func _process(delta: float) -> void:
 
 
 func draw_toys() -> void:
-	toys.draw(renderer, hands.drawn(), bench.near_cube(_head_pose, camera.transform.basis), hands.lit())
+	toys.draw(renderer, hands.drawn(), bench.extras(_head_pose, camera.transform.basis), hands.lit())
 	var b := hands.beams()
 	for i in b.size():
 		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
@@ -442,6 +449,39 @@ func set_fall(on: bool, say := false) -> void:
 	menu.refresh()
 	if say:
 		menu.notice("полёт: " + Menu.FALLS[0 if on else 1])
+
+
+## The throat's cylinder's length, m (WormholeSpace.set_length), each frame the menu's row changes
+## it: what stands in the space goes with its part of it (WormholeSpace.carried_l), the body and the
+## toys (their velocities and axes as they were); a toy being pulled is let be, the hands' motion
+## forgotten; the stereo check's scene, built of points of R^4, is built again.
+func set_length(cylinder: float) -> void:
+	var Lc0 := space.Lc
+	space.set_length(cylinder)
+	if space.Lc == Lc0:
+		return
+	var st := viewer.get_state()
+	st[0] = space.carried_l(st[0], Lc0)
+	viewer.set_state(st)
+	for b in toys.world.balls:
+		b.l = space.carried_l(b.l, Lc0)
+	for c in toys.world.cubes:
+		c.l = space.carried_l(c.l, Lc0)
+	hands.drop_pulls()
+	hands.forget_motion()
+	renderer.set_length()
+	if overlay:
+		for c in overlay.get_children():
+			c.free()
+		CheckScene.build(overlay, space, renderer)
+	elif toys.enabled:
+		draw_toys()
+	_update_chart_map()
+
+
+func length_text() -> String:
+	return "cylinder %.2f m, the curved zone %.2f m through, worlds %.2f m apart in R^4" \
+			% [2.0 * space.Lc, 2.0 * space.L, 2.0 * space.h]
 
 
 func set_smooth_turn(on: bool) -> void:

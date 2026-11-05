@@ -7,12 +7,13 @@
 #   waves            how many waves of 64 (128) a core keeps at once (ir3's max_waves)
 #   cat4             transcendental instructions (exp, log, sqrt, rcp, sin...)
 #   cat5             texture-unit instructions (samples, derivatives)
-# The fragment programs of more than a third of the biggest one's size: the floor's, the biggest
-# (floor.gdshader; Godot compiles it twice, a generic "ubershader" first, then the one specialised
-# for the scene, which runs from then on), and the generic programs of Godot's own StandardMaterial3D
-# (the menu's and the gaze dot's: two inputs, texture samples, loops); the bodies' are smaller. The
-# vertex programs likewise: the bodies' (body.gdshaderinc). Code size is not what runs: a pixel
-# runs one way through the floor's branches.
+# The fragment programs of more than a third of the biggest one's size: the biggest are the tail's
+# (zone_tail.gdshader: its search for the first way into a body, per pixel of its sectors only;
+# several, as Godot compiles each material's: a generic "ubershader" first, then the one
+# specialised for the scene, which runs from then on, and its passes); the floor's (floor.gdshader)
+# and Godot's own StandardMaterial3D's (the menu's and the gaze dot's) are a fraction of them, below
+# the line. The vertex programs likewise: the bodies' (body.gdshaderinc). Code size is not what
+# runs: a pixel runs one way through the branches, and as many rounds of a loop as it needs.
 # --paths: instead, each way a floor pixel's ray can take (geo_floor's branches; tests/floor_paths.gd
 # forces them one way at a time), the program Godot specialises and runs for it: what a pixel on
 # that way costs.
@@ -101,7 +102,7 @@ for stage in ('FRAG', 'VERT'):
     if not progs:
         sys.exit('no %s program statistics in the log' % stage)
     big = max(v[0] for v in progs.values())
-    print('fragment programs (the floor, the biggest):' if stage == 'FRAG' else 'vertex programs (the bodies):')
+    print('fragment programs (the tail\'s, the biggest):' if stage == 'FRAG' else 'vertex programs (the bodies):')
     for p, (n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl) in progs.items():
         if n < big / 3:
             continue

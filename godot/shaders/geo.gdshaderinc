@@ -151,13 +151,17 @@ vec2 geo_between(float b, float sigma, float a1, float gap1, float a2, float gap
 		out_ += vec2(b / g_prof.x, g_prof.x) * ((min(a2, Lc) - a1) / max(k, 1e-12));
 	}
 	if (a2 > Lc && a1 < L) {
+		// u at either end: a ray that turns on the fillet (sigma >= u0) has u = sigma + gap / 2R
+		// there (r - b = 2R (u - sigma)), exact by the gap; from |l| u keeps only |l|'s float32 digits,
+		// which on a long throat (|l| tens of metres) are fewer than a point next to the turn needs
 		float ul = max(sigma, g_prof2.y);
+		bool turns = sigma >= g_prof2.y;
 		bool lo = origin || a1 <= Lc;
-		float u1 = lo ? ul : geo_u(a1);
 		float d1 = lo ? ul - sigma : gap1 / R2;
+		float u1 = lo ? ul : (turns ? sigma + d1 : geo_u(a1));
 		bool whole = a2 >= L;
-		float u2 = whole ? 0.5 : geo_u(a2);
 		float d2 = whole ? (g_prof2.x - b) / R2 : gap2 / R2;
+		float u2 = whole ? 0.5 : (turns ? sigma + d2 : geo_u(a2));
 		out_ += geo_fillet(b, sigma, u1, d1, u2, d2, lo, whole);
 	}
 	if (a2 > L) {
@@ -190,6 +194,13 @@ vec2 geo_from_origin(float b, float sigma, float a, float gap) {
 // tangent vectors) and its place in the room (head_pos), and the view's camera as Godot gives it.
 // Under multiview INV_VIEW_MATRIX is one camera for both eyes, set back so that its frustum holds
 // both; each eye sits at EYE_OFFSET in that camera's space (its own turn is in its projection). So:
+// The ray from the eye seen at clip (x, y) by projection P, in the camera's space: to the point
+// there that P puts at w = 1, so linear across the picture (a varying between corners is exact).
+// Only P's rows x, y and w say it, whatever its depth row (near and far) is.
+vec3 geo_view_ray(mat4 P, vec2 clip) {
+	return inverse(mat3(P[0].xyw, P[1].xyw, P[2].xyw)) * vec3(clip, 1.0);
+}
+
 // the eye at inv_view * eye_offset, the camera's axes (right, up, back) carried there; a point's
 // place in the camera's space is eye_offset plus its direction from the eye along those axes. The
 // eye is the head moved by the play-space offset, to second order along the geodesic

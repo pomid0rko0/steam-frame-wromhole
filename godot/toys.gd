@@ -142,9 +142,9 @@ func cube_on_floor(side: float, pos: Vector2, half: float, yaw: float, color: Co
 
 
 ## The balls and cubes (those in lit, Hands.lit, glowing), the hands' balls (hands: [centre, colour
-## with the radius]) and the speed check's cube (extra: Bench.near_cube's, or []), to the renderer
+## with the radius]) and the speed check's bodies (extra: Bench.extras'), to the renderer
 ## (Renderer.set_objects).
-func draw(renderer: Renderer, hands: Array, extra := [], lit := {}) -> void:
+func draw(renderer: Renderer, hands: Array, extra := {}, lit := {}) -> void:
 	var pos := PackedVector4Array()
 	var col := PackedVector4Array()
 	for b in world.balls:
@@ -154,6 +154,9 @@ func draw(renderer: Renderer, hands: Array, extra := [], lit := {}) -> void:
 	for h in hands:
 		pos.append(h[0])
 		col.append(h[1])
+	for b: Array in extra.get("balls", []):
+		pos.append(b[0])
+		col.append(b[1])
 	var cpos := PackedVector4Array()
 	var axes := PackedVector4Array()
 	var ccol := PackedVector4Array()
@@ -164,11 +167,11 @@ func draw(renderer: Renderer, hands: Array, extra := [], lit := {}) -> void:
 		axes.append(box[1])
 		axes.append(box[2])
 		ccol.append(Vector4(k.r, k.g, k.b, c.half))
-	if not extra.is_empty():
-		cpos.append(extra[0])
-		axes.append(extra[1])
-		axes.append(extra[2])
-		ccol.append(extra[3])
+	for c: Array in extra.get("cubes", []):
+		cpos.append(c[0])
+		axes.append(c[1])
+		axes.append(c[2])
+		ccol.append(c[3])
 	renderer.set_objects(pos, col, cpos, axes, ccol)
 
 
