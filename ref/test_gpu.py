@@ -42,16 +42,13 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     zone's edge and out of it, half-surfaces in every azimuth: the point on the body's surface
     (chord, a cube's largest slab) and on its line, the line's first way out (as float64 finds it,
     sampled and bisected);
-  the zone bodies' meshes whole (zone_vertex, MESHES), for eyes' axes through and beside the
-    bodies: every vertex on its body; a ball's first and last columns' sections at its tips; every
-    corner of a cube's sections (float64: where the half-surface meets an edge) a vertex of its
-    column, or the corner of a half-surface turned round the axis by no more than CORNER_AZ (an
-    edge next to the half-surface's plane: turned_corner), and on the same row in the next column
-    (the strips join a corner to itself); a cube an
-    edge of which the space's curve takes back round the axis (folds) only near its surface (TEAR):
-    its sections cut that edge twice, which one corner an edge can't be; and as near their
-    surface, cubes the axis passes through or next to a corner, an edge or a face (within a
-    hundredth of a radian), where the mesh once tore, vertices metres off;
+  the zone bodies' meshes whole (balls zone_ball_vertex, cubes zone_cube.gdshaderinc's passes;
+    MESHES), for eyes' axes through and beside the bodies: every vertex on its body; a ball's first
+    and last columns' sections at its tips; a cube: every triangle (of area in the picture, not
+    dropped) on one face of it (ON_FACE: none across an edge, the face's lighting another's), and
+    every face covered (COVER points at random on each, each in a triangle on it, in its own
+    coordinates: no gap); also for cubes the axis passes through or next to a corner, an edge or a
+    face of (within a hundredth of a radian, and exactly), and issue #147's four;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Off on a throat with a crease (h < R) until issue #118 (CREASE_OFF): the cubes' meshes in the zone
@@ -101,7 +98,7 @@ def godot_number(text):
     return t + '0' if t.endswith('.') else t
 
 
-INC = open(os.path.join(SHADERS, 'geo.gdshaderinc')).read() + open(os.path.join(SHADERS, 'zone.gdshaderinc')).read()
+INC = ''.join(open(os.path.join(SHADERS, f)).read() for f in ('geo.gdshaderinc', 'zone.gdshaderinc', 'zone_cube.gdshaderinc'))
 INC = NUMBER.sub(lambda m: godot_number(m.group(1)), INC)
 INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
 # A GPU's bilinear filter weighs its four texels by fractions it rounds to 1/256 (as ref/geo.py's
@@ -241,13 +238,53 @@ void main() {
 		outp[O + 2] = arr;
 	} else if (mode == 13) {    // a = a body's centre, c = (reach, psi_max): its table's frame
 		outp[O] = zone_path_frame(a, c.x, c.y);
-	} else if (mode == 9) {     // a = (u, v, columns, rows), c = (en, size), (ball 1 or cube 0), C, E1, E2, E3: (l, alpha), t
-		vec4 C = inp[I + 3];
+	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
-		bool none;
-		vec2 p = zone_vertex(a.xy, a.z, a.w, inp[I + 2].x > 0.5, c.xyz, C, inp[I + 4], inp[I + 5], inp[I + 6], geo_normal(C), c.w, t, none);
+		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);
 		outp[O] = vec4(p, 0.0, 0.0);
 		outp[O + 1] = vec4(t, 0.0);
+	} else if (mode == 14) {    // a = (column, columns, rows), c = (en, size), C, E1, E2, E3: a cube's column,
+		// each of its nodes (l, alpha, 1 if killed, 1 if not a number), (t, its span), as zone_sections'
+		// cube passes work them out, here all in one invocation; then (the axis it is built round, 0)
+		vec4 C = inp[I + 2];
+		ZCube q = zc_cube(C, inp[I + 3], inp[I + 4], inp[I + 5], geo_normal(C), c.w, c.xyz);
+		vec4 near[12];
+		vec2 ends[12];
+		for (int e = 0; e < 12; e++) near[e] = zc_edge_near(q, e, ends[e]);
+		ZAxis ax = zc_axis(q, near, ends);
+		bool turned = ax.en != q.en;
+		q = zc_cube(C, inp[I + 3], inp[I + 4], inp[I + 5], geo_normal(C), c.w, ax.en);
+		ZPieces pcs;
+		for (int e = 0; e < 12; e++) {
+			vec3 pu[ZC_PIECES], pt[ZC_PIECES];
+			vec2 en_;
+			if (turned) near[e] = zc_edge_near(q, e, en_);
+			pcs.n[e] = zc_pieces(q, e, near[e], pu, pt);
+			for (int k = 0; k < ZC_PIECES; k++) {
+				pcs.u[e * ZC_PIECES + k] = pu[k];
+				pcs.t[e * ZC_PIECES + k] = pt[k];
+			}
+		}
+		float th0 = ax.rnd ? 0.0 : geo_atan2(dot(C.xyz, q.a2), dot(C.xyz, q.a1));
+		float kn[ZC_KNOTS];
+		int nk = zc_knots(pcs, ax.rnd, th0, kn);
+		vec3 col = zc_column(a.x, a.y, kn, nk, ax.rnd, th0);
+		ZSeq sq = zc_sequence(q, pcs, ax, col.y);
+		vec3 m;
+		vec3 t = zc_t(q, col.x, m);
+		vec2 pos[ZC_ITEMS];
+		int ne = 0;
+		for (int j = 0; j < ZC_PARTS; j++) {
+			if (j < sq.k) ne += sq.n[j];
+		}
+		for (int j = 0; j < ZC_ITEMS; j++) pos[j] = j < ne ? zc_item(q, pcs, ax, sq.id[j], col.x, t, m) : vec2(0.0);
+		for (int r = 0; r <= int(a.z); r++) {
+			bool kill;
+			vec2 p = zc_node(q, float(r), a.z, sq, pos, t, m, kill);
+			outp[O + 2 * r] = vec4(p, kill ? 1.0 : 0.0, geo_finite(p.x + p.y) ? 0.0 : 1.0);
+			outp[O + 2 * r + 1] = vec4(t, col.z);
+		}
+		outp[O + 2 * int(a.z) + 2] = vec4(ax.en, 0.0);
 	} else if (mode == 7 || mode == 8) {    // a = (l0, al0, dl, dal), c = (en, size), t, C, E1, E2, E3: (l, alpha)
 		vec4 e = inp[I + 2], C = inp[I + 3];
 		vec2 p = mode == 7 ? zone_edge_ball(a.x, a.y, a.z, a.w, c.xyz, e.xyz, C, c.w)
@@ -978,8 +1015,98 @@ def zone_checks(name, S, gpu, rng):
 
 
 MESHES = ((64, 48), (64, 12))   # the zone bodies' meshes: Renderer's ZONE_AZIMUTHS, ZONE_ROUND, ZONE_ROUND_COARSE
-CORNER_AZ = 1e-4                # radians (a tenth of a pixel): a cube's section corner a vertex of a half-surface turned so far
-TEAR = 0.05                     # a share of a cube's half size: no vertex further off its surface
+ON_FACE = 2e-4                  # a share of a cube's half size: a vertex this near a face's plane is on it
+ZC_PUSH = float(re.search(r'const float ZC_PUSH = ([\d.e-]+);', open(os.path.join(SHADERS, 'zone_cube.gdshaderinc')).read()).group(1))
+COVER = 400                     # points at random on each face of a cube that its mesh must cover
+LENS = 0.015                    # half sizes: such a point that near a knot's two columns' rows is between them (cube_mesh_faults)
+# issue #147's cubes, on the app's throat (docs/issues/147 on the branch docs/issue-media, repro.gd's
+# log): the axis 1e-4 rad off a corner, 1e-3 rad off a face's point, 1e-4 rad off a corner, through a
+# corner. C, E1, E2, E3, the half size, the eye's direction from the centre
+ISSUE_147 = (
+    ((2.969605684, 0.238620833, 0.352848709, 1.871206522), (-0.035447560, 0.193725392, 0.167319223, -0.966032267),
+     (-0.105392635, 0.931379139, 0.257130325, 0.235178977), (-0.088295490, -0.297786236, 0.944486499, 0.107110150), 0.25,
+     (0.999947369, 0.009940772, 0.002540309)),
+    ((2.955003500, -0.376517773, 0.355231017, -1.541054130), (0.118200965, 0.947049677, 0.020540997, 0.297831506),
+     (-0.063462868, -0.289088637, 0.221506521, 0.929158270), (-0.108506903, 0.061425351, 0.967725158, -0.219000593), 0.3,
+     (0.999943316, -0.010646766, 0.000235083)),
+    ((2.970422268, 0.376555264, -0.186543465, -0.707098782), (0.125366583, -0.978970706, 0.020129848, 0.159669697),
+     (-0.000038873, 0.158904359, 0.320144147, 0.933947086), (-0.062486708, 0.024717567, -0.945111692, 0.319763064), 0.3,
+     (0.999962211, 0.008213704, 0.002850926)),
+    ((2.980897903, 0.333923757, 0.052381247, 1.610111237), (-0.007974274, 0.001796874, 0.442342788, -0.896808863),
+     (-0.104284145, 0.964974403, -0.217015311, -0.104180135), (-0.041899271, 0.237553492, 0.870018721, 0.429977298), 0.25,
+     (0.999943137, 0.010663752, -0.000186108)))
+
+
+def issue_cubes():
+    """ISSUE_147 in zone_body's form."""
+    return [(np.array(C), [np.array(E1), np.array(E2), np.array(E3)], size, unit(np.array(en)), None, None, True)
+            for C, E1, E2, E3, size, en in ISSUE_147]
+
+
+def mesh_triangles(cols, rws):
+    """Renderer._zone_mesh's triangles, each as its three nodes (column, row): [T, 3, 2]."""
+    i, j = np.meshgrid(np.arange(cols), np.arange(rws), indexing='ij')
+    i, j = i.ravel(), j.ravel()
+    a = np.stack([np.stack([i, j], -1), np.stack([i + 1, j], -1), np.stack([i, j + 1], -1)], 1)
+    b = np.stack([np.stack([i, j + 1], -1), np.stack([i + 1, j], -1), np.stack([i + 1, j + 1], -1)], 1)
+    return np.concatenate([a, b])
+
+
+def cube_mesh_faults(x, T, kill, rng):
+    """A cube's mesh (its nodes' box coordinates x [cols + 1, rows + 1, 3] in half sizes, their
+    half-surfaces' t, the killed ones) against the cube: the triangles with area in the picture (not
+    all on one half-surface, not all killed) not all on one face (ON_FACE); of COVER points at random
+    on each face how many none of the triangles on that face holds (in its own coordinates), but for
+    those within LENS of a knot's two columns' rows on it (or of round the axis the first and last
+    column's), how many of those and how far at most: two polylines along one curve, the section at
+    that azimuth, apart in the box but both on one line in the picture."""
+    cols, rws = x.shape[0] - 1, x.shape[1] - 1
+    TR = mesh_triangles(cols, rws)
+    X = x[TR[..., 0], TR[..., 1]]
+    Ts = T[TR[..., 0], TR[..., 1]]
+    one = np.abs(Ts - Ts[:, :1]).max((1, 2)) < 1e-6
+    fin = np.isfinite(X).all((1, 2))
+    area = np.linalg.norm(np.cross(X[:, 1] - X[:, 0], X[:, 2] - X[:, 0]), axis=-1)
+    live = ~one & ~kill[TR[..., 0], TR[..., 1]].all(1) & (~fin | (area >= 1e-9))
+    on = np.stack([(np.abs(X[:, :, f // 2] - (1 if f % 2 else -1)) < ON_FACE).all(1) for f in range(6)], 1)
+    across = int((live & (~fin | ~on.any(1))).sum())
+    same = np.abs(T[1:, 0] - T[:-1, 0]).max(-1) < 1e-6
+    pair = np.zeros(cols + 1, bool)
+    pair[1:] |= same
+    pair[:-1] |= same
+    if np.abs(T[0, 0] - T[cols, 0]).max() < 1e-6:
+        pair[[0, cols]] = True
+    uncovered, lens, lens_far = 0, 0, 0.0
+    for f in range(6):
+        a = f // 2
+        ix = [(a + 1) % 3, (a + 2) % 3]
+        T2 = X[live & fin & on[:, f]][:, :, ix]
+        p = rng.uniform(-1, 1, (COVER, 1, 2))
+        v0, v1, v2 = T2[None, :, 1] - T2[None, :, 0], T2[None, :, 2] - T2[None, :, 0], p - T2[None, :, 0]
+        den = v0[..., 0] * v1[..., 1] - v0[..., 1] * v1[..., 0]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            u = (v2[..., 0] * v1[..., 1] - v2[..., 1] * v1[..., 0]) / den
+            w = (v0[..., 0] * v2[..., 1] - v0[..., 1] * v2[..., 0]) / den
+        held = ((u >= -1e-6) & (w >= -1e-6) & (u + w <= 1 + 1e-6)).any(1)
+        if held.all():
+            continue
+        # the knot pairs' rows on this face, as segments
+        xs = x[pair]
+        onr = np.abs(xs[..., a] - (1 if f % 2 else -1)) < ON_FACE
+        seg = onr[:, :-1] & onr[:, 1:] & ~(kill[pair][:, :-1] & kill[pair][:, 1:])
+        A2, B2 = xs[:, :-1][seg][:, ix], xs[:, 1:][seg][:, ix]
+        for q in p[~held, 0]:
+            d = np.inf
+            if len(A2):
+                e = B2 - A2
+                tq = np.clip(((q - A2) * e).sum(-1) / np.maximum((e * e).sum(-1), 1e-30), 0, 1)
+                d = np.linalg.norm(A2 + tq[:, None] * e - q, axis=-1).min()
+            if d <= LENS:
+                lens += 1
+                lens_far = max(lens_far, d)
+            else:
+                uncovered += 1
+    return across, uncovered, lens, lens_far
 
 
 def near_axis_cube(S, rng):
@@ -1013,7 +1140,8 @@ def near_axis_cube(S, rng):
 
 
 def zone_mesh_checks(name, S, gpu, rng):
-    """The zone bodies' meshes (zone_vertex) whole, for eyes' axes through and beside them."""
+    """The zone bodies' meshes whole (balls: zone_ball_vertex; cubes: zone_cube.gdshaderinc's passes,
+    mode 14), for eyes' axes through and beside them."""
     fails = 0
     for ball in (True, False):
         if not ball and crease_off(name, S, 'a cube\'s mesh in the zone'):
@@ -1025,14 +1153,35 @@ def zone_mesh_checks(name, S, gpu, rng):
                 bodies.append(b)
         near = 0 if ball else 30            # bodies[30:]: next to the axis's features
         bodies += [near_axis_cube(S, rng) for _ in range(near)]
+        if not ball and name == 'the app':
+            bodies += issue_cubes()
         for cols, rws in MESHES:
-            rows = [[i / cols, j / rws, cols, rws, *en, size, 1.0 if ball else 0.0, 0, 0, 0, *C, *E[0], *E[1], *E[2]]
-                    for C, E, size, en, t, m, axis in bodies for i in range(cols + 1) for j in range(rws + 1)]
-            o = gpu.run(9, rows, in_per=7, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
-            worst, alpha_out, tip, corners, missed, moved, strips, folded = 0.0, 0, 0.0, 0, [], 0, 0, 0
-            torn, tear, turns = [], 0.0, []
+            if ball:
+                rows = [[i / cols, j / rws, 0, 0, *en, size, *C] for C, E, size, en, t, m, axis in bodies
+                        for i in range(cols + 1) for j in range(rws + 1)]
+                o = gpu.run(9, rows, in_per=3, out_per=2).astype(float).reshape(len(bodies), cols + 1, rws + 1, 2, 4)
+                o[..., 0, 2:] = 0.0
+            else:
+                rows = [[i, cols, rws, 0, *en, size, *C, *E[0], *E[1], *E[2]] for C, E, size, en, t, m, axis in bodies
+                        for i in range(cols + 1)]
+                o = gpu.run(14, rows, in_per=6, out_per=2 * (rws + 1) + 1).astype(float).reshape(len(bodies), cols + 1, 2 * (rws + 1) + 1, 4)
+                axes = o[:, :, -1, :3]
+                o = o[:, :, :-1].reshape(len(bodies), cols + 1, rws + 1, 2, 4)
+            worst, alpha_out, tip, across, uncovered, nans, faulty, turned, turn, lens, lens_far = 0.0, 0, 0.0, 0, 0, 0, [], 0, 0.0, 0, 0.0
             for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
                 L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
+                if not ball:
+                    # the mesh round its own axis (zc_axis: the eye's, or turned off a corner or an edge
+                    # near it), the picture the cube turned so about the centre: by ZC_PUSH at most
+                    ax = axes[k, 0]
+                    a = angle(ax, en) * np.linalg.norm(C[:3])
+                    if a > 3e-7:                     # beyond float32's rounding of the axis
+                        turned += 1
+                        turn = max(turn, a)
+                    if a > 1.1 * ZC_PUSH:
+                        faulty.append((k, np.inf, 0, 0))
+                    en = ax
+                kill, nan = o[k, :, :, 0, 2] > 0.5, o[k, :, :, 0, 3] > 0.5
                 n = np.cos(A)[..., None] * en + np.sin(A)[..., None] * T
                 P = np.concatenate([S.r(L)[..., None] * n, S.w(L)[..., None]], axis=-1)
                 q = P - C
@@ -1040,111 +1189,42 @@ def zone_mesh_checks(name, S, gpu, rng):
                 sl = q @ E.T                                   # [cols + 1, rows + 1, 3]
                 off = np.abs(np.linalg.norm(q, axis=-1) - size) if ball else np.abs(np.abs(sl).max(-1) - size)
                 off = np.where(np.isfinite(off), off, np.inf)
-                if not ball and (k >= 30 or folds(S, C, E, size, en)):
-                    # near the surface: no tear (a vertex a hair across the axis, alpha past 0 or
-                    # pi, body.gdshaderinc draws on the axis, where its image is on the ring)
-                    folded += k < 30
-                    tear = max(tear, off.max() / size)
-                    if off.max() > TEAR * size:
-                        torn.append((k, off.max()))
-                    continue
+                off = np.where(kill, 0.0, off)
                 worst = max(worst, off.max())
-                alpha_out += int(((A < -1e-6) | (A > np.pi + 1e-6)).sum())
+                # a hair across the axis (alpha past 0 or pi): body.gdshaderinc draws on the axis,
+                # where its image is on the ring
+                alpha_out += int((((A < -1e-6) | (A > np.pi + 1e-6)) & ~kill).sum())
                 if ball:
                     # off the axis, the first and last columns' sections are at the ball's tips
-                    a1 = unit(np.cross(en, [0, 0, 1.0] if abs(en[2]) < 0.9 else [1.0, 0, 0]))
-                    ce = C[:3] @ en
                     if np.linalg.norm(q[0, 0]) > 0 and not np.isclose(T[0, 0] @ T[-1, 0], 1.0):
                         for i in (0, cols):
                             tip = max(tip, np.linalg.norm(P[i] - P[i].mean(0), axis=-1).max() / size)
                     continue
-                # an edge the space's curve takes back round the axis (the axis next to it): its
-                # sections there cut it twice, which a section's corners, one an edge, can't be
-                # a cube: each column's section's corners (float64, where the half-surface meets the
-                # cube's edges), each a vertex of that column; and each on the same row in the next
-                # column (where the columns are apart)
-                rows_of = [{} for _ in range(cols + 1)]       # column: edge: the rows at its corner
-                for i in range(cols + 1):
-                    t = T[i, 0]
-                    for e in range(12):
-                        for c in cube_corner(S, C, E, size, en, t, e):
-                            corners += 1
-                            Pc = zone_point(S, c[0], c[1], en, t)
-                            d = np.linalg.norm(P[i] - Pc, axis=-1)
-                            if d.min() > CHORD:
-                                # not a vertex itself: the edge's point a vertex is for a turn round
-                                # the axis within CORNER_AZ
-                                turned = turned_corner(S, C, E, size, en, t, e, c, P[i])
-                                if turned is None:
-                                    missed.append((k, i, e, d.min()))
-                                else:
-                                    d = np.linalg.norm(P[i] - turned[1], axis=-1)
-                                    turns.append(abs(turned[0]))
-                            rows_of[i][e] = set(np.nonzero(d <= CHORD)[0].tolist())
-                for i in range(cols):
-                    if angle(T[i, 0], T[i + 1, 0]) > 1e-5:
-                        strips += 1
-                        for e, rs in rows_of[i].items():
-                            if rs and rows_of[i + 1].get(e) and not rs & rows_of[i + 1][e]:
-                                moved += 1
+                # a cube: every triangle on one face, every face covered
+                a, u, ln, lf = cube_mesh_faults(sl / size, T, kill, rng)
+                across += a
+                uncovered += u
+                lens += ln
+                lens_far = max(lens_far, lf)
+                nans += int(nan.sum())
+                if a or u or nan.any() or off.max() > CHORD:
+                    faulty.append((k, off.max(), a, u))
             body = 'ball' if ball else 'cube'
-            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not missed and moved == 0 and not torn)
-            fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} (zone_vertex)', ok,
-                               f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
-                               + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
-                                  f'; {len(missed)} of {corners} section corners not a vertex ({len(turns)} a vertex for a half-surface turned round the axis by up to {max(turns, default=0.0):.0e} rad), '
-                                  f'{moved} on another row in the next column ({strips} strips); '
-                                  f'{folded} with an edge taken back round the axis and {near} with the axis next to a corner, an edge or a face: '
-                                  f'off their surface by {tear:.1e} of the half size at most, {len(torn)} beyond {TEAR}')
-                               + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis)')
-            for k, d in torn[:5]:
+            ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not faulty)
+            what = (f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
+                    + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
+                       f'; {across} triangles across an edge, of {COVER} points at random on each face {uncovered} on no triangle '
+                       f'({lens} between a knot\'s two columns\' rows, up to {lens_far:.1e} of the half size off them), {nans} nodes not a number; '
+                       f'{turned} built round an axis turned off a corner or an edge near it, the cube moved by up to {turn:.1e} m')
+                    + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis'
+                    + ('' if ball else f', {near} with the axis next to a corner, an edge or a face'
+                       + (f', issue #147\'s {len(ISSUE_147)}' if name == 'the app' else '')) + ')')
+            fails += not check(f'{name}: a {body}\'s mesh in the zone, {cols} by {rws} ({"zone_ball_vertex" if ball else "zone_cube.gdshaderinc"})', ok, what)
+            for k, d, a, u in faulty[:5]:
                 C, E, size, en = bodies[k][:4]
-                print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: a vertex {d:.2e} m off its surface')
-            for k, i, e, d in missed[:5]:
-                C, E, size, en = bodies[k][:4]
-                print(f'    cube C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: column {i}, edge {e}: the nearest vertex {d:.2e} m from its corner')
+                print(f'    cube {k}: C {tuple(C)}, E {tuple(map(tuple, E))}, size {size!r}, en {tuple(en)}: a vertex {d:.2e} m off its surface, '
+                      f'{a} triangles across an edge, {u} points on no triangle')
     return fails
-
-
-def turned_corner(S, C, E, size, en, t, e, c, V):
-    """A corner c (l, alpha) of the half-surface toward t on the cube's edge e that none of its
-    column's vertices V is at: the point of that edge whose azimuth round the axis en is within
-    CORNER_AZ of the half-surface's, turned round the axis into it, nearest V, as (the turn, the
-    point); None if it is further from them than CHORD. Next to the half-surface's plane an edge
-    goes round the axis by next to nothing, and where it crosses the half-surface slides along it
-    with the azimuth's last digits. The axis is the eye's, and the space is symmetric round it: the
-    picture of such a vertex is the edge's point's turned by as much, a tenth of a pixel at most."""
-    E = np.asarray(E)
-    a, b, g = e // 4, (e // 4 + 1) % 3, (e // 4 + 2) % 3
-    O = C + (size if e & 1 else -size) * E[b] + (size if e & 2 else -size) * E[g]
-    N = normal4(S, C)
-    m = np.cross(en, t)
-
-    def put(u):
-        Q = onto(S, O + u * size * E[a], N)
-        x = Q[:3]
-        along = x @ en
-        across = x - along * en
-        return np.arctan2(across @ m, across @ t), zone_point(S, l_of(S, Q), np.arctan2(np.linalg.norm(across), along), en, t)
-
-    uc = float((zone_point(S, c[0], c[1], en, t) - C) @ E[a]) / size
-    h = 1e-6
-    rate = abs(put(min(uc + h, 1.0))[0] - put(max(uc - h, -1.0))[0]) / (min(uc + h, 1.0) - max(uc - h, -1.0))
-    reach = CORNER_AZ / max(rate, 1e-12)
-
-    def far(u):
-        turn, X = put(u)
-        return np.linalg.norm(V - X, axis=-1).min() if abs(turn) <= CORNER_AZ else np.inf
-    us = np.linspace(max(uc - reach, -1.0), min(uc + reach, 1.0), 201)
-    fs = np.array([far(u) for u in us])
-    k = int(np.argmin(fs))
-    if not np.isfinite(fs[k]):
-        return None
-    r = optimize.minimize_scalar(far, bounds=(us[max(k - 1, 0)], us[min(k + 1, len(us) - 1)]), method='bounded',
-                                 options={'xatol': 1e-12})
-    u = r.x if r.fun < fs[k] else us[k]
-    turn, X = put(u)
-    return (turn, X) if far(u) <= CHORD else None
 
 
 def normal4(S, C):
@@ -1169,60 +1249,6 @@ def onto(S, Q, N):
         Ps = np.r_[float(S.r(l)) * unit(P[:3]), float(S.w(l))]
         c += (Ps - P) @ N
     return Q + c * N
-
-
-def folds(S, C, E, size, en):
-    """Whether one of a cube's edges goes back round the axis along en (its azimuth turns back:
-    the axis within the space's curve of it)."""
-    N = normal4(S, C)
-    a1 = unit(np.cross(en, [0, 0, 1.0] if abs(en[2]) < 0.9 else [1.0, 0, 0]))
-    a2 = np.cross(en, a1)
-    for e in range(12):
-        a, b, g = e // 4, (e // 4 + 1) % 3, (e // 4 + 2) % 3
-        az = []
-        for u in np.linspace(-1, 1, 33):
-            x = np.zeros(3)
-            x[a], x[b], x[g] = u * size, (size if e & 1 else -size), (size if e & 2 else -size)
-            P = onto(S, C + x @ E, N)
-            az.append(np.arctan2(P[:3] @ a2, P[:3] @ a1))
-        d = np.diff(np.unwrap(az))
-        if (d > 1e-9).any() and (d < -1e-9).any():
-            return True
-    return False
-
-
-def cube_corner(S, C, E, size, en, t, e):
-    """Where the half-surface toward t meets the cube's edge e (zone_edge_cut's numbering), float64:
-    Newton in (l, alpha) from the first-order cut; [] where it doesn't (or the edge lies along it)."""
-    E = np.asarray(E)
-    a = e // 4
-    b, g = (a + 1) % 3, (a + 2) % 3
-    gb, gg = (size if e & 1 else -size), (size if e & 2 else -size)
-    m = np.cross(en, t)
-    mu = E[:, :3] @ m
-    if abs(mu[a]) < 1e-9:
-        return []
-    x = np.zeros(3)
-    x[a], x[b], x[g] = (-C[:3] @ m - mu[b] * gb - mu[g] * gg) / mu[a], gb, gg
-    if abs(x[a]) > 1.3 * size:
-        return []
-    X = C + x @ E
-    p = np.array([l_of(S, X), np.arctan2(X[:3] @ t, X[:3] @ en)])
-
-    def f(p):
-        q = zone_point(S, p[0], p[1], en, t) - C
-        return np.array([q @ E[b] - gb, q @ E[g] - gg])
-    for _ in range(40):
-        F = f(p)
-        h = 1e-7
-        J = np.c_[(f(p + [h, 0]) - f(p - [h, 0])) / (2 * h), (f(p + [0, h]) - f(p - [0, h])) / (2 * h)]
-        if abs(np.linalg.det(J)) < 1e-8:
-            return []
-        p = p - np.linalg.solve(J, F)
-    q = zone_point(S, p[0], p[1], en, t) - C
-    if np.abs(f(p)).max() > 1e-9 or abs(q @ E[a]) > size + 1e-9 or not 0 <= p[1] <= np.pi:
-        return []
-    return [p]
 
 
 def line_text(row):

@@ -25,15 +25,15 @@
 //     takes the azimuths it spans, each section a closed curve round the point nearest its centre;
 //     a body round the axis every azimuth, each section an arc from where the axis enters it to
 //     where it leaves. No triangle crosses the axis, and the images come out as rings where they
-//     are. Each point found by Newton's steps on the body's own definition along a straight line of
-//     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
-//     azimuths, and a row on each corner of its sections, the same corner on the same row from one
-//     corner's azimuth to the next: its outline keeps its corners. Every point stays on the body:
-//     where those steps leave one off (the axis next to an edge), a line from the section's
-//     inside puts it there. A node's point is the same in every image: it is worked out once a
-//     frame for each eye (zone_sections.gd, ZoneSections' texture zone_nodes), and here each
-//     image's vertex takes it and its geodesic from the body's table of the ways from the eye
-//     (zone_paths, zone.gdshaderinc's zone_path_see), worked out once a frame too.
+//     are. A ball's points by Newton's steps on its definition along a straight line of (l, r alpha)
+//     from the inner point (zone.gdshaderinc); a cube's on its edges and faces, its columns on the
+//     knots of its edges' azimuths and a row on each corner of its sections, the same corner on the
+//     same row all through a span between two knots, a section of two parts with two rows between
+//     them that are dropped (v_kill; zone_cube.gdshaderinc). A node's point is the same in every
+//     image: it is worked out once a frame for each eye (zone_sections.gd, ZoneSections' texture
+//     zone_nodes), and here each image's vertex takes it and its geodesic from the body's table of
+//     the ways from the eye (zone_paths, zone.gdshaderinc's zone_path_see), worked out once a frame
+//     too.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -104,6 +104,11 @@ varying vec4 v_ray;     // the light's way in (R^4)
 #endif
 varying float v_l;
 varying float v_h;      // height above the floor
+#ifdef ZONE
+// 1 at a node no part of the surface (a cube's rows between two parts of its section,
+// zone_cube.gdshaderinc's zc_node): a triangle of three such is dropped, one with fewer has no area
+varying float v_kill;
+#endif
 varying vec3 v_col;
 #ifdef DIRECT
 varying vec3 v_p;       // the point (R^4's xyz)
@@ -138,13 +143,15 @@ void vertex() {
 	float pl = 0.0;
 	float len = 0.0, fell = 0.0;
 	vec4 arrive = vec4(0.0);
-	bool none = false;            // the section's steps came out not a number (zone_vertex)
+	bool none = false;            // the node came out not a number (zone_sections.gdshaderinc)
+	v_kill = 0.0;
 	// an image the pass leaves out (thinner than a share of a pixel), or of a body it did not take
 	// this frame (a slot not worked out: its nodes are another's, or none): every vertex out of the
 	// picture at the centre, no triangle drawn, no geodesic sought
 	vec4 cull = texelFetch(zone_cull, ivec3(image, slot, int(VIEW_INDEX)), 0);
 	if (cull.w > 0.5 && all(equal(cull.xyz, C.xyz))) {
-		// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
+		// the node's point on the body: (l, alpha) and its half-surface's direction t
+		// (zone_sections.gdshaderinc)
 		ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
 		int row = slot * zone_slot_rows + zone_row + node.y;
 		vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
@@ -152,6 +159,7 @@ void vertex() {
 		vec2 pe = na.xy;
 		vec3 t = vec3(na.zw, nb.x);
 		none = nb.y > 0.5;
+		v_kill = nb.z;
 		pl = pe.x;
 		float alpha = clamp(pe.y, 0.0, GEO_PI);
 		vec2 sca = geo_sincos(alpha);
@@ -305,7 +313,7 @@ void vertex() {
 	// node of the table about it)
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 #ifdef ZONE
-	// and orange where a cube's section's steps came out not a number (zone_cube_section)
+	// and orange where a node came out not a number
 	if (none) v_col = mix(v_col, vec3(1.0, 0.5, 0.0), 0.7);
 #endif
 }
@@ -342,11 +350,12 @@ void fragment() {
 #endif
 #ifdef ZONE
 	// a pixel whose numbers came out none is no part of the surface: a triangle of next to no area
-	// (a cube's strip between two columns on one corner's azimuth, zone_cube_azimuth: its vertices
+	// (a cube's strip between two columns on one knot's azimuth, zone_cube.gdshaderinc: its vertices
 	// all on that azimuth's line in the view, each placed on its own) gets one now and then,
-	// its varyings no numbers. Dropped after the derivatives, which take its neighbours; by the bits
-	// (geo_finite): a compiler may take a comparison as if no number were NaN
-	if (!geo_finite(col.r + col.g + col.b)) discard;
+	// its varyings no numbers; nor is one of a triangle between a cube's section's parts (v_kill).
+	// Dropped after the derivatives, which take its neighbours; by the bits (geo_finite): a compiler
+	// may take a comparison as if no number were NaN
+	if (!geo_finite(col.r + col.g + col.b) || v_kill > 0.5) discard;
 #endif
 	ALBEDO = col;
 #endif
