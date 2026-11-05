@@ -244,7 +244,8 @@ void main() {
 		outp[O] = zone_path_frame(a, c.x, c.y);
 	} else if (mode == 15) {    // a = (eye l, n), c = a ray there, C, E1, E2, (size, 1 a cube, psi_min): the
 		// tail's first way into the body (zone_tail.gdshaderinc): (hit, y, psi, len), its point, (its
-		// stretch, the band's least and greatest angle off the inward radial, 1 if a tail ray)
+		// stretch, the band's least and greatest angle off the inward radial, 1 if a tail ray), (the
+		// ray's sigma as the GPU has it)
 		float al = abs(a.x);
 		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));
 		vec4 e = inp[I + 5];
@@ -261,6 +262,7 @@ void main() {
 		outp[O] = vec4(hit ? 1.0 : 0.0, y, psi, len);
 		outp[O + 1] = P;
 		outp[O + 2] = vec4(float(on), band, ray ? 1.0 : 0.0);
+		outp[O + 3] = vec4(z.sigma, 0.0, 0.0, 0.0);
 	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
 		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);
@@ -1454,9 +1456,10 @@ def tail_checks(name, S, gpu, rng):
     method on shorter rays). Everything as the GPU gets it (float32), and the reference's ray that
     one; a ray float32 can't tell from r_min's left out. Hit or miss as the reference's (where the
     ray goes deeper than TAIL_GRAZE into the body, or stays further off it), and a hit's way in
-    within TAIL_POINT of the reference's for a launch within ALPHA_TOL (a hundredth of a pixel: next
-    to the limit the turn grows so fast with the launch that float32's last digit of it, a
-    sixteen-thousandth of a pixel, moves the way in by millimetres): its point and its length."""
+    within TAIL_POINT of the reference's, its point and its length, for the ray of the impact b the
+    GPU takes (by its sigma), which must be within ALPHA_TOL (a hundredth of a pixel) of the launch:
+    next to the limit the turn grows so fast with b that float32's last digit of the launch, a
+    sixteen-thousandth of a pixel, moves the way in by centimetres."""
     if S.Lc <= 0:
         print(f'SKIP {name}: tail  no cylinder (h <= R): the tail is no wider than the meshes leave', flush=True)
         return 0
@@ -1521,17 +1524,23 @@ def tail_checks(name, S, gpu, rng):
                 return (P * P).sum(1) - size * size
             return np.max(np.abs(np.stack([P @ e for e in E + [N]], 1)), 1) - size
         alpha = np.arctan2(sa, ca)
-        ref, depth = tail_reference(S, el, alpha, en, t, out_f, psi_min)
-        # and the launches ALPHA_TOL either side
-        near = [tail_reference(S, el, alpha + d, en, t, out_f, psi_min)[0] for d in (-ALPHA_TOL, ALPHA_TOL)]
         rows.append(np.r_[el, en, D, C, E[0], E[1], size, 0.0 if ball else 1.0, psi_min, 0.0])
-        refs.append((ref, abs(depth) / (2 * size) if ball else abs(depth), ball, C, near))
-    out = gpu.run(15, np.array(rows), in_per=6, out_per=3).reshape(-1, 3, 4)
-    wrong, graze, hits, worst_len, worst_p, onf = [], 0, 0, 0.0, 0.0, 0
-    for o, (ref, depth, ball, C, near), row in zip(out, refs, rows):
+        refs.append((alpha, t, out_f, psi_min, ball, C, size))
+    out = gpu.run(15, np.array(rows), in_per=6, out_per=4).reshape(-1, 4, 4)
+    wrong, graze, hits, worst_len, worst_p, worst_a, onf = [], 0, 0, 0.0, 0.0, 0.0, 0
+    for o, (alpha, t, out_f, psi_min, ball, C, size), row in zip(out, refs, rows):
+        el, en = row[0], row[1:4]
+        re = float(S.r(abs(el)))
+        # the GPU's ray: its b by its sigma, launched the same way round
+        bg = S.rho0 + 2 * S.R * float(o[3, 0])
+        ag = np.arcsin(min(bg / re, 1.0))
+        ag = ag if alpha < 0.5 * np.pi else np.pi - ag
+        worst_a = max(worst_a, abs(ag - alpha))
+        ref, depth = tail_reference(S, el, ag, en, t, out_f, psi_min)
+        depth = abs(depth) / (2 * size) if ball else abs(depth)
         hit = o[0, 0] > 0.5
         if hit != (ref is not None):
-            if depth < TAIL_GRAZE or any((r is not None) == hit for r in near):
+            if depth < TAIL_GRAZE:
                 graze += 1
             else:
                 wrong.append(f'{"ball" if ball else "cube"} eye l {row[0]:.3f} body l {l_of(S, C):.3f}: '
@@ -1540,27 +1549,18 @@ def tail_checks(name, S, gpu, rng):
         if not hit:
             continue
         hits += 1
-        tt = row[5:8] / np.linalg.norm(row[5:8])
-        pts = [(r[0], np.r_[float(S.r(r[1])) * (np.cos(r[2]) * row[1:4] + np.sin(r[2]) * tt), float(S.w(r[1]))])
-               for r in (near[0], ref, near[1]) if r is not None]
-        # the nearest point of the line through the three ways in (by launch) to the GPU's, and its length
-        best = (np.inf, np.inf)
-        for (s0, p0), (s1, p1) in zip(pts, pts[1:] or pts):
-            d = p1 - p0
-            u = float(np.clip((o[1] - p0) @ d / max(d @ d, 1e-30), 0.0, 1.0))
-            dp = np.linalg.norm(o[1] - (p0 + u * d))
-            if dp < best[0]:
-                best = (dp, abs(o[0, 3] - (s0 + u * (s1 - s0))))
-        worst_p = max(worst_p, best[0])
-        worst_len = max(worst_len, best[1])
+        s, l, ph = ref
+        P = np.r_[float(S.r(l)) * (np.cos(ph) * en + np.sin(ph) * t), float(S.w(l))]
+        worst_p = max(worst_p, np.linalg.norm(o[1] - P))
+        worst_len = max(worst_len, abs(o[0, 3] - s))
         onf += o[2, 0] > 0.5
     fails = 0
     fails += not check(f'{name}: the tail, which rays meet a body past psi_min (zone_tail.gdshaderinc)', not wrong,
                        f'{len(rows)} rays, {hits} meet one ({onf} on the far fillet or out), {graze} grazing or ill-posed; '
                        f'{time.time() - t0:.0f} s' + ''.join('\n    ' + w for w in wrong[:10]))
-    fails += not check(f'{name}: the tail, the way in', worst_len <= TAIL_POINT and worst_p <= TAIL_POINT,
-                       f'off the reference\'s for a launch within {ALPHA_TOL:.0e} rad: its point by {worst_p:.1e} m, '
-                       f'its length by {worst_len:.1e} m at most (limit {TAIL_POINT:.0e})')
+    fails += not check(f'{name}: the tail, the way in', worst_len <= TAIL_POINT and worst_p <= TAIL_POINT and worst_a <= ALPHA_TOL,
+                       f'off the reference\'s by {worst_p:.1e} m, its length by {worst_len:.1e} m at most (limit {TAIL_POINT:.0e}), '
+                       f'the GPU\'s ray {worst_a:.1e} rad off its launch (limit {ALPHA_TOL:.0e})')
     return fails
 
 

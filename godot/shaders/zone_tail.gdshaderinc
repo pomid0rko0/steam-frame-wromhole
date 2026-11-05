@@ -17,8 +17,11 @@
 // the axis) and l within the ball's slab: the profile (r(l), w(l)) within its chord of the ball's
 // centre seen at psi_c (the cylinder a line, the fillet an arc, the flat part a line: each in closed
 // form, tail_slab). On the cylinder the copies n whose l there is within the slab are a run of whole
-// numbers in closed form (tail_copies), so the first of them, however many turns on, is found at
-// once; on the far fillet the few there by psi at the slab's ends. A copy's window of y is its |x| <=
+// numbers in closed form (a cube's narrowed to its box's l at the window's angles), however many turns
+// on; next to the limit, where l moves by a hair a copy, the run is long, and the copies the ray goes
+// into are a run within it: tried at TAIL_COPIES copies spread over it, then halving back from the
+// first it goes into to the first of all (tail_copy). On the far fillet the few there by psi at the
+// slab's ends. A copy's window of y is its |x| <=
 // dmax, and in it the ray goes into the body where it enters every one of its convex parts (a ball's
 // chord ball, a cube's four slabs of its 4D box): each part's Newton step from the side the ray comes
 // from never passes that part's own way in, so the furthest of them, taken again and again, lands on
@@ -243,6 +246,19 @@ float tail_copy_y(TailRay z, float psi_c, float n) {
 	return z.y0 + (TAIL_PI2 * n + (psi_c - z.at0.x)) / z.cyl.x;
 }
 
+// copy n on the cylinder (sl: the slab's y on it): true if the ray goes into the body there at a turn
+// psi_min or more, and where (y, the angle, psi)
+bool tail_copy(TailRay z, TailBody q, float n, float psi_c, float dmax, vec2 sl, float lam, float psi_min, out vec3 at) {
+	at = vec3(0.0);
+	float yc = tail_copy_y(z, psi_c, n);
+	// the window in the angle off psi_c: dmax, and the slab's and the cylinder's ends
+	float xa = max(-dmax, (max(sl.x, z.y0) - yc) * z.cyl.x), xb = min(dmax, (min(sl.y, z.y1) - yc) * z.cyl.x);
+	float x;
+	if (!(xa <= xb && tail_enter(z, q, false, tail_l(z, yc), lam, psi_c, 0.0, xa, xb, x))) return false;
+	at = vec3(yc + x / z.cyl.x, psi_c + x, TAIL_PI2 * n + psi_c + x);
+	return at.z >= psi_min;
+}
+
 // The first way into the body at a turn of psi_min or more: true, its y, angle in the plane, turn
 // (psi) and the stretch it is on (0 the cylinder, 1 the far fillet, 2 out past the zone)
 bool tail_meet(TailRay z, TailBody q, float psi_min, out float y, out float ang, out float psi, out int on) {
@@ -293,7 +309,7 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, out float y, out float ang,
 					chi = max(chi, a2);
 				}
 			}
-			float mg = abs(lam) * dmax + 2.0 * q.size / float(TAIL_CUTS - 1);
+			float mg = abs(lam) * dmax + 0.25 * q.size / float(TAIL_CUTS - 1);
 			if (clo <= chi) {
 				lo = max(lo, clo - mg);
 				hi = min(hi, chi + mg);
@@ -309,19 +325,37 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, out float y, out float ang,
 		} else if (D0 < lo || D0 > hi) {
 			n1 = n0 - 1.0;
 		}
+		// the first copy the ray goes into: each of a short run, else TAIL_COPIES spread over it
+		// and halving back from the first of them it goes into
+		vec3 at;
+		bool met = false;
+		float span = n1 - n0;
+		float prev = n0 - 1.0;
 		for (int c = 0; c < TAIL_COPIES; c++) {
-			float n = n0 + float(c);
+			float n = span < float(TAIL_COPIES) ? n0 + float(c) : n0 + floor(span * float(c) / float(TAIL_COPIES - 1) + 0.5);
 			if (n > n1) break;
-			float yc = tail_copy_y(z, psi_c, n);
-			// the window in the angle off psi_c: dmax, and the slab's and the cylinder's ends
-			float xa = max(-dmax, (max(sl.x, z.y0) - yc) * z.cyl.x), xb = min(dmax, (min(sl.y, z.y1) - yc) * z.cyl.x);
-			float x;
-			if (xa <= xb && tail_enter(z, q, false, tail_l(z, yc), lam, psi_c, 0.0, xa, xb, x)) {
-				y = yc + x / z.cyl.x;
-				ang = psi_c + x;
-				psi = TAIL_PI2 * n + ang;
-				if (psi >= psi_min) return true;
+			if (tail_copy(z, q, n, psi_c, dmax, sl.xy, lam, psi_min, at)) {
+				met = true;
+				for (int k = 0; k < 16; k++) {
+					if (n - prev <= 1.0) break;
+					float mid = floor(0.5 * (prev + n));
+					vec3 am;
+					if (tail_copy(z, q, mid, psi_c, dmax, sl.xy, lam, psi_min, am)) {
+						n = mid;
+						at = am;
+					} else {
+						prev = mid;
+					}
+				}
+				break;
 			}
+			prev = n;
+		}
+		if (met) {
+			y = at.x;
+			ang = at.y;
+			psi = at.z;
+			return true;
 		}
 	}
 	// the far fillet: the copies psi there reaches, each window's start by Newton on the sweep
