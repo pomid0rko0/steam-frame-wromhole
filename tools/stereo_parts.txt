@@ -9,7 +9,7 @@ desktop headset check4 crv10
 crf0 check5 gravity1 crv4
 gravity2 gravity3 crv9
 crv11 crv7 check0
-crv5 crf6 check1
+crv5 crf6 check1 crf9
 crv3 crv1 check2
-crv2 crv0 check3
+crv2 crv0 check3 crv12
 crv8 crv6 gravity0

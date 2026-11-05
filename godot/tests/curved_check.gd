@@ -22,10 +22,13 @@ const U := preload("res://tests/util.gd")
 # video's (main.set_length)]: standing at the start looking up at the mouth; level with the throat's
 # centre 9 m out; at the curved zone's edge; in A's fillet; in the throat looking along it and
 # sideways; out in universe B looking back at the mouth; far off, a control; under the mouth looking
-# up into it; and on a throat LONG long (the bodies of the space carried with it, as stretching it
-# carries them: WormholeSpace.carried_l), where a body's images past the meshes' (the tail,
-# zone_tail.gdshader) are many pixels wide: in it sideways, at the start, in A's fillet looking in
-const LONG := 40.0
+# up into it; on the menu's longest throat (the bodies of the space carried with it, as stretching
+# it carries them: WormholeSpace.carried_l), where a body's images past the meshes' (the tail,
+# zone_tail.gdshader) are many pixels wide: in it sideways (crf9 also with foveation, as the
+# headset draws its floor), at the start; on one of MID, in A's fillet looking in; and on one with
+# no cylinder (h = R, the menu's shortest: no tail), in the throat looking along it
+const LONG := WormholeSpace.LENGTH_MAX
+const MID := 40.0
 const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0)], 0.0, 0.0],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -4.6)], 0.0, -5.0],
@@ -37,7 +40,8 @@ const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(0.6, 0.4), Vector2(-1.0, 0.0), [], 0.0, 75.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 90.0, -10.0, LONG],
 		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0, LONG],
-		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0, LONG]]
+		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0, MID],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
