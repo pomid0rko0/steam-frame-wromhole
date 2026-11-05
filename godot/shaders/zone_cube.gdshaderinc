@@ -155,7 +155,9 @@ float zc_root(ZCube q, int e, int which, float lo, float hi, float flo, float fh
 	for (int i = 0; i < 12; i++) {
 		c = (lo * fhi - hi * flo) / (fhi - flo);
 		if (!(c > lo && c < hi)) c = 0.5 * (lo + hi);
-		float fc = zc_gh(q, e, c, P)[which];
+		// no component by a number not known while compiling: the headset's compiler (ir3) has none
+		vec2 gh = zc_gh(q, e, c, P);
+		float fc = which == 0 ? gh.x : gh.y;
 		if (fc * fhi > 0.0) {
 			hi = c;
 			fhi = fc;
@@ -440,13 +442,13 @@ float zc_margin(ZCube q, vec2 pa, vec2 pb, int face, vec3 t) {
 	vec4 Ef = q.E[face / 2];
 	float goal = (face & 1) == 0 ? -q.s : q.s;
 	float rc = geo_r(abs(p.x));
+	// no break out of the steps, nor out of the walk back in zc_sequence: with them the headset's
+	// compiler (ir3) crashes on CUBE_SPANS; a step stands still instead
 	for (int i = 0; i < 4; i++) {
 		float g = dot(zone_point(p.x, p.y, q.en, t) - q.C, Ef) - goal;
-		if (abs(g) <= ZC_ON) break;
 		vec2 gr = vec2(dot(zone_rate(p.x, p.y, q.en, t, 1.0, 0.0), Ef), dot(zone_rate(p.x, p.y, q.en, t, 0.0, 1.0 / rc), Ef));
 		float gg = dot(gr, gr);
-		if (!(gg > 1e-18)) break;
-		vec2 step = (g / gg) * gr;
+		vec2 step = abs(g) > ZC_ON && gg > 1e-18 ? (g / gg) * gr : vec2(0.0);
 		p -= vec2(step.x, step.y / rc);
 	}
 	vec4 X = zone_point(p.x, p.y, q.en, t) - q.C;
@@ -615,19 +617,25 @@ ZSeq zc_sequence(ZCube q, ZPieces pcs, ZAxis ax, float th) {
 				int nbk = 0;
 				cur = pair[st * 6 + f1];
 				f = f1;
+				bool going = true;      // no break: zc_margin says why
 				for (int s = 0; s < ZC_ITEMS; s++) {
-					if (nbk >= ZC_ITEMS - 1 - ne || seen[cur]) break;
+					if (going && (nbk >= ZC_ITEMS - 1 - ne || seen[cur])) going = false;
+					if (!going) continue;
 					seen[cur] = true;
 					bid[nbk] = ids[cur];
 					bf[nbk] = f;            // the face back toward the start
 					nbk++;
 					int g = -1;
 					for (int h = 0; h < 6; h++) {
-						if (g < 0 && h != f && (fm[cur] & (1 << h)) != 0 && pair[cur * 6 + h] >= 0 && !seen[pair[cur * 6 + h]]) g = h;
+						int nh = pair[cur * 6 + h];
+						if (g < 0 && h != f && (fm[cur] & (1 << h)) != 0 && nh >= 0 && !seen[max(nh, 0)]) g = h;
 					}
-					if (g < 0) break;
-					cur = pair[cur * 6 + g];
-					f = g;
+					if (g < 0) {
+						going = false;
+					} else {
+						cur = pair[cur * 6 + g];
+						f = g;
+					}
 				}
 				// shift the part on by nbk, the walked back items reversed before it
 				for (int j = ZC_ITEMS - 1; j >= 0; j--) {
