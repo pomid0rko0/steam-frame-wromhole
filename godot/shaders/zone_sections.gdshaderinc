@@ -1,17 +1,31 @@
-// The meshes of the bodies in the curved zone (zone.gdshaderinc, zone_vertex), each node once a
-// frame for each eye, for the bodies' vertex shader (body.gdshaderinc, ZONE): a compute shader's
-// body, not a Godot shader's; zone_sections.gd puts the header (the version, BALL, CUBE, IMAGES or
-// PATHS) before it and geo.gdshaderinc and zone.gdshaderinc where it says.
+// The meshes of the bodies in the curved zone (balls: zone.gdshaderinc, zone_ball_vertex; cubes:
+// zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
+// (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
+// header (the version, BALL, CUBE_EDGES, CUBE_PIECES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES or
+// PATHS) before it and geo.gdshaderinc, zone.gdshaderinc and zone_cube.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
 // direction from the centre is the axis the mesh is built round) and the body, so each node of a
 // body's two meshes (the fine one, ZONE_FINE images, and the coarse one, the rest) is worked out
-// here once per eye, not in each vertex of each of its images. Invocation x: a node, the fine mesh's
-// first, column by column (a column's nodes share a half-surface: a cube's corners there); y: the
-// body, of those in the zone of this kind (slots from pc.first.x on); z: the eye.
-// Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and (t.z, 1 if zone_vertex's
-// steps came out not a number, else 0, 0, 0) at x = 2 col
-// and 2 col + 1, y = slot * slot_rows + the mesh's first row + row.
+// here once per eye, not in each vertex of each of its images. BALL and CUBE: invocation x a node,
+// the fine mesh's first, column by column; y: the body, of those in the zone of this kind (slots from
+// pc.first.x on); z: the eye. Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and
+// (t.z, 1 if its steps came out not a number, else 0, 1 if it is no part of the surface (a cube's
+// row between two parts of its section: body.gdshaderinc drops it), its column's side of a knot
+// (zc_side; a ball's 0)) at x = 2 col and 2 col + 1, y = slot * slot_rows + the mesh's first row +
+// row.
+//
+// A cube's nodes come after four passes of its own (zone_cube.gdshaderinc), each into plan_img (a
+// layer per eye, PLAN_ROWS rows a cube's slot) or col_img, on what the one before wrote:
+//   CUBE_EDGES: invocation x the edge (zc_edge_near): row 0, texels 2 e, 2 e + 1;
+//   CUBE_PIECES: x the edge, its pieces (zc_pieces) from all edges' row 0: row 1, texels 9 e (the
+//     count) and 9 e + 1 + 2 k, 9 e + 2 + 2 k (piece k); the axis (zc_axis): texels 108 and 109
+//     (the axis the mesh is built round, the later passes' too, and the knots' origin th0);
+//   CUBE_SPANS: x the span (the knots, zc_knots, sorted in each): its section (zc_sequence) at its
+//     middle, row 3, texels 5 s to 5 s + 4; its columns' (azimuth, the span's middle, the span), row 2;
+//   CUBE_COLUMNS: x the column, its items at its azimuth (zc_item) in its span's order: col_img, a
+//     row a column (y = slot * (columns + 1) + column), two items a texel;
+//   CUBE: the nodes from those (zc_node).
 //
 // IMAGES: which images of each body are drawn at all. An image thinner across than a quarter of a
 // pixel (ZoneSections.CULL_PX: the stereo test's rays a quarter of a pixel off a pixel's centre
@@ -52,6 +66,8 @@ layout(push_constant, std430) uniform Kind {
 layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray out_img;
 layout(set = 0, binding = 4, rgba32f) uniform restrict image2DArray cull_img;   // IMAGES' out, PATHS' in
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2DArray path_img;   // PATHS' out
+layout(set = 0, binding = 6, rgba32f) uniform restrict image2DArray plan_img;   // the cube passes' (above)
+layout(set = 0, binding = 7, rgba32f) uniform restrict image2DArray col_img;
 
 #define g_prof zp.prof
 #define g_prof2 zp.prof2
@@ -63,6 +79,67 @@ layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2DArray pa
 #define g_lift zp.floor_.x
 
 #include_geo_and_zone
+
+const int PLAN_ROWS = 4;            // plan_img's rows a cube's slot (zone_sections.gd's)
+
+// a cube's slot s as zone_cube.gdshaderinc takes it, round the axis en (the eye's direction from the
+// centre, or zc_axis's turned)
+ZCube zs_cube_at(int s, vec3 en) {
+	vec4 C = zb.body[4 * s], E1 = zb.body[4 * s + 1], E2 = zb.body[4 * s + 2];
+	vec4 N = geo_normal(C);
+	return zc_cube(C, E1, E2, -geo_cross4(E1, E2, N), N, zb.body[4 * s + 3].x, en);
+}
+
+// round eye z's axis (en: its direction from the centre)
+ZCube zs_cube(int s, int z, out vec3 en) {
+	float el;
+	vec4 ex, ey, ez;
+	geo_eye(zp.inv_view, zp.eye_off[z].xyz, el, en, ex, ey, ez);
+	return zs_cube_at(s, en);
+}
+
+// round cube ci's (slot s) mesh's axis for eye z (CUBE_PIECES' out)
+ZCube zs_cube_mesh(int s, int ci, int z) { return zs_cube_at(s, imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).xyz); }
+
+// cube ci's (of the zone's: its slot less the cubes' first) pieces and axis (CUBE_PIECES' out)
+void zs_pieces(int ci, int z, out ZPieces pcs, out ZAxis ax) {
+	int y = ci * PLAN_ROWS + 1;
+	for (int e = 0; e < 12; e++) {
+		pcs.n[e] = int(imageLoad(plan_img, ivec3(9 * e, y, z)).x);
+		for (int k = 0; k < ZC_PIECES; k++) {
+			if (k >= pcs.n[e]) break;
+			vec4 a = imageLoad(plan_img, ivec3(9 * e + 1 + 2 * k, y, z)), b = imageLoad(plan_img, ivec3(9 * e + 2 + 2 * k, y, z));
+			pcs.u[e * ZC_PIECES + k] = a.xyz;
+			pcs.t[e * ZC_PIECES + k] = vec3(a.w, b.xy);
+		}
+	}
+	vec4 a = imageLoad(plan_img, ivec3(108, y, z));
+	ax.rnd = a.x > 0.5;
+	ax.l_in = a.y;
+	ax.l_out = a.z;
+	ax.aax = a.w;
+	ax.en = imageLoad(plan_img, ivec3(109, y, z)).xyz;
+}
+
+// cube ci's span's section (CUBE_SPANS' out) from plan_img: an entry id 8 + face + 1
+ZSeq zs_seq(int ci, int z, int span) {
+	ZSeq sq;
+	int y = ci * PLAN_ROWS + 3;
+	vec4 h = imageLoad(plan_img, ivec3(5 * span, y, z));
+	sq.k = int(h.x);
+	sq.n[0] = int(h.y);
+	sq.n[1] = int(h.z);
+	sq.n[2] = int(h.w);
+	for (int j = 0; j < 4; j++) {
+		vec4 v = imageLoad(plan_img, ivec3(5 * span + 1 + j, y, z));
+		for (int i = 0; i < 4; i++) {
+			int code = int(v[i]);
+			sq.id[4 * j + i] = code / 8;
+			sq.face[4 * j + i] = code % 8 - 1;
+		}
+	}
+	return sq;
+}
 
 #if defined(PATHS)
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -92,6 +169,111 @@ void main() {
 	vec2 at = zone_path_at(f, i, k);
 	vec4 node = zone_path_node(el, en, at.x, at.y);
 	imageStore(path_img, ivec3(k, s * ZONE_PL + i, int(id.z)), node);
+}
+#elif defined(CUBE_EDGES) || defined(CUBE_PIECES)
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int e = int(id.x), z = int(id.z);
+	if (e >= 12) return;
+	int s = pc.first.x + int(id.y), ci = int(id.y);
+	vec3 en;
+	ZCube q = zs_cube(s, z, en);
+#ifdef CUBE_EDGES
+	vec2 ends;
+	vec4 near = zc_edge_near(q, e, ends);
+	imageStore(plan_img, ivec3(2 * e, ci * PLAN_ROWS, z), near);
+	imageStore(plan_img, ivec3(2 * e + 1, ci * PLAN_ROWS, z), vec4(ends, 0.0, 0.0));
+#else
+	vec4 near[12];
+	vec2 ends[12];
+	for (int i = 0; i < 12; i++) {
+		near[i] = imageLoad(plan_img, ivec3(2 * i, ci * PLAN_ROWS, z));
+		ends[i] = imageLoad(plan_img, ivec3(2 * i + 1, ci * PLAN_ROWS, z)).xy;
+	}
+	ZAxis ax = zc_axis(q, near, ends);
+	// round an axis turned off a corner or an edge: this edge near it anew
+	vec4 ne = near[e];
+	if (ax.en != q.en) {
+		q = zs_cube_at(s, ax.en);
+		vec2 en_;
+		ne = zc_edge_near(q, e, en_);
+	}
+	vec3 pu[ZC_PIECES], pt[ZC_PIECES];
+	int n = zc_pieces(q, e, ne, pu, pt);
+	int y = ci * PLAN_ROWS + 1;
+	imageStore(plan_img, ivec3(9 * e, y, z), vec4(float(n), 0.0, 0.0, 0.0));
+	for (int k = 0; k < ZC_PIECES; k++) {
+		if (k >= n) break;
+		imageStore(plan_img, ivec3(9 * e + 1 + 2 * k, y, z), vec4(pu[k], pt[k].x));
+		imageStore(plan_img, ivec3(9 * e + 2 + 2 * k, y, z), vec4(pt[k].yz, 0.0, 0.0));
+	}
+	if (e == 0) {
+		float th0 = ax.rnd ? 0.0 : geo_atan2(dot(q.C.xyz, q.a2), dot(q.C.xyz, q.a1));
+		imageStore(plan_img, ivec3(108, y, z), vec4(ax.rnd ? 1.0 : 0.0, ax.l_in, ax.l_out, ax.aax));
+		imageStore(plan_img, ivec3(109, y, z), vec4(ax.en, th0));
+	}
+#endif
+}
+#elif defined(CUBE_SPANS)
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int span = int(id.x), z = int(id.z);
+	int s = pc.first.x + int(id.y), ci = int(id.y);
+	ZCube q = zs_cube_mesh(s, ci, z);
+	ZPieces pc_;
+	ZAxis ax;
+	zs_pieces(ci, z, pc_, ax);
+	float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
+	float kn[ZC_KNOTS];
+	int nk = zc_knots(pc_, ax.rnd, th0, kn);
+	int spans = ax.rnd ? nk : nk - 1;
+	if (span >= max(spans, 1)) return;
+	// its columns: the sharing out's own (zc_column), each column's span found in turn
+	float columns = pc.grid.x;
+	float mid = 0.0;
+	for (int c = 0; c <= 128; c++) {
+		if (float(c) > columns) break;
+		vec3 col = zc_column(float(c), columns, kn, nk, ax.rnd, th0);
+		if (int(col.z) != span) continue;
+		mid = col.y;
+		imageStore(plan_img, ivec3(c, ci * PLAN_ROWS + 2, z), vec4(col, 0.0));
+	}
+	ZSeq sq = zc_sequence(q, pc_, ax, mid);
+	int y = ci * PLAN_ROWS + 3;
+	imageStore(plan_img, ivec3(5 * span, y, z), vec4(float(sq.k), float(sq.n[0]), float(sq.n[1]), float(sq.n[2])));
+	for (int j = 0; j < 4; j++) {
+		vec4 v;
+		for (int i = 0; i < 4; i++) v[i] = float(sq.id[4 * j + i] * 8 + sq.face[4 * j + i] + 1);
+		imageStore(plan_img, ivec3(5 * span + 1 + j, y, z), v);
+	}
+}
+#elif defined(CUBE_COLUMNS)
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int c = int(id.x), z = int(id.z);
+	if (float(c) > pc.grid.x) return;
+	int s = pc.first.x + int(id.y), ci = int(id.y);
+	ZCube q = zs_cube_mesh(s, ci, z);
+	ZPieces pc_;
+	ZAxis ax;
+	zs_pieces(ci, z, pc_, ax);
+	vec4 col = imageLoad(plan_img, ivec3(c, ci * PLAN_ROWS + 2, z));
+	ZSeq sq = zs_seq(ci, z, int(col.z));
+	vec3 m;
+	vec3 t = zc_t(q, col.x, m);
+	int ne = 0;
+	for (int i = 0; i < ZC_PARTS; i++) {
+		if (i < sq.k) ne += sq.n[i];
+	}
+	int y = ci * (int(pc.grid.x) + 1) + c;
+	for (int j = 0; j < ZC_ITEMS / 2; j++) {
+		vec2 a = 2 * j < ne ? zc_item(q, pc_, ax, sq.id[2 * j], col.x, t, m) : vec2(0.0);
+		vec2 b = 2 * j + 1 < ne ? zc_item(q, pc_, ax, sq.id[2 * j + 1], col.x, t, m) : vec2(0.0);
+		imageStore(col_img, ivec3(j, y, z), vec4(a, b));
+	}
 }
 #elif defined(IMAGES)
 // image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis
@@ -163,19 +345,36 @@ void main() {
 	vec3 en;
 	vec4 ex, ey, ez;
 	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
-	vec4 C = zb.body[4 * s], E1 = zb.body[4 * s + 1], E2 = zb.body[4 * s + 2];
-	float size = zb.body[4 * s + 3].x;
-	vec4 N = geo_normal(C);
-	vec4 E3 = -geo_cross4(E1, E2, N);
 	vec3 t;
-	bool none;
+	bool none, kill = false;
+	float side = 0.0;
 #ifdef BALL
-	vec2 pe = zone_vertex(vec2(float(col) / columns, float(row) / rows), columns, rows, true, en, C, E1, E2, E3, N, size, t, none);
+	vec2 pe = zone_ball_vertex(vec2(float(col) / columns, float(row) / rows), en, zb.body[4 * s], zb.body[4 * s + 3].x, t);
+	none = false;
 #else
-	vec2 pe = zone_vertex(vec2(float(col) / columns, float(row) / rows), columns, rows, false, en, C, E1, E2, E3, N, size, t, none);
+	int ci = int(id.y);
+	ZCube q = zs_cube_mesh(s, ci, int(id.z));
+	vec4 cv = imageLoad(plan_img, ivec3(int(col), ci * PLAN_ROWS + 2, int(id.z)));
+	ZSeq sq = zs_seq(ci, int(id.z), int(cv.z));
+	vec2 pos[ZC_ITEMS];
+	int yc = ci * (int(columns) + 1) + int(col);
+	for (int j = 0; j < ZC_ITEMS / 2; j++) {
+		vec4 v = imageLoad(col_img, ivec3(j, yc, int(id.z)));
+		pos[2 * j] = v.xy;
+		pos[2 * j + 1] = v.zw;
+	}
+	vec3 mv;
+	t = zc_t(q, cv.x, mv);
+	vec2 pe = zc_node(q, float(row), rows, sq, pos, t, mv, kill);
+	none = !geo_finite(pe.x + pe.y);
+	int y2 = ci * PLAN_ROWS + 2;
+	float th_prev = col > 0u ? imageLoad(plan_img, ivec3(int(col) - 1, y2, int(id.z))).x : 0.0;
+	float th_next = float(col) < columns ? imageLoad(plan_img, ivec3(int(col) + 1, y2, int(id.z))).x : 0.0;
+	bool rnd = imageLoad(plan_img, ivec3(108, ci * PLAN_ROWS + 1, int(id.z))).x > 0.5;
+	side = zc_side(float(col), columns, rnd, th_prev, cv.x, th_next);
 #endif
 	int y = s * int(pc.grid.w) + (coarse ? int(pc.grid.y) + 1 : 0) + int(row);
 	imageStore(out_img, ivec3(2 * int(col), y, int(id.z)), vec4(pe, t.xy));
-	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, none ? 1.0 : 0.0, 0.0, 0.0));
+	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, none ? 1.0 : 0.0, kill ? 1.0 : 0.0, side));
 }
 #endif

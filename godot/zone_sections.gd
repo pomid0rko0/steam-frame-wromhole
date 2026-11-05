@@ -2,13 +2,15 @@ class_name ZoneSections
 extends CompositorEffect
 ## The meshes of the bodies in the curved zone, worked out once a frame. A body in the zone is drawn
 ## once per image (Renderer.ZONE_IMAGES), as a mesh made anew for each view round the line through
-## its eye and the centre (shaders/zone.gdshaderinc, zone_vertex): a node's place on the body
+## its eye and the centre (shaders/zone.gdshaderinc, zone_cube.gdshaderinc): a node's place on the body
 ## depends on the eye and the body, not on the image. So before the bodies are drawn, a compute
 ## shader (shaders/zone_sections.gdshaderinc) works out every node of each such body's two meshes
 ## for each eye into a texture, and the bodies' vertex shader (shaders/body.gdshaderinc, ZONE) takes
 ## its node from there and only finds its geodesic to the eye: the section once per node and eye,
-## not once per vertex of each of the 20 images. A cube's section is the dear part (its corners on
-## the space, the edges its half-surface cuts, Newton's steps onto each corner and face).
+## not once per vertex of each of the 20 images. A cube's mesh takes four passes before its nodes
+## (shaders/zone_cube.gdshaderinc; zone_sections.gdshaderinc's CUBE_*: its edges near the axis, their
+## pieces, its spans' sections, its columns' corners), each on the one before, in plan_img and
+## col_img.
 ##
 ## And which images of each body are drawn at all (zone_sections.gdshaderinc, IMAGES): one thinner
 ## across than CULL_PX of a pixel is not, its vertices go out of the picture at once (cull_tex),
@@ -32,6 +34,10 @@ const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a
 const TS_BEGIN := "zone nodes begin"
 const TS_END := "zone nodes end"
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
+const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdshaderinc's)
+const PLAN_W := 160
+const COL_W := 8                    # col_img's texels a column (zone_cube.gdshaderinc's ZC_ITEMS / 2)
+const CUBE_PASSES := ["cube_edges", "cube_pieces", "cube_spans", "cube_columns"]
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
 var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
@@ -47,6 +53,8 @@ var _tex: RID
 var _cull: RID                      # images x slots, a layer per eye
 var _path: RID                      # (_path_n.y + 1) x slots * _path_n.x, a layer per eye
 var _path_n := Vector2i.ZERO        # a body's table's nodes along l and q (zone.gdshaderinc's ZONE_PL, ZONE_PQ)
+var _plan: RID                      # the cube passes' (PLAN_W x cubes * PLAN_ROWS, a layer per eye)
+var _col: RID                       # the cubes' columns' corners (COL_W x cubes * (columns + 1), a layer per eye)
 var _images := 0                    # images a body (Renderer.ZONE_IMAGES)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture (named by geo.gdshaderinc, not read)
@@ -109,6 +117,19 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	p.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	_path = _rd.texture_create(p, RDTextureView.new())
 	path_tex.texture_rd_rid = _path
+	for k in 2:
+		var q := RDTextureFormat.new()
+		q.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+		q.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+		q.width = PLAN_W if k == 0 else COL_W
+		q.height = maxi(cubes, 1) * (PLAN_ROWS if k == 0 else columns + 1)
+		q.array_layers = 2
+		q.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
+		var rid := _rd.texture_create(q, RDTextureView.new())
+		if k == 0:
+			_plan = rid
+		else:
+			_col = rid
 
 
 ## The space and its table (Renderer.upload_space), as Foveation.set_space takes them.
@@ -153,12 +174,13 @@ func set_bodies(rows: PackedVector4Array, balls: int, cubes: int) -> void:
 func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var zone: String = (load("res://shaders/zone.gdshaderinc") as ShaderInclude).code
+	var cube: String = (load("res://shaders/zone_cube.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/zone_sections.gdshaderinc") as ShaderInclude).code
-	body = body.replace("#include_geo_and_zone", geo + "\n" + zone)
+	body = body.replace("#include_geo_and_zone", geo + "\n" + zone + "\n" + cube)
 	for k in 2:
 		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
 		_path_n[k] = int(m.get_string(1))
-	for kind in ["ball", "cube", "images", "paths"]:
+	for kind in ["ball", "cube", "images", "paths"] + CUBE_PASSES:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -177,7 +199,7 @@ func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 6:
+	for b in 8:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
@@ -200,13 +222,19 @@ func _uniform_set(kind: String) -> RID:
 			5:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 				u.add_id(_path)
+			6:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+				u.add_id(_plan)
+			7:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+				u.add_id(_col)
 		us.append(u)
 	_sets[kind] = _rd.uniform_set_create(us, _shaders[kind], 0)
 	return _sets[kind]
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("paths"):
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("cube_columns"):
 		return
 	_mutex.lock()
 	var counts := _counts
@@ -244,28 +272,36 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var nodes := int(_grid.x + 1.0) * int(_grid.y + _grid.z + 2.0)
 	_rd.capture_timestamp(TS_BEGIN)
 	var cl := _rd.compute_list_begin()
-	for k in 2:
-		var n := counts.x if k == 0 else counts.y
-		if n == 0:
-			continue
-		var kind := "ball" if k == 0 else "cube"
-		_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
-		_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
-		var pc := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
-		pc.append_array(PackedInt32Array([0 if k == 0 else _cube0, 0, 0, 0]).to_byte_array())
-		_rd.compute_list_set_push_constant(cl, pc, pc.size())
-		_rd.compute_list_dispatch(cl, int(ceil(nodes / 64.0)), n, views)
-	_rd.compute_list_bind_compute_pipeline(cl, _pipes["images"])
-	_rd.compute_list_bind_uniform_set(cl, _uniform_set("images"), 0)
-	var ipc := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
+	var pcb := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
+	var bpc := pcb.duplicate()
+	bpc.append_array(PackedInt32Array([0, 0, 0, 0]).to_byte_array())
+	var cpc := pcb.duplicate()
+	cpc.append_array(PackedInt32Array([_cube0, 0, 0, 0]).to_byte_array())
+	var ipc := pcb.duplicate()
 	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
-	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
-	_rd.compute_list_dispatch(cl, int(ceil(_images / 32.0)), counts.x + counts.y, views)
+	if counts.x > 0:
+		_dispatch(cl, "ball", bpc, int(ceil(nodes / 64.0)), counts.x, views)
+	_dispatch(cl, "images", ipc, int(ceil(_images / 32.0)), counts.x + counts.y, views)
+	# a cube's passes, each on the one before (zone_sections.gdshaderinc), then its nodes
+	if counts.y > 0:
+		_dispatch(cl, "cube_edges", cpc, 1, counts.y, views)
+		_rd.compute_list_add_barrier(cl)
+		_dispatch(cl, "cube_pieces", cpc, 1, counts.y, views)
+		_rd.compute_list_add_barrier(cl)
+		_dispatch(cl, "cube_spans", cpc, 1, counts.y, views)
+		_rd.compute_list_add_barrier(cl)
+		_dispatch(cl, "cube_columns", cpc, int(ceil((_grid.x + 1.0) / 64.0)), counts.y, views)
+		_rd.compute_list_add_barrier(cl)
+		_dispatch(cl, "cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
 	# the tables, as far as the images just found drawn need them
 	_rd.compute_list_add_barrier(cl)
-	_rd.compute_list_bind_compute_pipeline(cl, _pipes["paths"])
-	_rd.compute_list_bind_uniform_set(cl, _uniform_set("paths"), 0)
-	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
-	_rd.compute_list_dispatch(cl, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
+	_dispatch(cl, "paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
 	_rd.compute_list_end()
 	_rd.capture_timestamp(TS_END)
+
+
+func _dispatch(cl: int, kind: String, push: PackedByteArray, x: int, y: int, z: int) -> void:
+	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
+	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
+	_rd.compute_list_set_push_constant(cl, push, push.size())
+	_rd.compute_list_dispatch(cl, x, y, z)

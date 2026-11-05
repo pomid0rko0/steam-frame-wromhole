@@ -25,15 +25,17 @@
 //     takes the azimuths it spans, each section a closed curve round the point nearest its centre;
 //     a body round the axis every azimuth, each section an arc from where the axis enters it to
 //     where it leaves. No triangle crosses the axis, and the images come out as rings where they
-//     are. Each point found by Newton's steps on the body's own definition along a straight line of
-//     (l, r alpha) from the inner point (zone.gdshaderinc). A cube's columns stand on its corners'
-//     azimuths, and a row on each corner of its sections, the same corner on the same row from one
-//     corner's azimuth to the next: its outline keeps its corners. Every point stays on the body:
-//     where those steps leave one off (the axis next to an edge), a line from the section's
-//     inside puts it there. A node's point is the same in every image: it is worked out once a
-//     frame for each eye (zone_sections.gd, ZoneSections' texture zone_nodes), and here each
-//     image's vertex takes it and its geodesic from the body's table of the ways from the eye
-//     (zone_paths, zone.gdshaderinc's zone_path_see), worked out once a frame too.
+//     are. A ball's points by Newton's steps on its definition along a straight line of (l, r alpha)
+//     from the inner point (zone.gdshaderinc); a cube's on its edges and faces, its columns on the
+//     knots of its edges' azimuths and a row on each corner of its sections, the same corner on the
+//     same row all through a span between two knots, a section of two parts with two rows between
+//     them that are dropped (v_kill; zone_cube.gdshaderinc); on a knot two columns, one line in the
+//     picture, pulled past each other by ZONE_KNOT_PX and the strip between them dropped (v_knot),
+//     else the rasterizer's rounding would leave pinholes between them. A node's point is the same
+//     in every image: it is worked out once a frame for each eye (zone_sections.gd, ZoneSections'
+//     texture zone_nodes), and here each image's vertex takes it and its geodesic from the body's
+//     table of the ways from the eye (zone_paths, zone.gdshaderinc's zone_path_see), worked out
+//     once a frame too.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -81,6 +83,9 @@ uniform sampler2DArray zone_paths : filter_nearest, repeat_disable;
 uniform int zone_slot = 0;
 uniform int zone_row = 0;
 uniform int zone_slot_rows = 62;
+// pixels a knot's two columns are pulled past each other by, each way: beyond the rasterizer's
+// rounding of a vertex (a 256th of a pixel)
+const float ZONE_KNOT_PX = 1.0 / 64.0;
 #endif
 #ifdef BEAM
 #define BEAM_POINTS 48           // Renderer.BEAM_POINTS
@@ -104,6 +109,14 @@ varying vec4 v_ray;     // the light's way in (R^4)
 #endif
 varying float v_l;
 varying float v_h;      // height above the floor
+#ifdef ZONE
+// 1 at a node no part of the surface (a cube's rows between two parts of its section,
+// zone_cube.gdshaderinc's zc_node): a triangle of three such is dropped, one with fewer has no area
+varying float v_kill;
+// 2 column + its side of a knot (zone_cube.gdshaderinc's zc_side), mod 8: the same at all three
+// vertices only of a triangle of the strip between a knot's two columns
+varying float v_knot;
+#endif
 varying vec3 v_col;
 #ifdef DIRECT
 varying vec3 v_p;       // the point (R^4's xyz)
@@ -138,13 +151,16 @@ void vertex() {
 	float pl = 0.0;
 	float len = 0.0, fell = 0.0;
 	vec4 arrive = vec4(0.0);
-	bool none = false;            // the section's steps came out not a number (zone_vertex)
+	bool none = false;            // the node came out not a number (zone_sections.gdshaderinc)
+	v_kill = 0.0;
+	v_knot = 0.0;
 	// an image the pass leaves out (thinner than a share of a pixel), or of a body it did not take
 	// this frame (a slot not worked out: its nodes are another's, or none): every vertex out of the
 	// picture at the centre, no triangle drawn, no geodesic sought
 	vec4 cull = texelFetch(zone_cull, ivec3(image, slot, int(VIEW_INDEX)), 0);
 	if (cull.w > 0.5 && all(equal(cull.xyz, C.xyz))) {
-		// the node's point on the body: (l, alpha) and its half-surface's direction t (zone_vertex)
+		// the node's point on the body: (l, alpha) and its half-surface's direction t
+		// (zone_sections.gdshaderinc)
 		ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
 		int row = slot * zone_slot_rows + zone_row + node.y;
 		vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
@@ -152,13 +168,32 @@ void vertex() {
 		vec2 pe = na.xy;
 		vec3 t = vec3(na.zw, nb.x);
 		none = nb.y > 0.5;
+		v_kill = nb.z;
 		pl = pe.x;
 		float alpha = clamp(pe.y, 0.0, GEO_PI);
 		vec2 sca = geo_sincos(alpha);
 		vec3 pn = sca.y * en + sca.x * t;
 		P = vec4(geo_r(abs(pl)) * pn, zone_w(pl));
 		vec4 dir = zone_path_see(zone_paths, slot * ZONE_PL, int(VIEW_INDEX), el, en, pl, pn, t, alpha, image, len, arrive, fell);
-		POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+		vec3 pv = EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez));
+		POSITION = PROJECTION_MATRIX * vec4(pv, 1.0);
+		// a knot's two columns (zc_side: +1 the first, -1 the second): one line in the picture, each
+		// with vertices of its own, which the rasterizer rounds to its grid apart. So each is pulled
+		// ZONE_KNOT_PX past the line toward the other, the way the picture of a point goes as its
+		// azimuth grows: dir (its radial part, then its part across) turned about the axis, toward
+		// en x t, or -(en x t) in the odd images, which leave on the -t side (zone_path_see). The
+		// strip between them is not drawn (v_knot)
+		float side = nb.w;
+		v_knot = mod(2.0 * float(node.x) + side, 8.0);
+		if (side != 0.0 && POSITION.w > 0.0) {
+			vec3 to = normalize(t - dot(t, en) * en);
+			vec4 way = vec4(0.0, ((image & 1) == 1 ? -1.0 : 1.0) * cross(en, to));
+			vec4 p2 = PROJECTION_MATRIX * vec4(pv + 1e-3 * len * vec3(dot(way, ex), dot(way, ey), dot(way, ez)), 1.0);
+			vec2 d = (p2.xy / p2.w - POSITION.xy / POSITION.w) * VIEWPORT_SIZE;
+			if (p2.w > 0.0 && dot(d, d) > 0.0) {
+				POSITION.xy += side * ZONE_KNOT_PX * 2.0 * normalize(d) / VIEWPORT_SIZE * POSITION.w;
+			}
+		}
 	} else {
 		P = C;
 		POSITION = vec4(0.0, 0.0, 2.0, 1.0);
@@ -305,7 +340,7 @@ void vertex() {
 	// node of the table about it)
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 #ifdef ZONE
-	// and orange where a cube's section's steps came out not a number (zone_cube_section)
+	// and orange where a node came out not a number
 	if (none) v_col = mix(v_col, vec3(1.0, 0.5, 0.0), 0.7);
 #endif
 }
@@ -342,11 +377,13 @@ void fragment() {
 #endif
 #ifdef ZONE
 	// a pixel whose numbers came out none is no part of the surface: a triangle of next to no area
-	// (a cube's strip between two columns on one corner's azimuth, zone_cube_azimuth: its vertices
-	// all on that azimuth's line in the view, each placed on its own) gets one now and then,
-	// its varyings no numbers. Dropped after the derivatives, which take its neighbours; by the bits
-	// (geo_finite): a compiler may take a comparison as if no number were NaN
-	if (!geo_finite(col.r + col.g + col.b)) discard;
+	// gets one now and then, its varyings no numbers; nor is one of a triangle between a cube's
+	// section's parts (v_kill), nor of the strip between a knot's two columns (v_knot the same at
+	// its vertices: none across it, while across any other triangle it changes by 2 to 6 over a
+	// column, a few thousand pixels at most). Dropped after the derivatives, which take its
+	// neighbours; by the bits (geo_finite): a compiler may take a comparison as if no number were NaN
+	float knot = fwidth(v_knot);
+	if (!geo_finite(col.r + col.g + col.b) || v_kill > 0.5 || knot < 1e-5) discard;
 #endif
 	ALBEDO = col;
 #endif
