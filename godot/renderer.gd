@@ -166,6 +166,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	tail_mat.set_shader_parameter("tail_psi_min", (ZONE_IMAGES - 1) * PI)
 	tail_mat.set_shader_parameter("tail_segments", float(TAIL_SEGMENTS))
 	tail_mat.set_shader_parameter("tail_far", Main.FAR)
+	tail_mat.set_shader_parameter("tail_images", ZONE_IMAGES)
+	tail_mat.set_shader_parameter("zone_cull", zone_sections.cull_tex)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
@@ -232,11 +234,15 @@ func _process(_delta: float) -> void:
 	if _warm > 0:
 		_warm -= 1
 		arrows.visible = _warm > 0 or (gravity_view == 2 and _lines_task < 0)
-		tail.visible = _warm > 0 or _tail_on
+		_tail_visible()
 		if _warm == 0:
 			for k in beams.size():
 				beams[k].visible = _beam_on[k]
 		_floor_material()
+
+
+func _tail_visible() -> void:
+	tail.visible = _warm > 0 or (_tail_on and tail_shown)
 
 
 ## The floor's quad's material: foveation's while it is on (it samples its texture),
@@ -247,6 +253,12 @@ func _floor_material() -> void:
 
 var _warm := 3                  # frames left drawing the gravity views, the beams and the tail (_process)
 var _tail_on := false           # a body in the zone, and a throat with a cylinder: the tail drawn
+# the tail drawn where it is on; the speed check takes it away to time it (bench.gd's VARIANTS)
+var tail_shown := true:
+	set(v):
+		tail_shown = v
+		if tail:
+			_tail_visible()
 var _beam_on: Array[bool] = [false, false]
 
 
@@ -287,7 +299,7 @@ func _profile() -> void:
 func set_length() -> void:
 	_profile()
 	_tail_on = zone_count != Vector2i.ZERO and space.Lc > 0.0
-	tail.visible = _warm > 0 or _tail_on
+	_tail_visible()
 	_lines_want = true
 	arrows.visible = false
 	if _lines_task < 0:
@@ -436,7 +448,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	tail_mat.set_shader_parameter("tail_count", Vector2i(inz[0], inz[1]))
 	_tail_on = inz[0] + inz[1] > 0 and space.Lc > 0.0
 	if tail:
-		tail.visible = _warm > 0 or _tail_on
+		_tail_visible()
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
 	zone_count = Vector2i(inz[0], inz[1])

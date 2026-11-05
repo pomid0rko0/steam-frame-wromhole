@@ -19,7 +19,8 @@ extends Node
 ## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
 ## the eyes (NEAR_CUBE: a body near the eyes with the world round it), and with a ball and a cube
 ## in the throat's cylinder (THROAT_BODIES: their images past the meshes', the tail, cost pixels
-## per body: zone_tail.gdshader), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## per body: zone_tail.gdshader), and the same without the tail (what it costs: the difference),
+## in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
@@ -78,10 +79,13 @@ const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
 # the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
-# eyes, the bodies in the throat]; the first is the reference the others are compared with
-const VARIANTS := [["plain", 0, false, false], ["foveation weak", 1, false, false], ["foveation medium", 2, false, false],
-	["foveation strong", 3, false, false], ["foveation stronger", 4, false, false], ["foveation strongest", 5, false, false],
-	["a cube at the eyes", 0, true, false], ["a ball and a cube in the throat", 0, false, true]]
+# eyes, the bodies in the throat, the tail drawn (Renderer.tail_shown)]; the first is the reference
+# the others are compared with
+const VARIANTS := [["plain", 0, false, false, true], ["foveation weak", 1, false, false, true],
+	["foveation medium", 2, false, false, true], ["foveation strong", 3, false, false, true],
+	["foveation stronger", 4, false, false, true], ["foveation strongest", 5, false, false, true],
+	["a cube at the eyes", 0, true, false, true], ["a ball and a cube in the throat", 0, false, true, true],
+	["the same without the tail", 0, false, true, false]]
 # the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
 # round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
 # B's, both in view from inside the cylinder looking round it and from out at the mouth
@@ -285,7 +289,7 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
+		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4]))
 	saved_pose = main.get_pose()
 	saved_length = 2.0 * main.space.Lc
 	main.hold = true
@@ -385,10 +389,11 @@ func _prepare() -> void:
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's foveation, cube and bodies in the throat.
+## A variant's foveation, cube, bodies in the throat and tail.
 func _use(v: Setup) -> void:
 	near = v.near
 	throat = v.throat
+	main.renderer.tail_shown = v.tail
 	if main.foveation.level != v.foveation:
 		main.foveation.set_level(v.foveation)
 
@@ -485,8 +490,15 @@ func _compared() -> void:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
 	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс"
-			% [_worst(0), _worst(variants.size() - 2), _worst(variants.size() - 1)]]
+	# and the tail's cost: the most the bodies in the throat cost more with it than without, at a place
+	var cube := _variant(true, false, true)
+	var bodies := _variant(false, true, true)
+	var bare := _variant(false, true, false)
+	var tail_ms := 0.0
+	for r in results:
+		tail_ms = maxf(tail_ms, _mean(r[bodies]) - _mean(r[bare]))
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс)"
+			% [_worst(0), _worst(cube), _worst(bodies), tail_ms]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -666,9 +678,20 @@ static func _list(v: Array) -> String:
 func _restore() -> void:
 	near = false
 	throat = false
+	main.renderer.tail_shown = true
 	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
 		main.set_length(saved_length)
 	main.foveation.set_level(menu.foveation)
+
+
+## The first variant without foveation with the cube before the eyes, the bodies in the throat and
+## the tail as asked.
+func _variant(p_near: bool, p_throat: bool, p_tail: bool) -> int:
+	for v in variants.size():
+		var f := variants[v]
+		if f.foveation == 0 and f.near == p_near and f.throat == p_throat and f.tail == p_tail:
+			return v
+	return 0
 
 
 ## Variant v's slowest place, ms.
@@ -694,12 +717,14 @@ class Setup:
 	var foveation: int              # Foveation.set_level's level
 	var near: bool                  # the cube before the eyes
 	var throat: bool                # the ball and the cube in the throat
+	var tail: bool                  # the tail drawn (Renderer.tail_shown)
 
-	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool) -> void:
+	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool, p_tail: bool) -> void:
 		label = p_label
 		foveation = p_foveation
 		near = p_near
 		throat = p_throat
+		tail = p_tail
 
 
 ## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees

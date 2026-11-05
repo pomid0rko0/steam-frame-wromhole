@@ -2,7 +2,8 @@
 // zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
 // (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
 // header (the version, BALL, CUBE_EDGES, CUBE_PIECES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES or
-// PATHS) before it and geo.gdshaderinc, zone.gdshaderinc and zone_cube.gdshaderinc where it says.
+// PATHS) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
+// zone_tail.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
 // direction from the centre is the axis the mesh is built round) and the body, so each node of a
@@ -36,7 +37,12 @@
 // angle at the picture's middle times cos^2 of the way off it. Invocation x: the image, y: the body
 // (the zone's balls, then its cubes), z: the eye. Out: a texel per image, body's slot and eye,
 // (the centre's x, y, z the body was taken at, 1 if drawn, else 0): the vertex shader draws an
-// image only where it says 1 for the centre its instance has.
+// image only where it says 1 for the centre its instance has. And invocation x = images: the
+// tail's view of the body from the eye (zone_tail.gdshaderinc: its band off the inward radial,
+// tail_band, past the last image, and its two sectors round it, tail_sector), once a frame for the
+// tail's sectors (zone_tail.gdshader), not in each of their vertices: three texels after the
+// images', (the centre's x, y, z, 1), (the band's least and greatest angle, the sectors' half
+// width, 0), (their direction u, 0).
 //
 // PATHS: each body's table of the ways from each eye (zone.gdshaderinc, «the paths by a table»),
 // after IMAGES: a node by geo_see_to's search, only the turns up to the last image drawn needs.
@@ -301,7 +307,7 @@ void main() {
 	uvec3 id = gl_GlobalInvocationID;
 	int j = int(id.x);
 	int balls = pc.first.x, all = pc.first.x + pc.first.y;
-	if (j >= pc.first.w || int(id.y) >= all) return;
+	if (j > pc.first.w || int(id.y) >= all) return;
 	bool cube = int(id.y) >= balls;
 	int s = cube ? pc.first.z + int(id.y) - balls : int(id.y);
 	vec4 C = zb.body[4 * s];
@@ -311,6 +317,18 @@ void main() {
 	vec3 en;
 	vec4 ex, ey, ez;
 	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
+	if (j == pc.first.w) {
+		// the tail's view of the body, from the meshes' last image on (Renderer's tail_psi_min)
+		TailBody q = tail_body(cube, C, zb.body[4 * s + 1], zb.body[4 * s + 2], size);
+		vec3 eye = vec3(geo_r(abs(el)), sqrt(geo_u(abs(el))), geo_dr(abs(el)));
+		vec2 band = tail_band(el, eye, q, float(pc.first.w - 1) * GEO_PI);
+		vec3 u;
+		float half_w = tail_sector(en, q, u);
+		imageStore(cull_img, ivec3(j, s, int(id.z)), vec4(C.xyz, 1.0));
+		imageStore(cull_img, ivec3(j + 1, s, int(id.z)), vec4(band, half_w, 0.0));
+		imageStore(cull_img, ivec3(j + 2, s, int(id.z)), vec4(u, 0.0));
+		return;
+	}
 	vec3 n;
 	float pl = geo_l_of(C, n);
 	float ca = dot(n, en);

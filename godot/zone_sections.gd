@@ -14,7 +14,9 @@ extends CompositorEffect
 ##
 ## And which images of each body are drawn at all (zone_sections.gdshaderinc, IMAGES): one thinner
 ## across than CULL_PX of a pixel is not, its vertices go out of the picture at once (cull_tex),
-## and so is none whose body is not the one the pass took (a slot not worked out this frame).
+## and so is none whose body is not the one the pass took (a slot not worked out this frame). The
+## same pass works out where the body's tail can be seen (cull_tex's last TAIL_TEXELS of a slot's
+## row), for the tail's sectors (shaders/zone_tail.gdshader).
 ##
 ## And then each body's table of the ways light takes from each eye (zone.gdshaderinc, «the paths
 ## by a table»; zone_sections.gdshaderinc, PATHS): a node of it by geo_see_to's search, as far along
@@ -38,6 +40,7 @@ const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdsh
 const PLAN_W := 160
 const COL_W := 8                    # col_img's texels a column (zone_cube.gdshaderinc's ZC_ITEMS / 2)
 const CUBE_PASSES := ["cube_edges", "cube_pieces", "cube_spans", "cube_columns"]
+const TAIL_TEXELS := 3              # cull_tex's texels after a body's images': the tail's view of it (IMAGES)
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
 var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
@@ -50,7 +53,7 @@ var _sets := {}
 var _ubo: RID                       # Params
 var _bodies: RID                    # Bodies
 var _tex: RID
-var _cull: RID                      # images x slots, a layer per eye
+var _cull: RID                      # (images + TAIL_TEXELS) x slots, a layer per eye
 var _path: RID                      # (_path_n.y + 1) x slots * _path_n.x, a layer per eye
 var _path_n := Vector2i.ZERO        # a body's table's nodes along l and q (zone.gdshaderinc's ZONE_PL, ZONE_PQ)
 var _plan: RID                      # the cube passes' (PLAN_W x cubes * PLAN_ROWS, a layer per eye)
@@ -100,12 +103,12 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	var c := RDTextureFormat.new()
 	c.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	c.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
-	c.width = images
+	c.width = images + TAIL_TEXELS
 	c.height = _slots
 	c.array_layers = 2
 	c.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
 	var zero := PackedByteArray()
-	zero.resize(16 * images * _slots)
+	zero.resize(16 * c.width * _slots)
 	_cull = _rd.texture_create(c, RDTextureView.new(), [zero, zero])
 	cull_tex.texture_rd_rid = _cull
 	var p := RDTextureFormat.new()
@@ -177,8 +180,9 @@ func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var zone: String = (load("res://shaders/zone.gdshaderinc") as ShaderInclude).code
 	var cube: String = (load("res://shaders/zone_cube.gdshaderinc") as ShaderInclude).code
+	var tail: String = (load("res://shaders/zone_tail.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/zone_sections.gdshaderinc") as ShaderInclude).code
-	body = body.replace("#include_geo_and_zone", geo + "\n" + zone + "\n" + cube)
+	body = body.replace("#include_geo_and_zone", geo + "\n" + zone + "\n" + cube + "\n" + tail)
 	for k in 2:
 		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
 		_path_n[k] = int(m.get_string(1))
@@ -283,7 +287,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	if counts.x > 0:
 		_dispatch(cl, "ball", bpc, int(ceil(nodes / 64.0)), counts.x, views)
-	_dispatch(cl, "images", ipc, int(ceil(_images / 32.0)), counts.x + counts.y, views)
+	_dispatch(cl, "images", ipc, int(ceil((_images + 1) / 32.0)), counts.x + counts.y, views)
 	# a cube's passes, each on the one before (zone_sections.gdshaderinc), then its nodes
 	if counts.y > 0:
 		_dispatch(cl, "cube_edges", cpc, 1, counts.y, views)
