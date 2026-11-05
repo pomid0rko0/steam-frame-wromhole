@@ -36,7 +36,7 @@ uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;   // ZoneSect
 uniform int tail_images = 20;          // Renderer.ZONE_IMAGES: the tail's texels of a slot's row after them
 uniform int tail_probe = 0;            // tests (tail_cost_test.gd): 1, each fragment green where its ray meets the body, else red
 uniform int tail_only = -1;            // tests: only this body slot's side drawn (2 slot + side)
-uniform bool tail_strips = true;       // the strips drawn (Renderer.tail_strips), else one band from the first copy
+uniform bool tail_strips_on = true;    // the strips drawn (Renderer.tail_strips), else one band from the first copy
 
 varying flat float v_slot;      // the body's slot
 varying flat vec3 v_copies;     // the copies looked into: the first, the last, 1 if past the zone too
@@ -70,7 +70,7 @@ void vertex() {
 		// strip k drawn if it is one of the first K, each apart from the next (tail_apart), the band
 		// from strip K on, a margin past each edge off the radial (tail_margin); where the body has no
 		// strips, the band whole, its margins those round the axis
-		if (tail_strips && hd.z > 0.5) {
+		if (tail_strips_on && hd.z > 0.5) {
 			vec2 kk = texelFetch(zone_cull, ivec3(i0 + 4, s, layer), 0).xy;
 			int K = int((side2 ? kk.y : kk.x) + 0.5);
 			int j = k == TAIL_STRIPS ? K : k;

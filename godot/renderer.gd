@@ -258,7 +258,7 @@ var _tail_on := false           # a body in the zone, and a throat with a cylind
 var tail_strips := true:
 	set(v):
 		tail_strips = v
-		tail_mat.set_shader_parameter("tail_strips", v)
+		tail_mat.set_shader_parameter("tail_strips_on", v)
 # the tail drawn where it is on; the speed check takes it away to time it (bench.gd's VARIANTS)
 var tail_shown := true:
 	set(v):
