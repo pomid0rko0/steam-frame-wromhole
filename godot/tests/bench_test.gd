@@ -77,8 +77,11 @@ func _process(_d: float) -> bool:
 			if b.throat != v.throat or (b.throat and main.renderer.zone_count.y < 1):
 				check("the segment's ball and cube in the throat", false, b.plan[b.step].y)
 				started = false
-			if main.renderer.tail_shown != v.tail:
-				check("the segment's tail", false, b.plan[b.step].y)
+			if main.renderer.tail_shown != v.tail or main.renderer.tail_strips != v.strips:
+				check("the segment's tail and its strips", false, b.plan[b.step].y)
+				started = false
+			if b.hands != v.hands:
+				check("the segment's hands", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.enabled != (v.foveation > 0):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.enabled])
@@ -97,9 +100,10 @@ func _process(_d: float) -> bool:
 			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
 			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
-			check("the tail drawn again", main.renderer.tail_shown)
-			check("the menu shows the foveation's result and the tail's", main.menu.bench_text.contains("фовеация")
-					and main.menu.bench_text.contains("хвост"), main.menu.bench_text)
+			check("the tail drawn again, with its strips, and the hands", main.renderer.tail_shown and main.renderer.tail_strips and b.hands)
+			check("the menu shows the foveation's result, the tail's and the hands'", main.menu.bench_text.contains("фовеация")
+					and main.menu.bench_text.contains("хвост") and main.menu.bench_text.contains("полосок")
+					and main.menu.bench_text.contains("мячи рук"), main.menu.bench_text)
 			U.finish(self)
 			return true
 	if Time.get_ticks_msec() > 600_000:
