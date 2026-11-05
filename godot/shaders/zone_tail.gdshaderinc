@@ -47,7 +47,7 @@
 const float TAIL_PI2 = 6.28318530717959;
 const int TAIL_COPIES = 4;        // copies tried a body and stretch (from the first that can be met)
 const int TAIL_STEPS = 12;        // Newton's rounds into a body
-const int TAIL_HALVE = 12;        // back to the way in, a step past it: to the stretch as many halvings leave
+const int TAIL_HALVE = 12;        // halvings back to the way in, a step past it
 const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
 const float TAIL_TOL_FILLET = 1e-5;
 const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
@@ -287,53 +287,47 @@ bool tail_over(TailRay z, TailBody q, bool fillet, float lc, float lam, float ps
 // goes in (true), by Newton's steps on each part it is out of, the furthest taken; false if it
 // leaves a part (or never reaches one) before it is in all. A part's step from outside never passes
 // its own way in where the part bends away from the ray, but a cube's slab can bend toward it along
-// the helix and the step overshoot into the body: the way in is then found between the last point
-// out of it and the first in, by false position, to the stretch TAIL_HALVE halvings would leave. A
-// step can even go over a cube (a thin way through a corner of it) and leave it behind: where the ray
-// then leaves a part, the step's stretch is looked into (tail_over, TAIL_OVER times, each time on the
-// half its slabs say the cube is in), and a point in the cube found there is the first in. Done
-// within TAIL_TOL of the body, or where a step moves the point by less: on the fillet the sweep's
-// table (its filter's weights in 256ths) leaves the point that much uncertain.
+// the helix and the step overshoot into the body: the way in is then halved back between the last
+// point out of it and the first in (TAIL_HALVE). A step can even go over a cube (a thin way through
+// a corner of it) and leave it behind: where the ray then leaves a part, the step's stretch is
+// looked into (tail_over, TAIL_OVER times, each time on the half its slabs say the cube is in), and
+// a point in the cube found there is the first in. Done within TAIL_TOL of the body, or where a step
+// moves the point by less: on the fillet the sweep's table (its filter's weights in 256ths) leaves
+// the point that much uncertain.
 bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
 	x = xa;
 	float near = fillet ? TAIL_TOL_FILLET : TAIL_TOL;
 	float tol = q.cube ? near : 2.0 * near * q.size;
 	float xo = xa;          // the last point out of the body
-	float go = 0.0, gi = 0.0;   // how far out there, and at x once in
 	bool in_ = false;
 	for (int i = 0; i < TAIL_STEPS; i++) {
 		vec3 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
 		if (o.x <= tol) {
 			// in at the window's start: it went in before (the meshes' images, or a copy before)
 			if (i == 0) return false;
-			gi = o.x;
 			in_ = true;
 			break;
 		}
 		if (o.y < 0.0) {
 			// leaving a part: over the cube with the last step? (xo out, x out)
 			if (!q.cube || i == 0) return false;
-			float a = xo, ga = go, c = x, u;
+			float a = xo, c = x, u;
 			for (int r = 0; r < TAIL_OVER && !in_; r++) {
 				if (!tail_over(z, q, fillet, lc, lam, psi_c, base, a, c, u)) break;
-				float gu = tail_out(z, q, fillet, lc, lam, psi_c, base, u, tol).x;
-				if (gu <= tol) {
+				if (tail_out(z, q, fillet, lc, lam, psi_c, base, u, tol).x <= tol) {
 					x = u;
-					gi = gu;
 					xo = a;
-					go = ga;
 					in_ = true;
 				} else {
 					// out at u: on the half the slabs, linear on it, say the cube may be in
 					float v;
-					if (tail_over(z, q, fillet, lc, lam, psi_c, base, a, u, v)) c = u; else { a = u; ga = gu; }
+					if (tail_over(z, q, fillet, lc, lam, psi_c, base, a, u, v)) c = u; else a = u;
 				}
 			}
 			if (in_) break;
 			return false;
 		}
 		xo = x;
-		go = o.x;
 		float xn = x + o.y;
 		if (!(xn <= xb)) return false;
 		// a step float32 can't take at x is done too: so asked, not as xn == x, which a compiler
@@ -344,30 +338,10 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 		if (done) return true;
 	}
 	if (!in_) return false;
-	// back to where the worst part comes within tol, between xo (out) and x (in): false position
-	// (Illinois: the end that stays has its value halved), a halving where its point falls in the
-	// stretch's outer quarters, until the stretch is as short as TAIL_HALVE halvings leave it
-	float fo = go - tol, fi = gi - tol;
-	float w0 = abs(x - xo) * exp2(-float(TAIL_HALVE));
-	int last = 0;
 	for (int i = 0; i < TAIL_HALVE; i++) {
-		if (abs(x - xo) <= w0) break;
-		float h = 0.5 * (xo + x);
-		float m = (xo * fi - x * fo) / (fi - fo);
-		if (!(abs(m - h) <= 0.25 * abs(x - xo))) m = h;
+		float m = 0.5 * (xo + x);
 		if (m == xo || m == x) break;
-		float fm = tail_out(z, q, fillet, lc, lam, psi_c, base, m, tol).x - tol;
-		if (fm <= 0.0) {
-			x = m;
-			fi = fm;
-			if (last == 1) fo *= 0.5;
-			last = 1;
-		} else {
-			xo = m;
-			fo = fm;
-			if (last == -1) fi *= 0.5;
-			last = -1;
-		}
+		if (tail_out(z, q, fillet, lc, lam, psi_c, base, m, tol).x <= tol) x = m; else xo = m;
 	}
 	return true;
 }
@@ -413,18 +387,6 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 	// the cylinder: the copies whose l at psi_c is within the slab, a run of whole numbers (l moves by
 	// 2 pi lambda a copy); a cube's narrowed to its box's l at psi_c where it has one (its slabs
 	// across l at that angle)
-#ifndef TAIL_NO_SINGLE
-	if (sl.x <= sl.y && z.cyl.x > 0.0 && n_hi - n_lo < 0.5) {
-		// a strip's copy: only it (its window: tail_copy)
-		vec3 at;
-		if (n_lo >= nmin && tail_copy(z, q, n_lo, psi_c, dmax, sl.xy, z.dl / z.cyl.x, psi_min, at)) {
-			y = at.x;
-			ang = at.y;
-			psi = at.z;
-			return true;
-		}
-	} else
-#endif
 	if (sl.x <= sl.y && z.cyl.x > 0.0) {
 		float lam = z.dl / z.cyl.x;       // dl / dpsi
 		float D0 = tail_l(z, tail_copy_y(z, psi_c, 0.0)) - q.C.w;

@@ -42,11 +42,9 @@ const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
-# the tail's shader (tail_kind): this build's first, then those the speed check times it against
-# (bench.gd's VARIANTS): as before its strips, its eye from the vertices, a strip's copy searched as the
-# band's are
-const TAIL_SHADERS := [ZONE_TAIL_SHADER, preload("res://shaders/zone_tail_before.gdshader"),
-	preload("res://shaders/zone_tail_flat_eye.gdshader"), preload("res://shaders/zone_tail_one_search.gdshader")]
+# the tail's shader (tail_kind): this build's, and the one the speed check times it against (bench.gd's
+# VARIANTS), as before its strips
+const TAIL_SHADERS := [ZONE_TAIL_SHADER, preload("res://shaders/zone_tail_before.gdshader")]
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
 # a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
 # rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
