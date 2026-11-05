@@ -68,6 +68,8 @@ GRID = 4
 THIN_STEPS = 8          # Newton's steps towards an image thinner than a pixel at most
 THIN_H = 0.01           # px: the rays off a pixel's centre for the gradient of their gap
 THIN_OVER = 1.1         # a step goes this much past where the gap's line crosses 0 (into the body)
+THIN_GRID = 17          # rays across the reach's disc round a pixel to start Newton's steps from
+THIN_STARTS = 3         # its nearest rays it starts from
 
 pre = sys.argv[1]
 EYES = sys.argv[2:3] or ['left', 'right']
@@ -456,35 +458,56 @@ for side_i, eye_name in enumerate(('left', 'right')):
     def thin(xs, ys, kind, reach, alone):
         """Whether a ray within reach px of pixels (xs, ys)'s centres meets a body of that kind
         first: an image thinner than a pixel, which the rays at the centre and a quarter off it all
-        pass by, found by Newton's steps from the centre on how near a ray comes to the kind's
-        bodies (trace's gap, its gradient across the picture by rays THIN_H px off), until a ray
-        meets one (and no body of the other kind in front, but where alone: there the other kind
-        is in front, and its outline judges the pixel)."""
-        x = xs.astype(float).copy(); y = ys.astype(float).copy()
-        found = np.zeros(len(xs), bool)
-        live = np.ones(len(xs), bool)
-        for _ in range(THIN_STEPS):
-            i = np.nonzero(live)[0]
-            if len(i) == 0:
-                break
-            m = len(i)
-            px = np.r_[x[i], x[i] + THIN_H, x[i]]; py = np.r_[y[i], y[i], y[i] + THIN_H]
-            _, _, _, _, gp = trace(l0, n0, to_tangent(n0, pixel_rays(e, px, py), axes), bodies=(kind,), gap=kind)
-            g0 = gp[:m]
-            gx_, gy_ = (gp[m:2 * m] - g0) / THIN_H, (gp[2 * m:] - g0) / THIN_H
-            met = g0 <= 0
-            if met.any():
-                j = i[met]
-                k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, x[j], y[j]), axes))
-                found[j] = (k == kind) | alone[j]
-                live[j] = False
-            gg = gx_ * gx_ + gy_ * gy_
-            go = ~met & np.isfinite(g0) & (gg > 0)
-            live[i[~met & ~go]] = False
-            j = i[go]
-            x[j] -= THIN_OVER * g0[go] * gx_[go] / gg[go]
-            y[j] -= THIN_OVER * g0[go] * gy_[go] / gg[go]
-            live[j[np.hypot(x[j] - xs[j], y[j] - ys[j]) > reach[j]]] = False
+        pass by. Sought by Newton's steps on how near a ray comes to the kind's bodies (trace's gap,
+        its gradient across the picture by rays THIN_H px off), from the centre, then from the ray
+        of a grid round it (THIN_GRID across the reach) that comes nearest (the nearest stretch of
+        a ray jumps from one way round the throat to another, and with it the gap's gradient), until
+        a ray meets one (and no body of the other kind in front, but where alone: there the other
+        kind is in front, and its outline judges the pixel)."""
+        def meets(j, x, y):
+            k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, x, y), axes))
+            return (k == kind) | alone[j]
+
+        def newton(j, x, y):
+            ok = np.zeros(len(j), bool)
+            x = x.copy(); y = y.copy()
+            live = np.ones(len(j), bool)
+            for _ in range(THIN_STEPS):
+                i = np.nonzero(live)[0]
+                if len(i) == 0:
+                    break
+                m = len(i)
+                px = np.r_[x[i], x[i] + THIN_H, x[i]]; py = np.r_[y[i], y[i], y[i] + THIN_H]
+                _, _, _, _, gp = trace(l0, n0, to_tangent(n0, pixel_rays(e, px, py), axes), bodies=(kind,), gap=kind)
+                g0 = gp[:m]
+                gx_, gy_ = (gp[m:2 * m] - g0) / THIN_H, (gp[2 * m:] - g0) / THIN_H
+                met = g0 <= 0
+                if met.any():
+                    ok[i[met]] = meets(j[i[met]], x[i[met]], y[i[met]])
+                    live[i[met]] = False
+                gg = gx_ * gx_ + gy_ * gy_
+                go = ~met & np.isfinite(g0) & (gg > 0)
+                live[i[~met & ~go]] = False
+                i = i[go]
+                x[i] -= THIN_OVER * g0[go] * gx_[go] / gg[go]
+                y[i] -= THIN_OVER * g0[go] * gy_[go] / gg[go]
+                live[i[np.hypot(x[i] - xs[j[i]], y[i] - ys[j[i]]) > reach[j[i]]]] = False
+            return ok
+        everyone = np.arange(len(xs))
+        found = newton(everyone, xs.astype(float), ys.astype(float))
+        u = np.linspace(-1.0, 1.0, THIN_GRID)
+        gu, gv = [a.ravel() for a in np.meshgrid(u, u)]
+        disc = np.hypot(gu, gv) <= 1.0
+        gu, gv = gu[disc], gv[disc]
+        for j in np.nonzero(~found)[0]:
+            px, py = xs[j] + reach[j] * gu, ys[j] + reach[j] * gv
+            k, _, _, _, gp = trace(l0, n0, to_tangent(n0, pixel_rays(e, px, py), axes), bodies=(kind,), gap=kind)
+            hit = np.nonzero(gp <= 0)[0]
+            if len(hit) and meets(np.full(len(hit), j), px[hit], py[hit]).any():
+                found[j] = True
+                continue
+            b = np.argsort(gp)[:THIN_STARTS]
+            found[j] = newton(np.full(len(b), j), px[b], py[b]).any()
         return found
     lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
     li = np.nonzero(lack)[0]
