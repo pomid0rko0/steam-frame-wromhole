@@ -64,7 +64,8 @@ float32; the GPU here is given them so written.
 Each throat's checks run in pieces, each in a process of its own (a GPU context and random draws
 of its own, seeded by the throat and the piece), as many at once as there are cores, the longest
 first; their lines come throat by throat. Exit status 1 on any failure.
-   python3 ref/test_gpu.py [numbers profile images paths exit zone eye]     (all, or those checks)"""
+   python3 ref/test_gpu.py [numbers profile images paths exit zone tail eye]   (all, or those checks;
+                                                                             -check: all but it)"""
 import copy
 import os
 import re
@@ -1710,7 +1711,7 @@ def main(checks=CHECKS):
                     start()
         if len(done) < len(runs):
             time.sleep(0.2)
-    order = ('profile', 'images', 'paths', 'exit', 'zone', 'mesh', 'eye')
+    order = [piece for check in CHECKS for c, piece in reversed(PIECES) if c == check]
     for i, name in enumerate(PROFILES):
         for piece in order:
             if (i, piece) not in procs:
@@ -1736,4 +1737,8 @@ if __name__ == '__main__':
         f = int(piece_checks(int(sys.argv[2]), sys.argv[3]))
         print(f'FAILURES: {f}')
         sys.exit(1 if f else 0)
-    sys.exit(1 if main(sys.argv[1:] or CHECKS) else 0)
+    # checks named, or all but those named with a '-' before
+    args = sys.argv[1:]
+    out = {a[1:] for a in args if a.startswith('-')}
+    asked = [a for a in args if not a.startswith('-')] or [c for c in CHECKS if c not in out]
+    sys.exit(1 if main(asked) else 0)

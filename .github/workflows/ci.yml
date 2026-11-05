@@ -298,7 +298,7 @@ jobs:
           path: stereo/
 
   # ref/test_gpu.py in two: its check zone (the bodies' meshes in the zone, the longest pieces) on a
-  # machine of its own, the rest with the gravity's on another
+  # machine of its own, all the others (-zone) with the gravity's on another
   ref-zone:
     name: Точность шейдеров, сетки тел в зоне
     needs: image
@@ -325,7 +325,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - run: python3 ref/test_gpu.py numbers profile images exit eye
+      - run: python3 ref/test_gpu.py -zone
       - if: ${{ !cancelled() }}
         run: python3 ref/test_gravity.py
 
