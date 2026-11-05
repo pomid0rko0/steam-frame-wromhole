@@ -165,6 +165,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# eye's axis, the mesh's edge and the tail's first way in would leave pinholes between them)
 	tail_mat.set_shader_parameter("tail_psi_min", (ZONE_IMAGES - 1) * PI)
 	tail_mat.set_shader_parameter("tail_segments", float(TAIL_SEGMENTS))
+	tail_mat.set_shader_parameter("tail_far", Main.FAR)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER

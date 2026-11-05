@@ -22,6 +22,7 @@ uniform vec4 tail_col[20];          // per slot: its colour (linear)
 uniform ivec2 tail_count = ivec2(0);   // balls, cubes in the zone
 uniform float tail_psi_min = 59.6902604182061;   // (Renderer.ZONE_IMAGES - 1) pi: the meshes' last image on
 uniform float tail_segments = 32.0;    // the mesh's quads across a sector (Renderer.TAIL_SEGMENTS)
+uniform float tail_far = 4000.0;       // m: the camera's far plane (Main.FAR)
 
 varying flat float v_el;
 varying flat vec3 v_eye;      // the eye's r, the root of its u on the fillet, r - rho0 (floor.gdshaderinc)
@@ -125,6 +126,9 @@ void fragment() {
 	}
 	if (!geo_finite(col.r + col.g + col.b + len)) discard;
 	ALBEDO = col;
-	vec4 c = PROJECTION_MATRIX * vec4(v_off + len * d, 1.0);
-	DEPTH = c.z / c.w;
+	// the light's way deep in the tail is kilometres: past half the far plane its depth there shrunk
+	// as 1 / len, still ordered by the way and before the floor's (0)
+	float lc = min(len, 0.5 * tail_far);
+	vec4 c = PROJECTION_MATRIX * vec4(v_off + lc * d, 1.0);
+	DEPTH = c.z / c.w * (lc / len);
 }
