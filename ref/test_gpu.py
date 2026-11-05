@@ -1371,22 +1371,27 @@ def outside(ball, X, C, E, size):
 
 
 # ---------- the tail of the bodies' images, per pixel (zone_tail.gdshaderinc) ----------
-TAIL_CASES = 160
+TAIL_CASES = 480
 TAIL_STEP = 2e-3             # m: the reference's samples along a ray where it may meet the body
+TAIL_DEEP = 3000.0           # rad past psi_min: the deepest a case aims at (two fifths of them deep)
 TAIL_GRAZE = 2e-4            # m: a ray this near a body's surface at its deepest grazes it (either answer)
 TAIL_POINT = 1e-3            # m: the way in, off the reference's (its length, and its point in R^4)
 
 
-def tail_reference(S, el, alpha, en, t, out_f, psi_min):
+def tail_reference(S, el, alpha, en, t, out_f, psi_min, C, reach):
     """The first way into a body (out_f(l, phi) > 0 outside, at arrays of points of the ray's plane)
     at a turn of psi_min or more along the ray from the eye at el launched alpha off the outward
     radial: DOP853 off the throat's cylinder (ref/geo.py's plane equations), on it the closed form
-    (uniform in l and in phi), to |l| = L + 12 or out past it. Returns (s, l, phi) of the way in or
-    None, and how deep the ray goes into the body there at most (or how near it comes, a miss: the
-    least of out_f)."""
+    (uniform in l and in phi), to |l| = L + 12 or out past it. On the cylinder the ray is sampled
+    only where it passes within reach (chord distance in R^4) of the body's centre C: in the body's
+    slab of l, and round the circle where cos(phi - phi_C) is at least what that takes (the ray's
+    point (rho0 n, l): |rho0 n - C_xyz|^2 = rho0^2 + |C_xyz|^2 - 2 rho0 A cos(phi - phi_C), A: C's
+    part in the ray's plane), so a ray round the throat hundreds of times is cheap. Returns (s, l,
+    phi) of the way in or None, and how deep the ray goes into the body there at most (or how near
+    it comes, a miss: the least of out_f)."""
     b = float(S.r(abs(el))) * np.sin(alpha)
     side = 1.0 if el >= 0 else -1.0
-    pieces = []                 # (s0, s1, f(s) -> (l, phi) arrays)
+    pieces = []                 # (s0, s1, f(s) -> (l, phi) arrays, its closed form on the cylinder or None)
     y = np.array([el, side * np.cos(alpha), 0.0])
     s0 = 0.0
     for _ in range(3):
@@ -1398,7 +1403,8 @@ def tail_reference(S, el, alpha, en, t, out_f, psi_min):
             ln = np.sign(vl) * S.Lc
             s1 = s0 + (ln - y[0]) / vl
             l0, p0, a = y[0], y[2], s0
-            pieces.append((s0, s1, lambda s, l0=l0, p0=p0, a=a, vl=vl: (l0 + vl * (s - a), p0 + b / S.rho0 ** 2 * (s - a))))
+            pieces.append((s0, s1, lambda s, l0=l0, p0=p0, a=a, vl=vl: (l0 + vl * (s - a), p0 + b / S.rho0 ** 2 * (s - a)),
+                           (l0, p0, a, vl)))
             y = np.array([ln, vl, p0 + b / S.rho0 ** 2 * (s1 - s0)])
             s0 = s1
             continue
@@ -1412,7 +1418,7 @@ def tail_reference(S, el, alpha, en, t, out_f, psi_min):
         sol = integrate.solve_ivp(lambda s, yy: plane_rhs(S, s, yy, b), (s0, s0 + 1000), y, method='DOP853',
                                   rtol=1e-11, atol=1e-12, events=[into, out] if S.Lc > 0 else [out],
                                   dense_output=True, max_step=0.05)
-        pieces.append((s0, sol.t[-1], lambda s, sol=sol: (sol.sol(s)[0], sol.sol(s)[2])))
+        pieces.append((s0, sol.t[-1], lambda s, sol=sol: (sol.sol(s)[0], sol.sol(s)[2]), None))
         if S.Lc > 0 and len(sol.t_events[0]):
             y = sol.y[:, -1].copy()
             y[0] = np.sign(y[0]) * S.Lc * (1 - 1e-12)
@@ -1420,10 +1426,36 @@ def tail_reference(S, el, alpha, en, t, out_f, psi_min):
             continue
         break
     least = 1.0
-    for s0, s1, f in pieces:
+    w = b / S.rho0 ** 2                  # the turn a metre along the ray on the cylinder
+    A = float(np.hypot(C[:3] @ en, C[:3] @ t))
+    pc = float(np.arctan2(C[:3] @ t, C[:3] @ en))
+    kap = (S.rho0 ** 2 + C[:3] @ C[:3] - reach ** 2) / max(2 * S.rho0 * A, 1e-300)
+    for s0, s1, f, cyl in pieces:
         if s1 <= s0:
             continue
-        ss = np.linspace(s0, s1, int((s1 - s0) / TAIL_STEP) + 2)
+        if cyl is None:
+            ss = np.linspace(s0, s1, int((s1 - s0) / TAIL_STEP) + 2)
+        else:
+            l0, p0, a, vl = cyl
+            if kap > 1.0:
+                continue
+            # the slab of l, then each pass round the circle within the window
+            sa, sb = sorted(((C[3] - reach - l0) / vl + a, (C[3] + reach - l0) / vl + a))
+            sa, sb = max(sa, s0), min(sb, s1)
+            if sa >= sb:
+                continue
+            dl = float(np.arccos(np.clip(kap, -1.0, 1.0))) + 1e-3
+            pa, pb = p0 + w * (sa - a), p0 + w * (sb - a)
+            n0, n1 = int(np.ceil((pa - pc - dl) / (2 * np.pi))), int(np.floor((pb - pc + dl) / (2 * np.pi)))
+            parts = []
+            for n in range(n0, n1 + 1):
+                ua = max(sa, a + (pc + 2 * np.pi * n - dl - p0) / w)
+                ub = min(sb, a + (pc + 2 * np.pi * n + dl - p0) / w)
+                if ua < ub:
+                    parts.append(np.linspace(ua, ub, int((ub - ua) / TAIL_STEP) + 2))
+            if not parts:
+                continue
+            ss = np.concatenate(parts)
         l, ph = f(ss)
         g = out_f(l, ph)
         ok = ph >= psi_min
@@ -1457,10 +1489,13 @@ def tail_checks(name, S, gpu, rng):
     method on shorter rays). Everything as the GPU gets it (float32), and the reference's ray that
     one; a ray float32 can't tell from r_min's left out. Hit or miss as the reference's (where the
     ray goes deeper than TAIL_GRAZE into the body, or stays further off it), and a hit's way in
-    within TAIL_POINT of the reference's, its point and its length, for the ray of the impact b the
-    GPU takes (by its sigma), which must be within ALPHA_TOL (a hundredth of a pixel) of the launch:
-    next to the limit the turn grows so fast with b that float32's last digit of the launch, a
-    sixteen-thousandth of a pixel, moves the way in by centimetres."""
+    within TAIL_POINT of the reference's, its point and its length, and past that by no more than
+    ALPHA_TOL (a hundredth of a pixel) of its way's length: seen from the eye; deep in the tail,
+    hundreds of turns and kilometres along, float32's last digit of the ray's turn a metre moves it
+    by centimetres. For the ray of the impact b the GPU takes (by its sigma), which must be within
+    ALPHA_TOL of the launch: next to the limit the turn grows so fast with b that float32's last
+    digit of the launch, a sixteen-thousandth of a pixel, moves the way in by centimetres too. Of
+    the cases two fifths aim deep in the tail, up to TAIL_DEEP past psi_min."""
     if S.Lc <= 0:
         print(f'SKIP {name}: tail  no cylinder (h <= R): the tail is no wider than the meshes leave', flush=True)
         return 0
@@ -1486,7 +1521,8 @@ def tail_checks(name, S, gpu, rng):
             lb = dl * rng.uniform(S.Lc, S.L)
         else:
             lb = dl * (S.L + rng.uniform(-size, size))
-        target = psi_min + rng.uniform(0, 4 * np.pi)
+        # the tail's first few turns, or deep in it: up to hundreds of turns (log-uniform)
+        target = psi_min + (rng.uniform(0, 4 * np.pi) if rng.uniform() < 0.6 else np.exp(rng.uniform(np.log(4 * np.pi), np.log(TAIL_DEEP))))
         def turn(bb):
             return abs(S.sweep(bb, el)[0] - S.sweep(bb, lb)[0])
         if turn(S.rho0 * (1 - 1e-12)) < target:
@@ -1529,6 +1565,7 @@ def tail_checks(name, S, gpu, rng):
         refs.append((alpha, t, out_f, psi_min, ball, C, size))
     out = gpu.run(15, np.array(rows), in_per=6, out_per=4).reshape(-1, 4, 4)
     wrong, graze, hits, worst_len, worst_p, worst_a, onf, outside = [], 0, 0, 0.0, 0.0, 0.0, 0, []
+    over, deepest = 0.0, 0.0
     for o, (alpha, t, out_f, psi_min, ball, C, size), row in zip(out, refs, rows):
         el, en = row[0], row[1:4]
         re = float(S.r(abs(el)))
@@ -1537,7 +1574,7 @@ def tail_checks(name, S, gpu, rng):
         ag = np.arcsin(min(bg / re, 1.0))
         ag = ag if alpha < 0.5 * np.pi else np.pi - ag
         worst_a = max(worst_a, abs(ag - alpha))
-        ref, depth = tail_reference(S, el, ag, en, t, out_f, psi_min)
+        ref, depth = tail_reference(S, el, ag, en, t, out_f, psi_min, C, size if ball else 2 * size)
         depth = abs(depth) / (2 * size) if ball else abs(depth)
         if ref is not None:
             # the ray within the body's band (off the inward radial) and its sectors round the axis
@@ -1549,8 +1586,11 @@ def tail_checks(name, S, gpu, rng):
                 outside.append(f'eye l {el:.3f} body l {l_of(S, C):.3f}: angle {chi:.5f} off the band [{o[2, 1]:.5f}, {o[2, 2]:.5f}]'
                                if not (o[2, 1] <= chi <= o[2, 2]) else f'eye l {el:.3f}: the plane off the body by more than its reach')
         hit = o[0, 0] > 0.5
+        # a ray this near the body's surface at its deepest grazes it, either answer: TAIL_GRAZE, and a
+        # hundredth of a pixel of its way seen from the eye
+        grazes = depth < TAIL_GRAZE + ALPHA_TOL * (ref[0] if ref is not None else 0.0)
         if hit != (ref is not None):
-            if depth < TAIL_GRAZE:
+            if grazes:
                 graze += 1
             else:
                 wrong.append(f'{"ball" if ball else "cube"} eye l {row[0]:.3f} body l {l_of(S, C):.3f}: '
@@ -1560,9 +1600,16 @@ def tail_checks(name, S, gpu, rng):
             continue
         hits += 1
         s, l, ph = ref
+        if grazes and abs(o[0, 3] - s) > 0.5 * np.pi * S.rho0:
+            # the reference's way in grazes the body at a pass the GPU's goes by: its next one is the GPU's
+            graze += 1
+            continue
         P = np.r_[float(S.r(l)) * (np.cos(ph) * en + np.sin(ph) * t), float(S.w(l))]
         worst_p = max(worst_p, np.linalg.norm(o[1] - P))
         worst_len = max(worst_len, abs(o[0, 3] - s))
+        # seen from the eye: past the absolute TAIL_POINT, the angle the way in is off by over its way
+        over = max(over, (max(np.linalg.norm(o[1] - P), abs(o[0, 3] - s)) - TAIL_POINT) / s)
+        deepest = max(deepest, s)
         onf += o[2, 0] > 0.5
     fails = 0
     fails += not check(f'{name}: the tail, which rays meet a body past psi_min (zone_tail.gdshaderinc)', not wrong,
@@ -1570,8 +1617,9 @@ def tail_checks(name, S, gpu, rng):
                        f'{time.time() - t0:.0f} s' + ''.join('\n    ' + w for w in wrong[:10]))
     fails += not check(f'{name}: the tail, every ray that meets a body within its sectors of the view (tail_band, tail_sector)',
                        not outside, f'{len(outside)} not' + ''.join('\n    ' + w for w in outside[:10]))
-    fails += not check(f'{name}: the tail, the way in', worst_len <= TAIL_POINT and worst_p <= TAIL_POINT and worst_a <= ALPHA_TOL,
-                       f'off the reference\'s by {worst_p:.1e} m, its length by {worst_len:.1e} m at most (limit {TAIL_POINT:.0e}), '
+    fails += not check(f'{name}: the tail, the way in', over <= ALPHA_TOL and worst_a <= ALPHA_TOL,
+                       f'off the reference\'s by {worst_p:.1e} m, its length by {worst_len:.1e} m at most, past {TAIL_POINT:.0e} m '
+                       f'{over:.1e} rad of its way seen from the eye (limit {ALPHA_TOL:.0e}; ways up to {deepest:.0f} m); '
                        f'the GPU\'s ray {worst_a:.1e} rad off its launch (limit {ALPHA_TOL:.0e})')
     return fails
 

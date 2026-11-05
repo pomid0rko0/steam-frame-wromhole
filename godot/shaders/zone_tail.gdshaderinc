@@ -43,6 +43,9 @@ const int TAIL_HALVE = 12;        // halvings back to the way in, a step past it
 const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
 const float TAIL_TOL_FILLET = 1e-5;
 const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
+const float TAIL_EPS = 1.2e-7;    // float32's unit in the last place over the number (2^-23)
+const float TAIL_REACH = 1.02;    // a ball's bounding ball over its radius (tail_body)
+const int TAIL_OVER = 4;          // looks into a step that may have gone over a cube (tail_enter)
 
 struct TailRay {
 	float el;        // the eye's l
@@ -81,8 +84,11 @@ TailBody tail_body(bool cube, vec4 C, vec4 E1, vec4 E2, float size) {
 	q.E[1] = E2;
 	q.E[2] = -geo_cross4(E1, E2, N);
 	q.E[3] = N;
-	// the 4D box [-s, s]^4 lies within 2 s of its centre
-	q.reach = cube ? 2.0 * size : size;
+	// the 4D box [-s, s]^4 lies within 2 s of its centre; a ball's bounding ball a hair wider than
+	// itself, so that a window's edge (tail_meet: where the ray's circle leaves the bounding ball) is
+	// never on its surface, where float32 would put the window's start inside it (tail_enter: no way
+	// in there)
+	q.reach = cube ? 2.0 * size : TAIL_REACH * size;
 	return q;
 }
 
@@ -228,12 +234,49 @@ vec3 tail_out(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi
 	return vec3(worst, leaves ? -1.0 : step, length(dP));
 }
 
+// A cube's four slab coordinates over its size at x (in it where all are within [-1, 1])
+vec4 tail_box(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float x) {
+	vec4 P, dP;
+	if (fillet) {
+		tail_point(z, x, base + tail_fillet(z, x).x, tail_rate(z, x).x, P, dP);
+	} else {
+		vec2 sc = geo_sincos(psi_c + x);
+		P = vec4(g_prof.x * (sc.y * z.en + sc.x * z.t), lc + lam * x);
+	}
+	vec4 d = P - q.C;
+	return vec4(dot(d, q.E[0]), dot(d, q.E[1]), dot(d, q.E[2]), dot(d, q.E[3])) / q.size;
+}
+
+// Whether a step from xa to xb (both out of the cube) may have gone over it: the slabs' coordinates
+// taken as linear between them are all within the cube somewhere; u the middle of where
+bool tail_over(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float u) {
+	u = xa;
+	vec4 ma = tail_box(z, q, fillet, lc, lam, psi_c, base, xa);
+	vec4 d = tail_box(z, q, fillet, lc, lam, psi_c, base, xb) - ma;
+	float lo = 0.0, hi = 1.0;
+	for (int k = 0; k < 4; k++) {
+		if (abs(d[k]) < 1e-12) {
+			if (abs(ma[k]) > 1.0) return false;
+			continue;
+		}
+		float t1 = (-1.0 - ma[k]) / d[k], t2 = (1.0 - ma[k]) / d[k];
+		lo = max(lo, min(t1, t2));
+		hi = min(hi, max(t1, t2));
+	}
+	if (lo > hi) return false;
+	u = mix(xa, xb, 0.5 * (lo + hi));
+	return true;
+}
+
 // From xa (where the ray is out of the body, its angle within dmax of the copy's) to xb: where it
 // goes in (true), by Newton's steps on each part it is out of, the furthest taken; false if it
 // leaves a part (or never reaches one) before it is in all. A part's step from outside never passes
 // its own way in where the part bends away from the ray, but a cube's slab can bend toward it along
 // the helix and the step overshoot into the body: the way in is then halved back between the last
-// point out of it and the first in (TAIL_HALVE). Done within TAIL_TOL of the body, or where a step
+// point out of it and the first in (TAIL_HALVE). A step can even go over a cube (a thin way through
+// a corner of it) and leave it behind: where the ray then leaves a part, the step's stretch is
+// looked into (tail_over, TAIL_OVER times, each time on the half its slabs say the cube is in), and
+// a point in the cube found there is the first in. Done within TAIL_TOL of the body, or where a step
 // moves the point by less: on the fillet the sweep's table (its filter's weights in 256ths) leaves
 // the point that much uncertain.
 bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
@@ -250,11 +293,32 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 			in_ = true;
 			break;
 		}
-		if (o.y < 0.0) return false;
+		if (o.y < 0.0) {
+			// leaving a part: over the cube with the last step? (xo out, x out)
+			if (!q.cube || i == 0) return false;
+			float a = xo, c = x, u;
+			for (int r = 0; r < TAIL_OVER && !in_; r++) {
+				if (!tail_over(z, q, fillet, lc, lam, psi_c, base, a, c, u)) break;
+				if (tail_out(z, q, fillet, lc, lam, psi_c, base, u, tol).x <= tol) {
+					x = u;
+					xo = a;
+					in_ = true;
+				} else {
+					// out at u: on the half the slabs, linear on it, say the cube may be in
+					float v;
+					if (tail_over(z, q, fillet, lc, lam, psi_c, base, a, u, v)) c = u; else a = u;
+				}
+			}
+			if (in_) break;
+			return false;
+		}
 		xo = x;
 		float xn = x + o.y;
 		if (!(xn <= xb)) return false;
-		bool done = xn == x || o.y * o.z < near;
+		// a step float32 can't take at x is done too: so asked, not as xn == x, which a compiler
+		// may take for o.y == 0 (deep in the tail, a fillet's y is tens of metres: its last digit
+		// some micrometres)
+		bool done = o.y <= TAIL_EPS * abs(x) || o.y * o.z < near;
 		x = xn;
 		if (done) return true;
 	}
