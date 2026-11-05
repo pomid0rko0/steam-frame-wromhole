@@ -24,9 +24,10 @@ const U := preload("res://tests/util.gd")
 # sideways; out in universe B looking back at the mouth; far off, a control; under the mouth looking
 # up into it; on the menu's longest throat (the bodies of the space carried with it, as stretching
 # it carries them: WormholeSpace.carried_l), where a body's images past the meshes' (the tail,
-# zone_tail.gdshader) are many pixels wide: in it sideways (crf9 also with foveation, as the
-# headset draws its floor), at the start; on one of MID, in A's fillet looking in; and on one with
-# no cylinder (h = R, the menu's shortest: no tail), in the throat looking along it
+# zone_tail.gdshader) are many pixels wide: in it sideways, at the start (crf10 also with
+# foveation, as the headset draws its floor: there seen through the throat); on one of MID, in A's
+# fillet looking in; and on one with no cylinder (h = R, the menu's shortest: no tail), in the
+# throat looking along it
 const LONG := WormholeSpace.LENGTH_MAX
 const MID := 40.0
 const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
