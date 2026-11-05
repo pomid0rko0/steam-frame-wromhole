@@ -258,7 +258,7 @@ void main() {
 		vec4 P = vec4(0.0), arr = vec4(0.0);
 		float len = 0.0;
 		if (hit) tail_hit(z, y, ang, on, P, arr, len);
-		vec2 band = tail_band(a.x, eye, e.z);
+		vec2 band = tail_band(a.x, eye, q, e.z);
 		outp[O] = vec4(hit ? 1.0 : 0.0, y, psi, len);
 		outp[O + 1] = P;
 		outp[O + 2] = vec4(float(on), band, ray ? 1.0 : 0.0);
@@ -1527,7 +1527,7 @@ def tail_checks(name, S, gpu, rng):
         rows.append(np.r_[el, en, D, C, E[0], E[1], size, 0.0 if ball else 1.0, psi_min, 0.0])
         refs.append((alpha, t, out_f, psi_min, ball, C, size))
     out = gpu.run(15, np.array(rows), in_per=6, out_per=4).reshape(-1, 4, 4)
-    wrong, graze, hits, worst_len, worst_p, worst_a, onf = [], 0, 0, 0.0, 0.0, 0.0, 0
+    wrong, graze, hits, worst_len, worst_p, worst_a, onf, outside = [], 0, 0, 0.0, 0.0, 0.0, 0, []
     for o, (alpha, t, out_f, psi_min, ball, C, size), row in zip(out, refs, rows):
         el, en = row[0], row[1:4]
         re = float(S.r(abs(el)))
@@ -1538,6 +1538,15 @@ def tail_checks(name, S, gpu, rng):
         worst_a = max(worst_a, abs(ag - alpha))
         ref, depth = tail_reference(S, el, ag, en, t, out_f, psi_min)
         depth = abs(depth) / (2 * size) if ball else abs(depth)
+        if ref is not None:
+            # the ray within the body's band (off the inward radial) and its sectors round the axis
+            # (its plane within its reach of the centre: a cube's 2 half sizes, a ball's radius)
+            D = row[4:8]
+            chi = np.arctan2(np.linalg.norm(D[1:]), -(1.0 if el >= 0 else -1.0) * D[0])
+            reach = size if ball else 2 * size
+            if not (o[2, 1] <= chi <= o[2, 2]) or abs(C[:3] @ np.cross(en, t)) > reach:
+                outside.append(f'eye l {el:.3f} body l {l_of(S, C):.3f}: angle {chi:.5f} off the band [{o[2, 1]:.5f}, {o[2, 2]:.5f}]'
+                               if not (o[2, 1] <= chi <= o[2, 2]) else f'eye l {el:.3f}: the plane off the body by more than its reach')
         hit = o[0, 0] > 0.5
         if hit != (ref is not None):
             if depth < TAIL_GRAZE:
@@ -1558,6 +1567,8 @@ def tail_checks(name, S, gpu, rng):
     fails += not check(f'{name}: the tail, which rays meet a body past psi_min (zone_tail.gdshaderinc)', not wrong,
                        f'{len(rows)} rays, {hits} meet one ({onf} on the far fillet or out), {graze} grazing or ill-posed; '
                        f'{time.time() - t0:.0f} s' + ''.join('\n    ' + w for w in wrong[:10]))
+    fails += not check(f'{name}: the tail, every ray that meets a body within its sectors of the view (tail_band, tail_sector)',
+                       not outside, f'{len(outside)} not' + ''.join('\n    ' + w for w in outside[:10]))
     fails += not check(f'{name}: the tail, the way in', worst_len <= TAIL_POINT and worst_p <= TAIL_POINT and worst_a <= ALPHA_TOL,
                        f'off the reference\'s by {worst_p:.1e} m, its length by {worst_len:.1e} m at most (limit {TAIL_POINT:.0e}), '
                        f'the GPU\'s ray {worst_a:.1e} rad off its launch (limit {ALPHA_TOL:.0e})')

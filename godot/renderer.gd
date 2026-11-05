@@ -13,7 +13,7 @@ extends Node3D
 ##   of the ways light takes from each eye worked out once a frame (zone_sections.gd), each image's
 ##   vertices only take their geodesics from that table. Their images past those ZONE_IMAGES, which
 ##   close in on the rays that wind round the throat's cylinder, per pixel along those rays
-##   (shaders/zone_tail.gdshader, a band of the view round the eye's radial direction).
+##   (shaders/zone_tail.gdshader), only in each body's sectors of the view where they can be.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -52,7 +52,7 @@ const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
-const TAIL_SEGMENTS := 128      # the tail's band of the view (zone_tail.gdshader): quads round it
+const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
@@ -109,7 +109,7 @@ var balls: MultiMeshInstance3D          # out in a flat universe: seen straight 
 var cubes: MultiMeshInstance3D
 var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
 var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader)
-var tail: MeshInstance3D
+var tail: MultiMeshInstance3D   # an instance per body slot and side (zone_tail.gdshader)
 var statics: Array[MeshInstance3D] = []
 var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
@@ -164,6 +164,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# from the meshes' last image on: both draw that one (where it meets the next in a ring, round the
 	# eye's axis, the mesh's edge and the tail's first way in would leave pinholes between them)
 	tail_mat.set_shader_parameter("tail_psi_min", (ZONE_IMAGES - 1) * PI)
+	tail_mat.set_shader_parameter("tail_segments", float(TAIL_SEGMENTS))
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
@@ -186,8 +187,11 @@ func _ready() -> void:
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
-	# under the camera too: a band of each eye's view round its radial direction
-	tail = _body(_zone_mesh(TAIL_SEGMENTS, 1), tail_mat)
+	# under the camera too: sectors of each eye's view round its radial direction
+	tail = _multimesh(_zone_mesh(TAIL_SEGMENTS, 1), tail_mat, 2 * (MAX_BALLS + MAX_CUBES))
+	for i in tail.multimesh.instance_count:
+		tail.multimesh.set_instance_transform(i, Transform3D.IDENTITY)
+	tail.multimesh.visible_instance_count = tail.multimesh.instance_count
 	tail.visible = false
 	add_child(tail)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)

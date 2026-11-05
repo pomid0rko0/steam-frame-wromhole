@@ -446,31 +446,62 @@ void tail_hit(TailRay z, float y, float ang, int on, out vec4 P, out vec4 arrive
 	len = on == 0 ? z.at0.y + (y - z.y0) * z.cyl.y : z.at1.y + tail_fillet(z, y).y;
 }
 
-// The band of the eye's directions the tail can take: (its least and greatest angle off the inward
-// radial direction). Outside the cylinder the rays that pass the throat and turn by psi_min before
-// they leave the zone: from the b at which they do (halving) to r_min's; in it both ways along l,
-// the outward ones' angles past pi / 2.
-vec2 tail_band(float el, vec3 eye, float psi_min) {
-	float le = abs(el), re = eye.x;
+// The view's directions in which body q's tail can be met from the eye at el (eye as geo_exit takes
+// it): (the least and greatest angle off the inward radial direction; least past greatest: none).
+// Its rays pass the throat through the cylinder (from the eye in it, either way along it, or inward
+// from outside) and reach the body's far end along that way (its centre's l and the reach a hair
+// stretched: the profile's arc is a little longer than its chord) having turned by psi_min - 2 pi at
+// least: from the launch whose ray does (halving) to r_min's. Round the axis it is seen within its
+// two sectors: tail_sector.
+vec2 tail_band(float el, vec3 eye, TailBody q, float psi_min) {
+	float le = abs(el), re = eye.x, side = el < 0.0 ? -1.0 : 1.0;
+	float Lc = g_prof.z, L = g_prof.w, R2 = 2.0 * g_prof.y;
 	vec2 band = vec2(GEO_PI, 0.0);
-	if (g_prof.z <= 0.0) return band;
+	if (Lc <= 0.0) return band;
+	vec3 cn;
+	float lc = geo_l_of(q.C, cn);
+	float rl = 1.05 * q.reach + 0.01;
+	float lim = geo_asin(min(g_prof2.z / re, 1.0));
 	for (int w = 0; w < 2; w++) {
 		bool outward = w == 1;
-		if (outward && le >= g_prof.z) break;
-		// the angle off the radial (inward, or outward) whose ray turns by psi_min: lo turns less
-		float lo = 0.0, hi = geo_asin(min(g_prof2.z / re, 1.0));
+		if (outward && le >= Lc) break;
+		float dl = outward ? side : -side;
+		float y0 = max(le - Lc, 0.0), y1 = outward ? Lc - le : Lc + le;
+		// the body's far end along this way, in metres of l from the eye: nothing of it past the
+		// cylinder's start, none (on the near fillet its images close in at once)
+		float yf = (lc - el) * dl + rl;
+		if (yf <= y0) continue;
+		float lo = 0.0, hi = lim;
 		for (int i = 0; i < 24; i++) {
 			float m = 0.5 * (lo + hi);
 			vec2 sc = geo_sincos(m);
 			float b = re * sc.x;
 			float gap = re * (sc.y * sc.y / (1.0 + sc.x));
 			float sigma = geo_sigma(eye.z - gap);
-			float turn = geo_exit_way(le, eye, b, sigma, gap, outward).x;
-			if (turn >= psi_min) hi = m; else lo = m;
+			float turn = 0.0;
+			if (sigma < g_prof2.y) {
+				float gc = -R2 * sigma;
+				float near = le > Lc ? geo_between(b, sigma, Lc, gc, le, gap, false).x : 0.0;
+				float cyl = geo_exit_cyl(b, sigma).x;
+				turn = near + (min(yf, y1) - y0) * cyl;
+				if (yf > y1) {
+					float a = min(Lc + (yf - y1), L);
+					turn += geo_between(b, sigma, Lc, gc, a, geo_dr(a) + gc, false).x;
+				}
+			}
+			if (turn >= psi_min - TAIL_PI2) hi = m; else lo = m;
 		}
-		float lim = geo_asin(min(g_prof2.z / re, 1.0));
-		if (!outward) band = vec2(lo, lim);
-		else band.y = GEO_PI - lo;
+		band = outward ? vec2(min(band.x, GEO_PI - lim), max(band.y, GEO_PI - lo)) : vec2(min(band.x, lo), max(band.y, lim));
 	}
 	return band;
+}
+
+// Body q's azimuths round the eye's axis whose rays' planes pass within its reach of its centre:
+// two sectors, round u (out: C's direction across en, unit, in the eye's tangent space) and round -u,
+// each the half width returned (pi: all of them, a body round the axis).
+float tail_sector(vec3 en, TailBody q, out vec3 u) {
+	vec3 c = q.C.xyz - dot(q.C.xyz, en) * en;
+	float rc = length(c);
+	u = rc > 1e-9 ? c / rc : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	return q.reach >= rc ? GEO_PI : geo_asin(q.reach / rc);
 }
