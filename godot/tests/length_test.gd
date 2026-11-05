@@ -172,13 +172,15 @@ func _carried() -> void:
 		var bl0 := ball.l
 		main.set_length(LONG)
 		var st := main.viewer.get_state()
-		var want := l0 * sp.Lc / Lc0 if absf(l0) < Lc0 else signf(l0) * (absf(l0) - Lc0 + sp.Lc)
+		# the feet's l (the head is l0; on B's fillet the room's up bends off the axis)
+		var f0: float = st0[0]
+		var want := f0 * sp.Lc / Lc0 if absf(f0) < Lc0 else signf(f0) * (absf(f0) - Lc0 + sp.Lc)
 		var wantb := bl0 * sp.Lc / Lc0 if absf(bl0) < Lc0 else signf(bl0) * (absf(bl0) - Lc0 + sp.Lc)
 		var same := true
 		for k in 3:
 			same = same and (st[2][k] as Vector4).is_equal_approx(st0[2][k])
 		if absf(st[0] - want) > 1e-9 or not same or st[3]:
-			bad.append("%s: l %.4f -> %.4f (want %.4f)" % [at[1], l0, st[0], want])
+			bad.append("%s: l %.4f -> %.4f (want %.4f)" % [at[1], f0, st[0], want])
 		if absf(ball.l - wantb) > 1e-9:
 			bad.append("%s: the toy at l %.4f -> %.4f (want %.4f)" % [at[1], bl0, ball.l, wantb])
 		main.toys.world.balls.erase(ball)
