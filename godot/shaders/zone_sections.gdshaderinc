@@ -40,17 +40,19 @@
 // image only where it says 1 for the centre its instance has. And invocation x = images: the
 // tail's view of the body from the eye (zone_tail.gdshaderinc: its band off the inward radial,
 // tail_band, past the last image, and its two sectors round it, tail_sector), once a frame for the
-// tail's sectors (zone_tail.gdshader), not in each of their vertices: four texels after the
+// tail's sectors (zone_tail.gdshader), not in each of their vertices: five texels after the
 // images', (the centre's x, y, z, 1), (the band's least and greatest angle, the sectors' half
 // width, 0), (their direction u, 0), (its strips' first copy each side, 1 if it has strips, 1 if
-// they are outward: tail_strips); and x = images + 1 + k, its strip k (tail_strip, k up to
-// TAIL_STRIPS: the last only where the band starts if every strip before it is apart), the texel
-// after those, (side 0's least and greatest angle, side 1's).
+// they are outward: tail_strips), (how many of its strips are drawn each side, 0, 0: PATHS works
+// them out from the strips); and x = images + 1 + k, its strip k (tail_strip, k up to TAIL_STRIPS:
+// the last only where the band starts if every strip before it is apart), the texel after those,
+// (side 0's least and greatest angle, side 1's).
 //
 // PATHS: each body's table of the ways from each eye (zone.gdshaderinc, «the paths by a table»),
 // after IMAGES: a node by geo_see_to's search, only the turns up to the last image drawn needs.
 // Invocation x: the node (along l, then q), y: the body (as IMAGES), z: the eye. Out: a layer per
-// eye, a node a texel at (k, slot * ZONE_PL + i), the body's frame at (ZONE_PQ, slot * ZONE_PL).
+// eye, a node a texel at (k, slot * ZONE_PL + i), the body's frame at (ZONE_PQ, slot * ZONE_PL). Its
+// invocation x = 0 also: how many of the body's tail's strips are drawn (tail_apart), from IMAGES'.
 
 layout(set = 0, binding = 0) uniform sampler2D g_tab;   // geo.gdshaderinc names it; not read here
 layout(set = 0, binding = 1, std140) uniform Params {
@@ -162,7 +164,19 @@ void main() {
 	vec4 C = zb.body[4 * s];
 	float size = zb.body[4 * s + 3].x;
 	vec4 f = zone_path_frame(C, cube ? 1.8 * size : size, GEO_PI * float(pc.first.w));
-	if (id.x == 0u) imageStore(path_img, ivec3(ZONE_PQ, s * ZONE_PL, int(id.z)), f);
+	if (id.x == 0u) {
+		imageStore(path_img, ivec3(ZONE_PQ, s * ZONE_PL, int(id.z)), f);
+		int i0 = pc.first.w;
+		float half_w = imageLoad(cull_img, ivec3(i0 + 1, s, int(id.z))).z;
+		vec2 sa[TAIL_STRIPS + 1], sb[TAIL_STRIPS + 1];
+		for (int j = 0; j <= TAIL_STRIPS; j++) {
+			vec4 v = imageLoad(cull_img, ivec3(i0 + 5 + j, s, int(id.z)));
+			sa[j] = v.xy;
+			sb[j] = v.zw;
+		}
+		float mg = tail_margins(half_w).y;
+		imageStore(cull_img, ivec3(i0 + 4, s, int(id.z)), vec4(float(tail_apart(sa, mg)), float(tail_apart(sb, mg)), 0.0, 0.0));
+	}
 	// the nodes the images IMAGES draws need: image j turns by pi j to pi (j + 1), and a vertex takes
 	// the nodes up to the third past its own
 	int last = -1;
@@ -339,7 +353,7 @@ void main() {
 			float k = float(j - i0 - 1);
 			vec4 st = vec4(0.0);
 			if (ts.on) st = vec4(tail_strip(ts, eye, 0, k), half_w < GEO_PI ? tail_strip(ts, eye, 1, k) : vec2(0.0));
-			imageStore(cull_img, ivec3(i0 + 3 + int(k) + 1, s, int(id.z)), st);
+			imageStore(cull_img, ivec3(i0 + 5 + int(k), s, int(id.z)), st);
 		}
 		return;
 	}

@@ -156,7 +156,6 @@ PATH_ARRIVE = 1e-2
 ZONE_PL, ZONE_PQ = (int(re.search(r'const int %s = (\d+);' % k, open(os.path.join(SHADERS, 'zone.gdshaderinc')).read()).group(1))
                     for k in ('ZONE_PL', 'ZONE_PQ'))
 ZONE_IMAGES = int(re.search(r'^const ZONE_IMAGES := (\d+)', open(os.path.join(HERE, '..', 'godot', 'renderer.gd')).read(), re.M).group(1))
-TAIL_SEGMENTS = int(re.search(r'^const TAIL_SEGMENTS := (\d+)', open(os.path.join(HERE, '..', 'godot', 'renderer.gd')).read(), re.M).group(1))
 TAIL_STRIPS = int(re.search(r'^const int TAIL_STRIPS = (\d+);', open(os.path.join(SHADERS, 'zone_tail.gdshaderinc')).read(), re.M).group(1))
 
 SRC = '''#version 430
@@ -269,8 +268,9 @@ void main() {
 	} else if (mode == 16) {    // as mode 15, and (the first copy, the last, 1 if past the zone too): the
 		// tail looked for among those copies only (a strip's, the band's past the strips: tail_meet),
 		// (hit, y, psi, len); the body's strips (tail_strips): (n0 each side, 1 if on, 1 if outward),
-		// (the sectors' half width, 0, 0, 0), then strip k's (side 0's least and greatest, side 1's), k
-		// from 0 to TAIL_STRIPS, as zone_sections' IMAGES pass works them out
+		// (the sectors' half width, how many strips are drawn each side: tail_apart, 0), then strip k's
+		// (side 0's least and greatest, side 1's), k from 0 to TAIL_STRIPS, as zone_sections' IMAGES
+		// and PATHS passes work them out
 		float al = abs(a.x);
 		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));
 		vec4 e = inp[I + 5], g = inp[I + 6];
@@ -289,9 +289,15 @@ void main() {
 		float half_w = tail_sector(a.yzw, q, u);
 		TailStrips ts = tail_strips(a.x, eye, a.yzw, q, half_w, e.z);
 		outp[O + 1] = vec4(ts.n0, ts.on ? 1.0 : 0.0, ts.outward ? 1.0 : 0.0);
-		outp[O + 2] = vec4(half_w, 0.0, 0.0, 0.0);
-		for (int k = 0; k <= TAIL_STRIPS; k++)
-			outp[O + 3 + k] = ts.on ? vec4(tail_strip(ts, eye, 0, float(k)), half_w < GEO_PI ? tail_strip(ts, eye, 1, float(k)) : vec2(0.0)) : vec4(0.0);
+		vec2 sa[TAIL_STRIPS + 1], sb[TAIL_STRIPS + 1];
+		for (int k = 0; k <= TAIL_STRIPS; k++) {
+			vec4 v = ts.on ? vec4(tail_strip(ts, eye, 0, float(k)), half_w < GEO_PI ? tail_strip(ts, eye, 1, float(k)) : vec2(0.0)) : vec4(0.0);
+			outp[O + 3 + k] = v;
+			sa[k] = v.xy;
+			sb[k] = v.zw;
+		}
+		float mg = tail_margins(half_w).y;
+		outp[O + 2] = vec4(half_w, float(tail_apart(sa, mg)), float(tail_apart(sb, mg)), 0.0);
 	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
 		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);
@@ -1643,13 +1649,13 @@ def tail_checks(name, S, gpu, rng):
     # finds lies in its copy's strip while the strips before it and it stay apart from the next (as
     # the vertex shader takes them, with its margins), else in the band past them; the search among
     # that one copy (or the band's copies on) finds the same way in, without the way past the zone
-    hits = [(o, row) for o, row in zip(out, rows) if o[0, 0] > 0.5]
+    met = [(o, row) for o, row in zip(out, rows) if o[0, 0] > 0.5]
     strip_bad, in_strip, in_band, no_strips = [], 0, 0, 0
-    if hits:
+    if met:
         per = 4 + TAIL_STRIPS
-        info = gpu.run(16, np.array([np.r_[row, 0.0, 0.0, 0.0, 0.0] for o, row in hits]), in_per=7, out_per=per).reshape(-1, per, 4)
+        info = gpu.run(16, np.array([np.r_[row, 0.0, 0.0, 0.0, 0.0] for o, row in met]), in_per=7, out_per=per).reshape(-1, per, 4)
         asks, cases = [], []
-        for (o, row), f in zip(hits, info):
+        for (o, row), f in zip(met, info):
             el, en, D, C = row[0], row[1:4], row[4:8], row[8:12]
             hd, half_w, st = f[1], float(f[2, 0]), f[3:]
             if hd[2] < 0.5:
@@ -1662,12 +1668,8 @@ def tail_checks(name, S, gpu, rng):
             n = round((float(o[0, 2]) - psi_c) / (2 * np.pi))
             n0 = float(hd[side])
             chi = np.arctan2(np.linalg.norm(D[1:]), -(1.0 if el >= 0 else -1.0) * D[0])
-            w = min(half_w, np.pi)
-            mg = 2e-3 + 0.125 * (2 * w / TAIL_SEGMENTS) ** 2
             ab = st[:, 2 * side:2 * side + 2]
-            K = 0
-            while K < TAIL_STRIPS and not max(ab[K, 0], ab[K + 1, 0]) <= min(ab[K, 1], ab[K + 1, 1]) + 2 * mg:
-                K += 1
+            K = int(round(float(f[2, 1 + side])))
             k = n - n0
             where = f'eye l {el:.3f} body l {l_of(S, C):.3f}, copy {n:.0f} (strip {k:.0f} of {K}), angle {chi:.6f}'
             if k < 0:

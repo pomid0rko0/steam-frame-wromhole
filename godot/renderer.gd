@@ -52,7 +52,7 @@ const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
-const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one
+const TAIL_SEGMENTS := 64       # the tail's sectors of the view (zone_tail.gdshader): quads across one (zone_tail.gdshaderinc's)
 const TAIL_PER := ZoneSections.TAIL_STRIPS + 1   # its instances a body slot and side: the strips and the band
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
@@ -165,7 +165,6 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# from the meshes' last image on: both draw that one (where it meets the next in a ring, round the
 	# eye's axis, the mesh's edge and the tail's first way in would leave pinholes between them)
 	tail_mat.set_shader_parameter("tail_psi_min", (ZONE_IMAGES - 1) * PI)
-	tail_mat.set_shader_parameter("tail_segments", float(TAIL_SEGMENTS))
 	tail_mat.set_shader_parameter("tail_far", Main.FAR)
 	tail_mat.set_shader_parameter("tail_images", ZONE_IMAGES)
 	tail_mat.set_shader_parameter("zone_cull", zone_sections.cull_tex)

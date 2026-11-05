@@ -41,7 +41,7 @@ const PLAN_W := 160
 const COL_W := 8                    # col_img's texels a column (zone_cube.gdshaderinc's ZC_ITEMS / 2)
 const CUBE_PASSES := ["cube_edges", "cube_pieces", "cube_spans", "cube_columns"]
 const TAIL_STRIPS := 24             # the tail's strips a side at most (zone_tail.gdshaderinc's TAIL_STRIPS)
-const TAIL_TEXELS := 4 + TAIL_STRIPS + 1   # cull_tex's texels after a body's images': the tail's view of it (IMAGES)
+const TAIL_TEXELS := 5 + TAIL_STRIPS + 1   # cull_tex's texels after a body's images': the tail's view of it (IMAGES)
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
 var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
@@ -288,7 +288,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	if counts.x > 0:
 		_dispatch(cl, "ball", bpc, int(ceil(nodes / 64.0)), counts.x, views)
-	_dispatch(cl, "images", ipc, int(ceil((_images + TAIL_TEXELS - 2) / 32.0)), counts.x + counts.y, views)
+	_dispatch(cl, "images", ipc, int(ceil((_images + 2 + TAIL_STRIPS) / 32.0)), counts.x + counts.y, views)
 	# a cube's passes, each on the one before (zone_sections.gdshaderinc), then its nodes
 	if counts.y > 0:
 		_dispatch(cl, "cube_edges", cpc, 1, counts.y, views)

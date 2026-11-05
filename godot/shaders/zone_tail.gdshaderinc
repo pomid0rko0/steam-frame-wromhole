@@ -55,6 +55,7 @@ const float TAIL_EPS = 1.2e-7;    // float32's unit in the last place over the n
 const float TAIL_REACH = 1.02;    // a ball's bounding ball over its radius (tail_body)
 const int TAIL_OVER = 4;          // looks into a step that may have gone over a cube (tail_enter)
 const int TAIL_STRIPS = 24;       // strips a side at most before the band (tail_strip; ZoneSections.TAIL_STRIPS)
+const float TAIL_SEGMENTS = 64.0; // quads across a sector of the view (Renderer.TAIL_SEGMENTS: zone_tail.gdshader)
 
 struct TailRay {
 	float el;        // the eye's l
@@ -694,6 +695,24 @@ TailStrips tail_strips(float el, vec3 eye, vec3 en, TailBody q, float half_w, fl
 	t.n0 = vec2(ceil((psi_min - t.c.y - t.dm) / TAIL_PI2), ceil((psi_min - t.c.w - t.dm) / TAIL_PI2));
 	t.on = true;
 	return t;
+}
+
+// The margins zone_tail.gdshader draws a sector of half width half_w with: (round the axis, off the
+// inward radial). Its edges off the radial are chords of circles round it, inside them by up to an
+// eighth of the step between its vertices squared; round the axis the sector a hair wider still.
+vec2 tail_margins(float half_w) {
+	float step = 2.0 * min(half_w, GEO_PI) / TAIL_SEGMENTS;
+	float sag = 0.125 * step * step;
+	return vec2(2e-3 + sag, 5e-4 + sag);
+}
+
+// How many of a side's strips are drawn (st: strip k's least and greatest angle at st[k], k to
+// TAIL_STRIPS): those up to the first that comes within three margins of the next (each drawn a
+// margin wider each way, and an inner edge's chords dip past it by less than one), the band from it.
+int tail_apart(vec2 st[TAIL_STRIPS + 1], float mg) {
+	int K = 0;
+	while (K < TAIL_STRIPS && max(st[K].x, st[K + 1].x) > min(st[K].y, st[K + 1].y) + 3.0 * mg) K++;
+	return K;
 }
 
 // Strip k (copy n0 + k) of side s: its launches' angles off the inward radial (least, greatest):

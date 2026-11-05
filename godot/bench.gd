@@ -64,6 +64,7 @@ const PLACES := [   # the comparison's poses: [where, degrees to the right, degr
 	[-6.2, 180.0, 0.0],     # world B, just outside the curved zone, facing the throat
 	[UNDER_B, 0.0, 60.0],   # on B's floor, looking up into its mouth
 	[0.0, 90.0, 0.0, LONG],  # in the middle of a long throat, looking sideways round it
+	[-0.5, 90.0, 0.0, LONG], # 5 m in from its mouth B, sideways: the throat's ball 55 m along, its tail across the view
 	[0.0, 0.0, 0.0, LONG],   # and along it
 	[START, 0.0, 0.0, LONG], # the start, the long throat's mouth ahead
 ]

@@ -27,7 +27,6 @@ uniform vec4 tail_rows[80];         // per slot: C, E1, E2, (size, 0, 0, 0)
 uniform vec4 tail_col[20];          // per slot: its colour (linear)
 uniform ivec2 tail_count = ivec2(0);   // balls, cubes in the zone
 uniform float tail_psi_min = 59.6902604182061;   // (Renderer.ZONE_IMAGES - 1) pi: the meshes' last image on
-uniform float tail_segments = 32.0;    // the mesh's quads across a sector (Renderer.TAIL_SEGMENTS)
 uniform float tail_far = 4000.0;       // m: the camera's far plane (Main.FAR)
 uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;   // ZoneSections.cull_tex
 uniform int tail_images = 20;          // Renderer.ZONE_IMAGES: the tail's texels of a slot's row after them
@@ -81,36 +80,30 @@ void vertex() {
 		float half_w = bw.z;
 		bool side2 = side_i == 1;
 		bool strips = hd.z > 0.5;
-		// a hair past the sector: its inner and outer edges are chords of circles round the axis
+		// a hair past the sector round the axis, and off the radial past its strips' or band's edges,
+		// which are chords of circles round it (tail_margins)
 		float w = min(half_w, GEO_PI);
-		float step = 2.0 * w / tail_segments;
-		float mg = 2e-3 + 0.125 * step * step;
-		// the strips while each stays apart from the next (margins and all): the first K; strip k
-		// drawn if it is one of them, the band from strip K on
+		vec2 mg = tail_margins(half_w);
+		// strip k drawn if it is one of the first K, each apart from the next (tail_apart), the band
+		// from strip K on
 		vec2 range = vec2(1.0, 0.0);
-		int K = 0;
-		vec2 sk = vec2(0.0);
 		if (strips) {
-			vec4 t0 = texelFetch(zone_cull, ivec3(i0 + 4, s, int(VIEW_INDEX)), 0);
-			sk = side2 ? t0.zw : t0.xy;
-			while (K < TAIL_STRIPS) {
-				vec4 t1 = texelFetch(zone_cull, ivec3(i0 + 5 + K, s, int(VIEW_INDEX)), 0);
-				vec2 sn = side2 ? t1.zw : t1.xy;
-				if (max(sk.x, sn.x) <= min(sk.y, sn.y) + 2.0 * mg) break;
-				if (K == k) {
-					range = sk;
-					float n = (side2 ? hd.y : hd.x) + float(k);
-					v_copies = vec3(n, n, 0.0);
-					break;
-				}
-				sk = sn;
-				K++;
+			vec2 kk = texelFetch(zone_cull, ivec3(i0 + 4, s, int(VIEW_INDEX)), 0).xy;
+			int K = int((side2 ? kk.y : kk.x) + 0.5);
+			int j = k == TAIL_STRIPS ? K : k;
+			vec4 tj = texelFetch(zone_cull, ivec3(i0 + 5 + j, s, int(VIEW_INDEX)), 0);
+			vec2 sj = side2 ? tj.zw : tj.xy;
+			float n0 = side2 ? hd.y : hd.x;
+			if (k == TAIL_STRIPS) {
+				range = hd.w > 0.5 ? vec2(band.x, sj.y) : vec2(sj.x, band.y);
+				v_copies = vec3(n0 + float(K), 1e9, 0.0);
+			} else if (k < K) {
+				range = sj;
+				v_copies = vec3(n0 + float(k), n0 + float(k), 0.0);
 			}
-		}
-		if (k == TAIL_STRIPS) {
-			// the band: from the first copy no strip takes on
-			range = !strips ? band : (hd.w > 0.5 ? vec2(band.x, sk.y) : vec2(sk.x, band.y));
-			v_copies = strips ? vec3((side2 ? hd.y : hd.x) + float(K), 1e9, 0.0) : vec3(-1e9, 1e9, 1.0);
+		} else if (k == TAIL_STRIPS) {
+			range = band;
+			mg.y = mg.x;
 		}
 		if (range.x <= range.y && !(side2 && half_w >= GEO_PI)) {
 			// in the camera's space: the inward radial direction, the body's direction round it, and
@@ -120,8 +113,8 @@ void vertex() {
 			vec3 b1 = vec3(dot(ex.yzw, u), dot(ey.yzw, u), dot(ez.yzw, u));
 			b1 = normalize(b1 - dot(b1, ax) * ax) * (side2 ? -1.0 : 1.0);
 			vec3 b2 = cross(ax, b1);
-			float phi = (2.0 * VERTEX.x - 1.0) * min(w + mg, GEO_PI);
-			float chi = VERTEX.y < 0.5 ? max(range.x - mg, 0.0) : min(range.y + mg, GEO_PI);
+			float phi = (2.0 * VERTEX.x - 1.0) * min(w + mg.x, GEO_PI);
+			float chi = VERTEX.y < 0.5 ? max(range.x - mg.y, 0.0) : min(range.y + mg.y, GEO_PI);
 			vec2 sp = geo_sincos(phi);
 			vec2 sc = geo_sincos(chi);
 			vec3 d = sc.y * ax + sc.x * (sp.y * b1 + sp.x * b2);
