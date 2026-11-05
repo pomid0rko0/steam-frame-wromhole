@@ -1,15 +1,19 @@
 shader_type spatial;
 // The tail of the zone bodies' images, per pixel (zone_tail.gdshaderinc), only where a body's tail can
-// be: an instance per body slot and side, a ring sector of the view round the eye's inward radial
-// direction (Renderer._zone_mesh: VERTEX.x across the sector, VERTEX.y 0 its inner edge, 1 its outer):
-// round the axis the azimuths whose rays' planes pass by the body (tail_sector: two, round its
-// direction and the opposite), off it the angles whose rays wind round the throat's cylinder enough
-// on their way to it (tail_band), both worked out once a frame for each body and eye by
-// ZoneSections' IMAGES pass (after a slot's images' texels of its cull_tex; an instance whose
-// centre is not the one the pass took draws nothing). Where a pixel's ray meets that body past the meshes' images it is
+// be: per body slot and side TAIL_STRIPS + 1 instances, each a ring sector of the view round the
+// eye's inward radial direction (Renderer._zone_mesh: VERTEX.x across the sector, VERTEX.y 0 its
+// inner edge, 1 its outer): round the axis the azimuths whose rays' planes pass by the body
+// (tail_sector: two, round its direction and the opposite), off it a strip of the angles whose rays
+// can meet one copy of it (tail_strip, instance k: copy n0 + k), as long as the strips stay apart,
+// and the band of those that wind round the throat's cylinder enough on their way to it from the
+// first copy no strip takes (tail_band; all of it where the body has no strips: tail_strips), all
+// worked out once a frame for each body and eye by ZoneSections' IMAGES pass (after a slot's images'
+// texels of its cull_tex; an instance whose centre is not the one the pass took draws nothing).
+// Where a pixel's ray meets that body past the meshes' images, among its instance's copies, it is
 // drawn at the depth of the light's way there, as the meshes are (body.gdshaderinc), lit as they are;
 // a pixel whose ray meets it not is dropped. Bodies as Renderer.set_objects has them in ZoneSections'
-// slots: balls' first, cubes' from TAIL_CUBE0; instance i is slot i / 2, side i % 2.
+// slots: balls' first, cubes' from TAIL_CUBE0; instance i is slot i / (2 per), side i / per % 2,
+// strip i % per (per = TAIL_STRIPS + 1; the last the band).
 render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 
 #include "res://shaders/geo_uniforms.gdshaderinc"
@@ -28,7 +32,7 @@ uniform float tail_far = 4000.0;       // m: the camera's far plane (Main.FAR)
 uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;   // ZoneSections.cull_tex
 uniform int tail_images = 20;          // Renderer.ZONE_IMAGES: the tail's texels of a slot's row after them
 uniform int tail_probe = 0;            // tests (tail_cost_test.gd): 1, each fragment green where its ray meets the body, else red
-uniform int tail_only = -1;            // tests: only this instance drawn
+uniform int tail_only = -1;            // tests: only this body slot's side drawn (2 slot + side)
 
 varying flat float v_el;
 varying flat vec3 v_eye;      // the eye's r, the root of its u on the fillet, r - rho0 (floor.gdshaderinc)
@@ -38,6 +42,7 @@ varying flat vec4 v_ey;
 varying flat vec4 v_ez;
 varying flat vec3 v_off;      // the eye in the camera's space (EYE_OFFSET)
 varying flat float v_slot;      // the body's slot
+varying flat vec3 v_copies;     // the copies looked into: the first, the last, 1 if past the zone too
 varying vec3 v_ray;
 
 TailBody slot_body(int s) {
@@ -45,7 +50,10 @@ TailBody slot_body(int s) {
 }
 
 void vertex() {
-	int s = INSTANCE_ID / 2;
+	const int per = TAIL_STRIPS + 1;
+	int s = INSTANCE_ID / (2 * per);
+	int side_i = INSTANCE_ID / per % 2;
+	int k = INSTANCE_ID % per;
 	bool cube = s >= TAIL_CUBE0;
 	bool used = (cube ? s - TAIL_CUBE0 < tail_count.y : s < tail_count.x);
 	float el;
@@ -61,15 +69,50 @@ void vertex() {
 	v_ez = ez;
 	v_off = EYE_OFFSET;
 	v_slot = float(s);
+	v_copies = vec3(-1e9, 1e9, 1.0);
 	POSITION = vec4(2.0, 2.0, 2.0, 1.0);
-	vec4 at = texelFetch(zone_cull, ivec3(tail_images, s, int(VIEW_INDEX)), 0);
-	if (used && at.w > 0.5 && all(equal(at.xyz, tail_rows[4 * s].xyz)) && (tail_only < 0 || INSTANCE_ID == tail_only)) {
-		vec4 bw = texelFetch(zone_cull, ivec3(tail_images + 1, s, int(VIEW_INDEX)), 0);
-		vec3 u = texelFetch(zone_cull, ivec3(tail_images + 2, s, int(VIEW_INDEX)), 0).xyz;
+	int i0 = tail_images;
+	vec4 at = texelFetch(zone_cull, ivec3(i0, s, int(VIEW_INDEX)), 0);
+	if (used && at.w > 0.5 && all(equal(at.xyz, tail_rows[4 * s].xyz)) && (tail_only < 0 || 2 * s + side_i == tail_only)) {
+		vec4 bw = texelFetch(zone_cull, ivec3(i0 + 1, s, int(VIEW_INDEX)), 0);
+		vec3 u = texelFetch(zone_cull, ivec3(i0 + 2, s, int(VIEW_INDEX)), 0).xyz;
+		vec4 hd = texelFetch(zone_cull, ivec3(i0 + 3, s, int(VIEW_INDEX)), 0);
 		vec2 band = bw.xy;
 		float half_w = bw.z;
-		bool side2 = (INSTANCE_ID & 1) == 1;
-		if (band.x < band.y && !(side2 && half_w >= GEO_PI)) {
+		bool side2 = side_i == 1;
+		bool strips = hd.z > 0.5;
+		// a hair past the sector: its inner and outer edges are chords of circles round the axis
+		float w = min(half_w, GEO_PI);
+		float step = 2.0 * w / tail_segments;
+		float mg = 2e-3 + 0.125 * step * step;
+		// the strips while each stays apart from the next (margins and all): the first K; strip k
+		// drawn if it is one of them, the band from strip K on
+		vec2 range = vec2(1.0, 0.0);
+		int K = 0;
+		vec2 sk = vec2(0.0);
+		if (strips) {
+			vec4 t0 = texelFetch(zone_cull, ivec3(i0 + 4, s, int(VIEW_INDEX)), 0);
+			sk = side2 ? t0.zw : t0.xy;
+			while (K < TAIL_STRIPS) {
+				vec4 t1 = texelFetch(zone_cull, ivec3(i0 + 5 + K, s, int(VIEW_INDEX)), 0);
+				vec2 sn = side2 ? t1.zw : t1.xy;
+				if (max(sk.x, sn.x) <= min(sk.y, sn.y) + 2.0 * mg) break;
+				if (K == k) {
+					range = sk;
+					float n = (side2 ? hd.y : hd.x) + float(k);
+					v_copies = vec3(n, n, 0.0);
+					break;
+				}
+				sk = sn;
+				K++;
+			}
+		}
+		if (k == TAIL_STRIPS) {
+			// the band: from the first copy no strip takes on
+			range = !strips ? band : (hd.w > 0.5 ? vec2(band.x, sk.y) : vec2(sk.x, band.y));
+			v_copies = strips ? vec3((side2 ? hd.y : hd.x) + float(K), 1e9, 0.0) : vec3(-1e9, 1e9, 1.0);
+		}
+		if (range.x <= range.y && !(side2 && half_w >= GEO_PI)) {
 			// in the camera's space: the inward radial direction, the body's direction round it, and
 			// across both
 			float sd = el < 0.0 ? -1.0 : 1.0;
@@ -77,12 +120,8 @@ void vertex() {
 			vec3 b1 = vec3(dot(ex.yzw, u), dot(ey.yzw, u), dot(ez.yzw, u));
 			b1 = normalize(b1 - dot(b1, ax) * ax) * (side2 ? -1.0 : 1.0);
 			vec3 b2 = cross(ax, b1);
-			// a hair past the sector: its inner and outer edges are chords of circles round the axis
-			float w = min(half_w, GEO_PI);
-			float step = 2.0 * w / tail_segments;
-			float mg = 2e-3 + 0.125 * step * step;
 			float phi = (2.0 * VERTEX.x - 1.0) * min(w + mg, GEO_PI);
-			float chi = VERTEX.y < 0.5 ? max(band.x - mg, 0.0) : min(band.y + mg, GEO_PI);
+			float chi = VERTEX.y < 0.5 ? max(range.x - mg, 0.0) : min(range.y + mg, GEO_PI);
 			vec2 sp = geo_sincos(phi);
 			vec2 sc = geo_sincos(chi);
 			vec3 d = sc.y * ax + sc.x * (sp.y * b1 + sp.x * b2);
@@ -100,7 +139,8 @@ void fragment() {
 	TailBody q = slot_body(slot);
 	float y = 0.0, ang = 0.0, psi = 0.0;
 	int on = 0;
-	bool met = tail_ray(v_el, v_eye, v_en, D, tail_psi_min, z) && tail_meet(z, q, tail_psi_min, y, ang, psi, on);
+	bool far = v_copies.z > 0.5;
+	bool met = tail_ray(v_el, v_eye, v_en, D, tail_psi_min, far, z) && tail_meet(z, q, tail_psi_min, v_copies.x, v_copies.y, far, y, ang, psi, on);
 	if (tail_probe == 1) {
 		ALBEDO = met ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
 		DEPTH = 1.0;

@@ -40,9 +40,12 @@
 // image only where it says 1 for the centre its instance has. And invocation x = images: the
 // tail's view of the body from the eye (zone_tail.gdshaderinc: its band off the inward radial,
 // tail_band, past the last image, and its two sectors round it, tail_sector), once a frame for the
-// tail's sectors (zone_tail.gdshader), not in each of their vertices: three texels after the
+// tail's sectors (zone_tail.gdshader), not in each of their vertices: four texels after the
 // images', (the centre's x, y, z, 1), (the band's least and greatest angle, the sectors' half
-// width, 0), (their direction u, 0).
+// width, 0), (their direction u, 0), (its strips' first copy each side, 1 if it has strips, 1 if
+// they are outward: tail_strips); and x = images + 1 + k, its strip k (tail_strip, k up to
+// TAIL_STRIPS: the last only where the band starts if every strip before it is apart), the texel
+// after those, (side 0's least and greatest angle, side 1's).
 //
 // PATHS: each body's table of the ways from each eye (zone.gdshaderinc, «the paths by a table»),
 // after IMAGES: a node by geo_see_to's search, only the turns up to the last image drawn needs.
@@ -307,7 +310,7 @@ void main() {
 	uvec3 id = gl_GlobalInvocationID;
 	int j = int(id.x);
 	int balls = pc.first.x, all = pc.first.x + pc.first.y;
-	if (j > pc.first.w || int(id.y) >= all) return;
+	if (j > pc.first.w + 1 + TAIL_STRIPS || int(id.y) >= all) return;
 	bool cube = int(id.y) >= balls;
 	int s = cube ? pc.first.z + int(id.y) - balls : int(id.y);
 	vec4 C = zb.body[4 * s];
@@ -317,16 +320,27 @@ void main() {
 	vec3 en;
 	vec4 ex, ey, ez;
 	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
-	if (j == pc.first.w) {
+	if (j >= pc.first.w) {
 		// the tail's view of the body, from the meshes' last image on (Renderer's tail_psi_min)
 		TailBody q = tail_body(cube, C, zb.body[4 * s + 1], zb.body[4 * s + 2], size);
 		vec3 eye = vec3(geo_r(abs(el)), sqrt(geo_u(abs(el))), geo_dr(abs(el)));
-		vec2 band = tail_band(el, eye, q, float(pc.first.w - 1) * GEO_PI);
+		float psi_min = float(pc.first.w - 1) * GEO_PI;
 		vec3 u;
 		float half_w = tail_sector(en, q, u);
-		imageStore(cull_img, ivec3(j, s, int(id.z)), vec4(C.xyz, 1.0));
-		imageStore(cull_img, ivec3(j + 1, s, int(id.z)), vec4(band, half_w, 0.0));
-		imageStore(cull_img, ivec3(j + 2, s, int(id.z)), vec4(u, 0.0));
+		TailStrips ts = tail_strips(el, eye, en, q, half_w, psi_min);
+		int i0 = pc.first.w;
+		if (j == i0) {
+			vec2 band = tail_band(el, eye, q, psi_min);
+			imageStore(cull_img, ivec3(i0, s, int(id.z)), vec4(C.xyz, 1.0));
+			imageStore(cull_img, ivec3(i0 + 1, s, int(id.z)), vec4(band, half_w, 0.0));
+			imageStore(cull_img, ivec3(i0 + 2, s, int(id.z)), vec4(u, 0.0));
+			imageStore(cull_img, ivec3(i0 + 3, s, int(id.z)), vec4(ts.n0, ts.on ? 1.0 : 0.0, ts.outward ? 1.0 : 0.0));
+		} else {
+			float k = float(j - i0 - 1);
+			vec4 st = vec4(0.0);
+			if (ts.on) st = vec4(tail_strip(ts, eye, 0, k), half_w < GEO_PI ? tail_strip(ts, eye, 1, k) : vec2(0.0));
+			imageStore(cull_img, ivec3(i0 + 3 + int(k) + 1, s, int(id.z)), st);
+		}
 		return;
 	}
 	vec3 n;

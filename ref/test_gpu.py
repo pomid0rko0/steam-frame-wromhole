@@ -156,6 +156,8 @@ PATH_ARRIVE = 1e-2
 ZONE_PL, ZONE_PQ = (int(re.search(r'const int %s = (\d+);' % k, open(os.path.join(SHADERS, 'zone.gdshaderinc')).read()).group(1))
                     for k in ('ZONE_PL', 'ZONE_PQ'))
 ZONE_IMAGES = int(re.search(r'^const ZONE_IMAGES := (\d+)', open(os.path.join(HERE, '..', 'godot', 'renderer.gd')).read(), re.M).group(1))
+TAIL_SEGMENTS = int(re.search(r'^const TAIL_SEGMENTS := (\d+)', open(os.path.join(HERE, '..', 'godot', 'renderer.gd')).read(), re.M).group(1))
+TAIL_STRIPS = int(re.search(r'^const int TAIL_STRIPS = (\d+);', open(os.path.join(SHADERS, 'zone_tail.gdshaderinc')).read(), re.M).group(1))
 
 SRC = '''#version 430
 layout(local_size_x=64) in;
@@ -252,10 +254,10 @@ void main() {
 		vec4 e = inp[I + 5];
 		TailRay z;
 		TailBody q = tail_body(e.y > 0.5, inp[I + 2], inp[I + 3], inp[I + 4], e.x);
-		bool ray = tail_ray(a.x, eye, a.yzw, c, e.z, z);
+		bool ray = tail_ray(a.x, eye, a.yzw, c, e.z, true, z);
 		float y = 0.0, ang = 0.0, psi = 0.0;
 		int on = 0;
-		bool hit = ray && tail_meet(z, q, e.z, y, ang, psi, on);
+		bool hit = ray && tail_meet(z, q, e.z, -1e9, 1e9, true, y, ang, psi, on);
 		vec4 P = vec4(0.0), arr = vec4(0.0);
 		float len = 0.0;
 		if (hit) tail_hit(z, y, ang, on, P, arr, len);
@@ -264,6 +266,32 @@ void main() {
 		outp[O + 1] = P;
 		outp[O + 2] = vec4(float(on), band, ray ? 1.0 : 0.0);
 		outp[O + 3] = vec4(z.sigma, 0.0, 0.0, 0.0);
+	} else if (mode == 16) {    // as mode 15, and (the first copy, the last, 1 if past the zone too): the
+		// tail looked for among those copies only (a strip's, the band's past the strips: tail_meet),
+		// (hit, y, psi, len); the body's strips (tail_strips): (n0 each side, 1 if on, 1 if outward),
+		// (the sectors' half width, 0, 0, 0), then strip k's (side 0's least and greatest, side 1's), k
+		// from 0 to TAIL_STRIPS, as zone_sections' IMAGES pass works them out
+		float al = abs(a.x);
+		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));
+		vec4 e = inp[I + 5], g = inp[I + 6];
+		TailRay z;
+		TailBody q = tail_body(e.y > 0.5, inp[I + 2], inp[I + 3], inp[I + 4], e.x);
+		bool far = g.z > 0.5;
+		bool ray = tail_ray(a.x, eye, a.yzw, c, e.z, far, z);
+		float y = 0.0, ang = 0.0, psi = 0.0;
+		int on = 0;
+		bool hit = ray && tail_meet(z, q, e.z, g.x, g.y, far, y, ang, psi, on);
+		vec4 P = vec4(0.0), arr = vec4(0.0);
+		float len = 0.0;
+		if (hit) tail_hit(z, y, ang, on, P, arr, len);
+		outp[O] = vec4(hit ? 1.0 : 0.0, y, psi, len);
+		vec3 u;
+		float half_w = tail_sector(a.yzw, q, u);
+		TailStrips ts = tail_strips(a.x, eye, a.yzw, q, half_w, e.z);
+		outp[O + 1] = vec4(ts.n0, ts.on ? 1.0 : 0.0, ts.outward ? 1.0 : 0.0);
+		outp[O + 2] = vec4(half_w, 0.0, 0.0, 0.0);
+		for (int k = 0; k <= TAIL_STRIPS; k++)
+			outp[O + 3 + k] = ts.on ? vec4(tail_strip(ts, eye, 0, float(k)), half_w < GEO_PI ? tail_strip(ts, eye, 1, float(k)) : vec2(0.0)) : vec4(0.0);
 	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
 		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);
@@ -1611,12 +1639,68 @@ def tail_checks(name, S, gpu, rng):
         over = max(over, (max(np.linalg.norm(o[1] - P), abs(o[0, 3] - s)) - TAIL_POINT) / s)
         deepest = max(deepest, s)
         onf += o[2, 0] > 0.5
+    # the strips (tail_strips, tail_strip; zone_tail.gdshader draws them): each way in the search
+    # finds lies in its copy's strip while the strips before it and it stay apart from the next (as
+    # the vertex shader takes them, with its margins), else in the band past them; the search among
+    # that one copy (or the band's copies on) finds the same way in, without the way past the zone
+    hits = [(o, row) for o, row in zip(out, rows) if o[0, 0] > 0.5]
+    strip_bad, in_strip, in_band, no_strips = [], 0, 0, 0
+    if hits:
+        per = 4 + TAIL_STRIPS
+        info = gpu.run(16, np.array([np.r_[row, 0.0, 0.0, 0.0, 0.0] for o, row in hits]), in_per=7, out_per=per).reshape(-1, per, 4)
+        asks, cases = [], []
+        for (o, row), f in zip(hits, info):
+            el, en, D, C = row[0], row[1:4], row[4:8], row[8:12]
+            hd, half_w, st = f[1], float(f[2, 0]), f[3:]
+            if hd[2] < 0.5:
+                no_strips += 1
+                continue
+            t = D[1:] / np.linalg.norm(D[1:])
+            c = C[:3] - (C[:3] @ en) * en
+            side = 0 if half_w >= np.pi or c @ t >= 0 else 1
+            psi_c = np.arctan2(C[:3] @ t, C[:3] @ en)
+            n = round((float(o[0, 2]) - psi_c) / (2 * np.pi))
+            n0 = float(hd[side])
+            chi = np.arctan2(np.linalg.norm(D[1:]), -(1.0 if el >= 0 else -1.0) * D[0])
+            w = min(half_w, np.pi)
+            mg = 2e-3 + 0.125 * (2 * w / TAIL_SEGMENTS) ** 2
+            ab = st[:, 2 * side:2 * side + 2]
+            K = 0
+            while K < TAIL_STRIPS and not max(ab[K, 0], ab[K + 1, 0]) <= min(ab[K, 1], ab[K + 1, 1]) + 2 * mg:
+                K += 1
+            k = n - n0
+            where = f'eye l {el:.3f} body l {l_of(S, C):.3f}, copy {n:.0f} (strip {k:.0f} of {K}), angle {chi:.6f}'
+            if k < 0:
+                strip_bad.append(f'{where}: before the first strip')
+                continue
+            if k < K:
+                in_strip += 1
+                if not ab[int(k), 0] <= chi <= ab[int(k), 1]:
+                    strip_bad.append(f'{where}: off its strip [{ab[int(k), 0]:.6f}, {ab[int(k), 1]:.6f}]')
+                asks.append(np.r_[row, n, n, 0.0, 0.0])
+            else:
+                in_band += 1
+                lo, hi = (ab[K, 0], np.pi) if hd[3] < 0.5 else (0.0, ab[K, 1])
+                if not lo <= chi <= hi:
+                    strip_bad.append(f'{where}: off the band past the strips [{lo:.6f}, {hi:.6f}]')
+                asks.append(np.r_[row, n0 + K, 1e9, 0.0, 0.0])
+            cases.append((o, where))
+        if asks:
+            again = gpu.run(16, np.array(asks), in_per=7, out_per=per).reshape(-1, per, 4)
+            for f, (o, where) in zip(again, cases):
+                r = f[0]
+                if r[0] < 0.5 or abs(r[3] - o[0, 3]) > TAIL_POINT + ALPHA_TOL * o[0, 3] or abs(r[2] - o[0, 2]) > 1e-3:
+                    strip_bad.append(f'{where}: its copies\' search {"met it at psi %.4f, length %.4f" % (r[2], r[3]) if r[0] > 0.5 else "missed it"}, '
+                                     f'all copies\' at psi {o[0, 2]:.4f}, length {o[0, 3]:.4f}')
     fails = 0
     fails += not check(f'{name}: the tail, which rays meet a body past psi_min (zone_tail.gdshaderinc)', not wrong,
                        f'{len(rows)} rays, {hits} meet one ({onf} on the far fillet or out), {graze} grazing or ill-posed; '
                        f'{time.time() - t0:.0f} s' + ''.join('\n    ' + w for w in wrong[:10]))
     fails += not check(f'{name}: the tail, every ray that meets a body within its sectors of the view (tail_band, tail_sector)',
                        not outside, f'{len(outside)} not' + ''.join('\n    ' + w for w in outside[:10]))
+    fails += not check(f'{name}: the tail, every way in within its copy\'s strip or the band past them, and found there (tail_strip)',
+                       not strip_bad, f'{in_strip} in strips, {in_band} in the band past them, {no_strips} of bodies without strips; '
+                       f'{len(strip_bad)} not' + ''.join('\n    ' + w for w in strip_bad[:10]))
     fails += not check(f'{name}: the tail, the way in', over <= ALPHA_TOL and worst_a <= ALPHA_TOL,
                        f'off the reference\'s by {worst_p:.1e} m, its length by {worst_len:.1e} m at most, past {TAIL_POINT:.0e} m '
                        f'{over:.1e} rad of its way seen from the eye (limit {ALPHA_TOL:.0e}; ways up to {deepest:.0f} m); '
