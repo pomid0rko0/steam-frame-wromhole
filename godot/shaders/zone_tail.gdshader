@@ -19,7 +19,7 @@ const int TAIL_SLOTS = 20;          // Renderer.MAX_BALLS + MAX_CUBES
 uniform vec4 tail_rows[80];         // per slot: C, E1, E2, (size, 0, 0, 0)
 uniform vec4 tail_col[20];          // per slot: its colour (linear)
 uniform ivec2 tail_count = ivec2(0);   // balls, cubes in the zone
-uniform float tail_psi_min = 62.8318530717959;   // Renderer.ZONE_IMAGES pi: the meshes' images end there
+uniform float tail_psi_min = 59.6902604182061;   // (Renderer.ZONE_IMAGES - 1) pi: the meshes' last image on
 
 varying flat float v_el;
 varying flat vec3 v_eye;      // the eye's r, the root of its u on the fillet, r - rho0 (floor.gdshaderinc)

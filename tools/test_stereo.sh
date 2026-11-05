@@ -31,8 +31,8 @@ JOBS=${JOBS:-$(nproc)}
 # balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation), each
 # case of the stereo check scene with its floor lines and foveation (checkN), each case of the
 # gravity view (gravityN)
-ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crf0 crf6 check0 check1 check2
-check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
+ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crv9 crv10 crv11 crf0 crf6 check0
+check1 check2 check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
 if [ -n "${PART:-}" ]; then
 	# CI's share: every part on exactly one of its lines, or a part would go unchecked
 	parts=$(grep -v '^#' "$ROOT/tools/stereo_parts.txt")
@@ -85,10 +85,11 @@ verdict() {   # name, comparison command...
 
 # where light is bent: at the start looking up at the lifted throat, level with it, at the curved
 # zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
-# a control, under the mouth looking up (curved_check.gd's PLACES); first, as their rays, traced
-# after each (tools/compare/curved.py, each eye on a core of its own), take minutes a place (more in
-# the throat, where they go round it), beside the other renders
-for p in 0 1 2 3 4 5 6 7 8; do want crv$p && TRACE=1 render crv$p -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
+# a control, under the mouth looking up, and on a long throat in it sideways, at the start and in
+# A's fillet (curved_check.gd's PLACES); first, as their rays, traced after each
+# (tools/compare/curved.py, each eye on a core of its own), take minutes a place (more in the throat,
+# where they go round it), beside the other renders
+for p in 0 1 2 3 4 5 6 7 8 9 10 11; do want crv$p && TRACE=1 render crv$p -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it
 for p in 0 6; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
@@ -143,7 +144,7 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
 	verdict "simulated headset, case $c: the hands' beams, each eye" python3 "$CMP/silhouettes.py" "$OUT/bea$c" 2
 done
-for p in 0 1 2 3 4 5 6 7 8; do
+for p in 0 1 2 3 4 5 6 7 8 9 10 11; do
 	want crv$p || continue
 	verdict "simulated headset, place $p where light is bent: balls, cubes and the floor against traced rays, every image, each eye" cat "$LOGS/crv$p.cmp"
 done

@@ -23,9 +23,11 @@
 // chord ball, a cube's four slabs of its 4D box): each part's Newton step from the side the ray comes
 // from never passes that part's own way in, so the furthest of them, taken again and again, lands on
 // the way into the body, or finds a part the ray leaves before it is in the others (tail_enter).
-// Only ways in at a turn psi >= psi_min = ZONE_IMAGES pi count: those before are the meshes' images
-// (a point at psi is in image floor(psi / pi)), drawn already, and a ray already in a body at psi_min
-// went in through one of them.
+// Only ways in at a turn psi >= psi_min count (a point at psi is in image floor(psi / pi)): those
+// before are the meshes' images, drawn already, and a ray already in a body at psi_min went in through
+// one of them. The renderer takes psi_min (ZONE_IMAGES - 1) pi: the meshes' last image is drawn by
+// both (the same points, at the same depth), else where it meets the next in a ring round the eye's
+// axis the mesh's edge and the tail's first way in would leave pinholes between them.
 //   Precision: float32. psi grows without bound next to the limit; a copy's angle is therefore
 // carried as its offset x from psi_c, and the l at which a copy passes psi_c straight from n
 // (tail_copy_y). Their phase is off by about psi times float32's step (1e-3 rad at psi 1e4, ten
@@ -33,7 +35,9 @@
 
 const float TAIL_PI2 = 6.28318530717959;
 const int TAIL_COPIES = 4;        // copies tried a body and stretch (from the first that can be met)
-const int TAIL_STEPS = 10;        // Newton's rounds into a body
+const int TAIL_STEPS = 12;        // Newton's rounds into a body
+const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
+const float TAIL_TOL_FILLET = 1e-5;
 const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
 
 struct TailRay {
@@ -198,10 +202,12 @@ void tail_parts(TailBody q, vec4 P, vec4 dP, out vec4 g, out vec4 dg) {
 // leaves a part (or never reaches one) before it is in all. Along the copy by x: on the cylinder
 // its angle off psi_c (there l = lc + lam x, the point a closed form: x keeps its digits however
 // fast the ray winds), on the far fillet y (the angle base + the fillet's sweep, base: at1's psi
-// less 2 pi n). Done where a step moves the point by less than float32 tells.
+// less 2 pi n). Done within TAIL_TOL of the body, or where a step moves the point by less: on the
+// fillet the sweep's table (its filter's weights in 256ths) leaves the point that much uncertain.
 bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
 	x = xa;
-	float tol = q.cube ? 1e-6 : 2e-6 * q.size;
+	float near = fillet ? TAIL_TOL_FILLET : TAIL_TOL;
+	float tol = q.cube ? near : 2.0 * near * q.size;
 	for (int i = 0; i < TAIL_STEPS; i++) {
 		vec4 P, dP;
 		if (fillet) {
@@ -225,7 +231,7 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 		if (in_) return i > 0;
 		float xn = x + step;
 		if (!(xn <= xb)) return false;
-		bool done = xn == x || step * length(dP) < 2e-6;
+		bool done = xn == x || step * length(dP) < near;
 		x = xn;
 		if (done) return true;
 	}

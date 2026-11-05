@@ -18,10 +18,14 @@ const U := preload("res://tests/util.gd")
 # [the feet's place on universe A's floor (chart x, y), the direction they face (chart x, y),
 # flights from there (main.viewer: off the floor, then each a geodesic along the head's x right, y
 # up, -z ahead, the room's axes carried along), a turn of the room to the right after, in degrees,
-# the head's pitch in degrees (util.gd's headset)]: standing at the start looking up at the mouth;
-# level with the throat's centre 9 m out; at the curved zone's edge; in A's fillet; in the throat
-# looking along it and sideways; out in universe B looking back at the mouth; far off, a control;
-# under the mouth looking up into it
+# the head's pitch in degrees (util.gd's headset), and the throat's cylinder's length if not the
+# video's (main.set_length)]: standing at the start looking up at the mouth; level with the throat's
+# centre 9 m out; at the curved zone's edge; in A's fillet; in the throat looking along it and
+# sideways; out in universe B looking back at the mouth; far off, a control; under the mouth looking
+# up into it; and on a throat LONG long (the bodies of the space carried with it, as stretching it
+# carries them: WormholeSpace.carried_l), where a body's images past the meshes' (the tail,
+# zone_tail.gdshader) are many pixels wide: in it sideways, at the start, in A's fillet looking in
+const LONG := 40.0
 const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0)], 0.0, 0.0],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -4.6)], 0.0, -5.0],
@@ -30,7 +34,10 @@ const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 90.0, -10.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 180.0, 0.0],
 		[Vector2(24.0, 9.0), Vector2(1.0, 0.3), [], 0.0, -10.0],
-		[Vector2(0.6, 0.4), Vector2(-1.0, 0.0), [], 0.0, 75.0]]
+		[Vector2(0.6, 0.4), Vector2(-1.0, 0.0), [], 0.0, 75.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 90.0, -10.0, LONG],
+		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0, LONG],
+		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0, LONG]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
@@ -79,6 +86,8 @@ func _process(_delta: float) -> bool:
 	if frames == 3:
 		main.menu.visible = false
 		main.renderer.show_scene(false)
+		if place.size() > 5:
+			main.set_length(place[5])
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
 		var v: Viewer = main.viewer
 		var fwd := main._head_forward_xz()
@@ -148,17 +157,20 @@ func _bodies() -> void:
 	ccol.append(Vector4(0.0, 4.0, 0.0, AXIS_CUBE[1]))
 	for c: Array in NEAR_AXIS_CUBES:
 		_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
+	# the space's bodies stand where they would on the video's throat stretched to this one
+	var lc0 := 0.5 * main.LENGTH
 	for b: Array in WORLD_BALLS + ([EDGE_BALL] if _fov() else []):
-		pos.append(sp.embed(b[0], (b[1] as Vector3).normalized()))
+		pos.append(sp.embed(sp.carried_l(b[0], lc0), (b[1] as Vector3).normalized()))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
 	for c: Array in WORLD_CUBES:
 		var n: Vector3 = (c[1] as Vector3).normalized()
-		var C := sp.embed(c[0], n)
+		var cl := sp.carried_l(c[0], lc0)
+		var C := sp.embed(cl, n)
 		var e1 := _normal_to(n)
 		var e2 := n.cross(e1)
 		var a: float = c[3]
 		for ax in [cos(a) * e1 + sin(a) * e2, -sin(a) * e1 + cos(a) * e2]:
-			axes.append(sp.embed_vector(c[0], n, Vector4(0.0, ax.x, ax.y, ax.z)).normalized())
+			axes.append(sp.embed_vector(cl, n, Vector4(0.0, ax.x, ax.y, ax.z)).normalized())
 		cpos.append(C)
 		ccol.append(Vector4(0.0, 4.0, 0.0, c[2]))
 	# the renderer draws this many of each kind and leaves out the rest, which the traced rays meet

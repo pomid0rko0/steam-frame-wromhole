@@ -161,7 +161,9 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
 		zone_mats.append(m)
 	tail_mat.shader = ZONE_TAIL_SHADER
-	tail_mat.set_shader_parameter("tail_psi_min", ZONE_IMAGES * PI)
+	# from the meshes' last image on: both draw that one (where it meets the next in a ring, round the
+	# eye's axis, the mesh's edge and the tail's first way in would leave pinholes between them)
+	tail_mat.set_shader_parameter("tail_psi_min", (ZONE_IMAGES - 1) * PI)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
