@@ -28,6 +28,10 @@ Checks per eye:
     body's pixel its image lacks, judged by that body's outline, when a ray a quarter of a pixel off
     its centre meets this kind next with the other kind taken out (near the photon sphere both kinds' images, thinner than a pixel,
     lie in one band, and a hair off the front one shows the one behind);
+  and a body's pixel whose rays pass it by counts only if no ray within MAX_EDGE px meets that
+    kind (thin: an image thinner than a pixel, a hundredth of one at a cube's corner on the eye's
+    axis, which the rays near the pixel's centre miss and the rasterizer draws where a triangle
+    covers its centre; the ray is sought by Newton's steps on how near rays come to that kind);
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
     haze) against the picture's colour, away from the cells' edges and lines (by the pixel's
     footprint on the floor, and under foveation by two of its texel's: the cell's edge filtered over
@@ -61,6 +65,9 @@ RAY_MAX = 30000.0       # m along a ray at most (the cylinder's jumps make a lon
 FLOOR_SAMPLES = 1500
 FLOOR_MIN = 100         # fewer usable floor samples (a view without much floor): no floor check
 GRID = 4
+THIN_STEPS = 8          # Newton's steps towards an image thinner than a pixel at most
+THIN_H = 0.01           # px: the rays off a pixel's centre for the gradient of their gap
+THIN_OVER = 1.1         # a step goes this much past where the gap's line crosses 0 (into the body)
 
 pre = sys.argv[1]
 EYES = sys.argv[2:3] or ['left', 'right']
@@ -229,6 +236,30 @@ def seg_box(P0, P1, C, Ax, half):
     return np.where((tin <= tout) & (u <= 1) & (tout >= 0), u, 2.0)
 
 
+def gap_ball(P0, P1, C, rad):
+    """How far outside the ball the chord P0 -> P1 comes nearest it (negative: in it)."""
+    d = P1 - P0
+    q = P0 - C
+    u = np.clip(-np.sum(q * d, -1) / np.maximum(np.sum(d * d, -1), 1e-30), 0.0, 1.0)
+    return np.linalg.norm(q + u[:, None] * d, axis=-1) - rad
+
+
+def gap_box(P0, P1, C, Ax, half):
+    """How far outside the 4D box the chord P0 -> P1 comes nearest it, in the box's own measure (the
+    largest of its slabs' distances; negative: in it). Along the chord that measure is the largest
+    of eight linear functions: its least on the chord is at an end or where two of them cross."""
+    o = (P0 - C) @ Ax.T
+    d = (P1 - P0) @ Ax.T
+    c = np.concatenate([o, -o], -1)                   # [m, 8]: c + k u
+    k = np.concatenate([d, -d], -1)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        u = (c[:, None, :] - c[:, :, None]) / (k[:, :, None] - k[:, None, :])
+    u = np.concatenate([u.reshape(len(c), -1), np.zeros((len(c), 1)), np.ones((len(c), 1))], -1)
+    u = np.where(np.isfinite(u), np.clip(u, 0.0, 1.0), 0.0)
+    g = np.max(c[:, None, :] + k[:, None, :] * u[:, :, None], -1)
+    return g.min(-1) - half
+
+
 def height(l, n):
     return r_of(l) * n[..., 2] + lift
 
@@ -278,11 +309,13 @@ def cyl_jump(l, n, vl, v, reach, left):
     return np.maximum(out, 0.0)
 
 
-def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
+def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2), gap=0):
     """Rays from (l0, n0) along unit tangent vectors D4 [m, 4]: what each meets first: 1 a ball,
     2 a cube, 3 the floor (with its l, n and the way), 0 the sky, -1 still going at smax. Only the
-    body kinds in bodies are there."""
+    body kinds in bodies are there. With gap a kind (1, 2), also how near each ray's steps come to
+    a body of that kind on its way (gap_ball, gap_box: the least; negative where it meets one)."""
     m = D4.shape[0]
+    g = np.full(m, np.inf)
     l = np.full(m, l0); n = np.tile(n0, (m, 1)); vl = D4[:, 0].copy(); v = D4[:, 1:].copy()
     kind = np.full(m, -1); hit_l = np.zeros(m); hit_n = np.zeros((m, 3)); way = np.zeros(m)
     s = np.zeros(m)
@@ -322,6 +355,13 @@ def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
             for C, Ax, a in CUBES:
                 u = np.where(jumped, 2.0, seg_box(P0, P1, C, Ax, a))
                 what = np.where(u < best, 2, what); best = np.minimum(best, u)
+        # a jump goes nowhere near a body
+        if gap == 1:
+            for C, rad in BALLS:
+                g[idx] = np.minimum(g[idx], np.where(jumped, np.inf, gap_ball(P0, P1, C, rad)))
+        elif gap == 2:
+            for C, Ax, a in CUBES:
+                g[idx] = np.minimum(g[idx], np.where(jumped, np.inf, gap_box(P0, P1, C, Ax, a)))
         h0 = height(l[idx], n[idx]); h1 = height(st[0], st[1])
         fl = (h0 > 0) & (h1 <= 0)
         uf = np.where(fl, h0 / np.where(fl, h0 - h1, 1.0), 2.0)
@@ -345,6 +385,8 @@ def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
         kind[sky] = 0
         alive[sky] = False
         alive[idx[alive[idx] & (s[idx] >= smax)]] = False
+    if gap:
+        return kind, hit_l, hit_n, way, g
     return kind, hit_l, hit_n, way
 
 
@@ -411,6 +453,39 @@ for side_i, eye_name in enumerate(('left', 'right')):
             k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, xs + dx, ys + dy), axes), bodies=bodies)
             ok &= ((k == kind) == has) & (k >= 0)
         return ok
+    def thin(xs, ys, kind, reach, alone):
+        """Whether a ray within reach px of pixels (xs, ys)'s centres meets a body of that kind
+        first: an image thinner than a pixel, which the rays at the centre and a quarter off it all
+        pass by, found by Newton's steps from the centre on how near a ray comes to the kind's
+        bodies (trace's gap, its gradient across the picture by rays THIN_H px off), until a ray
+        meets one (and no body of the other kind in front, but where alone: there the other kind
+        is in front, and its outline judges the pixel)."""
+        x = xs.astype(float).copy(); y = ys.astype(float).copy()
+        found = np.zeros(len(xs), bool)
+        live = np.ones(len(xs), bool)
+        for _ in range(THIN_STEPS):
+            i = np.nonzero(live)[0]
+            if len(i) == 0:
+                break
+            m = len(i)
+            px = np.r_[x[i], x[i] + THIN_H, x[i]]; py = np.r_[y[i], y[i], y[i] + THIN_H]
+            _, _, _, _, gp = trace(l0, n0, to_tangent(n0, pixel_rays(e, px, py), axes), bodies=(kind,), gap=kind)
+            g0 = gp[:m]
+            gx_, gy_ = (gp[m:2 * m] - g0) / THIN_H, (gp[2 * m:] - g0) / THIN_H
+            met = g0 <= 0
+            if met.any():
+                j = i[met]
+                k, _, _, _ = trace(l0, n0, to_tangent(n0, pixel_rays(e, x[j], y[j]), axes))
+                found[j] = (k == kind) | alone[j]
+                live[j] = False
+            gg = gx_ * gx_ + gy_ * gy_
+            go = ~met & np.isfinite(g0) & (gg > 0)
+            live[i[~met & ~go]] = False
+            j = i[go]
+            x[j] -= THIN_OVER * g0[go] * gx_[go] / gg[go]
+            y[j] -= THIN_OVER * g0[go] * gy_[go] / gg[go]
+            live[j[np.hypot(x[j] - xs[j], y[j] - ys[j]) > reach[j]]] = False
+        return found
     lack = ((gk == 1) & ~near_red[gy, gx]) | ((gk == 2) & ~near_green[gy, gx])
     li = np.nonzero(lack)[0]
     lack[li] = steady(gx[li].astype(float), gy[li].astype(float), gk[li], True)
@@ -442,6 +517,9 @@ for side_i, eye_name in enumerate(('left', 'right')):
         other = (ref_green if code == 1 else ref_red)
         fy, fx = np.nonzero(far & A & other)
         far[fy, fx] = steady(fx.astype(float), fy.astype(float), np.full(len(fx), code), False, bodies=(code,))
+        # the picture's body where the rays pass by: its image may be thinner than a pixel
+        fy, fx = np.nonzero(far & A & ~Rf)
+        far[fy, fx] = ~thin(fx, fy, code, MAX_EDGE * texel[fy, fx], other[fy, fx])
         far_all |= far
         lab, nb = ndimage.label(ndimage.binary_dilation(Rf, iterations=2))
         worst = 0.0

@@ -56,6 +56,8 @@ const TILT_SPEED := deg_to_rad(60.0)   # flying: pitch per second at full stick,
 const START_POS := Vector3(10.0, 0.0, 0.0)   # chart A, on the floor
 const START_FORWARD := Vector3(-1.0, 0.0, 0.0)
 const NEAR := 0.01                  # m: the camera's near plane: what comes closer to an eye is cut
+const FAR := 1.0e6                  # m: the far plane: a body's image deep in the tail (zone_tail.gdshader) is
+                                    # the light's way round the throat thousands of times, kilometres
 const DESKTOP_HEAD_HEIGHT := 1.6
 const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
@@ -151,6 +153,7 @@ func _ready() -> void:
 	host.add_child(origin)
 	camera = XRCamera3D.new()
 	camera.near = NEAR
+	camera.far = FAR
 	camera.compositor = Compositor.new()
 	origin.add_child(camera)
 	if in_xr:
