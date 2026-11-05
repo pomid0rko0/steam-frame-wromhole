@@ -194,6 +194,14 @@ vec2 geo_from_origin(float b, float sigma, float a, float gap) {
 // tangent vectors) and its place in the room (head_pos), and the view's camera as Godot gives it.
 // Under multiview INV_VIEW_MATRIX is one camera for both eyes, set back so that its frustum holds
 // both; each eye sits at EYE_OFFSET in that camera's space (its own turn is in its projection). So:
+// The ray from the eye seen at clip (x, y) by projection P, in the camera's space: to the point
+// there that P puts at w = 1, so linear across the picture (a varying between corners is exact).
+// Only P's rows x, y and w say it: its depth row's near and far a hundred million times apart
+// (Main.FAR), an inverse of the whole loses the ray to float32.
+vec3 geo_view_ray(mat4 P, vec2 clip) {
+	return inverse(mat3(P[0].xyw, P[1].xyw, P[2].xyw)) * vec3(clip, 1.0);
+}
+
 // the eye at inv_view * eye_offset, the camera's axes (right, up, back) carried there; a point's
 // place in the camera's space is eye_offset plus its direction from the eye along those axes. The
 // eye is the head moved by the play-space offset, to second order along the geodesic
