@@ -46,9 +46,11 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     MESHES), for eyes' axes through and beside the bodies: every vertex on its body; a ball's first
     and last columns' sections at its tips; a cube: every triangle (of area in the picture, not
     dropped) on one face of it (ON_FACE: none across an edge, the face's lighting another's), and
-    every face covered (COVER points at random on each, each in a triangle on it, in its own
-    coordinates: no gap); also for cubes the axis passes through or next to a corner, an edge or a
-    face of (within a hundredth of a radian, and exactly), and issue #147's four;
+    every face covered (COVER points at random on each, each in a triangle on it in its own
+    coordinates, or at a knot's two columns in (theta, alpha) round the axis within DIRECTION of
+    one: no gap); and built round an axis no further than ZC_PUSH off the eye's; also for cubes
+    the axis passes through or next to a corner, an edge or a face of (within a hundredth of a
+    radian, and exactly), and issue #147's four;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Off on a throat with a crease (h < R) until issue #118 (CREASE_OFF): the cubes' meshes in the zone
@@ -245,7 +247,8 @@ void main() {
 		outp[O + 1] = vec4(t, 0.0);
 	} else if (mode == 14) {    // a = (column, columns, rows), c = (en, size), C, E1, E2, E3: a cube's column,
 		// each of its nodes (l, alpha, 1 if killed, 1 if not a number), (t, its span), as zone_sections'
-		// cube passes work them out, here all in one invocation; then (the axis it is built round, 0)
+		// cube passes work them out, here all in one invocation; then (the axis it is built round, the
+		// column's side of a knot: zc_side)
 		vec4 C = inp[I + 2];
 		ZCube q = zc_cube(C, inp[I + 3], inp[I + 4], inp[I + 5], geo_normal(C), c.w, c.xyz);
 		vec4 near[12];
@@ -284,7 +287,9 @@ void main() {
 			outp[O + 2 * r] = vec4(p, kill ? 1.0 : 0.0, geo_finite(p.x + p.y) ? 0.0 : 1.0);
 			outp[O + 2 * r + 1] = vec4(t, col.z);
 		}
-		outp[O + 2 * int(a.z) + 2] = vec4(ax.en, 0.0);
+		float th_prev = a.x > 0.0 ? zc_column(a.x - 1.0, a.y, kn, nk, ax.rnd, th0).x : 0.0;
+		float th_next = a.x < a.y ? zc_column(a.x + 1.0, a.y, kn, nk, ax.rnd, th0).x : 0.0;
+		outp[O + 2 * int(a.z) + 2] = vec4(ax.en, zc_side(a.x, a.y, ax.rnd, th_prev, col.x, th_next));
 	} else if (mode == 7 || mode == 8) {    // a = (l0, al0, dl, dal), c = (en, size), t, C, E1, E2, E3: (l, alpha)
 		vec4 e = inp[I + 2], C = inp[I + 3];
 		vec2 p = mode == 7 ? zone_edge_ball(a.x, a.y, a.z, a.w, c.xyz, e.xyz, C, c.w)
@@ -1018,7 +1023,6 @@ MESHES = ((64, 48), (64, 12))   # the zone bodies' meshes: Renderer's ZONE_AZIMU
 ON_FACE = 2e-4                  # a share of a cube's half size: a vertex this near a face's plane is on it
 ZC_PUSH = float(re.search(r'const float ZC_PUSH = ([\d.e-]+);', open(os.path.join(SHADERS, 'zone_cube.gdshaderinc')).read()).group(1))
 COVER = 400                     # points at random on each face of a cube that its mesh must cover
-LENS = 0.015                    # half sizes: such a point that near a knot's two columns' rows is between them (cube_mesh_faults)
 # issue #147's cubes, on the app's throat (docs/issues/147 on the branch docs/issue-media, repro.gd's
 # log): the axis 1e-4 rad off a corner, 1e-3 rad off a face's point, 1e-4 rad off a corner, through a
 # corner. C, E1, E2, E3, the half size, the eye's direction from the centre
@@ -1052,14 +1056,18 @@ def mesh_triangles(cols, rws):
     return np.concatenate([a, b])
 
 
-def cube_mesh_faults(x, T, kill, rng):
-    """A cube's mesh (its nodes' box coordinates x [cols + 1, rows + 1, 3] in half sizes, their
-    half-surfaces' t, the killed ones) against the cube: the triangles with area in the picture (not
-    all on one half-surface, not all killed) not all on one face (ON_FACE); of COVER points at random
-    on each face how many none of the triangles on that face holds (in its own coordinates), but for
-    those within LENS of a knot's two columns' rows on it (or of round the axis the first and last
-    column's), how many of those and how far at most: two polylines along one curve, the section at
-    that azimuth, apart in the box but both on one line in the picture."""
+def cube_mesh_faults(S, C, E, size, en, x, A, T, kill, rng):
+    """A cube's mesh (its nodes' box coordinates x [cols + 1, rows + 1, 3] in half sizes, alpha A,
+    their half-surfaces' t, the killed ones; round the axis en) against the cube: the triangles with
+    area in the picture (not all on one half-surface, not all killed) not all on one face (ON_FACE);
+    and of COVER points at random on each face how many no triangle on that face holds. First in the
+    face's own coordinates, exact but for the two columns of a knot: there the section at one azimuth
+    twice, as each span's rows have it, two polylines inscribed in one curve, apart in the box but on
+    one line in the picture. So a point none holds there is looked for again in (theta, alpha) round
+    the axis, where those two columns meet on that line: a fault only if no triangle of its face is
+    within DIRECTION of it there (the angle from the axis, and sin alpha times the azimuth): what is
+    left between a face's outline and its chords. Returns the triangles across, the points uncovered,
+    those found again, and how far at most from a triangle."""
     cols, rws = x.shape[0] - 1, x.shape[1] - 1
     TR = mesh_triangles(cols, rws)
     X = x[TR[..., 0], TR[..., 1]]
@@ -1070,43 +1078,79 @@ def cube_mesh_faults(x, T, kill, rng):
     live = ~one & ~kill[TR[..., 0], TR[..., 1]].all(1) & (~fin | (area >= 1e-9))
     on = np.stack([(np.abs(X[:, :, f // 2] - (1 if f % 2 else -1)) < ON_FACE).all(1) for f in range(6)], 1)
     across = int((live & (~fin | ~on.any(1))).sum())
-    same = np.abs(T[1:, 0] - T[:-1, 0]).max(-1) < 1e-6
-    pair = np.zeros(cols + 1, bool)
-    pair[1:] |= same
-    pair[:-1] |= same
-    if np.abs(T[0, 0] - T[cols, 0]).max() < 1e-6:
-        pair[[0, cols]] = True
-    uncovered, lens, lens_far = 0, 0, 0.0
+    # (theta, alpha): the columns' azimuths in order, unwrapped
+    a1 = unit(np.cross(en, [0, 0, 1.0] if abs(en[2]) < 0.9 else [1.0, 0, 0]))
+    a2 = np.cross(en, a1)
+    th = np.unwrap(np.arctan2(T[:, 0] @ a2, T[:, 0] @ a1))
+    V = np.stack([np.broadcast_to(th[:, None], A.shape), A], -1)[TR[..., 0], TR[..., 1]]
+    N = normal4(S, C)
+    uncovered, again, far = 0, 0, 0.0
     for f in range(6):
         a = f // 2
         ix = [(a + 1) % 3, (a + 2) % 3]
-        T2 = X[live & fin & on[:, f]][:, :, ix]
-        p = rng.uniform(-1, 1, (COVER, 1, 2))
-        v0, v1, v2 = T2[None, :, 1] - T2[None, :, 0], T2[None, :, 2] - T2[None, :, 0], p - T2[None, :, 0]
-        den = v0[..., 0] * v1[..., 1] - v0[..., 1] * v1[..., 0]
-        with np.errstate(divide='ignore', invalid='ignore'):
-            u = (v2[..., 0] * v1[..., 1] - v2[..., 1] * v1[..., 0]) / den
-            w = (v0[..., 0] * v2[..., 1] - v0[..., 1] * v2[..., 0]) / den
-        held = ((u >= -1e-6) & (w >= -1e-6) & (u + w <= 1 + 1e-6)).any(1)
-        if held.all():
-            continue
-        # the knot pairs' rows on this face, as segments
-        xs = x[pair]
-        onr = np.abs(xs[..., a] - (1 if f % 2 else -1)) < ON_FACE
-        seg = onr[:, :-1] & onr[:, 1:] & ~(kill[pair][:, :-1] & kill[pair][:, 1:])
-        A2, B2 = xs[:, :-1][seg][:, ix], xs[:, 1:][seg][:, ix]
-        for q in p[~held, 0]:
-            d = np.inf
-            if len(A2):
-                e = B2 - A2
-                tq = np.clip(((q - A2) * e).sum(-1) / np.maximum((e * e).sum(-1), 1e-30), 0, 1)
-                d = np.linalg.norm(A2 + tq[:, None] * e - q, axis=-1).min()
-            if d <= LENS:
-                lens += 1
-                lens_far = max(lens_far, d)
-            else:
-                uncovered += 1
-    return across, uncovered, lens, lens_far
+        sel = live & fin & on[:, f]
+        p = rng.uniform(-1, 1, (COVER, 2))
+        held = in_triangles(X[sel][:, :, ix], p)
+        for q in p[~held]:
+            xq = np.zeros(3)
+            xq[a] = 1 if f % 2 else -1
+            xq[ix] = q
+            n = unit(onto(S, C + size * (xq @ np.asarray(E)), N)[:3])
+            tq = np.arctan2(n @ a2, n @ a1)
+            tq += 2 * np.pi * np.round((th[0] - tq) / (2 * np.pi))
+            aq = np.arccos(np.clip(n @ en, -1.0, 1.0))
+            # the face's triangles there, the azimuth scaled to an angle at the point; the point the
+            # nearest turn of its azimuth to each
+            W = V[sel].copy()
+            W[..., 0] = W[..., 0] - tq
+            W[..., 0] -= 2 * np.pi * np.round(W[..., 0].mean(1, keepdims=True) / (2 * np.pi))
+            W[..., 0] *= np.sin(aq)
+            W[..., 1] -= aq
+            d = triangles_distance(W)
+            again += 1
+            far = max(far, d)
+            uncovered += d > DIRECTION
+    return across, uncovered, again, far
+
+
+def knot_sides(T0):
+    """Each column's side of a knot (zc_side) from its half-surface's t [cols + 1, 3]: +1 the first
+    of two on one (t the same to the bit), -1 the second; round the axis (the first and last t a
+    hair apart) the last +1 and the first -1."""
+    cols = len(T0) - 1
+    same = np.all(T0[1:] == T0[:-1], -1)
+    rnd = np.abs(T0[0] - T0[cols]).max() < 1e-5
+    side = np.zeros(cols + 1)
+    for c in range(cols + 1):
+        if c < cols and same[c]:
+            side[c] = 1.0
+        elif c > 0 and same[c - 1]:
+            side[c] = -1.0
+        elif rnd and c in (0, cols):
+            side[c] = 1.0 if c == cols else -1.0
+    return side
+
+
+def in_triangles(T2, p):
+    """Which of the points p [n, 2] some triangle of T2 [m, 3, 2] holds."""
+    v0, v1, v2 = T2[None, :, 1] - T2[None, :, 0], T2[None, :, 2] - T2[None, :, 0], p[:, None, :] - T2[None, :, 0]
+    den = v0[..., 0] * v1[..., 1] - v0[..., 1] * v1[..., 0]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        u = (v2[..., 0] * v1[..., 1] - v2[..., 1] * v1[..., 0]) / den
+        w = (v0[..., 0] * v2[..., 1] - v0[..., 1] * v2[..., 0]) / den
+        return ((u >= -1e-6) & (w >= -1e-6) & (u + w <= 1 + 1e-6)).any(1)
+
+
+def triangles_distance(W):
+    """The distance from the origin to the nearest of the triangles W [m, 3, 2] (0 inside one)."""
+    if len(W) == 0:
+        return np.inf
+    if in_triangles(W, np.zeros((1, 2)))[0]:
+        return 0.0
+    P0, P1 = W, np.roll(W, -1, axis=1)
+    e = P1 - P0
+    s = np.clip(-(P0 * e).sum(-1) / np.maximum((e * e).sum(-1), 1e-300), 0.0, 1.0)
+    return float(np.linalg.norm(P0 + s[..., None] * e, axis=-1).min())
 
 
 def near_axis_cube(S, rng):
@@ -1165,9 +1209,9 @@ def zone_mesh_checks(name, S, gpu, rng):
                 rows = [[i, cols, rws, 0, *en, size, *C, *E[0], *E[1], *E[2]] for C, E, size, en, t, m, axis in bodies
                         for i in range(cols + 1)]
                 o = gpu.run(14, rows, in_per=6, out_per=2 * (rws + 1) + 1).astype(float).reshape(len(bodies), cols + 1, 2 * (rws + 1) + 1, 4)
-                axes = o[:, :, -1, :3]
+                axes, sides = o[:, :, -1, :3], o[:, :, -1, 3]
                 o = o[:, :, :-1].reshape(len(bodies), cols + 1, rws + 1, 2, 4)
-            worst, alpha_out, tip, across, uncovered, nans, faulty, turned, turn, lens, lens_far = 0.0, 0, 0.0, 0, 0, 0, [], 0, 0.0, 0, 0.0
+            worst, alpha_out, tip, across, uncovered, nans, faulty, turned, turn, again, far, marks = 0.0, 0, 0.0, 0, 0, 0, [], 0, 0.0, 0, 0.0, 0
             for k, (C, E, size, en, t0, m0, axis) in enumerate(bodies):
                 L, A, T = o[k, :, :, 0, 0], o[k, :, :, 0, 1], o[k, :, :, 1, :3]
                 if not ball:
@@ -1201,20 +1245,25 @@ def zone_mesh_checks(name, S, gpu, rng):
                             tip = max(tip, np.linalg.norm(P[i] - P[i].mean(0), axis=-1).max() / size)
                     continue
                 # a cube: every triangle on one face, every face covered
-                a, u, ln, lf = cube_mesh_faults(sl / size, T, kill, rng)
+                a, u, ag, fa = cube_mesh_faults(S, C, E, size, en, sl / size, A, T, kill, rng)
                 across += a
                 uncovered += u
-                lens += ln
-                lens_far = max(lens_far, lf)
+                again += ag
+                far = max(far, fa)
+                # a knot's two columns (one half-surface, its t to the bit; round the axis the last
+                # and the first too) marked as zc_side's, no other
+                mk = np.abs(knot_sides(T[:, 0]) - sides[k]).sum() > 0
+                marks += mk
                 nans += int(nan.sum())
-                if a or u or nan.any() or off.max() > CHORD:
+                if a or u or mk or nan.any() or off.max() > CHORD:
                     faulty.append((k, off.max(), a, u))
             body = 'ball' if ball else 'cube'
             ok = worst <= CHORD and alpha_out == 0 and (tip <= 0.02 if ball else not faulty)
             what = (f'vertices off its surface by {worst:.1e} m at most, {alpha_out} out of the half-surface'
                     + (f'; the tips\' sections {tip:.3f} of the radius across at most' if ball else
                        f'; {across} triangles across an edge, of {COVER} points at random on each face {uncovered} on no triangle '
-                       f'({lens} between a knot\'s two columns\' rows, up to {lens_far:.1e} of the half size off them), {nans} nodes not a number; '
+                       f'({again} not in its own coordinates, at a knot, and there in (theta, alpha) {far:.1e} rad from a triangle at most), {nans} nodes not a number, '
+                       f'{marks} with a knot\'s columns marked wrong; '
                        f'{turned} built round an axis turned off a corner or an edge near it, the cube moved by up to {turn:.1e} m')
                     + f' ({len(bodies)} {body}s, {sum(1 for b in bodies if b[6])} about the axis'
                     + ('' if ball else f', {near} with the axis next to a corner, an edge or a face'

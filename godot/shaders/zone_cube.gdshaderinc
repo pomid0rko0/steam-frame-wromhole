@@ -19,7 +19,8 @@
 // go round by up to a half turn), so that the half-surface it is cut by is bracketed. The azimuths of
 // the pieces' ends (the corners and the folds) are the knots: between two the same pieces are cut,
 // a span; the columns stand on the knots (zc_column: two on each, one a span's, the strip between
-// them has no width, as in the picture a half-surface is a line) and share out the rest by angle.
+// them has no width, as in the picture a half-surface is a line; zc_side tells them) and share out
+// the rest by angle.
 //   A section's corners (zc_sequence, at the span's middle): where the half-surface cuts each piece
 // whose azimuths hold it (zc_cut: the root of P(u) . m on its bracket, no atan near the axis), and
 // round the axis where it enters and leaves the cube. On each face, its corners lie along one curve,
@@ -30,9 +31,10 @@
 // the axis the first part runs from the entry to the exit; else each closes on its first corner.
 //   A column's nodes (zc_items, zc_node): its corners at its own azimuth (the span's list), each on a
 // row (rows shared out by corners in the span, the same row all through it), the rows between two on
-// their face (zc_between: Newton across the chord onto its plane). Between two parts, two rows that
-// are no part of the surface (the node's kill flag: body.gdshaderinc drops them): the strip between
-// a part's end and the next one's start there, the rows on either side at their part's own points.
+// their face (zc_between: across the chord in the face's own square, onto the half-surface). Between
+// two parts, two rows that are no part of the surface (the node's kill flag: body.gdshaderinc drops
+// them): the strip between a part's end and the next one's start there, the rows on either side at
+// their part's own points.
 //   A corner or an edge within ZC_PUSH of the eye's axis has no azimuth float32 can tell, and the
 // edges through a point on the axis turn round it there at once: the mesh is then built round an axis
 // turned off that point to ZC_PUSH (zc_axis; the mesh turned so about the centre, at most ZC_PUSH),
@@ -694,7 +696,7 @@ int zc_knots(ZPieces pcs, bool rnd, float th0, out float kn[ZC_KNOTS]) {
 	return m;
 }
 
-// Column c of columns + 1 (zone_cube_azimuth's sharing out, the knots kn, nk of them, from th0):
+// Column c of columns + 1 (the knots kn, nk of them, from th0):
 // (its azimuth, its span's middle, its span); spans: nk - 1, round the axis nk (the last to the
 // first a turn on). Each span has columns of its own at both ends (the strip between two on one knot
 // has no width) and at least one strip, the rest shared out by angle.
@@ -720,6 +722,20 @@ vec3 zc_column(float c, float columns, float kn[ZC_KNOTS], int nk, bool rnd, flo
 		e0 = e1;
 	}
 	return r;
+}
+
+// Column c's side of a knot (th_prev, th, th_next: the azimuths zc_column gives c - 1, c, c + 1, the
+// ones past the ends any): +1 the first of a knot's two columns, -1 the second; round the axis the
+// last +1 and the first -1, on one knot a turn apart; else 0. The two are one section's polylines on
+// one line of the picture with vertices of their own (each span's rows), which the rasterizer's
+// rounding leaves gaps between (T-junctions): body.gdshaderinc pulls them past each other there and
+// draws nothing of the strip between them.
+float zc_side(float c, float columns, bool rnd, float th_prev, float th, float th_next) {
+	if (c < columns && th_next == th) return 1.0;
+	if (c > 0.0 && th_prev == th) return -1.0;
+	if (rnd && c == columns) return 1.0;
+	if (rnd && c == 0.0) return -1.0;
+	return 0.0;
 }
 
 // Row r (of rows + 1) of a column (sq: its span's parts; pos: its items at its azimuth, in sq's order;

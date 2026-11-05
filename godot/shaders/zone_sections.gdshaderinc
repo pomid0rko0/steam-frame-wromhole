@@ -11,8 +11,9 @@
 // the fine mesh's first, column by column; y: the body, of those in the zone of this kind (slots from
 // pc.first.x on); z: the eye. Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and
 // (t.z, 1 if its steps came out not a number, else 0, 1 if it is no part of the surface (a cube's
-// row between two parts of its section: body.gdshaderinc drops it), 0) at x = 2 col and 2 col + 1,
-// y = slot * slot_rows + the mesh's first row + row.
+// row between two parts of its section: body.gdshaderinc drops it), its column's side of a knot
+// (zc_side; a ball's 0)) at x = 2 col and 2 col + 1, y = slot * slot_rows + the mesh's first row +
+// row.
 //
 // A cube's nodes come after four passes of its own (zone_cube.gdshaderinc), each into plan_img (a
 // layer per eye, PLAN_ROWS rows a cube's slot) or col_img, on what the one before wrote:
@@ -346,6 +347,7 @@ void main() {
 	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
 	vec3 t;
 	bool none, kill = false;
+	float side = 0.0;
 #ifdef BALL
 	vec2 pe = zone_ball_vertex(vec2(float(col) / columns, float(row) / rows), en, zb.body[4 * s], zb.body[4 * s + 3].x, t);
 	none = false;
@@ -365,9 +367,14 @@ void main() {
 	t = zc_t(q, cv.x, mv);
 	vec2 pe = zc_node(q, float(row), rows, sq, pos, t, mv, kill);
 	none = !geo_finite(pe.x + pe.y);
+	int y2 = ci * PLAN_ROWS + 2;
+	float th_prev = col > 0u ? imageLoad(plan_img, ivec3(int(col) - 1, y2, int(id.z))).x : 0.0;
+	float th_next = float(col) < columns ? imageLoad(plan_img, ivec3(int(col) + 1, y2, int(id.z))).x : 0.0;
+	bool rnd = imageLoad(plan_img, ivec3(108, ci * PLAN_ROWS + 1, int(id.z))).x > 0.5;
+	side = zc_side(float(col), columns, rnd, th_prev, cv.x, th_next);
 #endif
 	int y = s * int(pc.grid.w) + (coarse ? int(pc.grid.y) + 1 : 0) + int(row);
 	imageStore(out_img, ivec3(2 * int(col), y, int(id.z)), vec4(pe, t.xy));
-	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, none ? 1.0 : 0.0, kill ? 1.0 : 0.0, 0.0));
+	imageStore(out_img, ivec3(2 * int(col) + 1, y, int(id.z)), vec4(t.z, none ? 1.0 : 0.0, kill ? 1.0 : 0.0, side));
 }
 #endif
