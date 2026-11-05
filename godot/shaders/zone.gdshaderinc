@@ -667,8 +667,10 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 // way, ZONE_PQ along q = asinh psi, from one node below psi = 0 (the turn the other way: (X, -Y)) to
 // past the images' last turn, evenly in each; where the body's l reaches a join, evenly in u =
 // sign(l - J) sqrt(|l - J|) instead, a node on J: in u that power is a cubic, and the nodes crowd
-// to the join. A node holds (X, Y, dl/ds at the point as the eye's side counts l, fell:
-// geo_see_to's). A vertex takes the cubic through 4 x 4 nodes about it, both ways (Lagrange's: its
+// to the join. A node holds (X, Y, len dl/ds at the point as the eye's side counts l, fell:
+// geo_see_to's): dl/ds itself is the ray's direction near the eye, a jump there that a cubic can't
+// follow, len dl/ds is smooth (close to X there). A vertex takes only its sign: its size is the
+// ray's own, by b = r_eye sin a, which the ray keeps. A vertex takes the cubic through 4 x 4 nodes about it, both ways (Lagrange's: its
 // error goes as the 4th power of the steps), along l from its side of the join only. The steps set
 // against the error: ref/test_gpu.py. Where geo_see_to takes a closed form (the segment, the
 // cylinder unrolled), the vertex takes that.
@@ -711,13 +713,13 @@ vec2 zone_path_at(vec4 f, int i, int k) {
 	return vec2(l, 0.5 * (exp(q) - exp(-q)));
 }
 
-// The node at l and turn psi (negative: the other way) for the eye at (el, en): (X, Y, dl/ds at the
-// point on the eye's side, fell) as the table's top has them, by geo_see_to; at psi = 0 the radial
-// line, through the throat too: l along it goes as the length.
+// The node at l and turn psi (negative: the other way) for the eye at (el, en): (X, Y, len dl/ds at
+// the point on the eye's side, fell) as the table's top has them, by geo_see_to; at psi = 0 the
+// radial line, through the throat too: l along it goes as the length.
 vec4 zone_path_node(float el, vec3 en, float l, float psi) {
 	float side = el < 0.0 ? -1.0 : 1.0;
 	float dl = side * l - abs(el);
-	if (psi == 0.0) return vec4(dl, 0.0, dl < 0.0 ? -1.0 : 1.0, 0.0);
+	if (psi == 0.0) return vec4(dl, 0.0, dl, 0.0);
 	vec3 t = normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
 	float ap = abs(psi);
 	vec2 sc = geo_sincos(ap);
@@ -728,7 +730,7 @@ vec4 zone_path_node(float el, vec3 en, float l, float psi) {
 	vec2 dd = geo_drdw(l);
 	// dl/ds at the point: arrive's part along d/dl there, (dd.x pn, dd.y) (the rest is across it)
 	float dls = dot(arr, vec4(dd.x * pn, dd.y));
-	return vec4(len * side * d.x, (psi < 0.0 ? -len : len) * dot(d.yzw, t), side * dls, fell);
+	return vec4(len * side * d.x, (psi < 0.0 ? -len : len) * dot(d.yzw, t), len * side * dls, fell);
 }
 
 // Lagrange's weights of the nodes at -1, 0, 1, 2 at x (between 0 and 1 in the middle of them, 1 and
@@ -782,9 +784,11 @@ vec4 zone_path_see(sampler2DArray tab, int row0, int layer, float el, vec3 en, f
 	}
 	len = length(s.xy);
 	vec2 cs = s.xy / max(len, GEO_TINY20);
-	// arriving: along d/dl there by dl/ds, the rest toward growing angle (geo_see_to's arrive)
-	float dls = side * clamp(s.z, -1.0, 1.0);
+	// arriving (geo_see_to's arrive): toward growing angle b / r there, b = r_eye sin a; along d/dl
+	// the rest, its sign the table's
+	float bp = min(re * cs.y / geo_r(abs(pl)), 1.0);
+	float dls = side * (s.z < 0.0 ? -1.0 : 1.0) * sqrt(max((1.0 - bp) * (1.0 + bp), 0.0));
 	vec2 dd = geo_drdw(pl);
-	arrive = vec4(dls * dd.x * pn + sqrt(max(1.0 - dls * dls, 0.0)) * (scd.y * tt - scd.x * en), dls * dd.y);
+	arrive = vec4(dls * dd.x * pn + bp * (scd.y * tt - scd.x * en), dls * dd.y);
 	return vec4(side * cs.x, cs.y * tt);
 }

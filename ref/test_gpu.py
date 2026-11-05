@@ -22,7 +22,8 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     the toys' sizes about the eye, across the cylinder's and the zone's ends and anywhere in the
     zone, the table's nodes worked out as the table's pass does (zone_path_frame, zone_path_at,
     zone_path_node); points along shot rays within the body's l, every image up to the last
-    Renderer.ZONE_IMAGES draws: the direction within PATH_DIRECTION, the length as above;
+    Renderer.ZONE_IMAGES draws: the direction within PATH_DIRECTION, the length as above, the
+    direction the light comes in at the point (the lighting's) within PATH_ARRIVE;
   a ray's way out of the curved zone (geo_exit, each pixel's): rays from eyes in the flat universes
     and in the zone, half near the tangent and a quarter with b next to r_min on either side, against
     ref/geo.py's leave (the sweeps by quadrature; itself checked against DOP853 on some of them):
@@ -146,6 +147,9 @@ CHORD = 5e-5                 # metres off a body's surface (a ball's chord, a cu
 IMAGE_S = 100.0              # m: the longest ray the images' points are taken along
 IMAGE_J = 7                  # the app's throat: images up to at least this one
 PATH_DIRECTION = 1e-4        # radians: a body's table (a tenth of the headset's pixel)
+# radians: the direction light comes in at a body's point by its table (the lighting's only: its rim
+# goes as (1 - n . ray)^3, 3/4 of a step of the ray at most, 2/255 of the colour at this)
+PATH_ARRIVE = 1e-2
 # a body's table's nodes (zone.gdshaderinc) and the images drawn of a body in the zone (renderer.gd)
 ZONE_PL, ZONE_PQ = (int(re.search(r'const int %s = (\d+);' % k, open(os.path.join(SHADERS, 'zone.gdshaderinc')).read()).group(1))
                     for k in ('ZONE_PL', 'ZONE_PQ'))
@@ -228,12 +232,13 @@ void main() {
 	} else if (mode == 11) {    // a = (eye l, n), c = a table's frame, (node i, k): the node
 		vec2 at = zone_path_at(c, int(inp[I + 2].x), int(inp[I + 2].y));
 		outp[O] = zone_path_node(a.x, a.yzw, at.x, at.y);
-	} else if (mode == 12) {    // a = (eye l, n), c = (point l, n), (t, alpha), (image): by g_paths, the direction, (len, fell)
+	} else if (mode == 12) {    // a = (eye l, n), c = (point l, n), (t, alpha), (image): by g_paths, the direction, (len, fell), arrive
 		vec4 e = inp[I + 2];
 		float len, fell; vec4 arr;
 		vec4 d = zone_path_see(g_paths, 0, 0, a.x, a.yzw, c.x, c.yzw, e.xyz, e.w, int(inp[I + 3].x), len, arr, fell);
 		outp[O] = d;
 		outp[O + 1] = vec4(len, fell, 0.0, 0.0);
+		outp[O + 2] = arr;
 	} else if (mode == 13) {    // a = a body's centre, c = (reach, psi_max): its table's frame
 		outp[O] = zone_path_frame(a, c.x, c.y);
 	} else if (mode == 9) {     // a = (u, v, columns, rows), c = (en, size), (ball 1 or cube 0), C, E1, E2, E3: (l, alpha), t
@@ -587,30 +592,38 @@ def path_checks(name, S, gpu, rng):
             if len(inb) == 0:
                 continue
             D = np.r_[side * np.cos(alpha), np.sin(alpha) * t]
+            b = float(S.r(el)) * np.sin(alpha)
             for q in rng.choice(inb, min(6, len(inb)), replace=False):
                 lp, vl, phi = y[:, q]
                 jj, a, sg = image_of(phi)
                 ti = sg * t
                 brows.append([el, *en, lp, *(np.cos(a) * en + np.sin(a) * ti), *ti, a, jj, 0, 0, 0])
-                bcases.append((D, s[q], jj))
+                # the way it comes in: dl/ds along d/dl, b / r toward growing angle (R^4)
+                pn = np.cos(phi) * en + np.sin(phi) * t
+                tau = np.cos(phi) * t - np.sin(phi) * en
+                A = np.r_[vl * float(S.dr(lp)) * pn + b / float(S.r(lp)) * tau, vl * float(S.dw(lp))]
+                bcases.append((D, s[q], jj, A))
         if not brows:
             continue
-        o = gpu.run(12, brows, in_per=4, out_per=2, paths=tab)
-        for r, c, d, g in zip(brows, bcases, o[0::2], o[1::2]):
+        o = gpu.run(12, brows, in_per=4, out_per=3, paths=tab)
+        for r, c, d, g, ar in zip(brows, bcases, o[0::3], o[1::3], o[2::3]):
             rows.append(r)
-            cases.append((*c, d, g, reach, lc))
-    derr = np.array([angle(d, D) for D, s, j, d, g, reach, lc in cases])
-    lerr = np.array([abs(g[0] - s) / (1e-3 + LENGTH_REL * s) for D, s, j, d, g, reach, lc in cases])
+            cases.append((*c, d, g, reach, lc, ar))
+    derr = np.array([angle(d, D) for D, s, j, A, d, g, reach, lc, ar in cases])
+    lerr = np.array([abs(g[0] - s) / (1e-3 + LENGTH_REL * s) for D, s, j, A, d, g, reach, lc, ar in cases])
+    aerr = np.array([angle(ar, A) for D, s, j, A, d, g, reach, lc, ar in cases])
     js = np.array([c[2] for c in cases])
     near = np.array([c[1] for c in cases]) < 1.0
-    fails += not check(f'{name}: the paths by a body\'s table (zone_path_see)', derr.max() <= PATH_DIRECTION and lerr.max() <= 1,
+    fails += not check(f'{name}: the paths by a body\'s table (zone_path_see)', derr.max() <= PATH_DIRECTION and lerr.max() <= 1 and aerr.max() <= PATH_ARRIVE,
                        f'direction off by {derr.max():.1e} rad at most (median {np.median(derr):.0e}; nearer than 1 m '
-                       f'{derr[near].max() if near.any() else 0:.1e}), length {lerr.max():.2f} of the limit ({len(rows)} points of {bodies} bodies, '
-                       f'{near.sum()} nearer than 1 m, images 0 to {js.max()}: {(js >= 2).sum()} past the first turn)')
-    for k in [k for k in np.argsort(-np.maximum(derr / PATH_DIRECTION, lerr)) if derr[k] > PATH_DIRECTION or lerr[k] > 1][:8]:
-        r, (D, s, j, d, g, reach, lc) = rows[k], cases[k]
+                       f'{derr[near].max() if near.any() else 0:.1e}), length {lerr.max():.2f} of the limit, the way in off by {aerr.max():.1e} rad '
+                       f'({len(rows)} points of {bodies} bodies, {near.sum()} nearer than 1 m, images 0 to {js.max()}: {(js >= 2).sum()} past the first turn)')
+    for k in [k for k in np.argsort(-np.maximum(np.maximum(derr / PATH_DIRECTION, lerr), aerr / PATH_ARRIVE))
+              if derr[k] > PATH_DIRECTION or lerr[k] > 1 or aerr[k] > PATH_ARRIVE][:8]:
+        r, (D, s, j, A, d, g, reach, lc, ar) = rows[k], cases[k]
         print(f'    point {k}: eye l {r[0]!r}; body l {lc:.4f}, reach {reach}; point l {r[4]!r}, alpha {r[11]!r}, image {j}: '
-              f'GPU direction {tuple(d)}, length {g[0]!r}; the shot ray\'s {tuple(D)}, {s!r} ({derr[k]:.1e} rad off, length {lerr[k]:.2f} of the limit)')
+              f'GPU direction {tuple(d)}, length {g[0]!r}; the shot ray\'s {tuple(D)}, {s!r} ({derr[k]:.1e} rad off, length {lerr[k]:.2f} of the limit, '
+              f'the way in {aerr[k]:.1e} rad off)')
     return fails
 
 
