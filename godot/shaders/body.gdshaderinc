@@ -6,7 +6,7 @@
 //     ordinary camera); a fragment whose line of sight goes through the curved zone's ball is
 //     dropped: that part of the view is the lens's (floor.gdshaderinc, which draws these bodies
 //     there along the rays that come out of the zone).
-//   Else: each vertex along its geodesics (geo_see_image), every image.
+//   Else: each vertex along its geodesics (geo_see_image; ZONE: a table's, zone_path_see), every image.
 //   TOY: balls (BALL) and cubes (CUBE) of the physics (ball_world.gd), one MultiMesh each. An
 //     instance: its centre C (a point of R^4) and body axes E1, E2 packed in the transform's 12
 //     numbers (Renderer.pack), E3 from them and the space's normal; INSTANCE_CUSTOM = (colour,
@@ -32,7 +32,8 @@
 //     where those steps leave one off (the axis next to an edge), a line from the section's
 //     inside puts it there. A node's point is the same in every image: it is worked out once a
 //     frame for each eye (zone_sections.gd, ZoneSections' texture zone_nodes), and here each
-//     image's vertex takes it and finds its geodesic.
+//     image's vertex takes it and its geodesic from the body's table of the ways from the eye
+//     (zone_paths, zone.gdshaderinc's zone_path_see), worked out once a frame too.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
@@ -75,6 +76,8 @@ uniform float zone_columns = 64.0;
 uniform sampler2DArray zone_nodes : filter_nearest, repeat_disable;
 // per image, slot and eye: (the body's centre's x, y, z as the pass took it, 1 if the image is drawn)
 uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;
+// per slot and eye the body's table of the ways from the eye (zone.gdshaderinc, «the paths by a table»)
+uniform sampler2DArray zone_paths : filter_nearest, repeat_disable;
 uniform int zone_slot = 0;
 uniform int zone_row = 0;
 uniform int zone_slot_rows = 62;
@@ -154,7 +157,7 @@ void vertex() {
 		vec2 sca = geo_sincos(alpha);
 		vec3 pn = sca.y * en + sca.x * t;
 		P = vec4(geo_r(abs(pl)) * pn, zone_w(pl));
-		vec4 dir = geo_see_image(el, en, pl, pn, t, alpha, image, len, arrive, fell);
+		vec4 dir = zone_path_see(zone_paths, slot * ZONE_PL, int(VIEW_INDEX), el, en, pl, pn, t, alpha, image, len, arrive, fell);
 		POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
 	} else {
 		P = C;
@@ -298,7 +301,8 @@ void vertex() {
 	v_l = pl;
 	v_h = P.z + g_lift;
 	// to find where the headset's GPU makes a ray of the search not finite (the PC's never do):
-	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex
+	// cyan where one was passed over, magenta where geo_see's stand-in took the vertex (ZONE: in a
+	// node of the table about it)
 	if (fell > 0.0) v_col = mix(v_col, fell > 0.75 ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0), 0.7);
 #ifdef ZONE
 	// and orange where a cube's section's steps came out not a number (zone_cube_section)
@@ -339,7 +343,7 @@ void fragment() {
 #ifdef ZONE
 	// a pixel whose numbers came out none is no part of the surface: a triangle of next to no area
 	// (a cube's strip between two columns on one corner's azimuth, zone_cube_azimuth: its vertices
-	// all on that azimuth's line in the view, each placed by its own search) gets one now and then,
+	// all on that azimuth's line in the view, each placed on its own) gets one now and then,
 	// its varyings no numbers. Dropped after the derivatives, which take its neighbours; by the bits
 	// (geo_finite): a compiler may take a comparison as if no number were NaN
 	if (!geo_finite(col.r + col.g + col.b)) discard;

@@ -18,6 +18,12 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   both also with a quarter of the search's rays made NaN: every vertex still a number, never the
     stand-in (how far it then goes off is printed, held to no limit: a failure of the GPU's that
     the headset's marking of such vertices, body.gdshaderinc's, has never shown);
+  the paths by a body's table (zone_path_see, the zone bodies' vertices): eyes as above, bodies of
+    the toys' sizes about the eye, across the cylinder's and the zone's ends and anywhere in the
+    zone, the table's nodes worked out as the table's pass does (zone_path_frame, zone_path_at,
+    zone_path_node); points along shot rays within the body's l, every image up to the last
+    Renderer.ZONE_IMAGES draws: the direction within PATH_DIRECTION, the length as above, the
+    direction the light comes in at the point (the lighting's) within PATH_ARRIVE;
   a ray's way out of the curved zone (geo_exit, each pixel's): rays from eyes in the flat universes
     and in the zone, half near the tangent and a quarter with b next to r_min on either side, against
     ref/geo.py's leave (the sweeps by quadrature; itself checked against DOP853 on some of them):
@@ -50,13 +56,16 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
 Off on a throat with a crease (h < R) until issue #118 (CREASE_OFF): the cubes' meshes in the zone
 and a ball's surface. The zone's steps take the profile smooth, and there cubes across the crease
-came out with vertices hundreds of metres off, a ball next to it off its chord by 5.8e-5 m.
+came out with vertices hundreds of metres off, a ball next to it off its chord by 5.8e-5 m. And
+until #145 (CREASE_PATHS_OFF) the paths by a body's table: the rays that turn before the crease turn
+by no more than the one that grazes it, beyond that the way hugs the crease, and the table's cubic
+smooths the kink between (4e-3 rad off).
 Every number of godot/shaders as Godot writes it into the GLSL it compiles (14 decimals): the same
 float32; the GPU here is given them so written.
 Each throat's checks run in pieces, each in a process of its own (a GPU context and random draws
 of its own, seeded by the throat and the piece), as many at once as there are cores, the longest
 first; their lines come throat by throat. Exit status 1 on any failure.
-   python3 ref/test_gpu.py [numbers profile images exit zone eye]     (all, or those checks)"""
+   python3 ref/test_gpu.py [numbers profile images paths exit zone eye]     (all, or those checks)"""
 import copy
 import os
 import re
@@ -137,10 +146,19 @@ EYE_POS, EYE_AXES = 2e-5, 3e-4
 CHORD = 5e-5                 # metres off a body's surface (a ball's chord, a cube's slab)
 IMAGE_S = 100.0              # m: the longest ray the images' points are taken along
 IMAGE_J = 7                  # the app's throat: images up to at least this one
+PATH_DIRECTION = 1e-4        # radians: a body's table (a tenth of the headset's pixel)
+# radians: the direction light comes in at a body's point by its table (the lighting's only: its rim
+# goes as (1 - n . ray)^3, 3/4 of a step of the ray at most, 2/255 of the colour at this)
+PATH_ARRIVE = 1e-2
+# a body's table's nodes (zone.gdshaderinc) and the images drawn of a body in the zone (renderer.gd)
+ZONE_PL, ZONE_PQ = (int(re.search(r'const int %s = (\d+);' % k, open(os.path.join(SHADERS, 'zone.gdshaderinc')).read()).group(1))
+                    for k in ('ZONE_PL', 'ZONE_PQ'))
+ZONE_IMAGES = int(re.search(r'^const ZONE_IMAGES := (\d+)', open(os.path.join(HERE, '..', 'godot', 'renderer.gd')).read(), re.M).group(1))
 
 SRC = '''#version 430
 layout(local_size_x=64) in;
 uniform vec4 g_prof; uniform vec4 g_prof2; uniform vec4 g_tabx; uniform sampler2D g_tab; uniform float g_lift;
+uniform sampler2DArray g_paths;     // a body's table (mode 12), slot 0, one eye
 uniform float head_l; uniform vec3 head_n; uniform vec4 head_f[3]; uniform vec3 head_pos;
 uniform vec3 vb0; uniform vec3 vb1; uniform vec3 vb2;
 layout(std430, binding=0) buffer In { vec4 inp[]; };
@@ -211,6 +229,18 @@ void main() {
 		vec4 d = geo_see_image(a.x, a.yzw, c.x, c.yzw, e.xyz, e.w, int(inp[I + 3].x), len, arr, fell);
 		outp[O] = d;
 		outp[O + 1] = vec4(len, fell + 2.0 * float(g_rays), 0.0, 0.0);
+	} else if (mode == 11) {    // a = (eye l, n), c = a table's frame, (node i, k): the node
+		vec2 at = zone_path_at(c, int(inp[I + 2].x), int(inp[I + 2].y));
+		outp[O] = zone_path_node(a.x, a.yzw, at.x, at.y);
+	} else if (mode == 12) {    // a = (eye l, n), c = (point l, n), (t, alpha), (image): by g_paths, the direction, (len, fell), arrive
+		vec4 e = inp[I + 2];
+		float len, fell; vec4 arr;
+		vec4 d = zone_path_see(g_paths, 0, 0, a.x, a.yzw, c.x, c.yzw, e.xyz, e.w, int(inp[I + 3].x), len, arr, fell);
+		outp[O] = d;
+		outp[O + 1] = vec4(len, fell, 0.0, 0.0);
+		outp[O + 2] = arr;
+	} else if (mode == 13) {    // a = a body's centre, c = (reach, psi_max): its table's frame
+		outp[O] = zone_path_frame(a, c.x, c.y);
 	} else if (mode == 9) {     // a = (u, v, columns, rows), c = (en, size), (ball 1 or cube 0), C, E1, E2, E3: (l, alpha), t
 		vec4 C = inp[I + 3];
 		vec3 t;
@@ -264,12 +294,18 @@ class Gpu:
         self.tex.repeat_x = self.tex.repeat_y = False
         p = self.prog
         p['g_tab'] = 0
+        p['g_paths'] = 1           # a unit of its own: two samplers of different types on one unit stop the run
         p['g_prof'] = (S.rho0, S.R, S.Lc, S.L)
         p['g_prof2'] = (S.Rout, S.u0, S.rmin, S.th0)
         p['g_tabx'] = (S.t0, 1 / (S.t1 - S.t0), NB, NV)
         p['g_lift'] = LIFT
 
-    def run(self, mode, rows, in_per=2, out_per=1):
+    def run(self, mode, rows, in_per=2, out_per=1, paths=None):
+        """paths: a body's table, (ZONE_PL, ZONE_PQ + 1, 4) float32, as g_paths (mode 12)."""
+        if paths is not None:
+            self.paths = self.ctx.texture_array((ZONE_PQ + 1, ZONE_PL, 1), 4, dtype='f4', data=np.ascontiguousarray(paths, 'f4').tobytes())
+            self.paths.filter = (moderngl.NEAREST, moderngl.NEAREST)
+            self.paths.use(1)
         rows = np.asarray(rows, 'f4').reshape(-1, 4 * in_per)
         n = len(rows)
         rows = np.vstack([rows, np.zeros(((-n) % 64, 4 * in_per), 'f4')])
@@ -316,10 +352,14 @@ def check(name, ok, detail):
 CREASE_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/118'
 
 
-def crease_off(name, S, what):
-    """True (and a SKIP line) where the throat has a crease: the check what is off (CREASE_OFF)."""
+# and the paths by a body's table, next to the largest turn the rays that turn before the crease take
+CREASE_PATHS_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/145'
+
+
+def crease_off(name, S, what, issue=CREASE_OFF):
+    """True (and a SKIP line) where the throat has a crease: the check what is off (until issue)."""
     if S.th0 > 0:
-        print(f'SKIP {name}: {what}  off on a throat with a crease until {CREASE_OFF}', flush=True)
+        print(f'SKIP {name}: {what}  off on a throat with a crease until {issue}', flush=True)
     return S.th0 > 0
 
 
@@ -498,6 +538,92 @@ def image_checks(name, S, gpu, gpu_nan, rng):
     nan = int((~(np.isfinite(o[0::2]).all(1) & np.isfinite(o[1::2, 0]))).sum())
     fails += not check(f'{name}: the same, a quarter of the search\'s rays made NaN', nan == 0 and stand_in == 0,
                        f'{nan} not a number, {stand_in} by the stand-in; direction then off by {np.nanmax(derr):.1e} rad at most (median {np.nanmedian(derr):.0e})')
+    return fails
+
+
+def path_checks(name, S, gpu, rng):
+    """A body's table of the ways from an eye (zone_path_see): bodies about eyes as image_checks puts
+    them, points along shot rays through each, every image up to the last drawn."""
+    if crease_off(name, S, 'the paths by a body\'s table', CREASE_PATHS_OFF):
+        return 0
+    fails = 0
+    places = eye_places(S)
+    psi_max = np.pi * ZONE_IMAGES
+
+    def far(s, y):
+        return abs(y[0]) - (S.L + 30.0)
+    far.terminal, far.direction = True, 1
+    rows, cases, kinds = [], [], []
+    bodies = 0
+    while len(rows) < 1500:
+        el = float(np.float32(eye_at(places, rng)))
+        side = 1.0 if el >= 0 else -1.0
+        # the body: before the eye (held, or at the eyes), across an end of the cylinder or of the
+        # zone, anywhere in it or reaching into it; the toys' sizes (a ball's radius, 1.8 a cube's half)
+        u = rng.uniform()
+        if u < 0.35:
+            lc = el + rng.uniform(-1.0, 1.0)
+        elif u < 0.6:
+            lc = rng.choice([-1, 1]) * rng.choice([S.Lc, S.L]) + rng.uniform(-0.3, 0.3)
+        else:
+            lc = rng.uniform(-(S.L + 0.6), S.L + 0.6)
+        reach = float(rng.choice([0.04, 0.1, 0.2, 0.25, 0.35, 0.4, 1.8 * 0.1, 1.8 * 0.15, 1.8 * 0.3]))
+        en, t = frame(rng)
+        m = unit(rng.normal(size=3))
+        C = np.r_[float(S.r(lc)) * m, float(S.w(lc))]
+        f = gpu.run(13, [[*C, reach, psi_max, 0, 0]])[0].astype(float)
+        nodes = [[el, *en, *f, i, k, 0, 0] for i in range(ZONE_PL) for k in range(ZONE_PQ)]
+        tab = np.zeros((ZONE_PL, ZONE_PQ + 1, 4), 'f4')
+        tab[:, :ZONE_PQ] = gpu.run(11, nodes, in_per=3).reshape(ZONE_PL, ZONE_PQ, 4)
+        tab[0, ZONE_PQ] = f
+        l0, l1 = lc - (1.1 * reach + 0.01), lc + (1.1 * reach + 0.01)     # the l the table holds (zone_path_frame)
+        bodies += 1
+        # points along rays from the eye that pass through the body's l
+        brows, bcases = [], []
+        for shot in range(12):
+            kind = shot % 3
+            alpha = launch_rmin(S, float(S.r(el)), rng) if kind == 2 else launch(rng, kind == 1)
+            if alpha is None:
+                alpha = launch(rng, False)
+            sol = shoot(S, el, alpha, smax=IMAGE_S, events=[far], max_step=0.2)
+            s = np.linspace(0.05, sol.t[-1], 6000)      # from 5 cm, as image_checks
+            y = sol.sol(s)
+            inb = np.nonzero((y[0] >= l0) & (y[0] <= l1) & (y[2] <= psi_max))[0]
+            if len(inb) == 0:
+                continue
+            D = np.r_[side * np.cos(alpha), np.sin(alpha) * t]
+            b = float(S.r(el)) * np.sin(alpha)
+            for q in rng.choice(inb, min(6, len(inb)), replace=False):
+                lp, vl, phi = y[:, q]
+                jj, a, sg = image_of(phi)
+                ti = sg * t
+                brows.append([el, *en, lp, *(np.cos(a) * en + np.sin(a) * ti), *ti, a, jj, 0, 0, 0])
+                # the way it comes in: dl/ds along d/dl, b / r toward growing angle (R^4)
+                pn = np.cos(phi) * en + np.sin(phi) * t
+                tau = np.cos(phi) * t - np.sin(phi) * en
+                A = np.r_[vl * float(S.dr(lp)) * pn + b / float(S.r(lp)) * tau, vl * float(S.dw(lp))]
+                bcases.append((D, s[q], jj, A))
+        if not brows:
+            continue
+        o = gpu.run(12, brows, in_per=4, out_per=3, paths=tab)
+        for r, c, d, g, ar in zip(brows, bcases, o[0::3], o[1::3], o[2::3]):
+            rows.append(r)
+            cases.append((*c, d, g, reach, lc, ar))
+    derr = np.array([angle(d, D) for D, s, j, A, d, g, reach, lc, ar in cases])
+    lerr = np.array([abs(g[0] - s) / (1e-3 + LENGTH_REL * s) for D, s, j, A, d, g, reach, lc, ar in cases])
+    aerr = np.array([angle(ar, A) for D, s, j, A, d, g, reach, lc, ar in cases])
+    js = np.array([c[2] for c in cases])
+    near = np.array([c[1] for c in cases]) < 1.0
+    fails += not check(f'{name}: the paths by a body\'s table (zone_path_see)', derr.max() <= PATH_DIRECTION and lerr.max() <= 1 and aerr.max() <= PATH_ARRIVE,
+                       f'direction off by {derr.max():.1e} rad at most (median {np.median(derr):.0e}; nearer than 1 m '
+                       f'{derr[near].max() if near.any() else 0:.1e}), length {lerr.max():.2f} of the limit, the way in off by {aerr.max():.1e} rad '
+                       f'({len(rows)} points of {bodies} bodies, {near.sum()} nearer than 1 m, images 0 to {js.max()}: {(js >= 2).sum()} past the first turn)')
+    for k in [k for k in np.argsort(-np.maximum(np.maximum(derr / PATH_DIRECTION, lerr), aerr / PATH_ARRIVE))
+              if derr[k] > PATH_DIRECTION or lerr[k] > 1 or aerr[k] > PATH_ARRIVE][:8]:
+        r, (D, s, j, A, d, g, reach, lc, ar) = rows[k], cases[k]
+        print(f'    point {k}: eye l {r[0]!r}; body l {lc:.4f}, reach {reach}; point l {r[4]!r}, alpha {r[11]!r}, image {j}: '
+              f'GPU direction {tuple(d)}, length {g[0]!r}; the shot ray\'s {tuple(D)}, {s!r} ({derr[k]:.1e} rad off, length {lerr[k]:.2f} of the limit, '
+              f'the way in {aerr[k]:.1e} rad off)')
     return fails
 
 
@@ -1218,10 +1344,10 @@ def numbers_check():
                          f'{count} numbers in {files} files, {len(changed)} changed' + ''.join(f'\n    {c}' for c in changed)))
 
 
-CHECKS = ('numbers', 'profile', 'images', 'exit', 'zone', 'eye')
+CHECKS = ('numbers', 'profile', 'images', 'paths', 'exit', 'zone', 'eye')
 # the pieces run apart: (the check that asks for it, its name), the longest first
-PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('profile', 'profile'), ('images', 'images'),
-          ('eye', 'eye'))
+PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('paths', 'paths'), ('profile', 'profile'),
+          ('images', 'images'), ('eye', 'eye'))
 
 
 def piece_checks(index, piece):
@@ -1237,6 +1363,8 @@ def piece_checks(index, piece):
         return profile_checks(name, S, gpu, Gpu(ctx, S, NAN_SRC), rng)
     if piece == 'images':
         return image_checks(name, S, gpu, Gpu(ctx, S, NAN_SRC), rng)
+    if piece == 'paths':
+        return path_checks(name, S, gpu, rng)
     if piece == 'exit':
         # the table's on the same rays
         same = copy.deepcopy(rng)
@@ -1276,7 +1404,7 @@ def main(checks=CHECKS):
                     start()
         if len(done) < len(runs):
             time.sleep(0.2)
-    order = ('profile', 'images', 'exit', 'zone', 'mesh', 'eye')
+    order = ('profile', 'images', 'paths', 'exit', 'zone', 'mesh', 'eye')
     for i, name in enumerate(PROFILES):
         for piece in order:
             if (i, piece) not in procs:

@@ -1,7 +1,7 @@
 // The meshes of the bodies in the curved zone (zone.gdshaderinc, zone_vertex), each node once a
 // frame for each eye, for the bodies' vertex shader (body.gdshaderinc, ZONE): a compute shader's
-// body, not a Godot shader's; zone_sections.gd puts the header (the version, BALL, CUBE or IMAGES)
-// before it and geo.gdshaderinc and zone.gdshaderinc where it says.
+// body, not a Godot shader's; zone_sections.gd puts the header (the version, BALL, CUBE, IMAGES or
+// PATHS) before it and geo.gdshaderinc and zone.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
 // direction from the centre is the axis the mesh is built round) and the body, so each node of a
@@ -23,6 +23,11 @@
 // (the zone's balls, then its cubes), z: the eye. Out: a texel per image, body's slot and eye,
 // (the centre's x, y, z the body was taken at, 1 if drawn, else 0): the vertex shader draws an
 // image only where it says 1 for the centre its instance has.
+//
+// PATHS: each body's table of the ways from each eye (zone.gdshaderinc, «the paths by a table»),
+// after IMAGES: a node by geo_see_to's search, only the turns up to the last image drawn needs.
+// Invocation x: the node (along l, then q), y: the body (as IMAGES), z: the eye. Out: a layer per
+// eye, a node a texel at (k, slot * ZONE_PL + i), the body's frame at (ZONE_PQ, slot * ZONE_PL).
 
 layout(set = 0, binding = 0) uniform sampler2D g_tab;   // geo.gdshaderinc names it; not read here
 layout(set = 0, binding = 1, std140) uniform Params {
@@ -45,7 +50,8 @@ layout(push_constant, std430) uniform Kind {
 	ivec4 first;        // its first slot
 } pc;
 layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray out_img;
-layout(set = 0, binding = 4, rgba32f) uniform restrict writeonly image2DArray cull_img;   // IMAGES' out
+layout(set = 0, binding = 4, rgba32f) uniform restrict image2DArray cull_img;   // IMAGES' out, PATHS' in
+layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2DArray path_img;   // PATHS' out
 
 #define g_prof zp.prof
 #define g_prof2 zp.prof2
@@ -58,7 +64,36 @@ layout(set = 0, binding = 4, rgba32f) uniform restrict writeonly image2DArray cu
 
 #include_geo_and_zone
 
-#ifdef IMAGES
+#if defined(PATHS)
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int balls = pc.first.x, all = pc.first.x + pc.first.y;
+	if (id.x >= uint(ZONE_PL * ZONE_PQ) || int(id.y) >= all) return;
+	bool cube = int(id.y) >= balls;
+	int s = cube ? pc.first.z + int(id.y) - balls : int(id.y);
+	int i = int(id.x) / ZONE_PQ, k = int(id.x) % ZONE_PQ;
+	vec4 C = zb.body[4 * s];
+	float size = zb.body[4 * s + 3].x;
+	vec4 f = zone_path_frame(C, cube ? 1.8 * size : size, GEO_PI * float(pc.first.w));
+	if (id.x == 0u) imageStore(path_img, ivec3(ZONE_PQ, s * ZONE_PL, int(id.z)), f);
+	// the nodes the images IMAGES draws need: image j turns by pi j to pi (j + 1), and a vertex takes
+	// the nodes up to the third past its own
+	int last = -1;
+	for (int j = 0; j < pc.first.w; j++) {
+		if (imageLoad(cull_img, ivec3(j, s, int(id.z))).w > 0.5) last = j;
+	}
+	float pm = GEO_PI * float(last + 1);
+	if (last < 0 || float(k) > log(pm + sqrt(pm * pm + 1.0)) / f.z + 3.0) return;
+	float el;
+	vec3 en;
+	vec4 ex, ey, ez;
+	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
+	vec2 at = zone_path_at(f, i, k);
+	vec4 node = zone_path_node(el, en, at.x, at.y);
+	imageStore(path_img, ivec3(k, s * ZONE_PL + i, int(id.z)), node);
+}
+#elif defined(IMAGES)
 // image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis
 // toward t (alpha past 0 or pi: on the far side, toward -t)
 vec4 zs_see(float el, vec3 en, float pl, vec3 t, float a, int j) {

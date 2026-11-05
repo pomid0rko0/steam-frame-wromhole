@@ -229,47 +229,63 @@ void geo_eye(mat4 inv_view, vec3 eye_offset, out float el, out vec3 en, out vec4
 // ray of the search came out not finite (passed over), 1 where none was finite and the stand-in
 // below took the search's place (ref/test_gpu.py: never either). straight: the turn is alpha the
 // short way (the first image), which the straight line takes where it can.
-// Taken at once: with straight, where the eye and the point are in the same flat universe and the
-// segment between them stays out of the curved zone, the segment; where both are in the throat's
-// cylinder, the straight line on it unrolled. Else the ray is found among those that reach |l| =
-// |pl| (below): GEO_ITERS rays, the first the one between the two families, then false position
-// with halving (Illinois) in the family that holds the point, until a ray turns to within GEO_TOL of
-// the target (how many it takes: ref/test_gpu.py).
+// Taken at once where a closed form is the geodesic (geo_see_segment, geo_see_unrolled). Else the
+// ray is found among those that reach |l| = |pl| (below): GEO_ITERS rays, the first the one between
+// the two families, then false position with halving (Illinois) in the family that holds the point,
+// until a ray turns to within GEO_TOL of the target (how many it takes: ref/test_gpu.py).
 const int GEO_ITERS = 12;
 const int GEO_SPARE = 8;
 const float GEO_TOL = 1e-5;
 
+// The straight line on the throat's cylinder unrolled from the eye (side, |l| = le, r = re) to the
+// point (lp on the eye's side), turned by delta toward t (scd: its sine and cosine). Where both are
+// in the cylinder, the space there is the product of l and a sphere of radius rho0 and this is the
+// geodesic (geo_see_to's families can't take a point at about the eye's l there: their rays circle
+// the cylinder, their sweep grows without bound as they turn tangent, and the length comes out of a
+// division by their dl/ds). Elsewhere geo_see_to's stand-in.
+vec4 geo_see_unrolled(float side, float le, float lp, float re, vec3 en, vec3 t, float delta, vec2 scd, out float len, out vec4 arrive) {
+	float dl0 = lp - le, arc0 = re * delta;
+	len = sqrt(dl0 * dl0 + arc0 * arc0);
+	float cl0 = dl0 / max(len, GEO_TINY20), sl0 = arc0 / max(len, GEO_TINY20);
+	arrive = vec4(sl0 * (scd.y * t - scd.x * en), side * cl0);
+	return vec4(side * cl0, sl0 * t);
+}
+
+// The eye (side, r = re, direction en) and the point (r = rp, pn) in the same flat universe: the
+// segment between them (in R^4's xyz there) if it stays out of the curved zone (its nearest point to
+// the centre at least Rout from it), its direction at the eye, its length and the direction it comes
+// in at (dir, len, arrive); else false.
+bool geo_see_segment(float side, float re, vec3 en, float rp, vec3 pn, inout vec4 dir, inout float len, inout vec4 arrive) {
+	vec3 xe = re * en;
+	vec3 dv = rp * pn - xe;
+	float d2 = max(dot(dv, dv), GEO_TINY20);
+	vec3 m = xe + clamp(-dot(xe, dv) / d2, 0.0, 1.0) * dv;
+	if (dot(m, m) < g_prof2.x * g_prof2.x) return false;
+	len = sqrt(d2);
+	vec3 u = dv / len;
+	arrive = vec4(u, 0.0);
+	float cu = dot(u, en);
+	dir = vec4(side * cu, u - cu * en);
+	return true;
+}
+
 vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool straight, out float len, out vec4 arrive, out float fell) {
+	// One way out, nothing skipped in the loop: what the wave's vertices do apart is only their
+	// branches.
 	float side = el < 0.0 ? -1.0 : 1.0;
 	float le = abs(el);
 	float lp = side * pl;           // the eye's side is +
 	float alp = abs(lp);
 	float dre = geo_dr(le), drp = geo_dr(alp);       // r - rho0 at each
 	float re = g_prof.x + dre, rp = g_prof.x + drp;
-	// One way out, nothing skipped in the loop: what the wave's vertices do apart is only their
-	// branches. Both in the eye's flat universe and the segment between them clear of the curved
-	// zone (its nearest point to the centre at least Rout from it): the segment itself, in R^4's
-	// xyz there.
+	// Taken at once: with straight, both in the eye's flat universe and the segment between them
+	// clear of the curved zone, the segment (geo_see_segment); both in the throat's cylinder, the line
+	// on it unrolled (geo_see_unrolled, below).
 	vec4 dir = vec4(0.0);
 	len = 0.0;
 	arrive = vec4(0.0);
 	fell = 0.0;
-	bool seg = false;
-	if (straight && le >= g_prof.w && lp >= g_prof.w) {
-		vec3 xe = re * en;
-		vec3 dv = rp * pn - xe;
-		float d2 = max(dot(dv, dv), GEO_TINY20);
-		vec3 m = xe + clamp(-dot(xe, dv) / d2, 0.0, 1.0) * dv;
-		if (dot(m, m) >= g_prof2.x * g_prof2.x) {
-			seg = true;
-			len = sqrt(d2);
-			vec3 u = dv / len;
-			arrive = vec4(u, 0.0);
-			float cu = dot(u, en);
-			dir = vec4(side * cu, u - cu * en);
-		}
-	}
-	if (!seg) {
+	if (!(straight && le >= g_prof.w && lp >= g_prof.w && geo_see_segment(side, re, en, rp, pn, dir, len, arrive))) {
 		float rmin = g_prof2.z;
 		float dr0 = 2.0 * g_prof.y * g_prof2.y;             // r_min - rho0
 		float delta = target;
@@ -411,8 +427,11 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 			float dls = side * dl;                    // dl/ds in the true l
 			vec3 tau = -scd.x * en + scd.y * t;       // toward growing angle at pn
 			vec4 arr = vec4(dls * dd.x * pn + (b / rp) * tau, dls * dd.y);
-			// the search's ray if any was finite
-			float lens = res.y;
+			// the search's ray if any was finite. Its length with the turns it falls short of: a point
+			// a hair from the cylinder's end many turns round is reached by a ray closer to r_min than
+			// float32 tells (its direction that of r_min's to the last digit), and a turn more there is
+			// r_min^2 / b of length, r_min
+			float lens = res.y + (delta - res.x) * rmin;
 			found = geo_finite(lens + dca + dsa + arr.x + arr.y + arr.z + arr.w) && lens > 0.0 && lens < 1e7;
 			len = lens;
 			arrive = arr;
@@ -420,17 +439,9 @@ vec4 geo_see_to(float el, vec3 en, float pl, vec3 pn, vec3 t, float target, bool
 			if (!found) fell = 1.0;
 		}
 		if (!found) {
-			// the straight line on the cylinder unrolled. Where both are in the throat's cylinder,
-			// the space there is the product of l and a sphere of radius rho0 and that is the
-			// geodesic (the family above can't take a point at about the eye's l there: its rays
-			// circle the cylinder, their sweep grows without bound as they turn tangent, and the
-			// length comes out of a division by their dl/ds). Elsewhere it stands should no ray of
-			// the search come out finite, which a GPU's arithmetic must never make a hole of.
-			float dl0 = lp - le, arc0 = re * delta;
-			len = sqrt(dl0 * dl0 + arc0 * arc0);
-			float cl0 = dl0 / max(len, GEO_TINY20), sl0 = arc0 / max(len, GEO_TINY20);
-			arrive = vec4(sl0 * (scd.y * t - scd.x * en), side * cl0);
-			dir = vec4(side * cl0, sl0 * t);
+			// both in the cylinder, or no ray of the search came out finite (which a GPU's
+			// arithmetic must never make a hole of)
+			dir = geo_see_unrolled(side, le, lp, re, en, t, delta, scd, len, arrive);
 		}
 	}
 	return dir;

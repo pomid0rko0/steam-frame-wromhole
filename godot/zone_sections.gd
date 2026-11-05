@@ -14,6 +14,12 @@ extends CompositorEffect
 ## across than CULL_PX of a pixel is not, its vertices go out of the picture at once (cull_tex),
 ## and so is none whose body is not the one the pass took (a slot not worked out this frame).
 ##
+## And then each body's table of the ways light takes from each eye (zone.gdshaderinc, «the paths
+## by a table»; zone_sections.gdshaderinc, PATHS): a node of it by geo_see_to's search, as far along
+## the turns as the images drawn need (path_tex). A vertex of an image takes its way from the 4 x 4
+## nodes about it: 16 reads, not a search of up to 20 rays. The search's work goes from a vertex of
+## every image drawn to a node of the table (1600 a body, against 3185 a fine mesh's image).
+##
 ## On the XR camera's compositor (on the desktop the window's camera's), before the opaque pass,
 ## every frame whatever the foveation. Renderer hands it the space's numbers, the head each frame
 ## and the bodies in the zone (set_bodies: the same frame's as their instances); the eyes are
@@ -22,13 +28,14 @@ extends CompositorEffect
 
 const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a slot
 # the GPU timestamps of this pass (RenderingDevice.capture_timestamp), before and after it: the
-# nodes' part of the frame's GPU time (frame_rate.gd)
+# nodes' and tables' part of the frame's GPU time (frame_rate.gd)
 const TS_BEGIN := "zone nodes begin"
 const TS_END := "zone nodes end"
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
 var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
+var path_tex := Texture2DArrayRD.new()   # the bodies' tables of the ways from the eyes (PATHS' out), for them too
 
 var _rd: RenderingDevice
 var _shaders := {}                  # "ball", "cube" -> RID
@@ -38,6 +45,8 @@ var _ubo: RID                       # Params
 var _bodies: RID                    # Bodies
 var _tex: RID
 var _cull: RID                      # images x slots, a layer per eye
+var _path: RID                      # (_path_n.y + 1) x slots * _path_n.x, a layer per eye
+var _path_n := Vector2i.ZERO        # a body's table's nodes along l and q (zone.gdshaderinc's ZONE_PL, ZONE_PQ)
 var _images := 0                    # images a body (Renderer.ZONE_IMAGES)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture (named by geo.gdshaderinc, not read)
@@ -91,6 +100,15 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	zero.resize(16 * images * _slots)
 	_cull = _rd.texture_create(c, RDTextureView.new(), [zero, zero])
 	cull_tex.texture_rd_rid = _cull
+	var p := RDTextureFormat.new()
+	p.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+	p.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	p.width = _path_n.y + 1
+	p.height = _slots * _path_n.x
+	p.array_layers = 2
+	p.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	_path = _rd.texture_create(p, RDTextureView.new())
+	path_tex.texture_rd_rid = _path
 
 
 ## The space and its table (Renderer.upload_space), as Foveation.set_space takes them.
@@ -137,7 +155,10 @@ func _build() -> void:
 	var zone: String = (load("res://shaders/zone.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/zone_sections.gdshaderinc") as ShaderInclude).code
 	body = body.replace("#include_geo_and_zone", geo + "\n" + zone)
-	for kind in ["ball", "cube", "images"]:
+	for k in 2:
+		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
+		_path_n[k] = int(m.get_string(1))
+	for kind in ["ball", "cube", "images", "paths"]:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -156,7 +177,7 @@ func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 5:
+	for b in 6:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
@@ -176,13 +197,16 @@ func _uniform_set(kind: String) -> RID:
 			4:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 				u.add_id(_cull)
+			5:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+				u.add_id(_path)
 		us.append(u)
 	_sets[kind] = _rd.uniform_set_create(us, _shaders[kind], 0)
 	return _sets[kind]
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("images"):
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("paths"):
 		return
 	_mutex.lock()
 	var counts := _counts
@@ -237,5 +261,11 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
 	_rd.compute_list_dispatch(cl, int(ceil(_images / 32.0)), counts.x + counts.y, views)
+	# the tables, as far as the images just found drawn need them
+	_rd.compute_list_add_barrier(cl)
+	_rd.compute_list_bind_compute_pipeline(cl, _pipes["paths"])
+	_rd.compute_list_bind_uniform_set(cl, _uniform_set("paths"), 0)
+	_rd.compute_list_set_push_constant(cl, ipc, ipc.size())
+	_rd.compute_list_dispatch(cl, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
 	_rd.compute_list_end()
 	_rd.capture_timestamp(TS_END)

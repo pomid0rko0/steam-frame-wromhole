@@ -651,3 +651,144 @@ vec2 zone_vertex(vec2 uv, float columns, float rows, bool ball, vec3 en, vec4 C,
 	return zone_cube_section(uv.y, rows, round_axis, ax, dsg, en, a1, a2, t, sct.y * a2 - sct.x * a1,
 			scm.y * a1 + scm.x * a2, scm.y * a2 - scm.x * a1, az.y, za, zb, C, E1, E2, E3, N, size, none);
 }
+
+// ---------------------------------------------------------------- the paths by a table
+// A vertex of a body's image j takes its geodesic from a table worked out once a frame for each eye
+// and body (zone_sections.gdshaderinc, PATHS), not by geo_see_to's search. The space is spherically
+// symmetric, so the way from the eye to a point hangs only on the point's l and on the turn psi
+// (alpha + 2 pi k or 2 pi (k + 1) - alpha) its image takes in its plane through the centre: in that
+// plane, (X, Y) = len (cos a, sin a), a the launch angle from the eye's outward radial toward the
+// turn. That map is smooth everywhere, the eye too (the inverse of the exponential map at the eye:
+// on the plane's surface, whose curvature is nowhere positive, one geodesic a class), and close to
+// linear once the rays wind round the photon sphere; but where the profile joins its parts (the
+// cylinder's ends, the zone's edge: a step in a derivative of r(l)) only once or twice differentiable
+// across the join J, and beside it from an eye a few centimetres off it it goes as |l - J|^(3/2)
+// (rays that graze the join). A body's table: ZONE_PL nodes along l over its reach and a margin each
+// way, ZONE_PQ along q = asinh psi, from one node below psi = 0 (the turn the other way: (X, -Y)) to
+// past the images' last turn, evenly in each; where the body's l reaches a join, evenly in u =
+// sign(l - J) sqrt(|l - J|) instead, a node on J: in u that power is a cubic, and the nodes crowd
+// to the join. A node holds (X, Y, len dl/ds at the point as the eye's side counts l, fell:
+// geo_see_to's): dl/ds itself is the ray's direction near the eye, a jump there that a cubic can't
+// follow, len dl/ds is smooth (close to X there). A vertex takes only its sign: its size is the
+// ray's own, by b = r_eye sin a, which the ray keeps. A vertex takes the cubic through 4 x 4 nodes about it, both ways (Lagrange's: its
+// error goes as the 4th power of the steps), along l from its side of the join only. The steps set
+// against the error: ref/test_gpu.py. Where geo_see_to takes a closed form (the segment, the
+// cylinder unrolled), the vertex takes that.
+const int ZONE_PL = 16;
+const int ZONE_PQ = 100;
+
+// A body's table's frame (C its centre, reach the chord its points are within, psi_max the turn of
+// its images' last): (a, the step along l or u, the step along q, the node on the join or -1). Node
+// (i, k) is at q = (k - 1) .z, and at l = a + (i - 1) .y (no join: a the l of node 1), or at u = (i -
+// on) .y (a the join, on its node). Nodes 1 to ZONE_PL - 2 hold the body's l, one step to spare (u's
+// nodes move by less than one to put one on the join), and 1 to ZONE_PQ - 2 the turns from 0 to
+// psi_max.
+vec4 zone_path_frame(vec4 C, float reach, float psi_max) {
+	vec3 n;
+	float lc = geo_l_of(C, n);
+	float rl = 1.1 * reach + 0.01;     // a point's l within its geodesic distance of C's, a hair more than the chord
+	float h = 2.0 * rl / float(ZONE_PL - 4);
+	// the profile's join nearest the body's centre, if within a step of the body's l
+	vec4 joins = vec4(-g_prof.w, -g_prof.z, g_prof.z, g_prof.w);
+	float jl = 0.0;
+	bool join = false;
+	for (int k = 0; k < 4; k++) {
+		if (abs(joins[k] - lc) <= rl + h && (!join || abs(joins[k] - lc) < abs(jl - lc))) {
+			join = true;
+			jl = joins[k];
+		}
+	}
+	float hq = log(psi_max + sqrt(psi_max * psi_max + 1.0)) / float(ZONE_PQ - 3);
+	if (!join) return vec4(lc - rl, h, hq, -1.0);
+	float ua = sqrt(max(jl - (lc - rl), 0.0)), ub = sqrt(max(lc + rl - jl, 0.0));
+	float hu = (ua + ub) / float(ZONE_PL - 4);
+	return vec4(jl, hu, hq, ceil(ua / hu) + 1.0);
+}
+
+// node (i, k)'s place in the table of frame f (zone_path_frame): (l, psi)
+vec2 zone_path_at(vec4 f, int i, int k) {
+	float q = float(k - 1) * f.z;
+	float u = float(i) - f.w;
+	float l = f.w < 0.0 ? f.x + float(i - 1) * f.y : f.x + sign(u) * u * u * f.y * f.y;
+	return vec2(l, 0.5 * (exp(q) - exp(-q)));
+}
+
+// The node at l and turn psi (negative: the other way) for the eye at (el, en): (X, Y, len dl/ds at
+// the point on the eye's side, fell) as the table's top has them, by geo_see_to; at psi = 0 the
+// radial line, through the throat too: l along it goes as the length.
+vec4 zone_path_node(float el, vec3 en, float l, float psi) {
+	float side = el < 0.0 ? -1.0 : 1.0;
+	float dl = side * l - abs(el);
+	if (psi == 0.0) return vec4(dl, 0.0, dl, 0.0);
+	vec3 t = normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	float ap = abs(psi);
+	vec2 sc = geo_sincos(ap);
+	vec3 pn = sc.y * en + sc.x * t;
+	float len, fell;
+	vec4 arr;
+	vec4 d = geo_see_to(el, en, l, pn, t, ap, ap <= GEO_PI, len, arr, fell);
+	vec2 dd = geo_drdw(l);
+	// dl/ds at the point: arrive's part along d/dl there, (dd.x pn, dd.y) (the rest is across it)
+	float dls = dot(arr, vec4(dd.x * pn, dd.y));
+	return vec4(len * side * d.x, (psi < 0.0 ? -len : len) * dot(d.yzw, t), len * side * dls, fell);
+}
+
+// Lagrange's weights of the nodes at -1, 0, 1, 2 at x (between 0 and 1 in the middle of them, 1 and
+// 2 or -1 and 0 beside a join)
+vec4 zone_lagrange(float x) {
+	float a = x + 1.0, b = x - 1.0, c = x - 2.0;
+	return vec4(-x * b * c, 3.0 * a * b * c, -3.0 * a * x * c, a * x * b) / 6.0;
+}
+
+// Image j of the point (pl, pn), alpha off the eye's axis toward t, as geo_see_image gives it (the
+// launch direction, len, arrive; fell: the most of its nodes'), by geo_see_to's closed forms or else
+// the body's table: tab's rows from row0 (its slot's), layer (the eye's), and at column ZONE_PQ of row0 its frame
+// (zone_path_frame).
+vec4 zone_path_see(sampler2DArray tab, int row0, int layer, float el, vec3 en, float pl, vec3 pn, vec3 t, float alpha, int j, out float len, out vec4 arrive, out float fell) {
+	float k = float(j / 2);
+	bool far = (j & 1) == 1;
+	float target = far ? 2.0 * GEO_PI * (k + 1.0) - alpha : alpha + 2.0 * GEO_PI * k;
+	vec3 tt = far ? -t : t;
+	vec4 dir = vec4(0.0);
+	len = 0.0;
+	arrive = vec4(0.0);
+	fell = 0.0;
+	// what geo_see_to takes at once: the segment, the line on the cylinder unrolled
+	float side = el < 0.0 ? -1.0 : 1.0;
+	float le = abs(el), lp = side * pl;
+	float re = geo_r(le);
+	if (j == 0 && le >= g_prof.w && lp >= g_prof.w && geo_see_segment(side, re, en, geo_r(lp), pn, dir, len, arrive)) return dir;
+	vec2 scd = geo_sincos(target);
+	if (le <= g_prof.z && abs(lp) <= g_prof.z) return geo_see_unrolled(side, le, lp, re, en, tt, target, scd, len, arrive);
+	vec4 f = texelFetch(tab, ivec3(ZONE_PQ, row0, layer), 0);
+	// the point's place along l in steps from node 1, and the nodes from its side of the join only
+	// (the join's node on: fl = on - 1)
+	float d = pl - f.x;
+	int on = int(f.w);
+	float fl = on < 0 ? d / f.y : float(on - 1) + sign(d) * sqrt(abs(d)) / f.y;
+	int i = int(floor(fl));
+	if (on >= 0) i = fl < float(on - 1) ? min(i, on - 3) : max(i, on);
+	i = clamp(i, 0, ZONE_PL - 4);
+	float fq = log(target + sqrt(target * target + 1.0)) / f.z;
+	int c = clamp(int(floor(fq)), 0, ZONE_PQ - 4);
+	vec4 wl = zone_lagrange(fl - float(i)), wq = zone_lagrange(fq - float(c));
+	vec3 s = vec3(0.0);
+	for (int a = 0; a < 4; a++) {
+		vec3 row = vec3(0.0);
+		for (int b = 0; b < 4; b++) {
+			vec4 v = texelFetch(tab, ivec3(c + b, row0 + i + a, layer), 0);
+			row += wq[b] * v.xyz;
+			fell = max(fell, v.w);
+		}
+		s += wl[a] * row;
+	}
+	len = length(s.xy);
+	vec2 cs = s.xy / max(len, GEO_TINY20);
+	// arriving (geo_see_to's arrive): toward growing angle b / r there, b = r_eye sin a; along d/dl
+	// the rest, its sign the table's
+	float bp = min(re * cs.y / geo_r(abs(pl)), 1.0);
+	float dls = side * (s.z < 0.0 ? -1.0 : 1.0) * sqrt(max((1.0 - bp) * (1.0 + bp), 0.0));
+	vec2 dd = geo_drdw(pl);
+	arrive = vec4(dls * dd.x * pn + bp * (scd.y * tt - scd.x * en), dls * dd.y);
+	return vec4(side * cs.x, cs.y * tt);
+}
