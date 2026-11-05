@@ -295,6 +295,15 @@ func empty() -> void:
 		h.pull = null
 
 
+## The space changed under them (the throat's length, main.set_length): a toy being pulled stays
+## where it is, its flight worked out in the space before.
+func drop_pulls() -> void:
+	for h in list:
+		h.aimed = null
+		h.locked = false
+		h.pull = null
+
+
 ## The viewer was put somewhere else, or the room (a recentre): the hands' and held toys' places
 ## before are no motion.
 func forget_motion() -> void:

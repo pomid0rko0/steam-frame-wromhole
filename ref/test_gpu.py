@@ -100,7 +100,7 @@ def godot_number(text):
     return t + '0' if t.endswith('.') else t
 
 
-INC = ''.join(open(os.path.join(SHADERS, f)).read() for f in ('geo.gdshaderinc', 'zone.gdshaderinc', 'zone_cube.gdshaderinc'))
+INC = ''.join(open(os.path.join(SHADERS, f)).read() for f in ('geo.gdshaderinc', 'zone.gdshaderinc', 'zone_cube.gdshaderinc', 'zone_tail.gdshaderinc'))
 INC = NUMBER.sub(lambda m: godot_number(m.group(1)), INC)
 INC = TURNIP + re.sub(r'(?<![\w.])(sin|cos)\(', r'turnip_\1(', INC)
 # A GPU's bilinear filter weighs its four texels by fractions it rounds to 1/256 (as ref/geo.py's
@@ -240,6 +240,25 @@ void main() {
 		outp[O + 2] = arr;
 	} else if (mode == 13) {    // a = a body's centre, c = (reach, psi_max): its table's frame
 		outp[O] = zone_path_frame(a, c.x, c.y);
+	} else if (mode == 15) {    // a = (eye l, n), c = a ray there, C, E1, E2, (size, 1 a cube, psi_min): the
+		// tail's first way into the body (zone_tail.gdshaderinc): (hit, y, psi, len), its point, (its
+		// stretch, the band's least and greatest angle off the inward radial, 1 if a tail ray)
+		float al = abs(a.x);
+		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));
+		vec4 e = inp[I + 5];
+		TailRay z;
+		TailBody q = tail_body(e.y > 0.5, inp[I + 2], inp[I + 3], inp[I + 4], e.x);
+		bool ray = tail_ray(a.x, eye, a.yzw, c, e.z, z);
+		float y = 0.0, ang = 0.0, psi = 0.0;
+		int on = 0;
+		bool hit = ray && tail_meet(z, q, e.z, y, ang, psi, on);
+		vec4 P = vec4(0.0), arr = vec4(0.0);
+		float len = 0.0;
+		if (hit) tail_hit(z, y, ang, on, P, arr, len);
+		vec2 band = tail_band(a.x, eye, e.z);
+		outp[O] = vec4(hit ? 1.0 : 0.0, y, psi, len);
+		outp[O + 1] = P;
+		outp[O + 2] = vec4(float(on), band, ray ? 1.0 : 0.0);
 	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
 		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);

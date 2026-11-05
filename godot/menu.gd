@@ -9,7 +9,8 @@ extends Node3D
 ## A setting is a row: a subclass of Row (the end of this file) in _make_rows; one kept for the
 ## next start also in SETTINGS: loaded in _ready, written by _save. A value stepped to takes effect
 ## only after SETTLE (or with A, another row, closing): stepping through the rates must not switch
-## the headset at every step, nor the foveations make their textures again.
+## the headset at every step, nor the foveations make their textures again. A row that slides (the
+## throat's length) changes instead every frame its direction is held, by its rate, at once.
 
 # shares of the full size (full_eye) each eye's picture can be, left to right in the menu
 const SCALES := [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
@@ -26,6 +27,8 @@ const OFF_ON := ["выкл", "вкл"]
 const ON_OFF := ["вкл", "выкл"]
 const HINT := "крестовина или левый стик: выбрать, менять\nA — нажать · B — закрыть"
 const SETTLE := 0.5             # s a value stepped to waits before it takes effect
+const LENGTH_RATE := 0.5        # the throat's length held: its (length + LENGTH_PAD) grows or shrinks so much a second
+const LENGTH_PAD := 2.0         # m (so 0 to 80 m in about 7 s, the video's 8 m from 0 in 3)
 const NOTICE_TIME := 2.0        # s a notice stays on the line below (notice)
 const REPEAT_AFTER := 0.4       # s a direction is held before it repeats
 const REPEAT := 0.12            # s between repeats
@@ -83,6 +86,7 @@ var bench_unseen := false       # the line below shows it until the menu is open
 var notice_text := ""           # a button's setting on the line below for a while (notice)
 var notice_left := 0.0
 var was := {}                   # buttons down last frame (handle_input)
+var slid := false               # a sliding row changed since its direction was let go: kept then
 var dir_held := Vector2i.ZERO   # the direction held (_direction)
 var held_for := 0.0             # s it has been held: then it repeats
 var armed := true               # a direction let go once since the menu opened (a stick out to walk does not act)
@@ -241,8 +245,13 @@ func handle_input(dt: float) -> bool:
 	var pressed_a := _pressed("a", a)
 	var pressed_b := _pressed("b", b)
 	if open and was_open:
+		var slides := not rows.is_empty() and rows[cursor].slides() and rows[cursor].enabled()
 		if not armed:
 			armed = dir == Vector2i.ZERO
+		elif dir.x != 0 and slides:
+			rows[cursor].slide(dir.x, dt)
+			slid = true
+			refresh()
 		elif dir != Vector2i.ZERO:
 			var fire := dir != dir_held
 			held_for = 0.0 if fire else held_for + dt
@@ -261,6 +270,9 @@ func handle_input(dt: float) -> bool:
 		elif pressed_b:
 			back()
 			_tick(right)
+	if slid and dir.x == 0:
+		slid = false
+		_slid()
 	dir_held = dir
 	return was_open or open
 
@@ -472,8 +484,8 @@ func refresh() -> void:
 	var movable := r.enabled() and r.count() > 1
 	for a: MeshInstance3D in arrows:
 		a.position.y = r.y
-	arrows[0].visible = movable and at > 0
-	arrows[1].visible = movable and at < r.count() - 1
+	arrows[0].visible = movable and at > 0 or r.enabled() and r.slides()
+	arrows[1].visible = movable and at < r.count() - 1 or r.enabled() and r.slides()
 
 
 func _show() -> void:
@@ -542,6 +554,17 @@ func choose_scale(v: float) -> void:
 	_set_text(_compose())
 
 
+## The throat's length let go of (its row slid to it): kept for the next start, and in the log.
+func _slid() -> void:
+	_save()
+	print("menu: throat ", main.length_text())
+
+
+## The throat's length kept (main.set_length), or by default (main.LENGTH).
+static func saved_length(default: float) -> float:
+	return float(_load().get_value("throat", "length", default))
+
+
 ## A foveation choice; kept for the next start.
 func choose_foveation(level: int) -> void:
 	if xr == null:
@@ -583,6 +606,7 @@ func _save() -> void:
 	var cfg := _load()
 	cfg.set_value("ui", "strip", strip_on)
 	cfg.set_value("ui", "beam", main.hands.beam)
+	cfg.set_value("throat", "length", 2.0 * main.space.Lc)
 	if xr:
 		_keep(cfg, "eye", render_scale, scale_chosen)
 		_keep(cfg, "foveation_level", foveation, foveation_chosen)
@@ -731,6 +755,7 @@ func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"), ZonesRow.new(self, "zones", "зоны фовеации"),
 			GazeRow.new(self, "gaze", "точка взгляда"), BeamRow.new(self, "beam", "луч прицела"),
+			LengthRow.new(self, "length", "длина горла"),
 			GravRow.new(self, "grav", "гравитация"), FlyRow.new(self, "fly", "полёт"),
 			TurnRow.new(self, "turn", "поворот"),
 			StripRow.new(self, "strip", "строка частоты"),
@@ -787,6 +812,41 @@ class Row:
 	## A's own action instead of a value: true if there is one (done).
 	func act() -> bool:
 		return false
+
+	## Held left or right it changes every frame (slide), not a step at a time.
+	func slides() -> bool:
+		return false
+
+	func slide(_dir: int, _dt: float) -> void:
+		pass
+
+
+## The throat's cylinder's length (main.set_length): held left or right it shortens or stretches as
+## it is held, from nought to WormholeSpace.LENGTH_MAX; A: the video's.
+class LengthRow extends Row:
+	func count() -> int:
+		return 1
+
+	func text(_i: int) -> String:
+		var m := 2.0 * menu.main.space.Lc
+		return ("%.1f м" % m).replace(".", ",") if m < 9.95 else "%d м" % roundi(m)
+
+	func enabled() -> bool:
+		return not menu.main.hold
+
+	func slides() -> bool:
+		return true
+
+	func slide(dir: int, dt: float) -> void:
+		var m := 2.0 * menu.main.space.Lc + LENGTH_PAD
+		m *= exp(dir * LENGTH_RATE * dt)
+		menu.main.set_length(clampf(m - LENGTH_PAD, 0.0, WormholeSpace.LENGTH_MAX))
+
+	func act() -> bool:
+		menu.main.set_length(menu.main.LENGTH)
+		menu._slid()
+		menu.refresh()
+		return true
 
 
 ## The refresh rate (frame_rate.gd).

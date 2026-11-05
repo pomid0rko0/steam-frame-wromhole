@@ -11,7 +11,9 @@ extends Node3D
 ## - Bodies in the curved zone: meshes whose every vertex goes where the eye sees it along its
 ##   geodesic (body.gdshaderinc), one per image; the meshes' nodes on the body and each body's table
 ##   of the ways light takes from each eye worked out once a frame (zone_sections.gd), each image's
-##   vertices only take their geodesics from that table.
+##   vertices only take their geodesics from that table. Their images past those ZONE_IMAGES, which
+##   close in on the rays that wind round the throat's cylinder, per pixel along those rays
+##   (shaders/zone_tail.gdshader, a band of the view round the eye's radial direction).
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -39,6 +41,7 @@ const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
+const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
 # a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
 # rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
@@ -49,6 +52,7 @@ const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
+const TAIL_SEGMENTS := 128      # the tail's band of the view (zone_tail.gdshader): quads round it
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
@@ -104,6 +108,8 @@ var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new
 var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
 var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
+var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader)
+var tail: MeshInstance3D
 var statics: Array[MeshInstance3D] = []
 var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
 var beams: Array[MultiMeshInstance3D] = []
@@ -154,6 +160,8 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
 		zone_mats.append(m)
+	tail_mat.shader = ZONE_TAIL_SHADER
+	tail_mat.set_shader_parameter("tail_psi_min", ZONE_IMAGES * PI)
 	arrow_mat.shader = ARROW_SHADER
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
@@ -176,6 +184,10 @@ func _ready() -> void:
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
+	# under the camera too: a band of each eye's view round its radial direction
+	tail = _body(_zone_mesh(TAIL_SEGMENTS, 1), tail_mat)
+	tail.visible = false
+	add_child(tail)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
 	for k in 4:
@@ -190,7 +202,7 @@ func _ready() -> void:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
 		play.add_child(mi)
-	arrows = _images(_arrow_mesh(), arrow_mat)
+	arrows = _images(_arrow_mesh(arrow_arrays(space)), arrow_mat)
 	arrows.visible = false
 	play.add_child(arrows)
 	var tube := _beam_mesh()
@@ -209,9 +221,11 @@ func _ready() -> void:
 ## compile while the app starts, not at the first switch to them (a stall of a tenth of a second or
 ## more on the Frame, and SteamVR at half rate after it).
 func _process(_delta: float) -> void:
+	_lines_ready()
 	if _warm > 0:
 		_warm -= 1
-		arrows.visible = _warm > 0 or gravity_view == 2
+		arrows.visible = _warm > 0 or (gravity_view == 2 and _lines_task < 0)
+		tail.visible = _warm > 0 or _tail_on
 		if _warm == 0:
 			for k in beams.size():
 				beams[k].visible = _beam_on[k]
@@ -224,7 +238,8 @@ func _floor_material() -> void:
 	floor_quad.material_override = floor_mats[1] if _warm > 0 else (floor_sample_mat if foveation.enabled else floor_mat)
 
 
-var _warm := 3                  # frames left drawing the gravity views and the beams (_process)
+var _warm := 3                  # frames left drawing the gravity views, the beams and the tail (_process)
+var _tail_on := false           # a body in the zone, and a throat with a cylinder: the tail drawn
 var _beam_on: Array[bool] = [false, false]
 
 
@@ -232,6 +247,7 @@ var _beam_on: Array[bool] = [false, false]
 func materials() -> Array[ShaderMaterial]:
 	var out: Array[ShaderMaterial] = [ball_mat, cube_mat, arrow_mat]
 	out.append_array(zone_mats)
+	out.append(tail_mat)
 	out.append_array(beam_mats)
 	out.append_array(floor_mats)
 	out.append_array(scene_mats)
@@ -242,19 +258,72 @@ func materials() -> Array[ShaderMaterial]:
 ## the sweep table, the floor's lift and gravity there. Slow in GDScript: not per frame.
 func upload_space() -> void:
 	var tab := space.sweep_table()
-	var tex := ImageTexture.create_from_image(tab.image)
-	_sweep_tex = tex
+	_sweep_tex = ImageTexture.create_from_image(tab.image)
 	_sweep_axes = tab.axes
+	_profile()
+
+
+func _profile() -> void:
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
 	for fx in [foveation, zone_sections]:
 		fx.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
-				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, tex,
+				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, _sweep_tex,
 				Vector2(space.lift, space.grav_beta))
 
 
-var _sweep_tex: Texture2D
+## The throat's length changed (WormholeSpace.set_length), a frame at a time while it is being
+## changed: the profile and gravity's numbers to every shader (the sweep table is the same), the
+## tail on or off, and the field lines built anew off the main thread (a WormholeSpace of their own:
+## a few tenths of a second), shown again when they are (_lines_ready).
+func set_length() -> void:
+	_profile()
+	_tail_on = zone_count != Vector2i.ZERO and space.Lc > 0.0
+	tail.visible = _warm > 0 or _tail_on
+	_lines_want = true
+	arrows.visible = false
+	if _lines_task < 0:
+		_lines_start()
+
+
+var _lines_task := -1           # WorkerThreadPool's task building the field lines, -1 none
+var _lines_want := false        # they are stale: built (again) once the task is free
+var _lines_built := []          # what it built: [mesh arrays]
+
+
+func _lines_start() -> void:
+	_lines_want = false
+	var shape := Vector4(space.rho0, space.h, space.fillet, space.lift)
+	_lines_built = []
+	_lines_task = WorkerThreadPool.add_task(_lines_build.bind(shape), false, "field lines")
+
+
+## On a worker thread: reads nothing of the app's, only makes new things.
+func _lines_build(shape: Vector4) -> void:
+	_lines_built = [arrow_arrays(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
+
+
+func _exit_tree() -> void:
+	if _lines_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_lines_task)
+		_lines_task = -1
+
+
+## The field lines, built: in place, and shown if their view is on and they are not stale again.
+func _lines_ready() -> void:
+	if _lines_task < 0 or not WorkerThreadPool.is_task_completed(_lines_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_lines_task)
+	_lines_task = -1
+	if _lines_want:
+		_lines_start()
+		return
+	arrows.multimesh.mesh = _arrow_mesh(_lines_built[0])
+	arrows.visible = gravity_view == 2
+
+
+var _sweep_tex: ImageTexture
 var _sweep_axes := Vector4.ZERO
 
 
@@ -300,6 +369,8 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	var lens_b := PackedVector4Array()
 	var zone_rows := PackedVector4Array()       # ZoneSections' slots: balls' first, cubes' from MAX_BALLS
 	zone_rows.resize(4 * (MAX_BALLS + MAX_CUBES))
+	var zone_cols := PackedVector4Array()       # and their colours (the tail's)
+	zone_cols.resize(MAX_BALLS + MAX_CUBES)
 	for i in n:
 		var C := pos[i]
 		var e := _tangent_pair(C)
@@ -312,6 +383,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k + 1] = e[0]
 			zone_rows[k + 2] = e[1]
 			zone_rows[k + 3] = Vector4(col[i].w, 0.0, 0.0, 0.0)
+			zone_cols[inz[0]] = Vector4(c.r, c.g, c.b, 1.0)
 		if out:
 			flat[0] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 0.0), Vector4(1.0, 0.0, 0.0, col[i].w),
@@ -336,6 +408,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k + 1] = E1
 			zone_rows[k + 2] = E2
 			zone_rows[k + 3] = Vector4(half, 0.0, 0.0, 0.0)
+			zone_cols[MAX_BALLS + inz[1]] = Vector4(c.r, c.g, c.b, 1.0)
 		if out:
 			flat[1] += 1
 			var rows := [Vector4(C.x, C.y, C.z, 2.0), Vector4(E1.x, E1.y, E1.z, half),
@@ -351,6 +424,12 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	for k in 4:
 		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
+	tail_mat.set_shader_parameter("tail_rows", zone_rows)
+	tail_mat.set_shader_parameter("tail_col", zone_cols)
+	tail_mat.set_shader_parameter("tail_count", Vector2i(inz[0], inz[1]))
+	_tail_on = inz[0] + inz[1] > 0 and space.Lc > 0.0
+	if tail:
+		tail.visible = _warm > 0 or _tail_on
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
 	zone_count = Vector2i(inz[0], inz[1])
@@ -482,7 +561,7 @@ func set_gravity_view(view: int) -> void:
 	floor_mat = floor_mats[mini(gravity_view, 1)]
 	_floor_material()
 	foveation.gravity = gravity_view > 0
-	arrows.visible = gravity_view == 2
+	arrows.visible = gravity_view == 2 and _lines_task < 0
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
@@ -650,43 +729,51 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 
 
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
-## LINE_* and ARROW_*). Vertices as points of the space: n in the vertex, l in UV.x (body.gdshaderinc,
-## ARROWS); each line and arrow twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1).
-## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
-func _arrow_mesh() -> ArrayMesh:
+## LINE_* and ARROW_*), as mesh arrays (Mesh.ARRAY_*) of the space sp: nothing but sp is read, so
+## they are built off the main thread when the throat's length changes (main.set_length). Vertices
+## as points of the space: n in the vertex, l in UV.x (body.gdshaderinc, ARROWS); each line and arrow
+## twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1). Points of the surface n.x = 0 are
+## (l, beta), n = (0, cos beta, sin beta).
+static func arrow_arrays(sp: WormholeSpace) -> Array:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var top := space.Rout + LINE_TOP
-	var reach := space.Rout + LINE_REACH
+	var top := sp.Rout + LINE_TOP
+	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
 	for side in [1.0, -1.0]:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
 			var rr := Vector2(y, top).length()
-			var pts := _field_line(side * (rr - space.Rout + space.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
+			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
 			if pts.size() < 2:
 				continue
-			_line(st, pts, true)
-			_line(st, pts, false)
+			_line(sp, st, pts, true)
+			_line(sp, st, pts, false)
 	st.index()          # shared corners once (_scene_mesh)
-	return st.commit()
+	return st.commit_to_arrays()
+
+
+static func _arrow_mesh(arr: Array) -> ArrayMesh:
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
 
 
 ## The force at (l, beta) of the surface n.x = 0 (metric dl^2 + r^2 dbeta^2): its parts along l and
 ## along beta (per metre), in g.
-func _force(l: float, beta: float) -> Vector2:
-	var F := -space.potential_grad(l, Vector3(0.0, cos(beta), sin(beta)))
+static func _force(sp: WormholeSpace, l: float, beta: float) -> Vector2:
+	var F := -sp.potential_grad(l, Vector3(0.0, cos(beta), sin(beta)))
 	return Vector2(F.x, Vector3(F.y, F.z, F.w).dot(Vector3(0.0, -sin(beta), cos(beta))))
 
 
 ## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (where the
 ## height goes through 0) or out past rmax from the throat's centre: its points [l, beta, g].
-func _field_line(l: float, beta: float, rmax: float) -> Array:
+static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -> Array:
 	var dir := func(ll: float, bb: float) -> Vector2:
-		var f := _force(ll, bb)
+		var f := _force(sp, ll, bb)
 		var g := f.length()
-		return Vector2(f.x, f.y / space.r(ll)) / g if g > 1e-6 else Vector2.ZERO
-	var pts := [[l, beta, _force(l, beta).length()]]
+		return Vector2(f.x, f.y / sp.r(ll)) / g if g > 1e-6 else Vector2.ZERO
+	var pts := [[l, beta, _force(sp, l, beta).length()]]
 	for i in LINE_MAX_STEPS:
 		var p := Vector2(l, beta)
 		var k1: Vector2 = dir.call(p.x, p.y)
@@ -696,24 +783,24 @@ func _field_line(l: float, beta: float, rmax: float) -> Array:
 		var k3: Vector2 = dir.call(p.x + 0.5 * LINE_DS * k2.x, p.y + 0.5 * LINE_DS * k2.y)
 		var k4: Vector2 = dir.call(p.x + LINE_DS * k3.x, p.y + LINE_DS * k3.y)
 		var q := p + LINE_DS / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-		var h0 := space.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
-		var h1 := space.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
+		var h0 := sp.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
+		var h1 := sp.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
 		if h1 <= 0.0:
 			# onto the floor: the step's part that gets there
 			q = p.lerp(q, h0 / (h0 - h1))
-			pts.append([q.x, q.y, _force(q.x, q.y).length()])
+			pts.append([q.x, q.y, _force(sp, q.x, q.y).length()])
 			break
-		if space.r(q.x) > rmax:
+		if sp.r(q.x) > rmax:
 			break
 		l = q.x
 		beta = q.y
-		pts.append([l, beta, _force(l, beta).length()])
+		pts.append([l, beta, _force(sp, l, beta).length()])
 	return pts
 
 
 ## A line through pts ([l, beta, g]) LINE_WIDTH to each side, with an arrow every ARROW_GAP along
 ## it, in the colour of g where each point is; rim: its outline instead, ARROW_RIM wider all round.
-func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
+static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> void:
 	var grow := ARROW_RIM if rim else 0.0
 	var w := LINE_WIDTH + grow
 	# the strip: two vertices a point
@@ -722,7 +809,7 @@ func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
 		var a: Array = pts[maxi(i - 1, 0)]
 		var b: Array = pts[mini(i + 1, pts.size() - 1)]
 		var p: Array = pts[i]
-		var rr := space.r(p[0])
+		var rr := sp.r(p[0])
 		var t := Vector2(b[0] - a[0], (b[1] - a[1]) * rr).normalized()
 		var side := Vector2(-t.y, t.x)
 		var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(p[2]), 1.0)
@@ -737,7 +824,7 @@ func _line(st: SurfaceTool, pts: Array, rim: bool) -> void:
 	for i in range(1, pts.size()):
 		var a: Array = pts[i - 1]
 		var b: Array = pts[i]
-		var rr := space.r(0.5 * (a[0] + b[0]))
+		var rr := sp.r(0.5 * (a[0] + b[0]))
 		var d := Vector2(b[0] - a[0], (b[1] - a[1]) * rr)
 		var len := d.length()
 		while len > 0.0 and next <= s + len:

@@ -108,9 +108,11 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, flo
 	_mutex.lock()
 	_space = PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
 			tabx.x, tabx.y, tabx.z, tabx.w])
-	_tab = RenderingServer.texture_get_rd_texture(tab.get_rid())
+	var t := RenderingServer.texture_get_rd_texture(tab.get_rid())
+	if t != _tab:
+		_tab = t
+		_sets.clear()
 	_floor = floor_
-	_sets.clear()
 	_mutex.unlock()
 
 
