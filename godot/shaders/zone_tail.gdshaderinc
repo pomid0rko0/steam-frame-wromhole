@@ -39,6 +39,7 @@
 const float TAIL_PI2 = 6.28318530717959;
 const int TAIL_COPIES = 4;        // copies tried a body and stretch (from the first that can be met)
 const int TAIL_STEPS = 12;        // Newton's rounds into a body
+const int TAIL_HALVE = 12;        // halvings back to the way in, a step past it
 const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
 const float TAIL_TOL_FILLET = 1e-5;
 const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
@@ -200,45 +201,70 @@ void tail_parts(TailBody q, vec4 P, vec4 dP, out vec4 g, out vec4 dg) {
 	}
 }
 
+// how far the ray's point at x along copy n is out of the body (> 0 out, its parts' most), and the
+// Newton step that takes each part it is out of to its way in, the furthest (a part it leaves: -1).
+// Along the copy by x: on the cylinder its angle off psi_c (there l = lc + lam x, the point a closed
+// form: x keeps its digits however fast the ray winds), on the far fillet y (the angle base + the
+// fillet's sweep, base: at1's psi less 2 pi n).
+vec3 tail_out(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float x, float tol) {
+	vec4 P, dP;
+	if (fillet) {
+		tail_point(z, x, base + tail_fillet(z, x).x, tail_rate(z, x).x, P, dP);
+	} else {
+		vec2 sc = geo_sincos(psi_c + x);
+		P = vec4(g_prof.x * (sc.y * z.en + sc.x * z.t), lc + lam * x);
+		dP = vec4(g_prof.x * (sc.y * z.t - sc.x * z.en), lam);
+	}
+	vec4 g, dg;
+	tail_parts(q, P, dP, g, dg);
+	float worst = -1e30, step = 0.0;
+	bool leaves = false;
+	for (int k = 0; k < 4; k++) {
+		worst = max(worst, g[k]);
+		if (g[k] <= tol) continue;
+		if (dg[k] >= 0.0) leaves = true;
+		else step = max(step, -g[k] / dg[k]);
+	}
+	return vec3(worst, leaves ? -1.0 : step, length(dP));
+}
+
 // From xa (where the ray is out of the body, its angle within dmax of the copy's) to xb: where it
 // goes in (true), by Newton's steps on each part it is out of, the furthest taken; false if it
-// leaves a part (or never reaches one) before it is in all. Along the copy by x: on the cylinder
-// its angle off psi_c (there l = lc + lam x, the point a closed form: x keeps its digits however
-// fast the ray winds), on the far fillet y (the angle base + the fillet's sweep, base: at1's psi
-// less 2 pi n). Done within TAIL_TOL of the body, or where a step moves the point by less: on the
-// fillet the sweep's table (its filter's weights in 256ths) leaves the point that much uncertain.
+// leaves a part (or never reaches one) before it is in all. A part's step from outside never passes
+// its own way in where the part bends away from the ray, but a cube's slab can bend toward it along
+// the helix and the step overshoot into the body: the way in is then halved back between the last
+// point out of it and the first in (TAIL_HALVE). Done within TAIL_TOL of the body, or where a step
+// moves the point by less: on the fillet the sweep's table (its filter's weights in 256ths) leaves
+// the point that much uncertain.
 bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
 	x = xa;
 	float near = fillet ? TAIL_TOL_FILLET : TAIL_TOL;
 	float tol = q.cube ? near : 2.0 * near * q.size;
+	float xo = xa;          // the last point out of the body
+	bool in_ = false;
 	for (int i = 0; i < TAIL_STEPS; i++) {
-		vec4 P, dP;
-		if (fillet) {
-			tail_point(z, x, base + tail_fillet(z, x).x, tail_rate(z, x).x, P, dP);
-		} else {
-			vec2 sc = geo_sincos(psi_c + x);
-			P = vec4(g_prof.x * (sc.y * z.en + sc.x * z.t), lc + lam * x);
-			dP = vec4(g_prof.x * (sc.y * z.t - sc.x * z.en), lam);
+		vec3 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
+		if (o.x <= tol) {
+			// in at the window's start: it went in before (the meshes' images, or a copy before)
+			if (i == 0) return false;
+			in_ = true;
+			break;
 		}
-		vec4 g, dg;
-		tail_parts(q, P, dP, g, dg);
-		float step = 0.0;
-		bool in_ = true;
-		for (int k = 0; k < 4; k++) {
-			if (g[k] <= tol) continue;
-			in_ = false;
-			if (dg[k] >= 0.0) return false;
-			step = max(step, -g[k] / dg[k]);
-		}
-		// in at the window's start: it went in before (the meshes' images, or a copy before)
-		if (in_) return i > 0;
-		float xn = x + step;
+		if (o.y < 0.0) return false;
+		xo = x;
+		float xn = x + o.y;
 		if (!(xn <= xb)) return false;
-		bool done = xn == x || step * length(dP) < near;
+		bool done = xn == x || o.y * o.z < near;
 		x = xn;
 		if (done) return true;
 	}
-	return false;
+	if (!in_) return false;
+	for (int i = 0; i < TAIL_HALVE; i++) {
+		float m = 0.5 * (xo + x);
+		if (m == xo || m == x) break;
+		if (tail_out(z, q, fillet, lc, lam, psi_c, base, m, tol).x <= tol) x = m; else xo = m;
+	}
+	return true;
 }
 
 // where copy n passes the body's angle psi_c on the cylinder (y)
