@@ -2,8 +2,8 @@
 traces itself, independently of the shaders' method: the eye moved from the head along a geodesic
 and its frame carried along (RK4), each pixel's ray integrated as a geodesic of the space in 3D
 (RK4, the equations of docs/geometry.md, «Движение»; steps of STEP and STEP_CYL in and near the
-curved zone, longer out in the flat universes; a step into the throat's cylinder ends at its end,
-where r's curvature jumps), however many times it goes round the throat, up to RAY_MAX. In the throat's cylinder the space is a line times a sphere of radius rho0, and a geodesic
+curved zone, longer out in the flat universes), however many times it goes round the throat, up to
+RAY_MAX. In the throat's cylinder the space is a line times a sphere of radius rho0, and a geodesic
 is uniform along l and along a great circle of the sphere: there a ray goes by that closed form,
 in steps of STEP_CYL where it may meet a body (within the body's slab of l, and of the angle round
 the throat the body spans) and in one jump to the next such place or the cylinder's end elsewhere,
@@ -293,12 +293,6 @@ def trace(l0, n0, D4, smax=RAY_MAX, bodies=(1, 2)):
         r = r_of(l[idx])
         al = np.abs(l[idx])
         hs = np.where(al < L + 0.5, np.where(al < Lc - 0.1, STEP_CYL, STEP), np.clip(0.1 * (r - Rout), STEP, STEP_MAX))
-        # a step that would go into the cylinder ends where it does: across its end r's curvature
-        # jumps (0 on it, 1 / R on the fillet), and RK4 over that jump strays by a hair, which round
-        # the photon sphere many turns on is a whole turn
-        sv = np.abs(vl[idx])
-        into = (al > Lc + 1e-9) & (np.sign(l[idx]) * vl[idx] < 0) & ((al - Lc) < hs * sv)
-        hs = np.where(into, (al - Lc) / np.maximum(sv, 1e-300), hs)
         st = rk4([l[idx], n[idx], vl[idx], v[idx]], hs)
         # in the cylinder: by the closed form, a step where a body may be met, else a jump to the
         # next such place (just short of it) or the cylinder's end
