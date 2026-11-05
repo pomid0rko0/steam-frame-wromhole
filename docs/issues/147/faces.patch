@@ -1,0 +1,21 @@
+diff --git a/godot/shaders/body.gdshaderinc b/godot/shaders/body.gdshaderinc
+index 0a59a9e..0b4229d 100644
+--- a/godot/shaders/body.gdshaderinc
++++ b/godot/shaders/body.gdshaderinc
+@@ -333,6 +333,16 @@ void fragment() {
+ 	float e = look_box_edge(v_box);
+ 	float fw = max(fwidth(e), 1e-5);
+ 	col *= mix(0.45, 1.0, clamp((e - 0.04) / fw + 0.5, 0.0, 1.0));
++#ifdef ZONE
++	// #147: each face of a cube in the zone flat in its own pure colour (by the largest |v_box|, as
++	// the lighting picks the face): +x red, -x green, +y blue, -y yellow, +z cyan, -z magenta
++	if (max(max(v_col.r, v_col.g), v_col.b) <= 1.0) {
++		int f = ab.x >= ab.y && ab.x >= ab.z ? 0 : (ab.y >= ab.z ? 1 : 2);
++		bool neg = (f == 0 ? v_box.x : (f == 1 ? v_box.y : v_box.z)) < 0.0;
++		col = f == 0 ? (neg ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)) : (f == 1 ? (neg ? vec3(1.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0))
++				: (neg ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0)));
++	}
++#endif
+ #else
+ 	vec4 n = normalize(v_n);
+ 	float nl = dot(n, normalize(v_sun));
