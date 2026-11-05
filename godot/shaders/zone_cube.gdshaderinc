@@ -448,7 +448,7 @@ float zc_margin(ZCube q, vec2 pa, vec2 pb, int face, vec3 t) {
 		float g = dot(zone_point(p.x, p.y, q.en, t) - q.C, Ef) - goal;
 		vec2 gr = vec2(dot(zone_rate(p.x, p.y, q.en, t, 1.0, 0.0), Ef), dot(zone_rate(p.x, p.y, q.en, t, 0.0, 1.0 / rc), Ef));
 		float gg = dot(gr, gr);
-		vec2 step = abs(g) > ZC_ON && gg > 1e-18 ? (g / gg) * gr : vec2(0.0);
+		vec2 step = abs(g) > ZC_ON && gg > 1e-12 ? (g / gg) * gr : vec2(0.0);
 		p -= vec2(step.x, step.y / rc);
 	}
 	vec4 X = zone_point(p.x, p.y, q.en, t) - q.C;

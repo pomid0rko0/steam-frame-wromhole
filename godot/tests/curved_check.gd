@@ -50,12 +50,12 @@ const WORLD_CUBES := [[-3.0, Vector3(0.3, 1.0, 0.2), 0.3, 0.5], [7.5, Vector3(-1
 const AXIS_BALL := [1.1, 0.1, 0.0]
 const AXIS_CUBE := [0.7, 0.12, 0.4]
 # and next to one eye's line through the throat's centre (its axis: there the space's curve takes a
-# cube's edge back round the axis, and a section cuts it twice), and with a corner on it or a hair
-# off it (issue #147's cubes: a section of two parts, the mesh's axis turned off the corner):
-# [the eye (0 left, 1 right), m toward the centre from the eye, half size, the cube's edge across the
-# axis (0) or its corner (1) toward it, how far from the axis (negative: the axis through the cube)]
-const NEAR_AXIS_CUBES := [[0, 1.7, 0.2, 0, 0.003], [1, 2.4, 0.15, 1, -0.003], [0, 2.6, 0.2, 1, 0.0],
-		[1, 3.0, 0.2, 1, 0.0003]]
+# cube's edge back round the axis, and a section cuts it twice), and with a corner on it (as issue
+# #147's: a section of two parts, the mesh's axis turned off the corner): [the eye (0 left, 1 right),
+# m toward the centre from the eye, half size, the cube's edge across the axis (0) or its corner (1)
+# toward it, how far from the axis (negative: the axis through the cube)]. The scene's cubes are
+# Renderer.MAX_CUBES, all it draws
+const NEAR_AXIS_CUBES := [[0, 1.7, 0.2, 0, 0.003], [1, 2.4, 0.15, 1, -0.003], [0, 2.6, 0.2, 1, 0.0]]
 
 var main: Main
 var hmd
@@ -161,6 +161,9 @@ func _bodies() -> void:
 			axes.append(sp.embed_vector(c[0], n, Vector4(0.0, ax.x, ax.y, ax.z)).normalized())
 		cpos.append(C)
 		ccol.append(Vector4(0.0, 4.0, 0.0, c[2]))
+	# the renderer draws this many of each kind and leaves out the rest, which the traced rays meet
+	U.check("the scene's bodies, all drawn", pos.size() <= Renderer.MAX_BALLS and cpos.size() <= Renderer.MAX_CUBES,
+			"%d balls (Renderer.MAX_BALLS %d), %d cubes (MAX_CUBES %d)" % [pos.size(), Renderer.MAX_BALLS, cpos.size(), Renderer.MAX_CUBES])
 	main.toys.enabled = false
 	main.renderer.set_objects(pos, col, cpos, axes, ccol)
 	_objects = [pos, col, cpos, axes, ccol]
