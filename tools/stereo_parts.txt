@@ -2,13 +2,13 @@
 # Shared out by each part's cost as tools/test_stereo.sh's own timings give it (its last lines: a
 # part's renders' seconds and its traces'), so that every machine ends at about the same time: the
 # first three run theirs after other checks (ci.yml: the builds, the Godot tests, the headset's
-# compiler) and so take a few renders; the five longest curved places, in and by the throat, are
-# each on a machine of its own with a shorter one, their eyes' traces then four processes on four
-# cores. Every part exactly once (the test checks).
+# compiler) and so take a few renders and short traces; the longest curved places' traces (crv11,
+# on a long throat, by far) each on a machine of its own with shorter ones, their eyes' traces
+# then four processes on four cores. Every part exactly once (the test checks).
 desktop headset check4 crv10
-crf0 check5 gravity1 crv11
+crf0 check5 gravity1 crv4
 gravity2 gravity3 crv9
-crv4 crv7 check0
+crv11 crv7 check0
 crv5 crf6 check1
 crv3 crv1 check2
 crv2 crv0 check3
