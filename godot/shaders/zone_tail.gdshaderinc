@@ -413,6 +413,7 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 	// the cylinder: the copies whose l at psi_c is within the slab, a run of whole numbers (l moves by
 	// 2 pi lambda a copy); a cube's narrowed to its box's l at psi_c where it has one (its slabs
 	// across l at that angle)
+#ifndef TAIL_NO_SINGLE
 	if (sl.x <= sl.y && z.cyl.x > 0.0 && n_hi - n_lo < 0.5) {
 		// a strip's copy: only it (its window: tail_copy)
 		vec3 at;
@@ -422,7 +423,9 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 			psi = at.z;
 			return true;
 		}
-	} else if (sl.x <= sl.y && z.cyl.x > 0.0) {
+	} else
+#endif
+	if (sl.x <= sl.y && z.cyl.x > 0.0) {
 		float lam = z.dl / z.cyl.x;       // dl / dpsi
 		float D0 = tail_l(z, tail_copy_y(z, psi_c, 0.0)) - q.C.w;
 		float lo = tail_l(z, sl.x) - q.C.w, hi = tail_l(z, sl.y) - q.C.w;

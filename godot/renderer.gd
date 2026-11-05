@@ -42,6 +42,11 @@ const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
+# the tail's shader (tail_kind): this build's first, then those the speed check times it against
+# (bench.gd's VARIANTS): as before its strips, its eye from the vertices, a strip's copy searched as the
+# band's are
+const TAIL_SHADERS := [ZONE_TAIL_SHADER, preload("res://shaders/zone_tail_before.gdshader"),
+	preload("res://shaders/zone_tail_flat_eye.gdshader"), preload("res://shaders/zone_tail_one_search.gdshader")]
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
 # a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
 # rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
@@ -109,7 +114,7 @@ var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new
 var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
 var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
-var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader)
+var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader; tail_kind's)
 var tail: MultiMeshInstance3D   # an instance per body slot and side (zone_tail.gdshader)
 var statics: Array[MeshInstance3D] = []
 var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
@@ -259,6 +264,24 @@ var tail_strips := true:
 	set(v):
 		tail_strips = v
 		tail_mat.set_shader_parameter("tail_strips_on", v)
+# the tail's shader, TAIL_SHADERS' (the speed check's), its material taking every uniform the one
+# before had: tail_mat is the one drawn
+var tail_kind := 0:
+	set(v):
+		if v == tail_kind:
+			return
+		tail_kind = v
+		var m := ShaderMaterial.new()
+		m.shader = TAIL_SHADERS[v]
+		for u in m.shader.get_shader_uniform_list():
+			var x: Variant = tail_mat.get_shader_parameter(u.name)
+			if x != null:
+				m.set_shader_parameter(u.name, x)
+		if v == 1:
+			m.set_shader_parameter("tail_per", TAIL_PER)
+		tail_mat = m
+		if tail:
+			tail.material_override = m
 # the tail drawn where it is on; the speed check takes it away to time it (bench.gd's VARIANTS)
 var tail_shown := true:
 	set(v):

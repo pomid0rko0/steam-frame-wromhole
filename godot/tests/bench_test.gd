@@ -1,8 +1,9 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
 ## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
-## cube before the eyes drawn in its own), logs a line per place, and gives back the foveation, the
-## cube and where the viewer stood. The menu has its row. In a small window: nothing here looks at
+## cube before the eyes drawn in its own; the long throat's ways at its places only), the toys at their
+## start throughout, logs a line per place, and gives back the foveation, the cube, the tail's
+## shader, the toys and where the viewer stood. The menu has its row. In a small window: nothing here looks at
 ## the picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
 ##   godot --path . --resolution 160x90 -s res://tests/bench_test.gd
 
@@ -11,6 +12,7 @@ const U := preload("res://tests/util.gd")
 var main: Main
 var frames := 0
 var pose_before: Array
+var toys_before: Array          # the toys' balls and cubes before (the check puts them at their start)
 var started := false
 
 
@@ -52,6 +54,9 @@ func _process(_d: float) -> bool:
 		check("the menu has the speed check's row", has_row)
 		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
+		# a ball let go in the throat, as the demo's drop does: the check takes it away while it runs
+		main.toys.drop()
+		toys_before = main.toys.world.balls.duplicate() + main.toys.world.cubes.duplicate()
 		b.warm = 0.1
 		b.time = 0.2
 		b.start()
@@ -77,8 +82,15 @@ func _process(_d: float) -> bool:
 			if b.throat != v.throat or (b.throat and main.renderer.zone_count.y < 1):
 				check("the segment's ball and cube in the throat", false, b.plan[b.step].y)
 				started = false
-			if main.renderer.tail_shown != v.tail or main.renderer.tail_strips != v.strips:
-				check("the segment's tail and its strips", false, b.plan[b.step].y)
+			if main.renderer.tail_shown != v.tail or main.renderer.tail_strips != v.strips or main.renderer.tail_kind != v.shader \
+					or main.renderer.tail_mat.shader != Renderer.TAIL_SHADERS[v.shader] or main.renderer.tail.material_override != main.renderer.tail_mat:
+				check("the segment's tail, its strips and shader", false, b.plan[b.step].y)
+				started = false
+			if v.long and not b._long(place):
+				check("the long throat's ways at its places only", false, b.plan[b.step].y)
+				started = false
+			if main.toys.world.balls.size() != main.toys.BALLS_A.size() + 1 or main.toys.drop_in >= 0.0 or main.toys.launch_in >= 0.0:
+				check("the toys at their start, without the throw and the drop", false, main.toys.world.balls.size())
 				started = false
 			if b.hands != v.hands:
 				check("the segment's hands", false, b.plan[b.step].y)
@@ -89,9 +101,10 @@ func _process(_d: float) -> bool:
 		if not b.running:
 			check("finished", true, "%d frames" % frames)
 			var all_timed := true
-			for r in b.results:
-				for v in r:
-					all_timed = all_timed and v.size() == (2 if b.variants.size() > 1 else 1)
+			for i in b.results.size():
+				for k in b.variants.size():
+					var want := 0 if b.variants[k].long and not b._long(b.PLACES[i]) else (2 if b.variants.size() > 1 else 1)
+					all_timed = all_timed and b.results[i][k].size() == want
 			check("every segment timed", all_timed, "%d variants" % b.variants.size())
 			check("each way of VARIANTS", b.variants.size() == b.VARIANTS.size())
 			var p: Array = main.get_pose()
@@ -100,10 +113,14 @@ func _process(_d: float) -> bool:
 			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
 			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
-			check("the tail drawn again, with its strips, and the hands", main.renderer.tail_shown and main.renderer.tail_strips and b.hands)
+			check("the tail drawn again, with its strips and this build's shader, and the hands", main.renderer.tail_shown
+					and main.renderer.tail_strips and main.renderer.tail_kind == 0 and main.renderer.tail_mat.shader == Renderer.ZONE_TAIL_SHADER
+					and main.renderer.tail.material_override == main.renderer.tail_mat and b.hands)
+			var toys_after: Array = main.toys.world.balls.duplicate() + main.toys.world.cubes.duplicate()
+			check("the toys back as they were", toys_after == toys_before, "%d of %d" % [toys_after.size(), toys_before.size()])
 			check("the menu shows the foveation's result, the tail's and the hands'", main.menu.bench_text.contains("фовеация")
 					and main.menu.bench_text.contains("хвост") and main.menu.bench_text.contains("полосок")
-					and main.menu.bench_text.contains("мячи рук"), main.menu.bench_text)
+					and main.menu.bench_text.contains("до полосок") and main.menu.bench_text.contains("мячи рук"), main.menu.bench_text)
 			U.finish(self)
 			return true
 	if Time.get_ticks_msec() > 600_000:
