@@ -25,7 +25,7 @@ func _off_place(where: Variant) -> float:
 	var v := main.viewer
 	if where is float and not is_inf(where):
 		var hp := v.head(main.camera.transform.origin.y)
-		return 1e9 if v.standing else (sp.embed(hp[0], hp[1]) - sp.embed(where, Vector3(1.0, 0.0, 0.0))).length()
+		return 1e9 if v.standing else (sp.embed(hp[0], hp[1]) - sp.embed(main.bench._axis_l(where), Vector3(1.0, 0.0, 0.0))).length()
 	var at: Vector3 = Vector3(main.START_POS.x, main.START_POS.y, 1.0) if where is float else where
 	var p := sp.point_from_chart(at.z, Vector3(at.x, at.y, 0.0))
 	return 1e9 if not v.standing else (sp.embed(v.l, v.n) - sp.embed(p[0], p[1])).length()
@@ -66,9 +66,16 @@ func _process(_d: float) -> bool:
 			if miss > 1e-3:
 				check("at the place being timed", false, "%s: %.4f m off" % [b._name(place[0]), miss])
 				started = false
+			var cyl: float = place[3] if place.size() > 3 else b.saved_length
+			if not is_equal_approx(2.0 * main.space.Lc, cyl):
+				check("the place's throat", false, "%.2f m, not %.2f" % [2.0 * main.space.Lc, cyl])
+				started = false
 			var v := b.variants[b.plan[b.step].y]
 			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1):
 				check("the segment's cube before the eyes", false, b.plan[b.step].y)
+				started = false
+			if b.throat != v.throat or (b.throat and main.renderer.zone_count.y < 1):
+				check("the segment's ball and cube in the throat", false, b.plan[b.step].y)
 				started = false
 			if main.foveation.level != v.foveation or main.foveation.enabled != (v.foveation > 0):
 				check("the segment's foveation", false, "%d %s" % [main.foveation.level, main.foveation.enabled])
@@ -85,6 +92,7 @@ func _process(_d: float) -> bool:
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
+			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the menu shows the foveation's result", main.menu.bench_text.contains("фовеация"), main.menu.bench_text)
 			U.finish(self)

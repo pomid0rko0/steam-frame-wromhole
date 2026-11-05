@@ -17,7 +17,9 @@ extends Node
 ## and the frame is timed on the GPU (the median frame of each segment, and of each of its parts:
 ## FrameRate.PARTS), this build's renderer each
 ## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
-## the eyes (NEAR_CUBE: a body near the eyes with the world round it), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
+## the eyes (NEAR_CUBE: a body near the eyes with the world round it), and with a ball and a cube
+## in the throat's cylinder (THROAT_BODIES: their images past the meshes', the tail, cost pixels
+## per body: zone_tail.gdshader), in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
@@ -44,7 +46,8 @@ const START := INF
 const UNDER_A := Vector3(2.5, 0.0, 1.0)     # on A's floor under the mouth, the head just below the curved zone
 const UNDER_A_IN := Vector3(0.5, 0.0, 1.0)  # right under the throat's centre: the head in the curved zone
 const UNDER_B := Vector3(-2.5, 0.0, -1.0)   # on B's floor under its mouth
-const PLACES := [   # the comparison's poses: [where, degrees to the right, degrees up]
+const LONG := 80.0              # m: a long throat's cylinder (the menu's longest)
+const PLACES := [   # the comparison's poses: [where, degrees to the right, degrees up, and the throat's cylinder's length if not the menu's]
 	[START, 0.0, 0.0],      # the mouth over the floor ahead
 	[UNDER_A, 0.0, 60.0],   # looking up into the mouth
 	[UNDER_A_IN, 0.0, 80.0],
@@ -59,6 +62,9 @@ const PLACES := [   # the comparison's poses: [where, degrees to the right, degr
 	[-5.0, 180.0, 0.0],     # world B, at the edge, facing the throat (boxes where A has pillars)
 	[-6.2, 180.0, 0.0],     # world B, just outside the curved zone, facing the throat
 	[UNDER_B, 0.0, 60.0],   # on B's floor, looking up into its mouth
+	[0.0, 90.0, 0.0, LONG],  # in the middle of a long throat, looking sideways round it
+	[0.0, 0.0, 0.0, LONG],   # and along it
+	[START, 0.0, 0.0, LONG], # the start, the long throat's mouth ahead
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
@@ -72,10 +78,16 @@ const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
 # the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
-# eyes]; the first is the reference the others are compared with
-const VARIANTS := [["plain", 0, false], ["foveation weak", 1, false], ["foveation medium", 2, false],
-	["foveation strong", 3, false], ["foveation stronger", 4, false], ["foveation strongest", 5, false],
-	["a cube at the eyes", 0, true]]
+# eyes, the bodies in the throat]; the first is the reference the others are compared with
+const VARIANTS := [["plain", 0, false, false], ["foveation weak", 1, false, false], ["foveation medium", 2, false, false],
+	["foveation strong", 3, false, false], ["foveation stronger", 4, false, false], ["foveation strongest", 5, false, false],
+	["a cube at the eyes", 0, true, false], ["a ball and a cube in the throat", 0, false, true]]
+# the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
+# round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
+# B's, both in view from inside the cylinder looking round it and from out at the mouth
+const THROAT_BALL := [0.45, 0.6, 0.3]
+const THROAT_CUBE := [-0.7, 1.4, 0.25]
+const THROAT_COLOR := Color(0.9, 0.4, 0.3)
 # the cube before the eyes: [m ahead of the head, half size]: 20 cm, its near face 30 cm away, as if
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
@@ -91,13 +103,20 @@ var running := false
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var variants: Array[Setup] = []   # this run's (start)
-# the cube before the eyes is drawn (near_cube); set, the toys go to the renderer again at once:
+# the cube before the eyes is drawn (extras); set, the toys go to the renderer again at once:
 # main drew them before this node's _process, and the frame a variant starts in must have its cube
 var near := false:
 	set(v):
 		near = v
 		if main and main.toys.enabled:
 			main.draw_toys()
+# the bodies in the throat are drawn (extras), likewise
+var throat := false:
+	set(v):
+		throat = v
+		if main and main.toys.enabled:
+			main.draw_toys()
+var saved_length := 0.0         # the throat's cylinder's length before (a place sets its own)
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
@@ -123,12 +142,44 @@ var preparing := 0              # variants left to run untimed before the first 
 var verdict := ""               # the comparison's line
 
 
-## The cube before the eyes while near (the comparison's variant, the tour's last rows): [centre,
-## two axes (R^4), (colour, half size)], or [] (main.draw_toys). hp: the head as main has it
-## ([l, n, frame]), basis: the head's in the play space.
-func near_cube(hp: Array, basis: Basis) -> Array:
-	if not near:
-		return []
+## What this check draws besides the toys (main.draw_toys, Toys.draw): {"balls": [[centre (R^4),
+## (colour, radius)]...], "cubes": [[centre, two axes (R^4), (colour, half size)]...]}: the cube
+## before the eyes while near (the comparison's variant, the tour's last rows), the ball and the cube
+## in the throat while throat. hp: the head as main has it ([l, n, frame]), basis: the head's in the
+## play space.
+func extras(hp: Array, basis: Basis) -> Dictionary:
+	var out := {"balls": [], "cubes": []}
+	if near:
+		out.cubes.append(_near_cube(hp, basis))
+	if throat:
+		var sp: WormholeSpace = main.space
+		var f: Array = hp[2]
+		var fwd := -basis.z
+		var T: Vector4 = fwd.x * f[0] + fwd.y * f[1] + fwd.z * f[2]
+		var n0: Vector3 = hp[1]
+		var t := Vector3(T.y, T.z, T.w)
+		t -= t.dot(n0) * n0
+		if t.length() < 1e-3:
+			t = (Vector3(0.0, 0.0, 1.0) if absf(n0.z) < 0.9 else Vector3(1.0, 0.0, 0.0)).cross(n0)
+		t = t.normalized()
+		var half := maxf(sp.Lc, 0.5)
+		for k in 2:
+			var d: Array = THROAT_BALL if k == 0 else THROAT_CUBE
+			var l: float = d[0] * half
+			var n: Vector3 = (cos(d[1]) * n0 + sin(d[1]) * t).normalized()
+			var C := sp.embed(l, n)
+			if k == 0:
+				out.balls.append([C, Vector4(THROAT_COLOR.r, THROAT_COLOR.g, THROAT_COLOR.b, d[2])])
+			else:
+				var a1 := n.cross(t).normalized()
+				var e1 := sp.embed_vector(l, n, Vector4(0.0, a1.x, a1.y, a1.z)).normalized()
+				var e2 := sp.embed_vector(l, n, Vector4(0.6, 0.8 * t.x, 0.8 * t.y, 0.8 * t.z)).normalized()
+				e2 = (e2 - e2.dot(e1) * e1).normalized()
+				out.cubes.append([C, e1, e2, Vector4(NEAR_COLOR.r, NEAR_COLOR.g, NEAR_COLOR.b, d[2])])
+	return out
+
+
+func _near_cube(hp: Array, basis: Basis) -> Array:
 	var f: Array = hp[2]
 	var fwd := -basis.z
 	var T: Vector4 = fwd.x * f[0] + fwd.y * f[1] + fwd.z * f[2]
@@ -163,6 +214,14 @@ func _make_tour() -> Array[Step]:
 		st.near = true
 		t.append(st)
 	return t
+
+
+## A place of PLACES: the throat its length (its own, or the one before the check), then the viewer.
+func _put_place(place: Array) -> void:
+	var cyl: float = place[3] if place.size() > 3 else saved_length
+	if not is_equal_approx(2.0 * main.space.Lc, cyl):
+		main.set_length(cyl)
+	_put(place[0], place[1], place[2])
 
 
 ## The viewer at a pose (where: PLACES' top), turned yaw degrees right, the view pitch degrees up
@@ -226,8 +285,9 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2]))
+		variants.append(Setup.new(f[0], f[1], f[2], f[3]))
 	saved_pose = main.get_pose()
+	saved_length = 2.0 * main.space.Lc
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
 	# back to this app's own setting where there is one, else to what the display ran at
@@ -321,13 +381,14 @@ func _process(delta: float) -> void:
 ## Run a variant untimed at the first place, so its pipelines are compiled before the timing.
 func _prepare() -> void:
 	phase_t = 0.0
-	_put(PLACES[0][0], PLACES[0][1], PLACES[0][2])
+	_put_place(PLACES[0])
 	_use(variants[variants.size() - preparing])
 
 
-## A variant's foveation and cube.
+## A variant's foveation, cube and bodies in the throat.
 func _use(v: Setup) -> void:
 	near = v.near
+	throat = v.throat
 	if main.foveation.level != v.foveation:
 		main.foveation.set_level(v.foveation)
 
@@ -362,7 +423,7 @@ func _clock() -> void:
 func _begin(i: int) -> void:
 	step = i
 	var place: Array = PLACES[plan[i].x]
-	_put(place[0], place[1], place[2])
+	_put_place(place)
 	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
@@ -398,8 +459,8 @@ func _end_segment() -> void:
 			s += " (%.3f)" % (_mean(r[v]) / _mean(r[0]))
 		parts.append(s)
 		segs.append(_list(r[v]))
-	print("bench: %s, %.0f deg right, %.0f deg up: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [_name(place[0]), place[1], place[2], ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
+	print("bench: %s, %.0f deg right, %.0f deg up, cylinder %.0f m: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
+			% [_name(place[0]), place[1], place[2], 2.0 * main.space.Lc, ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
 	# by part: each variant's mean over its segments of their medians, ms (FrameRate.PARTS)
 	var by := []
 	for v in variants.size():
@@ -424,7 +485,8 @@ func _compared() -> void:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
 	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс" % [_worst(0), _worst(variants.size() - 1)]]
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс"
+			% [_worst(0), _worst(variants.size() - 2), _worst(variants.size() - 1)]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -462,7 +524,7 @@ func _tour_step(i: int) -> void:
 	near = tour[i].near
 	tour_results.append(Tally.new())
 	if tour[i].recover:
-		_put(PLACES[0][0], PLACES[0][1], PLACES[0][2])     # recover at the start
+		_put_place(PLACES[0])     # recover at the start
 	_show("замер %.0f Гц: шаг %d из %d, глаза закрыты" % [main.rate.rate, i + 1, tour.size()])
 
 
@@ -603,6 +665,9 @@ static func _list(v: Array) -> String:
 ## As it runs: the foveation chosen in the menu, no cube.
 func _restore() -> void:
 	near = false
+	throat = false
+	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
+		main.set_length(saved_length)
 	main.foveation.set_level(menu.foveation)
 
 
@@ -628,11 +693,13 @@ class Setup:
 	var label: String
 	var foveation: int              # Foveation.set_level's level
 	var near: bool                  # the cube before the eyes
+	var throat: bool                # the ball and the cube in the throat
 
-	func _init(p_label: String, p_foveation: int, p_near: bool) -> void:
+	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool) -> void:
 		label = p_label
 		foveation = p_foveation
 		near = p_near
+		throat = p_throat
 
 
 ## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees
