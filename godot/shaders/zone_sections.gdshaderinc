@@ -174,8 +174,7 @@ void main() {
 			sa[j] = v.xy;
 			sb[j] = v.zw;
 		}
-		float mg = tail_margins(half_w).y;
-		imageStore(cull_img, ivec3(i0 + 4, s, int(id.z)), vec4(float(tail_apart(sa, mg)), float(tail_apart(sb, mg)), 0.0, 0.0));
+		imageStore(cull_img, ivec3(i0 + 4, s, int(id.z)), vec4(float(tail_apart(sa, half_w)), float(tail_apart(sb, half_w)), 0.0, 0.0));
 	}
 	// the nodes the images IMAGES draws need: image j turns by pi j to pi (j + 1), and a vertex takes
 	// the nodes up to the third past its own

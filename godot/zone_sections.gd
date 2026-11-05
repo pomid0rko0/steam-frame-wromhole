@@ -40,7 +40,7 @@ const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdsh
 const PLAN_W := 160
 const COL_W := 8                    # col_img's texels a column (zone_cube.gdshaderinc's ZC_ITEMS / 2)
 const CUBE_PASSES := ["cube_edges", "cube_pieces", "cube_spans", "cube_columns"]
-const TAIL_STRIPS := 24             # the tail's strips a side at most (zone_tail.gdshaderinc's TAIL_STRIPS)
+const TAIL_STRIPS := 8              # the tail's strips a side at most (zone_tail.gdshaderinc's TAIL_STRIPS)
 const TAIL_TEXELS := 5 + TAIL_STRIPS + 1   # cull_tex's texels after a body's images': the tail's view of it (IMAGES)
 
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials

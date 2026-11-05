@@ -296,8 +296,7 @@ void main() {
 			sa[k] = v.xy;
 			sb[k] = v.zw;
 		}
-		float mg = tail_margins(half_w).y;
-		outp[O + 2] = vec4(half_w, float(tail_apart(sa, mg)), float(tail_apart(sb, mg)), 0.0);
+		outp[O + 2] = vec4(half_w, float(tail_apart(sa, half_w)), float(tail_apart(sb, half_w)), 0.0);
 	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
 		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);

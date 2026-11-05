@@ -54,8 +54,8 @@ const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken 
 const float TAIL_EPS = 1.2e-7;    // float32's unit in the last place over the number (2^-23)
 const float TAIL_REACH = 1.02;    // a ball's bounding ball over its radius (tail_body)
 const int TAIL_OVER = 4;          // looks into a step that may have gone over a cube (tail_enter)
-const int TAIL_STRIPS = 24;       // strips a side at most before the band (tail_strip; ZoneSections.TAIL_STRIPS)
-const float TAIL_SEGMENTS = 64.0; // quads across a sector of the view (Renderer.TAIL_SEGMENTS: zone_tail.gdshader)
+const int TAIL_STRIPS = 8;        // strips a side at most before the band (tail_strip; ZoneSections.TAIL_STRIPS)
+const float TAIL_SEGMENTS = 32.0; // quads across a sector of the view (Renderer.TAIL_SEGMENTS: zone_tail.gdshader)
 
 struct TailRay {
 	float el;        // the eye's l
@@ -724,20 +724,35 @@ TailStrips tail_strips(float el, vec3 eye, vec3 en, TailBody q, float half_w, fl
 }
 
 // The margins zone_tail.gdshader draws a sector of half width half_w with: (round the axis, off the
-// inward radial). Its edges off the radial are chords of circles round it, inside them by up to an
-// eighth of the step between its vertices squared; round the axis the sector a hair wider still.
+// inward radial where the body has no strips). Its edges off the radial are chords of circles round
+// it; round the axis the sector a hair wider still.
 vec2 tail_margins(float half_w) {
 	float step = 2.0 * min(half_w, GEO_PI) / TAIL_SEGMENTS;
 	float sag = 0.125 * step * step;
-	return vec2(2e-3 + sag, 5e-4 + sag);
+	return vec2(2e-3 + sag, 2e-3 + sag);
+}
+
+// The margin past a strip's edge at angle chi off the radial: half a pixel, and as far as the chords
+// between the edge's vertices (a step apart round the axis, as zone_tail.gdshader puts them) dip off
+// its circle away from the equator (chi pi/2) at their middle: tan chi' = tan chi cos(step / 2), so
+// by up to sin(2 chi) sin^2(step / 4).
+float tail_margin(float chi, float half_w) {
+	float step = 2.0 * min(min(half_w, GEO_PI) + tail_margins(half_w).x, GEO_PI) / TAIL_SEGMENTS;
+	float h = geo_sincos(0.25 * step).x;
+	return 5e-4 + abs(geo_sincos(2.0 * chi).x) * h * h * 1.05;
 }
 
 // How many of a side's strips are drawn (st: strip k's least and greatest angle at st[k], k to
-// TAIL_STRIPS): those up to the first that comes within three margins of the next (each drawn a
-// margin wider each way, and an inner edge's chords dip past it by less than one), the band from it.
-int tail_apart(vec2 st[TAIL_STRIPS + 1], float mg) {
+// TAIL_STRIPS, of a sector of half width half_w): those up to the first that comes within the
+// margins of the next, the band from it.
+int tail_apart(vec2 st[TAIL_STRIPS + 1], float half_w) {
 	int K = 0;
-	while (K < TAIL_STRIPS && max(st[K].x, st[K + 1].x) > min(st[K].y, st[K + 1].y) + 3.0 * mg) K++;
+	while (K < TAIL_STRIPS) {
+		float gap = max(st[K].x, st[K + 1].x) - min(st[K].y, st[K + 1].y);
+		float mg = tail_margin(st[K].x, half_w) + tail_margin(st[K].y, half_w) + tail_margin(st[K + 1].x, half_w) + tail_margin(st[K + 1].y, half_w);
+		if (gap <= mg) break;
+		K++;
+	}
 	return K;
 }
 

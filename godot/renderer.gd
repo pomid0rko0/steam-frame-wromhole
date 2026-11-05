@@ -52,7 +52,7 @@ const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
-const TAIL_SEGMENTS := 64       # the tail's sectors of the view (zone_tail.gdshader): quads across one (zone_tail.gdshaderinc's)
+const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one (zone_tail.gdshaderinc's)
 const TAIL_PER := ZoneSections.TAIL_STRIPS + 1   # its instances a body slot and side: the strips and the band
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
@@ -190,8 +190,8 @@ func _ready() -> void:
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
-	# under the camera too: sectors of each eye's view round its radial direction, per body slot and
-	# side its strips and band (zone_tail.gdshader); those of the slots in use drawn (set_objects)
+	# under the camera too: sectors of each eye's view round its radial direction, per body and side
+	# its strips and band (zone_tail.gdshader); those of the bodies in the zone drawn (set_objects)
 	tail = _multimesh(_zone_mesh(TAIL_SEGMENTS, 1), tail_mat, 2 * (MAX_BALLS + MAX_CUBES) * TAIL_PER)
 	for i in tail.multimesh.instance_count:
 		tail.multimesh.set_instance_transform(i, Transform3D.IDENTITY)
@@ -447,9 +447,9 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	tail_mat.set_shader_parameter("tail_rows", zone_rows)
 	tail_mat.set_shader_parameter("tail_col", zone_cols)
 	tail_mat.set_shader_parameter("tail_count", Vector2i(inz[0], inz[1]))
-	# the slots up to the last in use (balls' first, cubes' from MAX_BALLS); while warming, all
+	# the zone's bodies' (its balls', then its cubes'); while warming, all
 	if tail and _warm == 0:
-		tail.multimesh.visible_instance_count = 2 * TAIL_PER * (MAX_BALLS + inz[1] if inz[1] > 0 else inz[0])
+		tail.multimesh.visible_instance_count = 2 * TAIL_PER * (inz[0] + inz[1])
 	_tail_on = inz[0] + inz[1] > 0 and space.Lc > 0.0
 	if tail:
 		_tail_visible()
