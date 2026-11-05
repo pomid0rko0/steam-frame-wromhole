@@ -10,9 +10,11 @@ extends SceneTree
 ##    share of its length; in the fillet, as far from the mouth; the room's axes as they were. A toy
 ##    in the cylinder goes with it.
 ## 4. A length set at run time draws what the app started with that length draws, pixel for pixel:
-##    the floor, the sky, the scene's objects and the gravity view's floor and field lines (built
-##    again off the main thread for the length), from the start. The app is started again with the
-##    length kept in the settings (Menu.saved_length) for the second picture.
+##    the floor, the sky, the scene's objects, the gravity view's floor and field lines (built again
+##    off the main thread for the length), and a ball and a cube in the throat's cylinder (_bodies:
+##    there from before the throat stretches; their meshes and their images' tail), from the start.
+##    The app is started again with the length kept in the settings (Menu.saved_length) for the
+##    second picture.
 
 const U := preload("res://tests/util.gd")
 const LONG := 40.0                        # m: a long throat's cylinder
@@ -64,6 +66,8 @@ func _process(_delta: float) -> bool:
 		1:
 			video_picture = root.get_texture().get_image()
 			before = [main.space.chart_position(main.viewer.l, main.viewer.n)]
+			# the bodies in the throat while it stretches
+			_bodies()
 			main.menu.set_open(true)
 			U.check("the menu has the throat's length", main.menu.select("length"), "")
 			busy = 0.0
@@ -79,6 +83,8 @@ func _process(_delta: float) -> bool:
 			if slid_frames > 0:
 				busy = maxf(busy, main.scripts_ms)
 			slid_frames += 1
+			# where they are on this frame's throat, as main sends its toys each frame
+			_bodies()
 			if 2.0 * main.space.Lc >= WormholeSpace.LENGTH_MAX or slid_frames > 2000:
 				var up := InputEventKey.new()
 				up.keycode = KEY_RIGHT
@@ -106,6 +112,7 @@ func _process(_delta: float) -> bool:
 			main.set_length(LONG)
 			main.menu._save()
 			_settle(main)
+			_bodies()
 			stage = 4
 			wait = 2
 		4:
@@ -124,6 +131,7 @@ func _process(_delta: float) -> bool:
 		6:
 			U.check("started with the kept length", is_equal_approx(2.0 * main.space.Lc, LONG), "%.3f m" % (2.0 * main.space.Lc))
 			_settle(main)
+			_bodies()
 			wait = 12
 			stage = 7
 		7:
@@ -131,10 +139,21 @@ func _process(_delta: float) -> bool:
 			var diff := _differ(img, picture)
 			U.check("the length set at run time draws what the app started with it draws", diff == 0,
 					"%d of %d pixels differ" % [diff, img.get_width() * img.get_height()])
+			var seen := _seen(img)
+			U.check("the ball and the cube in the throat are in the picture", seen.x > 20 and seen.y > 20,
+					"%d red pixels, %d green" % [seen.x, seen.y])
 			var other := _differ(img, video_picture)
 			U.check("and the video's throat draws another picture there (the check sees the length)",
 					other > img.get_width() * img.get_height() / 100, "%d pixels differ" % other)
+			picture = img
+			main.renderer.tail_shown = false
+			wait = 3
+			stage = 8
+		8:
+			var tail := _differ(picture, root.get_texture().get_image())
+			U.check("and the tail of their images draws some of it", tail > 0, "%d pixels without it differ" % tail)
 			# back to the video's for the next runs of the app on this machine
+			main.renderer.tail_shown = true
 			main.set_length(Main.LENGTH)
 			main.menu._save()
 			U.finish(self)
@@ -188,6 +207,36 @@ func _carried() -> void:
 	main.set_length(Main.LENGTH)
 	U.check("flying, the body (and a toy) stay where they were against their part of the throat, the room's axes as they were",
 			bad.is_empty(), ", ".join(bad))
+
+
+## A ball and a cube in the throat's cylinder, at the same shares of its length whatever it is, as
+## the renderer takes them (toys are off: main sends none of its own).
+func _bodies() -> void:
+	var sp := main.space
+	var bn := Vector3(0.75, 0.0, 0.66).normalized()
+	var pos := PackedVector4Array([sp.embed(0.35 * sp.Lc, bn)])
+	var col := PackedVector4Array([Vector4(4.0, 0.0, 0.0, 0.35)])
+	var cl := -0.45 * sp.Lc
+	var cn := Vector3(0.6, 0.5, 0.62).normalized()
+	var e1 := cn.cross(Vector3(0.0, 0.0, 1.0)).normalized()
+	var e2 := cn.cross(e1)
+	var axes := PackedVector4Array([sp.embed_vector(cl, cn, Vector4(0.0, e1.x, e1.y, e1.z)).normalized(),
+			sp.embed_vector(cl, cn, Vector4(0.0, e2.x, e2.y, e2.z)).normalized()])
+	main.renderer.set_objects(pos, col, PackedVector4Array([sp.embed(cl, cn)]), axes,
+			PackedVector4Array([Vector4(0.0, 4.0, 0.0, 0.3)]))
+
+
+## The picture's red and green pixels (the ball's and the cube's).
+static func _seen(img: Image) -> Vector2i:
+	var n := Vector2i.ZERO
+	for y in img.get_height():
+		for x in img.get_width():
+			var c := img.get_pixel(x, y)
+			if c.r - maxf(c.g, c.b) > 0.25:
+				n.x += 1
+			elif c.g - maxf(c.r, c.b) > 0.25:
+				n.y += 1
+	return n
 
 
 static func _differ(a: Image, b: Image) -> int:
