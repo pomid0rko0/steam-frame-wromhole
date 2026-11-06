@@ -23,7 +23,8 @@ extends Node
 ## per body: zone_tail.gdshader), and the same without the tail (what it costs: the difference) and
 ## with it as one band, without its strips, at foveation's strongest with two balls of a hand's size
 ## before the chest (HAND_BALLS: what the hands' balls cost); at the long throat's places only (LONG)
-## also with the bodies in the throat at foveation's strongest with the tail and without,
+## also with the bodies in the throat at foveation's strongest with the tail and without, and with
+## the gravity view's field lines at foveation's strongest (what they cost: Renderer.arrow_arrays),
 ## in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
@@ -73,6 +74,7 @@ const PLACES := [   # the comparison's poses: [where, degrees to the right, degr
 	[-0.5, 90.0, 0.0, LONG], # 5 m in from its mouth B, sideways: the throat's ball 55 m along, its tail across the view
 	[0.0, 0.0, 0.0, LONG],   # and along it
 	[START, 0.0, 0.0, LONG], # the start, the long throat's mouth ahead
+	[5.0, 0.0, 0.0, LONG],   # inside at its edge, facing the throat: the field lines through the mouth all round
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
@@ -89,8 +91,9 @@ const TILT_PERIOD := 2.0        # s: its tilts (roll)
 # the tail drawn with its strips, timed at every place): foveation (its level,
 # Foveation.set_level), near (the cube before the eyes), throat (the bodies in the throat), hands
 # (two balls of a hand's size before the chest: HAND_BALLS), tail (Renderer.tail_shown), strips
-# (Renderer.tail_strips: else one band from the first copy past the meshes'), long (at the long
-# throat's places only); the first is the reference the others are compared with
+# (Renderer.tail_strips: else one band from the first copy past the meshes'), lines (the gravity view
+# with the field lines, Renderer.GRAVITY_VIEWS' last; else the menu's), long (at the long throat's
+# places only); the first is the reference the others are compared with
 const VARIANTS := [{"label": "plain"},
 	{"label": "foveation weak", "foveation": 1},
 	{"label": "foveation medium", "foveation": 2},
@@ -103,7 +106,8 @@ const VARIANTS := [{"label": "plain"},
 	{"label": "the same without the tail", "throat": true, "tail": false},
 	{"label": "the same, the tail without strips", "throat": true, "strips": false},
 	{"label": "a ball and a cube in the throat, foveation strongest", "foveation": 5, "throat": true, "long": true},
-	{"label": "the same without the tail, foveation strongest", "foveation": 5, "throat": true, "tail": false, "long": true}]
+	{"label": "the same without the tail, foveation strongest", "foveation": 5, "throat": true, "tail": false, "long": true},
+	{"label": "the field lines, foveation strongest", "foveation": 5, "lines": true, "long": true}]
 # the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
 # round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
 # B's, both in view from inside the cylinder looking round it and from out at the mouth
@@ -148,6 +152,7 @@ var throat := false:
 		if main and main.toys.enabled:
 			main.draw_toys()
 var saved_length := 0.0         # the throat's cylinder's length before (a place sets its own)
+var saved_gravity := 0          # the gravity view before (the field lines' variant sets its own)
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
@@ -335,6 +340,7 @@ func start() -> void:
 		toys.launch_in = -1.0
 		toys.drop_in = -1.0
 	saved_length = 2.0 * main.space.Lc
+	saved_gravity = main.renderer.gravity_view
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
 	# back to this app's own setting where there is one, else to what the display ran at
@@ -454,6 +460,9 @@ func _use(v: Setup) -> void:
 	throat = v.throat
 	main.renderer.tail_shown = v.tail
 	main.renderer.tail_strips = v.strips
+	var view := Renderer.GRAVITY_VIEWS.size() - 1 if v.lines else saved_gravity
+	if main.renderer.gravity_view != view:
+		main.set_gravity_view(view)
 	if main.foveation.level != v.foveation:
 		main.foveation.set_level(v.foveation)
 
@@ -609,15 +618,22 @@ func _compared() -> void:
 		var f := variants[v]
 		if f.hands:
 			with_hands = v
-		if f.foveation == 5 and not f.near and not f.throat and not f.hands:
+		if f.foveation == 5 and not f.near and not f.throat and not f.hands and not f.lines:
 			fov5 = v
 	# the hands' balls: the most they add at foveation's strongest at a place
 	var hands_ms := 0.0
 	if with_hands >= 0 and fov5 >= 0:
 		for r in results:
 			hands_ms = maxf(hands_ms, _mean(r[with_hands]) - _mean(r[fov5]))
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс), мячи рук при сильнейшей фовеации — до %.1f мс"
-			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms, hands_ms]]
+	# the field lines: the most they add at foveation's strongest at a place (the long throat's)
+	var lines_ms := 0.0
+	for v in variants.size():
+		if variants[v].lines and fov5 >= 0:
+			for r in results:
+				if not r[v].is_empty():
+					lines_ms = maxf(lines_ms, _mean(r[v]) - _mean(r[fov5]))
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс), мячи рук при сильнейшей фовеации — до %.1f мс, силовые линии — до %.1f мс"
+			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms, hands_ms, lines_ms]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -808,6 +824,8 @@ func _restore() -> void:
 	throat = false
 	main.renderer.tail_shown = true
 	main.renderer.tail_strips = true
+	if main.renderer.gravity_view != saved_gravity:
+		main.set_gravity_view(saved_gravity)
 	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
 		main.set_length(saved_length)
 	main.foveation.set_level(menu.foveation)
@@ -849,6 +867,7 @@ class Setup:
 	var strips: bool                # its strips (Renderer.tail_strips)
 	var long: bool                  # timed at the long throat's places only
 	var hands: bool                 # the two balls of a hand's size before the chest (HAND_BALLS)
+	var lines: bool                 # the gravity view with the field lines
 
 	## From a VARIANTS entry (its top: what each key means), the rest as the first's.
 	func _init(d: Dictionary) -> void:
@@ -860,6 +879,7 @@ class Setup:
 		strips = d.get("strips", true)
 		long = d.get("long", false)
 		hands = d.get("hands", false)
+		lines = d.get("lines", false)
 
 
 ## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees

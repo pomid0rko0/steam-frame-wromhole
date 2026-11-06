@@ -42,8 +42,10 @@
 //     sheet (A +1, B -1), all in the flat sheets.
 //   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
 //   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
-//     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR; COLOR.a 1 (the arrow,
-//     over its outline of COLOR.a 0) a hair nearer the eye in depth, in the same place in the view.
+//     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR, but for their outline
+//     (arrow_rim): the pixels neither inside the coloured part (CUSTOM0's three numbers all at least
+//     0) nor inside the line's (UV2's two; Renderer._line); COLOR.a 1 (an arrow, coloured over its
+//     line) a hair nearer the eye in depth than 0 (a line), in the same place in the view.
 //   BEAM (beam.gdshader): a hand's pointing beam (Renderer.set_beam), a tube round a line of up to
 //     BEAM_POINTS points of R^4 (beam_p, beam_n of them), beam_r[i] in radius at point i; its mesh
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
@@ -99,6 +101,9 @@ uniform float beam_r[BEAM_POINTS];
 uniform int beam_n = 0;
 uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
+#ifdef ARROWS
+uniform vec3 arrow_rim : source_color = vec3(0.02);   // the outline's colour (Renderer.ARROW_RIM_COLOR)
+#endif
 
 #ifdef CUBE
 // each face axis's normal (the axis, tangent at the point, unit) against the sun, up and the
@@ -130,6 +135,10 @@ varying flat vec3 v_eye;     // the eye (R^4's xyz)
 #endif
 #ifdef TOY
 varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
+#endif
+#ifdef ARROWS
+varying vec3 v_inner;   // how far inside the coloured part (CUSTOM0), and inside its line's (UV2)
+varying vec2 v_line;
 #endif
 
 #ifdef ZONE
@@ -311,6 +320,8 @@ void vertex() {
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
 	v_col = COLOR.rgb;
+	v_inner = CUSTOM0.xyz;
+	v_line = UV2;
 #elif defined(BEAM)
 	vec4 Np = N;
 	v_col = beam_col;
@@ -373,7 +384,10 @@ void fragment() {
 	vec3 m = v_eye + t * d;
 	if (dot(m, m) < g_prof2.x * g_prof2.x) discard;
 #endif
-#if defined(ARROWS) || defined(BEAM)
+#ifdef ARROWS
+	bool inside = min(v_inner.x, min(v_inner.y, v_inner.z)) >= 0.0 || min(v_line.x, v_line.y) >= 0.0;
+	ALBEDO = inside ? v_col : arrow_rim;
+#elif defined(BEAM)
 	ALBEDO = v_col;
 #else
 #ifdef CUBE

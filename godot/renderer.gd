@@ -182,6 +182,7 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	tail_mat.set_shader_parameter("tail_images", ZONE_IMAGES)
 	tail_mat.set_shader_parameter("zone_cull", zone_sections.cull_tex)
 	arrow_mat.shader = ARROW_SHADER
+	arrow_mat.set_shader_parameter("arrow_rim", Vector3(ARROW_RIM_COLOR.r, ARROW_RIM_COLOR.g, ARROW_RIM_COLOR.b))
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
 
@@ -802,11 +803,12 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 ## LINE_* and ARROW_*), as mesh arrays (Mesh.ARRAY_*) of the space sp: nothing but sp is read, so
 ## they are built off the main thread when the throat's length changes (main.set_length). Vertices
 ## as points of the space: n in the vertex, l in UV.x (body.gdshaderinc, ARROWS); each line and arrow
-## twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1). Points of the surface n.x = 0 are
-## (l, beta), n = (0, cos beta, sin beta).
+## once with its outline (_line). Points of the surface n.x = 0 are (l, beta), n = (0, cos beta,
+## sin beta).
 static func arrow_arrays(sp: WormholeSpace) -> Array:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_custom_format(0, SurfaceTool.CUSTOM_RGBA_FLOAT)
 	var top := sp.Rout + LINE_TOP
 	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
@@ -817,15 +819,14 @@ static func arrow_arrays(sp: WormholeSpace) -> Array:
 			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
 			if pts.size() < 2:
 				continue
-			_line(sp, st, pts, true)
-			_line(sp, st, pts, false)
+			_line(sp, st, pts)
 	st.index()          # shared corners once (_scene_mesh)
 	return st.commit_to_arrays()
 
 
 static func _arrow_mesh(arr: Array) -> ArrayMesh:
 	var m := ArrayMesh.new()
-	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
 	return m
 
 
@@ -869,11 +870,16 @@ static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -
 
 
 ## A line through pts ([l, beta, g]) LINE_WIDTH to each side, with an arrow every ARROW_GAP along
-## it, in the colour of g where each point is; rim: its outline instead, ARROW_RIM wider all round.
-static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> void:
-	var grow := ARROW_RIM if rim else 0.0
-	var w := LINE_WIDTH + grow
-	# the strip: two vertices a point
+## it, in the colour of g where each point is (the strip's two vertices at a point shared by its
+## quads either side), and its dark outline ARROW_RIM wide all round: one mesh, the outline's outer
+## edge, each vertex with how far it is inside the coloured part (CUSTOM0: a strip's way in from its
+## two edges, LINE_WIDTH - x and LINE_WIDTH + x at x across it, and 1; an arrow's place in its
+## coloured triangle's barycentric coordinates; UV2: the way in from the line's edges, for an arrow
+## too, which is coloured over its line), so the outline is the pixels where none of them is all
+## positive (body.gdshaderinc, ARROWS), not a mesh of its own. An arrow (COLOR.a 1) a hair nearer the
+## eye than its line (0).
+static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array) -> void:
+	var w := LINE_WIDTH + ARROW_RIM
 	var prev: Array = []
 	for i in pts.size():
 		var a: Array = pts[maxi(i - 1, 0)]
@@ -882,11 +888,12 @@ static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> 
 		var rr := sp.r(p[0])
 		var t := Vector2(b[0] - a[0], (b[1] - a[1]) * rr).normalized()
 		var side := Vector2(-t.y, t.x)
-		var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(p[2]), 1.0)
-		var pair := [Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), Vector2(p[0] - w * side.x, p[1] - w * side.y / rr)]
+		var c := Color(_gravity_color(p[2]), 0.0)
+		var pair := [[Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), w, c], [Vector2(p[0] - w * side.x, p[1] - w * side.y / rr), -w, c]]
 		if not prev.is_empty():
-			for q: Vector2 in [prev[0], pair[0], pair[1], prev[0], pair[1], prev[1]]:
-				_vertex(st, q, c)
+			for v: Array in [prev[0], pair[0], pair[1], prev[0], pair[1], prev[1]]:
+				var across := Vector2(LINE_WIDTH - v[1], LINE_WIDTH + v[1])
+				_vertex(st, v[0], v[2], Color(across.x, across.y, 1.0, 0.0), across)
 		prev = pair
 	# the arrows, each along the line where it stands
 	var s := 0.0
@@ -902,19 +909,37 @@ static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> 
 			var at := Vector2(lerpf(a[0], b[0], f), lerpf(a[1], b[1], f))
 			var t := d / len
 			var side := Vector2(-t.y, t.x)
-			var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(lerpf(a[2], b[2], f)), 1.0)
-			var tip := (0.5 * ARROW_LENGTH + 2.0 * grow) * t
-			var back := -(0.5 * ARROW_LENGTH + grow) * t
-			for o: Vector2 in [tip, back + (ARROW_HALF + 2.0 * grow) * side, back - (ARROW_HALF + 2.0 * grow) * side]:
-				_vertex(st, Vector2(at.x + o.x, at.y + o.y / rr), c)
+			var c := Color(_gravity_color(lerpf(a[2], b[2], f)), 1.0)
+			# the coloured triangle, and the outline's round it: (along t, across) from where it stands
+			var tip := 0.5 * ARROW_LENGTH * t
+			var inner := [tip, -tip + ARROW_HALF * side, -tip - ARROW_HALF * side]
+			var back := -(0.5 * ARROW_LENGTH + ARROW_RIM) * t
+			var outer := [tip + 2.0 * ARROW_RIM * t, back + (ARROW_HALF + 2.0 * ARROW_RIM) * side, back - (ARROW_HALF + 2.0 * ARROW_RIM) * side]
+			for o: Vector2 in outer:
+				var x := o.dot(side)
+				_vertex(st, Vector2(at.x + o.x, at.y + o.y / rr), c, _barycentric(o, inner), Vector2(LINE_WIDTH - x, LINE_WIDTH + x))
 			next += ARROW_GAP
 		s += len
 
 
-## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0.
-static func _vertex(st: SurfaceTool, q: Vector2, c: Color) -> void:
+## Point o's barycentric coordinates in the triangle tri (three Vector2), as a Color's r, g, b.
+static func _barycentric(o: Vector2, tri: Array) -> Color:
+	var e1: Vector2 = tri[1] - tri[0]
+	var e2: Vector2 = tri[2] - tri[0]
+	var q: Vector2 = o - tri[0]
+	var den := e1.cross(e2)
+	var u := q.cross(e2) / den
+	var v := e1.cross(q) / den
+	return Color(1.0 - u - v, u, v, 0.0)
+
+
+## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0: its colour, and how far
+## inside the coloured part it is (_line).
+static func _vertex(st: SurfaceTool, q: Vector2, c: Color, inner: Color, line: Vector2) -> void:
 	st.set_color(c)
 	st.set_uv(Vector2(q.x, 0.0))
+	st.set_uv2(line)
+	st.set_custom(0, inner)
 	st.add_vertex(Vector3(0.0, cos(q.y), sin(q.y)))
 
 

@@ -117,7 +117,8 @@ func _process(_d: float) -> bool:
 			check("the toys back as they were", toys_after == toys_before, "%d of %d" % [toys_after.size(), toys_before.size()])
 			check("the menu shows the foveation's result and the tail's", main.menu.bench_text.contains("фовеация")
 					and main.menu.bench_text.contains("хвост") and main.menu.bench_text.contains("при сильнейшей фовеации")
-					and main.menu.bench_text.contains("без полосок") and main.menu.bench_text.contains("мячи рук"), main.menu.bench_text)
+					and main.menu.bench_text.contains("без полосок") and main.menu.bench_text.contains("мячи рук")
+					and main.menu.bench_text.contains("силовые линии"), main.menu.bench_text)
 			U.finish(self)
 			return true
 	if Time.get_ticks_msec() > 600_000:
