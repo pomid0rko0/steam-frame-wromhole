@@ -78,7 +78,7 @@ uniform float sheet = 1.0;       // the universe: A +1, B -1
 // (C, E1, E2, (size, colour)) at (4 slot + k, ZONE_LIST_BODIES) (ZoneSections' LISTS)
 uniform sampler2D zone_list : filter_nearest, repeat_disable;
 uniform int zone_list_row = 0;
-const int ZONE_LIST_BODIES = 7;
+const int ZONE_LIST_BODIES = 8;
 uniform float zone_round = 48.0; // the nodes' points round a section and azimuths a mesh's VERTEX.xy spans (Renderer._zone_mesh)
 uniform float zone_columns = 64.0;
 // the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this mesh's
@@ -91,6 +91,15 @@ uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;
 uniform sampler2DArray zone_paths : filter_nearest, repeat_disable;
 uniform int zone_row = 0;
 uniform int zone_slot_rows = 62;
+#ifdef CUBE
+// the ribbon (Renderer.ZONE_RIBBON): a column's three rows the coarse mesh's nodes that ZoneSections'
+// RIBBONS chose for this image and eye (the ends of its line, the nearest between), at (column,
+// image + zone_images * (slot - zone_cube0))
+uniform bool zone_ribbon = false;
+uniform sampler2DArray zone_ribbons : filter_nearest, repeat_disable;
+uniform int zone_images = 20;
+uniform int zone_cube0 = 0;
+#endif
 // pixels a knot's two columns are pulled past each other by, each way: beyond the rasterizer's
 // rounding of a vertex (a 256th of a pixel)
 const float ZONE_KNOT_PX = 1.0 / 64.0;
@@ -184,6 +193,12 @@ void vertex() {
 		// the node's point on the body: (l, alpha) and its half-surface's direction t
 		// (zone_sections.gdshaderinc)
 		ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
+#ifdef CUBE
+		if (zone_ribbon) {
+			vec4 rr = texelFetch(zone_ribbons, ivec3(node.x, image + zone_images * (slot - zone_cube0), int(VIEW_INDEX)), 0);
+			node.y = int((VERTEX.y > 0.75 ? rr.y : (VERTEX.y > 0.25 ? rr.z : rr.x)) + 0.5);
+		}
+#endif
 		int row = slot * zone_slot_rows + zone_row + node.y;
 		vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
 		vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);

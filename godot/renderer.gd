@@ -45,8 +45,9 @@ const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
 # a body in the curved zone: each of its images in the picture (ZONE_IMAGES at most) on the mesh its
 # place there needs (zone_sections.gdshaderinc's SIZES): the fine one for one of the first ZS_FINE
-# when large, a ball's thin ones (ZONE_LODS: the coarse one's nodes, fewer) when thin, else the
-# coarse one (body.gdshaderinc, ZONE: azimuths about the eye's axis, points round each section);
+# when large, a ball's thin ones (ZONE_LODS: the coarse one's nodes, fewer) and a cube's ribbon when
+# thin, else the coarse one (body.gdshaderinc, ZONE: azimuths about the eye's axis, points round
+# each section);
 # each mesh a MultiMesh drawn indirect, its instances the list ZoneSections' LISTS makes and their
 # count written by it. Seen from the throat's cylinder, a body's k-th turn round it is a ring as long
 # as its first image that thins only as 1 / k
@@ -55,8 +56,11 @@ const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
 # the zone's meshes, in ZoneSections' lists' order: [kind (0 balls, 1 cubes), azimuths, points round a
-# section]: the fine one's nodes, or the coarse one's (each mesh's azimuths and points a divisor of theirs)
-const ZONE_LODS := [[0, 64, 48], [0, 64, 12], [0, 64, 6], [0, 32, 6], [0, 16, 4], [1, 64, 48], [1, 64, 12]]
+# section]: the fine one's nodes, or the coarse one's (each mesh's azimuths and points a divisor of
+# theirs); a cube's last, the ribbon: each column's three nodes of the coarse one that ZoneSections'
+# RIBBONS chose (ZONE_RIBBON)
+const ZONE_LODS := [[0, 64, 48], [0, 64, 12], [0, 64, 6], [0, 32, 6], [0, 16, 4], [1, 64, 48], [1, 64, 12], [1, 64, 2]]
+const ZONE_RIBBON := 7
 const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one (zone_tail.gdshaderinc's)
 const TAIL_PER := ZoneSections.TAIL_STRIPS + 1   # its instances a body slot and side: the strips and the band
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
@@ -173,6 +177,11 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.set_shader_parameter("zone_list_row", k)
 		m.set_shader_parameter("zone_row", 0 if fine else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
+		if k == ZONE_RIBBON:
+			m.set_shader_parameter("zone_ribbon", true)
+			m.set_shader_parameter("zone_ribbons", zone_sections.ribbon_tex)
+			m.set_shader_parameter("zone_images", ZONE_IMAGES)
+			m.set_shader_parameter("zone_cube0", MAX_BALLS)
 		zone_mats.append(m)
 	tail_mat.shader = ZONE_TAIL_SHADER
 	# from the meshes' last image on: both draw that one (where it meets the next in a ring, round the

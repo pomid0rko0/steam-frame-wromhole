@@ -1,8 +1,8 @@
 // The meshes of the bodies in the curved zone (balls: zone.gdshaderinc, zone_ball_vertex; cubes:
 // zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
 // (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
-// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES, SIZES, LISTS,
-// PATHS or LINES) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
+// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES, SIZES, RIBBONS,
+// LISTS, PATHS or LINES) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
 // zone_tail.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
@@ -89,8 +89,14 @@ layout(set = 0, binding = 4, rgba32f) uniform restrict image2DArray cull_img;   
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2DArray path_img;   // PATHS' out
 layout(set = 0, binding = 6, rgba32f) uniform restrict image2DArray plan_img;   // the cube passes' (above)
 layout(set = 0, binding = 7, rgba32f) uniform restrict image2DArray col_img;
-#ifdef SIZES
+#if defined(SIZES) || defined(RIBBONS)
 layout(set = 1, binding = 0) uniform sampler2DArray s_paths;   // PATHS' out, as the vertices take it
+#endif
+#ifdef RIBBONS
+// a cube's thin image's ribbon: per column the rows of its two nodes at the ends of its line in the
+// picture and of the nearest (RIBBONS' out, the cubes' vertex shader's in: body.gdshaderinc, zone_ribbons): texel
+// (column, image + images * the cube's index), a layer per eye
+layout(set = 1, binding = 1, rgba32f) uniform restrict writeonly image2DArray ribbon_img;
 #endif
 #ifdef LINES
 // the field lines' vertices (Renderer.arrow_arrays: l, n.y, n.z, 1 for an arrow's) and where each is in
@@ -110,6 +116,7 @@ layout(set = 1, binding = 4, std430) buffer Cmd3 { uint v[]; } cmd3;
 layout(set = 1, binding = 5, std430) buffer Cmd4 { uint v[]; } cmd4;
 layout(set = 1, binding = 6, std430) buffer Cmd5 { uint v[]; } cmd5;
 layout(set = 1, binding = 7, std430) buffer Cmd6 { uint v[]; } cmd6;
+layout(set = 1, binding = 8, std430) buffer Cmd7 { uint v[]; } cmd7;
 #endif
 
 #define g_prof zp.prof
@@ -134,9 +141,12 @@ const int PLAN_ROWS = 4;            // plan_img's rows a cube's slot (zone_secti
 // difference over a column's step. The fine mesh (48 round) for the first ZS_FINE images thicker
 // than ZS_COARSE_PX, else the coarse one (12; 64 azimuths); a ball's thin ones (the coarse one's
 // nodes: 64 by 6, every 2nd point; 32 by 6, every 2nd azimuth too; 16 by 4, every 4th and 3rd) where
-// they keep to that (a cube's rows are its sections' corners and the points between): codes 1 to 5 in that order (cull_img's .w), each mesh keeping to
-// what the next keeps to. A turn round the throat's sphere is a ring as long as the body's first
-// image and thinner only as 1 / k: those take the thin ones.
+// they keep to that: codes 1 to 5 in that order (cull_img's .w), each mesh keeping to what the next
+// keeps to. A cube's rows are its sections' corners and the points between, on rows of their own
+// in each span: its thin image (ZS_THIN_PX.x) takes the ribbon (code 3), each column's two nodes at
+// the ends of its line in the picture and the nearest between (RIBBONS), its outline the coarse
+// mesh's, its inside two strips. A turn round the throat's sphere is a ring as long as the body's first image and
+// thinner only as 1 / k: those take the thin ones.
 const int ZS_FINE = 4;
 const float ZS_COARSE_PX = 15.0;    // 12 round: 0.034 of the half, a quarter of a pixel at 15 across
 const vec2 ZS_THIN_PX = vec2(3.7, 1.7);   // 6 round: 0.134 of the half; 4: 0.293
@@ -632,7 +642,7 @@ void main() {
 	if (bad == 0u) {
 		if (out_) mesh = 0.0;
 		else if (j < ZS_FINE && thick > ZS_COARSE_PX) mesh = 1.0;
-		else if (cube) mesh = 2.0;
+		else if (cube) mesh = thick <= ZS_THIN_PX.x ? 3.0 : 2.0;
 		else if (thick <= ZS_THIN_PX.y && bend <= ZS_BEND_PX.z) mesh = 5.0;
 		else if (thick <= ZS_THIN_PX.x && bend <= ZS_BEND_PX.y) mesh = 4.0;
 		else if (thick <= ZS_THIN_PX.x && bend <= ZS_BEND_PX.x) mesh = 3.0;
@@ -642,19 +652,81 @@ void main() {
 	}
 	imageStore(cull_img, ivec3(j, s, z), vec4(cull.xyz, mesh));
 }
+#elif defined(RIBBONS)
+// A workgroup a cube's image SIZES gave the ribbon (x: the image, y: the cube, z: the eye): an
+// invocation a column of the coarse mesh, its nodes' ways to the eye (zone_path_see), and of them the
+// two whose angles off the eye's outward radial are the least and the greatest: the ends of the
+// column's line in the picture, so the ribbon's outline is the coarse mesh's; and the nearest along
+// its way, on the side of the section the eye sees (the corner between the faces seen, whose edge is
+// drawn dark). Into ribbon_img: (the row of the least, of the greatest, of the nearest). A column
+// with a node that is no part of the surface (between
+// two parts of the section, where a strip would join them) or not a number: the image back to the
+// coarse mesh. pc.first: (balls, cubes, the cubes' first slot, images).
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+shared bool s_bad;
+void main() {
+	int j = int(gl_WorkGroupID.x), ci = int(gl_WorkGroupID.y), z = int(gl_WorkGroupID.z);
+	int tid = int(gl_LocalInvocationID.x);
+	int s = pc.first.z + ci;
+	vec4 cull = imageLoad(cull_img, ivec3(j, s, z));
+	if (int(cull.w + 0.5) != 3) return;
+	if (tid == 0) s_bad = false;
+	barrier();
+	if (tid <= int(pc.grid.x)) {
+		float el;
+		vec3 en;
+		vec4 ex, ey, ez;
+		geo_eye(zp.inv_view, zp.eye_off[z].xyz, el, en, ex, ey, ez);
+		float side = el < 0.0 ? -1.0 : 1.0;
+		float amin = 1e30, amax = -1e30, lmin = 1e30;
+		int rmin = 0, rmax = 0, rnear = 0;
+		bool bad = false;
+		int rows = int(pc.grid.z + 0.5);
+		for (int r = 0; r <= rows; r++) {
+			int y = s * int(pc.grid.w) + int(pc.grid.y) + 1 + r;
+			vec4 na = imageLoad(out_img, ivec3(2 * tid, y, z));
+			vec4 nb = imageLoad(out_img, ivec3(2 * tid + 1, y, z));
+			vec3 t = vec3(na.zw, nb.x);
+			float alpha = clamp(na.y, 0.0, GEO_PI);
+			vec2 sca = geo_sincos(alpha);
+			vec3 pn = sca.y * en + sca.x * t;
+			float len, fell;
+			vec4 arrive;
+			vec4 dir = zone_path_see(s_paths, s * ZONE_PL, z, el, en, na.x, pn, t, alpha, j, len, arrive, fell);
+			float a = atan(length(dir.yzw), side * dir.x);
+			bad = bad || nb.y > 0.5 || nb.z > 0.5 || !geo_finite(a);
+			if (a < amin) {
+				amin = a;
+				rmin = r;
+			}
+			if (a > amax) {
+				amax = a;
+				rmax = r;
+			}
+			if (len < lmin) {
+				lmin = len;
+				rnear = r;
+			}
+		}
+		if (bad) s_bad = true;
+		imageStore(ribbon_img, ivec3(tid, j + pc.first.w * ci, z), vec4(float(rmin), float(rmax), float(rnear), 0.0));
+	}
+	barrier();
+	if (tid == 0 && s_bad) imageStore(cull_img, ivec3(j, s, z), vec4(cull.xyz, 2.0));
+}
 #elif defined(LISTS)
 // One workgroup: each body's image drawn in either eye (IMAGES' cull_img, its mesh there, the finer of
 // the two: each mesh of a kind keeps to what the next keeps to), into its mesh's list (rows: balls
-// fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse; texel k: (slot, image)), the lists'
+// fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse, ribbon; texel k: (slot, image)), the lists'
 // lengths into the draw commands (their second number: the instance count), and the bodies' rows
 // (zb.body) into row ZS_LIST_BODIES for the vertices. pc.first: (balls, cubes, the cubes' first slot,
 // images), pc.grid.x: the views.
-const int ZS_LIST_BODIES = 7;
+const int ZS_LIST_BODIES = 8;
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
-shared uint s_n[7];
+shared uint s_n[8];
 void main() {
 	int tid = int(gl_LocalInvocationID.x);
-	if (tid < 7) s_n[tid] = 0u;
+	if (tid < 8) s_n[tid] = 0u;
 	barrier();
 	int balls = pc.first.x, all = (pc.first.x + pc.first.y) * pc.first.w;
 	int views = int(pc.grid.x + 0.5);
@@ -669,7 +741,7 @@ void main() {
 			if (m > 0) mesh = mesh == 0 ? m : min(mesh, m);
 		}
 		if (mesh == 0) continue;
-		int list = cube ? 4 + min(mesh, 2) : mesh - 1;
+		int list = cube ? 4 + min(mesh, 3) : mesh - 1;
 		uint k = atomicAdd(s_n[list], 1u);
 		imageStore(list_img, ivec2(int(k), list), vec4(float(s), float(j), 0.0, 0.0));
 	}
@@ -683,6 +755,7 @@ void main() {
 		cmd4.v[1] = s_n[4];
 		cmd5.v[1] = s_n[5];
 		cmd6.v[1] = s_n[6];
+		cmd7.v[1] = s_n[7];
 	}
 }
 #elif defined(LINES)

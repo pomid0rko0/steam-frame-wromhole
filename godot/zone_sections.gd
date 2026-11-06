@@ -21,7 +21,8 @@ extends CompositorEffect
 ##
 ## And which mesh each image drawn takes (SIZES: where the vertex shader puts a few of its nodes;
 ## zone_sections.gdshaderinc's ZS_*): none out of the picture, a thin one for a thin image (a turn
-## round the throat: a ring as long as the body's first image, 1 / k as thick); and the lists of what
+## round the throat: a ring as long as the body's first image, 1 / k as thick), for a cube the ribbon
+## (RIBBONS: each column's two nodes at the ends of its line in the picture); and the lists of what
 ## each of the zone's meshes draws (LISTS: Renderer's ZONE_LODS, drawn indirect: list_tex, and the
 ## draw commands' instance counts written here).
 ##
@@ -48,7 +49,7 @@ const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a
 const TS_BEGIN := "zone nodes begin"
 const TS_END := "zone nodes end"
 # and after each of its passes, this and the pass's name ("lines", "ball", "images", the cube's passes,
-# "cube", "paths", "sizes", "lists"): what each costs (frame_rate.gd, bench.gd)
+# "cube", "paths", "sizes", "ribbons", "lists"): what each costs (frame_rate.gd, bench.gd)
 const TS_PASS := "zone pass "
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdshaderinc's)
@@ -63,7 +64,8 @@ var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out
 var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
 var path_tex := Texture2DArrayRD.new()   # the bodies' tables of the ways from the eyes (PATHS' out), for them too
 var list_tex := Texture2DRD.new()   # the zone meshes' lists and the bodies' rows (LISTS' out), for them too
-const LISTS := 7                    # Renderer.ZONE_LODS: balls fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse
+const LISTS := 8                    # Renderer.ZONE_LODS: balls fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse, ribbon
+var ribbon_tex := Texture2DArrayRD.new()   # a cube's thin image's ribbon: each column's two rows (RIBBONS' out), for the cubes' materials
 var line_tex := Texture2DRD.new()   # the field lines' vertices in the views (LINES' out: a vertex a texel, a row an image's eye), for their material
 
 var _rd: RenderingDevice
@@ -93,6 +95,8 @@ var _list: RID                      # list_tex's (a row a list, then the bodies'
 var _cmds: Array[RID] = []          # the zone meshes' draw commands (Renderer: set_commands)
 var _list_set: RID                  # LISTS' set 1: _list and _cmds
 var _sizes_set: RID                 # SIZES' set 1: the bodies' tables (_path) to sample
+var _ribbon: RID                    # ribbon_tex's: (columns + 1) x images * cubes, a layer per eye
+var _ribbon_set: RID                # RIBBONS' set 1: _path to sample, _ribbon
 var _line_in: RID                   # the field lines' vertices (set_lines)
 var _line_out: RID                  # line_tex's
 var _line_set: RID                  # LINES' set 1: the two
@@ -150,6 +154,15 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	p.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	_path = _rd.texture_create(p, RDTextureView.new())
 	path_tex.texture_rd_rid = _path
+	var rb := RDTextureFormat.new()
+	rb.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+	rb.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	rb.width = columns + 1
+	rb.height = maxi(cubes, 1) * images
+	rb.array_layers = 2
+	rb.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	_ribbon = _rd.texture_create(rb, RDTextureView.new())
+	ribbon_tex.texture_rd_rid = _ribbon
 	var li := RDTextureFormat.new()
 	li.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	li.width = maxi(maxi(balls, cubes) * images, BODY_ROWS)
@@ -279,7 +292,7 @@ func _build() -> void:
 	for k in 2:
 		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
 		_path_n[k] = int(m.get_string(1))
-	for kind in ["ball", "cube", "images", "sizes", "lists", "paths", "lines"] + CUBE_PASSES:
+	for kind in ["ball", "cube", "images", "sizes", "ribbons", "lists", "paths", "lines"] + CUBE_PASSES:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -343,6 +356,23 @@ func _sizes_set_rid() -> RID:
 	u.add_id(_path)
 	_sizes_set = _rd.uniform_set_create([u], _shaders["sizes"], 1)
 	return _sizes_set
+
+
+## RIBBONS' set 1: the bodies' tables to sample, as the vertex shader does, and its out.
+func _ribbon_set_rid() -> RID:
+	if _ribbon_set.is_valid() and _rd.uniform_set_is_valid(_ribbon_set):
+		return _ribbon_set
+	var u := RDUniform.new()
+	u.binding = 0
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u.add_id(_sampler)
+	u.add_id(_path)
+	var o := RDUniform.new()
+	o.binding = 1
+	o.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	o.add_id(_ribbon)
+	_ribbon_set = _rd.uniform_set_create([u, o], _shaders["ribbons"], 1)
+	return _ribbon_set
 
 
 ## LINES' set 1 (the lines' vertices and its out), made when they change.
@@ -459,6 +489,8 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_pass("paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
 	# each image's mesh by its size, the meshes' lists and instance counts
 	_pass("sizes", ipc, _images, counts.x + counts.y, views)
+	if counts.y > 0:
+		_pass("ribbons", ipc, _images, counts.y, views)
 	var lpc := PackedFloat32Array([views, 0.0, 0.0, 0.0]).to_byte_array()
 	lpc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	_pass("lists", lpc, 1, 1, 1)
@@ -477,6 +509,8 @@ func _pass(kind: String, push: PackedByteArray, x: int, y: int, z: int) -> void:
 		_rd.compute_list_bind_uniform_set(cl, _list_set, 1)
 	elif kind == "sizes":
 		_rd.compute_list_bind_uniform_set(cl, _sizes_set_rid(), 1)
+	elif kind == "ribbons":
+		_rd.compute_list_bind_uniform_set(cl, _ribbon_set_rid(), 1)
 	elif kind == "lines":
 		_rd.compute_list_bind_uniform_set(cl, _line_set_rid(), 1)
 	_rd.compute_list_set_push_constant(cl, push, push.size())
