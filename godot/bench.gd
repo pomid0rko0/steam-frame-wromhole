@@ -21,7 +21,9 @@ extends Node
 ## the eyes (NEAR_CUBE: a body near the eyes with the world round it), and with a ball and a cube
 ## in the throat's cylinder (THROAT_BODIES: their images past the meshes', the tail, cost pixels
 ## per body: zone_tail.gdshader), and the same without the tail (what it costs: the difference) and
-## with it as one band, without its strips, and the cube before the eyes with its passes as they were
+## with it as one band, without its strips, at foveation's strongest with two balls of a hand's size
+## before the chest (HAND_BALLS: what the hands' balls cost), and the cube before the eyes with its
+## passes as they were
 ## (ZoneSections.cube_old: what its passes side by side save); at the long throat's places only
 ## (LONG) also with the
 ## tail as before its strips (Renderer.TAIL_SHADERS) and the bodies in the throat at foveation's
@@ -87,25 +89,28 @@ const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
-# the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
-# eyes, the bodies in the throat, the tail drawn (Renderer.tail_shown), its strips (Renderer.
-# tail_strips: else one band from the first copy past the meshes'), the tail's shader (Renderer.
-# tail_kind), at the long throat's places only, the cube's passes as they were (ZoneSections.
-# cube_old)]; the first is the reference the others are compared with
-const VARIANTS := [["plain", 0, false, false, true, true, 0, false, false],
-	["foveation weak", 1, false, false, true, true, 0, false, false],
-	["foveation medium", 2, false, false, true, true, 0, false, false],
-	["foveation strong", 3, false, false, true, true, 0, false, false],
-	["foveation stronger", 4, false, false, true, true, 0, false, false],
-	["foveation strongest", 5, false, false, true, true, 0, false, false],
-	["a cube at the eyes", 0, true, false, true, true, 0, false, false],
-	["the same, its passes as before", 0, true, false, true, true, 0, false, true],
-	["a ball and a cube in the throat", 0, false, true, true, true, 0, false, false],
-	["the same without the tail", 0, false, true, false, true, 0, false, false],
-	["the same, the tail without strips", 0, false, true, true, false, 0, false, false],
-	["the same, the tail as before its strips", 0, false, true, true, false, 1, true, false],
-	["a ball and a cube in the throat, foveation strongest", 5, false, true, true, true, 0, true, false],
-	["the same without the tail, foveation strongest", 5, false, true, false, true, 0, true, false]]
+# the comparison's variants, each what it changes from the first (Setup's defaults: without foveation,
+# the tail drawn with its strips and this build's shader, timed at every place): foveation (its level,
+# Foveation.set_level), near (the cube before the eyes), throat (the bodies in the throat), hands
+# (two balls of a hand's size before the chest: HAND_BALLS), tail (Renderer.tail_shown), strips
+# (Renderer.tail_strips: else one band from the first copy past the meshes'), shader (Renderer.
+# tail_kind), long (at the long throat's places only), cube_old (the cube's passes as they were:
+# ZoneSections.cube_old); the first is the reference the others are compared with
+const VARIANTS := [{"label": "plain"},
+	{"label": "foveation weak", "foveation": 1},
+	{"label": "foveation medium", "foveation": 2},
+	{"label": "foveation strong", "foveation": 3},
+	{"label": "foveation stronger", "foveation": 4},
+	{"label": "foveation strongest", "foveation": 5},
+	{"label": "the same with the hands' balls", "foveation": 5, "hands": true},
+	{"label": "a cube at the eyes", "near": true},
+	{"label": "the same, its passes as before", "near": true, "cube_old": true},
+	{"label": "a ball and a cube in the throat", "throat": true},
+	{"label": "the same without the tail", "throat": true, "tail": false},
+	{"label": "the same, the tail without strips", "throat": true, "strips": false},
+	{"label": "the same, the tail as before its strips", "throat": true, "strips": false, "shader": 1, "long": true},
+	{"label": "a ball and a cube in the throat, foveation strongest", "foveation": 5, "throat": true, "long": true},
+	{"label": "the same without the tail, foveation strongest", "foveation": 5, "throat": true, "tail": false, "long": true}]
 # the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
 # round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
 # B's, both in view from inside the cylinder looking round it and from out at the mouth
@@ -116,6 +121,9 @@ const THROAT_COLOR := Color(0.9, 0.4, 0.3)
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
 const NEAR_CUBE := [0.4, 0.1]
+# the hands' balls (the variant's, not the tracked hands', which a run with the eyes closed seldom has
+# in view): [m ahead of the head, m to its right (each side), m up, radius], as hands hold out
+const HAND_BALLS := [0.35, 0.2, -0.3, 0.04]
 const NEAR_COLOR := Color(0.55, 0.6, 0.95)
 
 var main: Main
@@ -132,6 +140,12 @@ var variants: Array[Setup] = []   # this run's (start)
 var near := false:
 	set(v):
 		near = v
+		if main and main.toys.enabled:
+			main.draw_toys()
+# the hands' balls are drawn (extras), likewise
+var hand_balls := false:
+	set(v):
+		hand_balls = v
 		if main and main.toys.enabled:
 			main.draw_toys()
 # the bodies in the throat are drawn (extras), likewise
@@ -178,6 +192,13 @@ func extras(hp: Array, basis: Basis) -> Dictionary:
 	var out := {"balls": [], "cubes": []}
 	if near:
 		out.cubes.append(_near_cube(hp, basis))
+	if hand_balls:
+		var f: Array = hp[2]
+		for side in [-1.0, 1.0]:
+			var v: Vector3 = basis * Vector3(side * HAND_BALLS[1], HAND_BALLS[2], -HAND_BALLS[0])
+			var T: Vector4 = v.x * f[0] + v.y * f[1] + v.z * f[2]
+			var g: Array = main.space.geodesic(hp[0], hp[1], T.normalized(), v.length(), [])
+			out.balls.append([main.space.embed(g[0], g[1]), Vector4(THROAT_COLOR.r, THROAT_COLOR.g, THROAT_COLOR.b, HAND_BALLS[3])])
 	if throat:
 		var sp: WormholeSpace = main.space
 		var f: Array = hp[2]
@@ -312,7 +333,7 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8]))
+		variants.append(Setup.new(f))
 	saved_pose = main.get_pose()
 	var toys: Toys = main.toys
 	saved_toys = [toys.world.balls.duplicate(), toys.world.cubes.duplicate(), toys.launch_in, toys.drop_in]
@@ -433,9 +454,10 @@ static func _long(place: Array) -> bool:
 	return place.size() > 3 and place[3] == LONG
 
 
-## A variant's foveation, cube, bodies in the throat and tail.
+## A variant's foveation, cube, hands' balls, bodies in the throat and tail.
 func _use(v: Setup) -> void:
 	near = v.near
+	hand_balls = v.hands
 	throat = v.throat
 	main.renderer.tail_shown = v.tail
 	main.renderer.tail_strips = v.strips
@@ -561,7 +583,7 @@ func _compared() -> void:
 	for v in range(1, variants.size()):
 		summary.append("%s %.3f" % [variants[v].label, _ratio(v, 0)])
 		var f := variants[v]
-		if f.foveation > 0 and not f.near and not f.throat and f.shader == 0 and not f.long:
+		if f.foveation > 0 and not f.near and not f.throat and not f.hands and f.shader == 0 and not f.long:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
 	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
@@ -595,11 +617,23 @@ func _compared() -> void:
 			if not r[fov_tail].is_empty() and not r[fov_bare].is_empty():
 				fov_ms = maxf(fov_ms, _mean(r[fov_tail]) - _mean(r[fov_bare]))
 	var cube_old := -1
+	var with_hands := -1
+	var fov5 := -1
 	for v in variants.size():
-		if variants[v].cube_old:
+		var f := variants[v]
+		if f.cube_old:
 			cube_old = v
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс (его проходы как раньше — %.1f мс), с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс, как до полосок — до %.1f мс)"
-			% [_worst(0), _worst(cube), _worst(cube_old) if cube_old >= 0 else 0.0, _worst(bodies), tail_ms, fov_ms, band_ms, before_ms]]
+		if f.hands:
+			with_hands = v
+		if f.foveation == 5 and not f.near and not f.throat and not f.hands:
+			fov5 = v
+	# the hands' balls: the most they add at foveation's strongest at a place
+	var hands_ms := 0.0
+	if with_hands >= 0 and fov5 >= 0:
+		for r in results:
+			hands_ms = maxf(hands_ms, _mean(r[with_hands]) - _mean(r[fov5]))
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс (его проходы как раньше — %.1f мс), с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс, как до полосок — до %.1f мс), мячи рук при сильнейшей фовеации — до %.1f мс"
+			% [_worst(0), _worst(cube), _worst(cube_old) if cube_old >= 0 else 0.0, _worst(bodies), tail_ms, fov_ms, band_ms, before_ms, hands_ms]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -786,6 +820,7 @@ static func _list(v: Array) -> String:
 ## As it runs: the foveation chosen in the menu, no cube.
 func _restore() -> void:
 	near = false
+	hand_balls = false
 	throat = false
 	main.renderer.tail_shown = true
 	main.renderer.tail_strips = true
@@ -800,7 +835,7 @@ func _restore() -> void:
 func _variant(p_near: bool, p_throat: bool, p_tail: bool, p_strips := true) -> int:
 	for v in variants.size():
 		var f := variants[v]
-		if f.foveation == 0 and f.shader == 0 and not f.long and not f.cube_old and f.near == p_near and f.throat == p_throat and f.tail == p_tail and f.strips == p_strips:
+		if f.foveation == 0 and f.shader == 0 and not f.long and not f.cube_old and not f.hands and f.near == p_near and f.throat == p_throat and f.tail == p_tail and f.strips == p_strips:
 			return v
 	return 0
 
@@ -833,18 +868,20 @@ class Setup:
 	var shader: int                 # the tail's (Renderer.tail_kind)
 	var long: bool                  # timed at the long throat's places only
 	var cube_old: bool              # the cube's passes as they were (ZoneSections.cube_old)
+	var hands: bool                 # the two balls of a hand's size before the chest (HAND_BALLS)
 
-	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool, p_tail: bool, p_strips: bool, p_shader: int,
-			p_long: bool, p_cube_old: bool) -> void:
-		label = p_label
-		foveation = p_foveation
-		near = p_near
-		throat = p_throat
-		tail = p_tail
-		strips = p_strips
-		shader = p_shader
-		long = p_long
-		cube_old = p_cube_old
+	## From a VARIANTS entry (its top: what each key means), the rest as the first's.
+	func _init(d: Dictionary) -> void:
+		label = d.label
+		foveation = d.get("foveation", 0)
+		near = d.get("near", false)
+		throat = d.get("throat", false)
+		tail = d.get("tail", true)
+		strips = d.get("strips", true)
+		shader = d.get("shader", 0)
+		long = d.get("long", false)
+		cube_old = d.get("cube_old", false)
+		hands = d.get("hands", false)
 
 
 ## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees

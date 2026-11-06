@@ -86,6 +86,9 @@ func _process(_d: float) -> bool:
 					or main.renderer.tail_mat.shader != Renderer.TAIL_SHADERS[v.shader] or main.renderer.tail.material_override != main.renderer.tail_mat:
 				check("the segment's tail, its strips and shader", false, b.plan[b.step].y)
 				started = false
+			if b.hand_balls != v.hands:
+				check("the segment's hands' balls", false, b.plan[b.step].y)
+				started = false
 			if main.renderer.zone_sections.cube_old != v.cube_old:
 				check("the segment's cube passes", false, b.plan[b.step].y)
 				started = false
@@ -110,7 +113,7 @@ func _process(_d: float) -> bool:
 			var p: Array = main.get_pose()
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
-			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
+			check("no cube before the eyes after it, nor the hands' balls", not b.near and not b.hand_balls and _cubes() == main.toys.world.cubes.size())
 			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the cube's passes this build's again", not main.renderer.zone_sections.cube_old)
@@ -121,7 +124,8 @@ func _process(_d: float) -> bool:
 			check("the toys back as they were", toys_after == toys_before, "%d of %d" % [toys_after.size(), toys_before.size()])
 			check("the menu shows the foveation's result and the tail's", main.menu.bench_text.contains("фовеация")
 					and main.menu.bench_text.contains("хвост") and main.menu.bench_text.contains("при сильнейшей фовеации")
-					and main.menu.bench_text.contains("без полосок") and main.menu.bench_text.contains("до полосок"), main.menu.bench_text)
+					and main.menu.bench_text.contains("без полосок") and main.menu.bench_text.contains("до полосок")
+					and main.menu.bench_text.contains("мячи рук") and main.menu.bench_text.contains("проходы как раньше"), main.menu.bench_text)
 			U.finish(self)
 			return true
 	if Time.get_ticks_msec() > 600_000:
