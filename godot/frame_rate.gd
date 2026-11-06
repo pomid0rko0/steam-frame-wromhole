@@ -399,7 +399,7 @@ func _second() -> void:
 
 func _on_drawing() -> void:
 	drawing_us = Time.get_ticks_usec()
-	RenderingServer.call_on_render_thread(readings.handed.bind(drawing_us))
+	RenderingServer.call_on_render_thread(Readings.handed.bind(readings, drawing_us))
 
 
 func _on_drawn() -> void:
@@ -413,7 +413,7 @@ var _new_parts := false         # parts_last is newer than the second's counts h
 ## own, else after the frames handed to it before), and the last ones it made: gpu_last, cpu_last,
 ## lag_last, and the GPU time by part (parts_last, zone_last) if the timestamps read are newer.
 func _take_readings() -> void:
-	RenderingServer.call_on_render_thread(readings.read.bind(target.get_viewport_rid()))
+	RenderingServer.call_on_render_thread(Readings.read.bind(readings, target.get_viewport_rid()))
 	readings.mutex.lock()
 	gpu_last = readings.gpu
 	cpu_last = readings.cpu
@@ -427,7 +427,7 @@ func _take_readings() -> void:
 
 
 ## What the render thread reads for FrameRate (its top): read and handed run there, the main thread
-## takes the fields under mutex.
+## takes the fields under mutex. Static, the object bound as an argument: a call queued holds it.
 class Readings:
 	var mutex := Mutex.new()
 	var gpu := 0.0                  # the viewport's measured GPU time, ms
@@ -439,31 +439,31 @@ class Readings:
 
 	## Once a frame: the measured times, and the GPU time by part (this file's top) of the newest
 	## frame whose timestamps are back, if newer than the last read.
-	func read(vp: RID) -> void:
+	static func read(r: Readings, vp: RID) -> void:
 		var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
 		var c := RenderingServer.viewport_get_measured_render_time_cpu(vp)
 		var rd := RenderingServer.get_rendering_device()
-		var f := rd.get_captured_timestamps_frame() if rd else frame
+		var f := rd.get_captured_timestamps_frame() if rd else r.frame
 		var p := PackedFloat32Array()
 		var z := {}
-		if f != frame:
+		if f != r.frame:
 			p = _parts(rd, str(vp.get_id()), z)
-		mutex.lock()
-		gpu = g
-		cpu = c
+		r.mutex.lock()
+		r.gpu = g
+		r.cpu = c
 		if not p.is_empty():
-			frame = f
-			parts = p
-			zone = z
-		mutex.unlock()
+			r.frame = f
+			r.parts = p
+			r.zone = z
+		r.mutex.unlock()
 
 	## The frame handed over at queued (Time.get_ticks_usec on the main thread) reaches the render
 	## thread now.
-	func handed(queued: int) -> void:
+	static func handed(r: Readings, queued: int) -> void:
 		var d := (Time.get_ticks_usec() - queued) / 1000.0
-		mutex.lock()
-		lag = d
-		mutex.unlock()
+		r.mutex.lock()
+		r.lag = d
+		r.mutex.unlock()
 
 	static func _parts(rd: RenderingDevice, vp: String, zone_out: Dictionary) -> PackedFloat32Array:
 		# name: GPU time, ns (what Godot 4.7.2 gives: the parts add up to the viewport's measured time)

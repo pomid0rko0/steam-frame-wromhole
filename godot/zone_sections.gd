@@ -75,8 +75,9 @@ var line_tex := Texture2DRD.new()   # the field lines' vertices in the views (LI
 var line_data_tex := Texture2DRD.new()   # and their colours and ways inside (Renderer.line_chunks' data: a row a chunk)
 var line_list_tex := Texture2DRD.new()   # and the chunks' images drawn (LINE_LISTS' out: texel k (chunk, image))
 
+var _spirv := {}                    # "ball", "cube"... -> RDShaderSPIRV (_compile, the main thread's)
 var _rd: RenderingDevice
-var _shaders := {}                  # "ball", "cube" -> RID
+var _shaders := {}                  # and -> RID
 var _pipes := {}
 var _sets := {}
 var _ubo: RID                       # Params
@@ -130,6 +131,11 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	_slots = balls + cubes
 	_cube0 = balls
 	_images = images
+	_compile()
+	# RenderingServer's textures made here first, on the main thread, where the materials take them:
+	# the render thread then only puts its own in their place
+	for t: Texture in [tex, cull_tex, path_tex, list_tex, ribbon_tex, line_tex, line_data_tex, line_list_tex]:
+		t.get_rid()
 	RenderingServer.call_on_render_thread(_setup_rt.bind(columns, slot_rows, balls, cubes, images))
 
 
@@ -324,7 +330,12 @@ func _bodies_rt(bytes: PackedByteArray, counts: Vector2i) -> void:
 	_counts = counts
 
 
-func _build() -> void:
+## On the main thread, once (setup): the compute programs compiled, for _build (Foveation._compile
+## says why there).
+func _compile() -> void:
+	var rd := RenderingServer.get_rendering_device()
+	if rd == null:
+		return
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var zone: String = (load("res://shaders/zone.gdshaderinc") as ShaderInclude).code
 	var cube: String = (load("res://shaders/zone_cube.gdshaderinc") as ShaderInclude).code
@@ -337,11 +348,18 @@ func _build() -> void:
 	for kind in ["ball", "cube", "images", "sizes", "ribbons", "lists", "paths", "lines", "line_lists"] + CUBE_PASSES:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
-		var spirv := _rd.shader_compile_spirv_from_source(src)
+		var spirv := rd.shader_compile_spirv_from_source(src)
 		if spirv.compile_error_compute != "":
 			push_error("zone_sections (%s): %s" % [kind, spirv.compile_error_compute])
+			_spirv.clear()
 			return
-		_shaders[kind] = _rd.shader_create_from_spirv(spirv)
+		_spirv[kind] = spirv
+
+
+## On the render thread: the compute pipelines from _compile's programs, and the buffers.
+func _build() -> void:
+	for kind: String in _spirv:
+		_shaders[kind] = _rd.shader_create_from_spirv(_spirv[kind])
 		_pipes[kind] = _rd.compute_pipeline_create(_shaders[kind])
 	var s := RDSamplerState.new()
 	_sampler = _rd.sampler_create(s)

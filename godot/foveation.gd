@@ -99,8 +99,9 @@ var _fovea := PackedFloat32Array()
 var _mutex := Mutex.new()
 
 # the render thread's
+var _spirv := {}                    # "eyes", "table", "floor", "gravity" -> RDShaderSPIRV (_compile, the main thread's)
 var _rd: RenderingDevice
-var _shaders := {}                  # "eyes", "table", "floor", "gravity" -> RID
+var _shaders := {}                  # and -> RID
 var _pipes := {}
 var _sets := {}
 var _ubo: RID
@@ -208,6 +209,10 @@ func resize() -> void:
 	var m: float = sqrt(3.0) / ((lv[1] - lv[0]) * half)
 	var n := Vector2i(ceili(2.0 * _warp_at(0.5 * size.x, r0, m)), ceili(2.0 * _warp_at(0.5 * size.y, r0, m))) \
 			+ Vector2i.ONE * (2 * MARGIN + 2)
+	_compile()
+	# RenderingServer's textures made here first: _make only puts its own in their place
+	fov_tex.get_rid()
+	warp_tex.get_rid()
 	RenderingServer.call_on_render_thread(_resize_rt.bind(level, r0, m, n, size))
 
 
@@ -254,8 +259,13 @@ func _make(n: Vector2i) -> void:
 			_rd.free_rid(r)
 
 
-## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity.
-func _build() -> void:
+## On the main thread, once: the compute programs compiled (the eyes, the way out's rows, then the
+## floor, plain or coloured by gravity), for _build: loading the shaders' files on the render thread
+## would race the main thread's loading.
+func _compile() -> void:
+	var rd := RenderingServer.get_rendering_device()
+	if rd == null or not _spirv.is_empty():
+		return
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var look: String = (load("res://shaders/look.gdshaderinc") as ShaderInclude).code
 	var lens: String = (load("res://shaders/lens.gdshaderinc") as ShaderInclude).code
@@ -267,11 +277,18 @@ func _build() -> void:
 		var src := RDShaderSource.new()
 		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n"}
 		src.source_compute = "#version 450\n" + defs[kind] + body
-		var spirv := _rd.shader_compile_spirv_from_source(src)
+		var spirv := rd.shader_compile_spirv_from_source(src)
 		if spirv.compile_error_compute != "":
 			push_error("foveation (%s): %s" % [kind, spirv.compile_error_compute])
+			_spirv.clear()
 			return
-		_shaders[kind] = _rd.shader_create_from_spirv(spirv)
+		_spirv[kind] = spirv
+
+
+## On the render thread: the compute pipelines from _compile's programs, and the buffers.
+func _build() -> void:
+	for kind: String in _spirv:
+		_shaders[kind] = _rd.shader_create_from_spirv(_spirv[kind])
 		_pipes[kind] = _rd.compute_pipeline_create(_shaders[kind])
 	var s := RDSamplerState.new()
 	s.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR

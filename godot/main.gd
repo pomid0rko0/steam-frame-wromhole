@@ -202,6 +202,13 @@ func _ready() -> void:
 		draw_toys()
 
 
+func _notification(what: int) -> void:
+	# freed (the tests start the app again): first the render thread done with all it was given, the
+	# calls queued to the parts below too (foveation.gd's top, «Threads»), before they go
+	if what == NOTIFICATION_PREDELETE:
+		RenderingServer.force_sync()
+
+
 ## On the render thread, once: whether it is the main one.
 func _on_render_thread(main_id: int) -> void:
 	render_thread = OS.get_thread_caller_id() != main_id
