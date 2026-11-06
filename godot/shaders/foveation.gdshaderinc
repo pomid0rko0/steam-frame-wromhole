@@ -140,37 +140,66 @@ TailBody fov_tail_body(int s) {
 	return tail_body(s >= tk.n.z, tb.body[4 * s], tb.body[4 * s + 1], tb.body[4 * s + 2], tb.body[4 * s + 3].x);
 }
 
-// The copies body slot s's side looks into at angle chi off the eye's inward radial (its strip's or
-// the band's, as zone_tail.gdshader's vertices take them: (first, last, 1 if past the zone too), or
-// none (first > last)), k its strip (TAIL_STRIPS: the band).
-vec3 fov_tail_copies(int s, uint v, bool side2, int k, float chi, float half_w, vec4 bw, vec4 hd) {
+// The workgroup's view of each body's tail, the same for all its texels (one eye): body b's slot and
+// sector, (b1, half width round the axis with its margins; nought: no tail this frame), and per side
+// and strip k (TAIL_STRIPS: the band) the angles off the eye's inward radial it spans and the copies
+// it looks into (as zone_tail.gdshader's vertices take them: (least, greatest, first, last); past the
+// zone too where first is -1e9, the band of a body without strips; none: least > greatest).
+#define FOV_TAIL_MAX 20
+#define FOV_TAIL_RANGES (2 * (TAIL_STRIPS + 1))
+shared vec4 s_sec[FOV_TAIL_MAX];
+shared vec4 s_rng[FOV_TAIL_MAX * FOV_TAIL_RANGES];
+
+// body b's (of the zone's: its balls, then its cubes) into s_sec and s_rng, for eye v whose inward
+// radial in the camera's space is ax
+void fov_tail_view(int b, uint v, vec3 ax, vec4 ex, vec4 ey, vec4 ez) {
 	int i0 = tk.n.w;
-	vec2 range = vec2(1.0, 0.0);
-	vec3 copies = vec3(-1e9, 1e9, 1.0);
-	if (tk.f.y > 0.5 && hd.z > 0.5) {
-		vec2 kk = imageLoad(zone_cull, ivec3(i0 + 4, s, v)).xy;
+	int sl = b < tk.n.x ? b : tk.n.z + b - tk.n.x;
+	for (int r = 0; r < FOV_TAIL_RANGES; r++) s_rng[b * FOV_TAIL_RANGES + r] = vec4(1.0, 0.0, 0.0, 0.0);
+	s_sec[b] = vec4(0.0);
+	vec4 at = imageLoad(zone_cull, ivec3(i0, sl, v));
+	if (at.w < 0.5 || any(notEqual(at.xyz, tb.body[4 * sl].xyz))) return;
+	vec4 bw = imageLoad(zone_cull, ivec3(i0 + 1, sl, v));
+	vec4 hd = imageLoad(zone_cull, ivec3(i0 + 3, sl, v));
+	vec3 u = imageLoad(zone_cull, ivec3(i0 + 2, sl, v)).xyz;
+	vec2 kk = imageLoad(zone_cull, ivec3(i0 + 4, sl, v)).xy;
+	float half_w = bw.z;
+	vec3 b1 = vec3(dot(ex.yzw, u), dot(ey.yzw, u), dot(ez.yzw, u));
+	b1 = normalize(b1 - dot(b1, ax) * ax);
+	s_sec[b] = vec4(b1, min(min(half_w, GEO_PI) + tail_margins(half_w).x, GEO_PI));
+	bool strips = tk.f.y > 0.5 && hd.z > 0.5;
+	for (int side = 0; side < 2; side++) {
+		bool side2 = side == 1;
+		// a body round the axis: one sector, all of it
+		if (side2 && half_w >= GEO_PI) break;
 		int K = int((side2 ? kk.y : kk.x) + 0.5);
-		if (k < TAIL_STRIPS && k >= K) return vec3(1.0, 0.0, 0.0);
-		int j = k == TAIL_STRIPS ? K : k;
-		vec4 tj = imageLoad(zone_cull, ivec3(i0 + 5 + j, s, v));
-		vec2 sj = side2 ? tj.zw : tj.xy;
 		float n0 = side2 ? hd.y : hd.x;
-		if (k == TAIL_STRIPS) {
-			range = hd.w > 0.5 ? vec2(bw.x, sj.y) : vec2(sj.x, bw.y);
-			copies = vec3(n0 + float(K), 1e9, 0.0);
-		} else {
-			range = sj;
-			copies = vec3(n0 + float(k), n0 + float(k), 0.0);
+		for (int k = 0; k <= TAIL_STRIPS; k++) {
+			vec2 range = vec2(1.0, 0.0);
+			vec2 copies = vec2(-1e9, 1e9);
+			if (strips) {
+				if (k < TAIL_STRIPS && k >= K) continue;
+				int j = k == TAIL_STRIPS ? K : k;
+				vec4 tj = imageLoad(zone_cull, ivec3(i0 + 5 + j, sl, v));
+				vec2 sj = side2 ? tj.zw : tj.xy;
+				if (k == TAIL_STRIPS) {
+					range = hd.w > 0.5 ? vec2(bw.x, sj.y) : vec2(sj.x, bw.y);
+					copies = vec2(n0 + float(K), 1e9);
+				} else {
+					range = sj;
+					copies = vec2(n0 + float(k));
+				}
+				range += vec2(-tail_margin(range.x, half_w), tail_margin(range.y, half_w));
+			} else if (k == TAIL_STRIPS) {
+				float mg = tail_margins(half_w).x;
+				range = bw.xy + vec2(-mg, mg);
+			} else {
+				continue;
+			}
+			range = clamp(range, 0.0, GEO_PI);
+			s_rng[b * FOV_TAIL_RANGES + side * (TAIL_STRIPS + 1) + k] = vec4(range, copies);
 		}
-		range += vec2(-tail_margin(range.x, half_w), tail_margin(range.y, half_w));
-	} else if (k == TAIL_STRIPS) {
-		float mg = tail_margins(half_w).x;
-		range = bw.xy + vec2(-mg, mg);
-	} else {
-		return vec3(1.0, 0.0, 0.0);
 	}
-	range = clamp(range, 0.0, GEO_PI);
-	return range.x <= range.y && chi >= range.x && chi <= range.y ? copies : vec3(1.0, 0.0, 0.0);
 }
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -178,6 +207,14 @@ shared vec4 s_e[64];
 void main() {
 	uvec3 id = gl_GlobalInvocationID;
 	uint v = id.z;
+	vec4 e = eyes[6u * v];
+	vec4 ex = eyes[6u * v + 1u], ey = eyes[6u * v + 2u], ez = eyes[6u * v + 3u];
+	// the camera's space: the eye's inward radial direction
+	vec3 ax = normalize((e.x < 0.0 ? 1.0 : -1.0) * vec3(ex.x, ey.x, ez.x));
+	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
+	int li = int(gl_LocalInvocationIndex);
+	if (li < nb) fov_tail_view(li, v, ax, ex, ey, ez);
+	barrier();
 	vec2 p;
 	float rho, s, k;
 	bool used = fov_texel(id, p, rho, s, k) && fovp.pic.w < 0.5;
@@ -187,48 +224,32 @@ void main() {
 	TailRay hz;
 	float hy = 0.0, hang = 0.0, best = FOV_SKY;
 	int hon = 0;
-	vec3 d = vec3(0.0);
 	if (used) {
 		vec2 clip = p / fovp.pic.xy * 2.0 - 1.0;
-		d = normalize((fovp.ray[v] * vec4(clip, 1.0, 0.0)).xyz);
-		vec4 e = eyes[6u * v];
-		vec4 ex = eyes[6u * v + 1u], ey = eyes[6u * v + 2u], ez = eyes[6u * v + 3u];
+		vec3 d = normalize((fovp.ray[v] * vec4(clip, 1.0, 0.0)).xyz);
 		vec4 D = d.x * ex + d.y * ey + d.z * ez;
 		vec3 eye = eyes[6u * v + 4u].xyz;
 		best = imageLoad(out_img, ivec3(id)).a;
-		// the camera's space: the inward radial direction, the angle off it
-		vec3 ax = normalize((e.x < 0.0 ? 1.0 : -1.0) * vec3(ex.x, ey.x, ez.x));
 		float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
-		int i0 = tk.n.w;
-		for (int b = 0; b < tk.n.x + tk.n.y; b++) {
+		for (int b = 0; b < nb; b++) {
+			vec4 sec = s_sec[b];
+			if (sec.w <= 0.0) continue;
+			// the azimuth round the axis off the body's direction (side 2's sector is round -b1)
+			float phi = geo_atan2(dot(d, cross(ax, sec.xyz)), dot(d, sec.xyz));
 			int sl = b < tk.n.x ? b : tk.n.z + b - tk.n.x;
-			vec4 at = imageLoad(zone_cull, ivec3(i0, sl, v));
-			if (at.w < 0.5 || any(notEqual(at.xyz, tb.body[4 * sl].xyz))) continue;
-			vec4 bw = imageLoad(zone_cull, ivec3(i0 + 1, sl, v));
-			vec4 hd = imageLoad(zone_cull, ivec3(i0 + 3, sl, v));
-			vec3 u = imageLoad(zone_cull, ivec3(i0 + 2, sl, v)).xyz;
-			float half_w = bw.z;
-			// the sector's azimuth round the axis, as zone_tail.gdshader's vertices span it
-			vec3 b1 = vec3(dot(ex.yzw, u), dot(ey.yzw, u), dot(ez.yzw, u));
-			b1 = normalize(b1 - dot(b1, ax) * ax);
-			float pw = min(min(half_w, GEO_PI) + tail_margins(half_w).x, GEO_PI);
-			float phi = geo_atan2(dot(d, cross(ax, b1)), dot(d, b1));
-			TailBody q = fov_tail_body(sl);
 			for (int side = 0; side < 2; side++) {
-				bool side2 = side == 1;
-				if (side2 && half_w >= GEO_PI) break;
-				// side 2's sector is round -b1: its azimuth phi - pi
-				float ph = side2 ? (phi > 0.0 ? phi - GEO_PI : phi + GEO_PI) : phi;
-				if (abs(ph) > pw) continue;
+				float ph = side == 0 ? phi : (phi > 0.0 ? phi - GEO_PI : phi + GEO_PI);
+				if (abs(ph) > sec.w) continue;
 				for (int st = 0; st <= TAIL_STRIPS; st++) {
-					vec3 cp = fov_tail_copies(sl, v, side2, st, chi, half_w, bw, hd);
-					if (cp.x > cp.y) continue;
-					bool far = cp.z > 0.5;
+					vec4 rg = s_rng[b * FOV_TAIL_RANGES + side * (TAIL_STRIPS + 1) + st];
+					if (rg.x > rg.y || chi < rg.x || chi > rg.y) continue;
+					bool far = rg.z < -5e8;
+					TailBody q = fov_tail_body(sl);
 					TailRay z;
 					float y, ang, psi;
 					int on;
 					if (!tail_ray(e.x, eye, e.yzw, D, tk.f.x, far, z)) continue;
-					if (!tail_meet(z, q, tk.f.x, cp.x, cp.y, far, y, ang, psi, on)) continue;
+					if (!tail_meet(z, q, tk.f.x, rg.z, rg.w, far, y, ang, psi, on)) continue;
 					vec4 P, arrive;
 					float len;
 					tail_hit(z, y, ang, on, P, arrive, len);
