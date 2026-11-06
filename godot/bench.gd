@@ -350,6 +350,8 @@ func start() -> void:
 	# back to this app's own setting where there is one, else to what the display ran at
 	var rate: FrameRate = main.rate
 	saved_rate = rate.stored if rate.steam_key != "" and rate.stored > 0.0 else rate.rate
+	if _headset() and rate.steam_key != "" and saved_rate > 0.0:
+		Menu.keep_rate_back(saved_rate)
 	var order: Array = range(variants.size())
 	if variants.size() > 1:
 		var back := order.duplicate()
@@ -393,10 +395,12 @@ func start() -> void:
 	_rate(RATE, "prepare")
 
 
-## Ask for a rate (the headset only), then go on to the next phase.
+## Ask for a rate (the headset only), then go on to the next phase: also when the display runs at
+## it already, if the rate chosen (SteamVR's setting for the app) is another, so that the two never
+## part.
 func _rate(hz: float, next: String) -> void:
 	phase_t = 0.0
-	if _headset() and absf(main.rate.rate - hz) > 0.5:
+	if _headset() and (absf(main.rate.rate - hz) > 0.5 or absf(main.rate.chosen() - hz) > 0.5):
 		main.rate.choose(hz)
 		phase = "rate"
 		_next = next
@@ -656,10 +660,10 @@ func _compared() -> void:
 # ---------------------------------------------------------------- the tour
 
 ## The frame timing (main.rate), every frame: while counting, a "tf" line for the frame.
-func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
+func frame_timing(display_time: int, expected_hz: float) -> void:
 	var refreshes_before := meter.refreshes
 	var frames_before := meter.frames
-	meter.add(display_time, period, expected_hz)
+	meter.add(display_time, expected_hz)
 	if not counting or meter.frames == frames_before:
 		return
 	var g: float = main.rate.gpu_last
@@ -792,6 +796,7 @@ func _finish(tour_line: String) -> void:
 	if _headset() and saved_rate > 0.0 and (absf(saved_rate - main.rate.rate) > 0.5
 			or absf(saved_rate - main.rate.chosen()) > 0.5):
 		main.rate.choose(saved_rate)
+	Menu.keep_rate_back(0.0)
 	print("bench: done")
 	var parts := []
 	if tour_line != "":

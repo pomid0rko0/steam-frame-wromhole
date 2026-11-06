@@ -144,6 +144,7 @@ func _ready() -> void:
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
 		find_app_setting()
+		put_rate_back()
 
 
 ## The rate choices: SteamVR's per-app ones on the Frame, else what the runtime offers.
@@ -181,10 +182,8 @@ func _process(delta: float) -> void:
 	var bench := main.bench
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
-		# predicted display time of the next frame minus this one's: the period the runtime paces us at
-		var period := api.get_next_frame_time() - now
 		var missed_before := meter.missed()
-		meter.add(now, period, reported)
+		meter.add(now, reported)
 		# a late frame gets a line: where, what is before the eyes (main.view_text), the times this
 		# file's top describes and the pipelines compiled so far
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
@@ -194,7 +193,7 @@ func _process(delta: float) -> void:
 					% [meter.missed() - missed_before, main.viewer.l, look.x, look.y, gpu_last, cpu_last,
 					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, lag_last, _before_text(),
 					compilations(), main.view_text()] + "; GPU by part, the last frame read: " + _parts_text(parts_last))
-		bench.frame_timing(now, period, reported)
+		bench.frame_timing(now, reported)
 	var mt := before_ms()    # the frame before's, so before "before" turns to this one
 	if mt.x > now.main_max.x:
 		now.main_max = mt
@@ -257,6 +256,18 @@ func _write() -> void:
 	OS.unset_environment("LD_PRELOAD")
 	print("refresh: setting %s.%s to %.0f" % [steam_key, SETTING, desired])
 	WorkerThreadPool.add_task(_set_stored.bind(desired))
+
+
+## A speed check that did not end (the app quit in the middle of it) left SteamVR's setting for
+## this app at its own rate: the rate from before it goes back (Menu.keep_rate_back).
+func put_rate_back() -> void:
+	var back := Menu.rate_back()
+	if back <= 0.0:
+		return
+	Menu.keep_rate_back(0.0)
+	if steam_key != "" and absf(stored - back) > 0.5:
+		print("refresh: a speed check did not end, SteamVR's setting for the app is %.0f: putting %.0f back" % [stored, back])
+		choose(back)
 
 
 ## This app's rate in SteamVR's settings file (read only: SteamVR rewrites it from memory).

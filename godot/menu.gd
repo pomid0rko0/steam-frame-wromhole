@@ -572,6 +572,22 @@ static func saved_length(default: float) -> float:
 	return float(_load().get_value("throat", "length", default))
 
 
+## The rate the speed check puts back when it ends, kept while it runs (Bench.start): an app quit
+## in the middle of it (the SteamVR dashboard) leaves SteamVR's setting for the app at the speed
+## check's rate, and the next start puts this one back (FrameRate.put_rate_back). 0: none.
+static func keep_rate_back(r: float) -> void:
+	var cfg := _load()
+	if r > 0.0:
+		cfg.set_value("bench", "rate_back", r)
+	elif cfg.has_section_key("bench", "rate_back"):
+		cfg.erase_section_key("bench", "rate_back")
+	cfg.save(SETTINGS)
+
+
+static func rate_back() -> float:
+	return float(_load().get_value("bench", "rate_back", 0.0))
+
+
 ## A foveation choice; kept for the next start.
 func choose_foveation(level: int) -> void:
 	if xr == null:

@@ -205,6 +205,8 @@ func _process(_delta: float) -> bool:
 		p.press()
 		U.check("speed check: its row and A start it, ask for 72 Hz, close the menu", b.running and r.desired == 72.0
 				and not p.open)
+		U.check("speed check: the rate to put back kept while it runs (a quit in the middle: the next start does)",
+				Menu.rate_back() == bench_stored, str(Menu.rate_back()))
 		U.check("speed check: the line below says how it goes", p.strip.visible and p.strip_label.text.contains("замер:"))
 	if j > 70 and not b.running:
 		# each variant at each of its places (those of the long throat only, at those)
@@ -219,7 +221,7 @@ func _process(_delta: float) -> bool:
 				and b.tour_results.back().refreshes > 0)
 		var pose: Array = main.get_pose()
 		U.check("speed check: back where it stood, no cube before the eyes", absf(pose[0] - b.saved_pose[0]) < 1e-3 and not b.near)
-		U.check("speed check: the rate set back", r.desired == bench_stored)
+		U.check("speed check: the rate set back, none kept to put back", r.desired == bench_stored and Menu.rate_back() == 0.0)
 		U.check("speed check: the foveation set back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 		U.check("speed check: the menu says it is done (the tour's result)", p.bench_text.contains("Гц"))
 		U.check("... on the line below, until the menu opens", p.strip_label.text.contains(p.bench_text))
