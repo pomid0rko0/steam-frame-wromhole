@@ -45,8 +45,6 @@ const PLAN_W := 160
 const CUBE_SPANS := 32               # a cube's spans at most: CUBE_SPANS' workgroups (zone_cube.gdshaderinc's ZC_SPANS)
 const COL_W := 8                    # col_img's texels a column (zone_cube.gdshaderinc's ZC_ITEMS / 2)
 const CUBE_PASSES := ["cube_edges", "cube_spans", "cube_columns"]
-# the same as they were, one invocation an edge, a span, a column (cube_old: the speed check's control)
-const CUBE_OLD_PASSES := ["cube_old_edges", "cube_old_pieces", "cube_old_spans", "cube_old_columns"]
 const TAIL_STRIPS := 8              # the tail's strips a side at most (zone_tail.gdshaderinc's TAIL_STRIPS)
 const TAIL_TEXELS := 5 + TAIL_STRIPS + 1   # cull_tex's texels after a body's images': the tail's view of it (IMAGES)
 
@@ -77,7 +75,6 @@ var _floor := Vector2.ZERO          # (lift, beta)
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
 var _bodies_bytes := PackedByteArray()   # set_bodies' rows as the buffer takes them; empty: sent
 var _counts := Vector2i.ZERO        # balls and cubes in the zone
-var cube_old := false               # the cube's passes as they were (CUBE_OLD_PASSES): the speed check times both (bench.gd)
 var _mutex := Mutex.new()
 
 
@@ -195,7 +192,7 @@ func _build() -> void:
 	for k in 2:
 		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
 		_path_n[k] = int(m.get_string(1))
-	for kind in ["ball", "cube", "images", "paths"] + CUBE_PASSES + CUBE_OLD_PASSES:
+	for kind in ["ball", "cube", "images", "paths"] + CUBE_PASSES:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -249,7 +246,7 @@ func _uniform_set(kind: String) -> RID:
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("cube_old_columns"):
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("cube_columns"):
 		return
 	_mutex.lock()
 	var counts := _counts
@@ -297,16 +294,10 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		_pass("ball", bpc, int(ceil(nodes / 64.0)), counts.x, views)
 	_pass("images", ipc, int(ceil((_images + 2 + TAIL_STRIPS) / 32.0)), counts.x + counts.y, views)
 	# a cube's passes, each on the one before (zone_sections.gdshaderinc), then its nodes
-	if counts.y > 0 and cube_old:
-		_pass("cube_old_edges", cpc, 1, counts.y, views)
-		_pass("cube_old_pieces", cpc, 1, counts.y, views)
-		_pass("cube_old_spans", cpc, 1, counts.y, views)
-		_pass("cube_old_columns", cpc, int(ceil((_grid.x + 1.0) / 64.0)), counts.y, views)
-	elif counts.y > 0:
+	if counts.y > 0:
 		_pass("cube_edges", cpc, 1, counts.y, views)
 		_pass("cube_spans", cpc, CUBE_SPANS, counts.y, views)
 		_pass("cube_columns", cpc, int(ceil((_grid.x + 1.0) * COL_W / 64.0)), counts.y, views)
-	if counts.y > 0:
 		_pass("cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
 	# the tables, as far as the images just found drawn need them
 	_pass("paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
