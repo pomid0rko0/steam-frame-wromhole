@@ -41,6 +41,7 @@ const TS_PASS := "zone pass "
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdshaderinc's)
 const PLAN_W := 160
+const CUBE_SPANS := 32               # a cube's spans at most: CUBE_SPANS' workgroups (zone_cube.gdshaderinc's ZC_SPANS)
 const COL_W := 8                    # col_img's texels a column (zone_cube.gdshaderinc's ZC_ITEMS / 2)
 const CUBE_PASSES := ["cube_edges", "cube_pieces", "cube_spans", "cube_columns"]
 const TAIL_STRIPS := 8              # the tail's strips a side at most (zone_tail.gdshaderinc's TAIL_STRIPS)
@@ -295,7 +296,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	if counts.y > 0:
 		_pass("cube_edges", cpc, 1, counts.y, views)
 		_pass("cube_pieces", cpc, 1, counts.y, views)
-		_pass("cube_spans", cpc, 1, counts.y, views)
+		_pass("cube_spans", cpc, CUBE_SPANS, counts.y, views)
 		_pass("cube_columns", cpc, int(ceil((_grid.x + 1.0) * COL_W / 64.0)), counts.y, views)
 		_pass("cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
 	# the tables, as far as the images just found drawn need them

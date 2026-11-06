@@ -353,15 +353,22 @@ vec2 zc_axis_item(ZCube q, ZAxis ax, int it, vec3 t, out int faces) {
 	return p;
 }
 
-// The section's item it at azimuth th (t, m): a piece's cut (it = 4 e + k) or a point of the axis
-vec2 zc_item(ZCube q, ZPieces pcs, ZAxis ax, int it, float th, vec3 t, vec3 m) {
+// The section's item it at azimuth th (t, m): a piece's cut (it = 4 e + k, the piece's ends' u and
+// azimuths pu, pt) or a point of the axis
+vec2 zc_item_of(ZCube q, ZAxis ax, int it, vec3 pu, vec3 pt, float th, vec3 t, vec3 m) {
 	if (it >= ZC_IN) {
 		int f;
 		return zc_axis_item(q, ax, it, t, f);
 	}
-	int e = it / ZC_PIECES, k = it % ZC_PIECES;
-	float u = zc_cut(q, e, pcs.u[it], pcs.t[it], th, m);
+	int e = it / ZC_PIECES;
+	float u = zc_cut(q, e, pu, pt, th, m);
 	return zc_la(q, zc_point(q, zc_x(e, u)), t);
+}
+
+// the same, the piece from pcs
+vec2 zc_item(ZCube q, ZPieces pcs, ZAxis ax, int it, float th, vec3 t, vec3 m) {
+	int i = min(it, 12 * ZC_PIECES - 1);
+	return zc_item_of(q, ax, it, pcs.u[i], pcs.t[i], th, t, m);
 }
 
 // The point a share f of the way from pa to pb ((l, alpha) on the half-surface toward t, its
@@ -457,17 +464,13 @@ float zc_margin(ZCube q, vec2 pa, vec2 pb, int face, vec3 t) {
 	return -max(max(o.x, o.y), o.z);
 }
 
-// The section at azimuth th (a span's middle) as its parts (ZSeq): its items (the cuts of the pieces
-// whose azimuths hold th, the axis's points on the cube), on each face sorted along its plane's curve
-// in the half-surface and joined in turn (zc_margin); then the walk from item to
-// item, across each item's edge onto its other face: round the axis first from the entry (to the
-// exit), then from the lowest cut left, round to it again (or, where it stops, the other way too).
-ZSeq zc_sequence(ZCube q, ZPieces pcs, ZAxis ax, float th) {
-	vec3 m;
-	vec3 t = zc_t(q, th, m);
-	int ids[ZC_ITEMS];
-	int fm[ZC_ITEMS];       // faces mask
-	vec2 pos[ZC_ITEMS];
+// The section's items at azimuth th: their ids (cuts first, then round the axis its entry and exit)
+// and faces masks (an axis point's from zc_seq_pos), their count; first: the axis's first
+int zc_seq_items(ZPieces pcs, ZAxis ax, float th, out int ids[ZC_ITEMS], out int fm[ZC_ITEMS], out int first) {
+	for (int i = 0; i < ZC_ITEMS; i++) {
+		ids[i] = 0;
+		fm[i] = 0;
+	}
 	int ni = 0;
 	for (int e = 0; e < 12; e++) {
 		for (int k = 0; k < ZC_PIECES; k++) {
@@ -476,63 +479,78 @@ ZSeq zc_sequence(ZCube q, ZPieces pcs, ZAxis ax, float th) {
 			if (!zc_has(pcs.t[it], th)) continue;
 			ids[ni] = it;
 			fm[ni] = zc_edge_faces(e);
-			pos[ni] = zc_item(q, pcs, ax, it, th, t, m);
 			ni++;
 		}
 	}
-	int first = ni;
+	first = ni;
 	if (ax.rnd) {
 		for (int i = 0; i < 2; i++) {
 			ids[ni] = ZC_IN + i;
-			pos[ni] = zc_axis_item(q, ax, ZC_IN + i, t, fm[ni]);
 			ni++;
 		}
 	}
-	// on each face its items, sorted along its plane's curve in the half-surface (across its plane's
-	// gradient in (l, r alpha))
-	int onf[6 * ZC_ITEMS];
-	int nof[6];
-	for (int f = 0; f < 6; f++) {
-		float key[ZC_ITEMS];
-		int no = 0;
-		vec2 ref = vec2(0.0);
-		for (int i = 0; i < ZC_ITEMS; i++) {
-			if (i >= ni) break;
-			if ((fm[i] & (1 << f)) != 0) {
-				onf[f * ZC_ITEMS + no] = i;
-				ref += pos[i];
-				no++;
-			}
-		}
-		nof[f] = no;
-		if (no < 2) continue;
-		ref /= float(no);
-		float rc = geo_r(abs(ref.x));
-		vec4 Ef = q.E[f / 2];
-		float gl = dot(zone_rate(ref.x, ref.y, q.en, t, 1.0, 0.0), Ef);
-		float ga = dot(zone_rate(ref.x, ref.y, q.en, t, 0.0, 1.0 / rc), Ef);
-		for (int j = 0; j < ZC_ITEMS; j++) {
-			if (j >= no) break;
-			vec2 p = pos[onf[f * ZC_ITEMS + j]];
-			key[j] = -ga * p.x + gl * rc * p.y;
-		}
-		for (int j = 1; j < ZC_ITEMS; j++) {
-			if (j >= no) break;
-			int oi = onf[f * ZC_ITEMS + j];
-			float kv = key[j];
-			int h = j - 1;
-			while (h >= 0 && key[h] > kv) {
-				onf[f * ZC_ITEMS + h + 1] = onf[f * ZC_ITEMS + h];
-				key[h + 1] = key[h];
-				h--;
-			}
-			onf[f * ZC_ITEMS + h + 1] = oi;
-			key[h + 1] = kv;
+	return ni;
+}
+
+// Item it's place (l, alpha) at th (t, m): a piece's cut (its ends' u and azimuths pu, pt), or a point
+// of the axis, whose faces mask it sets in fm
+vec2 zc_seq_pos(ZCube q, ZAxis ax, int it, vec3 pu, vec3 pt, float th, vec3 t, vec3 m, inout int fm) {
+	if (it >= ZC_IN) return zc_axis_item(q, ax, it, t, fm);
+	return zc_item_of(q, ax, it, pu, pt, th, t, m);
+}
+
+// Face f's items (of ni: their faces masks fm, places pos), sorted along its plane's curve in the
+// half-surface (across its plane's gradient in (l, r alpha)), into o; their count
+int zc_seq_face(ZCube q, vec3 t, int f, int fm[ZC_ITEMS], vec2 pos[ZC_ITEMS], int ni, out int o[ZC_ITEMS]) {
+	float key[ZC_ITEMS];
+	for (int i = 0; i < ZC_ITEMS; i++) {
+		o[i] = 0;
+		key[i] = 0.0;
+	}
+	int no = 0;
+	vec2 ref = vec2(0.0);
+	for (int i = 0; i < ZC_ITEMS; i++) {
+		if (i >= ni) break;
+		if ((fm[i] & (1 << f)) != 0) {
+			o[no] = i;
+			ref += pos[i];
+			no++;
 		}
 	}
-	// along a face's curve the cube's bounds are crossed at each item, so its stretches between them
-	// are in and out in turn: of the two ways round, the one with the more margin inside (each's at
-	// its middle: how far within the other bounds), against float32's noise in any one
+	if (no < 2) return no;
+	ref /= float(no);
+	float rc = geo_r(abs(ref.x));
+	vec4 Ef = q.E[f / 2];
+	float gl = dot(zone_rate(ref.x, ref.y, q.en, t, 1.0, 0.0), Ef);
+	float ga = dot(zone_rate(ref.x, ref.y, q.en, t, 0.0, 1.0 / rc), Ef);
+	for (int j = 0; j < ZC_ITEMS; j++) {
+		if (j >= no) break;
+		vec2 p = pos[o[j]];
+		key[j] = -ga * p.x + gl * rc * p.y;
+	}
+	for (int j = 1; j < ZC_ITEMS; j++) {
+		if (j >= no) break;
+		int oi = o[j];
+		float kv = key[j];
+		int h = j - 1;
+		while (h >= 0 && key[h] > kv) {
+			o[h + 1] = o[h];
+			key[h + 1] = key[h];
+			h--;
+		}
+		o[h + 1] = oi;
+		key[h + 1] = kv;
+	}
+	return no;
+}
+
+// The section from its items (zc_seq_items, their places' faces masks), each face's items in order
+// (onf: ZC_ITEMS a face, nof of them) and the margins between each two in turn (mg, the same way:
+// zc_margin): along a face's curve the cube's bounds are crossed at each item, so its stretches
+// between them are in and out in turn: of the two ways round, the one with the more margin inside
+// (each's at its middle: how far within the other bounds), against float32's noise in any one; then
+// the walk.
+ZSeq zc_seq_walk(int ids[ZC_ITEMS], int fm[ZC_ITEMS], int ni, int first, int onf[6 * ZC_ITEMS], int nof[6], float mg[6 * ZC_ITEMS]) {
 	int pair[ZC_ITEMS * 6];
 	for (int i = 0; i < ZC_ITEMS * 6; i++) pair[i] = -1;
 	for (int f = 0; f < 6; f++) {
@@ -540,7 +558,7 @@ ZSeq zc_sequence(ZCube q, ZPieces pcs, ZAxis ax, float th) {
 		float score = 0.0;
 		for (int j = 0; j < ZC_ITEMS - 1; j++) {
 			if (j >= no - 1) break;
-			score += ((j & 1) == 0 ? 1.0 : -1.0) * zc_margin(q, pos[onf[f * ZC_ITEMS + j]], pos[onf[f * ZC_ITEMS + j + 1]], f, t);
+			score += ((j & 1) == 0 ? 1.0 : -1.0) * mg[f * ZC_ITEMS + j];
 		}
 		for (int j = score >= 0.0 ? 0 : 1; j < ZC_ITEMS - 1; j += 2) {
 			if (j >= no - 1) break;
@@ -670,6 +688,44 @@ ZSeq zc_sequence(ZCube q, ZPieces pcs, ZAxis ax, float th) {
 		sq.face[1] = -1;
 	}
 	return sq;
+}
+
+// The section at azimuth th (a span's middle) as its parts (ZSeq): its items (the cuts of the pieces
+// whose azimuths hold th, the axis's points on the cube: zc_seq_items, zc_seq_pos), on each face
+// sorted along its plane's curve in the half-surface (zc_seq_face) and joined in turn (zc_margin);
+// then the walk from item to item, across each item's edge onto its other face: round the axis first
+// from the entry (to the exit), then from the lowest cut left, round to it again (or, where it stops,
+// the other way too: zc_seq_walk). Its stages one after another here (ref/test_gpu.py); CUBE_SPANS
+// works the items' places and the faces' joins out side by side (zone_sections.gdshaderinc).
+ZSeq zc_sequence(ZCube q, ZPieces pcs, ZAxis ax, float th) {
+	vec3 m;
+	vec3 t = zc_t(q, th, m);
+	int ids[ZC_ITEMS];
+	int fm[ZC_ITEMS];       // faces mask
+	vec2 pos[ZC_ITEMS];
+	int first;
+	int ni = zc_seq_items(pcs, ax, th, ids, fm, first);
+	for (int i = 0; i < ZC_ITEMS; i++) {
+		if (i >= ni) break;
+		int it = ids[i];
+		int k = min(it, 12 * ZC_PIECES - 1);
+		int f = fm[i];
+		pos[i] = zc_seq_pos(q, ax, it, pcs.u[k], pcs.t[k], th, t, m, f);
+		fm[i] = f;
+	}
+	int onf[6 * ZC_ITEMS];
+	int nof[6];
+	for (int f = 0; f < 6; f++) {
+		int o[ZC_ITEMS];
+		nof[f] = zc_seq_face(q, t, f, fm, pos, ni, o);
+		for (int j = 0; j < ZC_ITEMS; j++) onf[f * ZC_ITEMS + j] = o[j];
+	}
+	float mg[6 * ZC_ITEMS];
+	for (int x = 0; x < 6 * ZC_ITEMS; x++) {
+		int f = x / ZC_ITEMS, j = x % ZC_ITEMS;
+		mg[x] = j < nof[f] - 1 ? zc_margin(q, pos[onf[x]], pos[onf[min(x + 1, 6 * ZC_ITEMS - 1)]], f, t) : 0.0;
+	}
+	return zc_seq_walk(ids, fm, ni, first, onf, nof, mg);
 }
 
 // The knots (the pieces' ends' azimuths, off the axis from th0 in [-pi, pi), round it in [0, 2 pi)),

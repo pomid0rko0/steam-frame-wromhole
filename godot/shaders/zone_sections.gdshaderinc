@@ -22,13 +22,15 @@
 //   CUBE_PIECES: x the edge, its pieces (zc_pieces) from all edges' row 0: row 1, texels 9 e (the
 //     count) and 9 e + 1 + 2 k, 9 e + 2 + 2 k (piece k); the axis (zc_axis): texels 108 and 109
 //     (the axis the mesh is built round, the later passes' too, and the knots' origin th0);
-//   CUBE_SPANS: x the span (the knots, zc_knots, sorted in each): its section (zc_sequence) at its
-//     middle (zc_span_mid), row 3, texels 5 s to 5 s + 4;
+//   CUBE_SPANS: a workgroup a span (ZC_SPANS of them; the knots, zc_knots, sorted in each): its
+//     section (zc_sequence's stages) at its middle (zc_span_mid), its items' places and its faces'
+//     joins (zc_margin) side by side, row 3, texels 5 s to 5 s + 4; the knots (span 0's), row 2,
+//     their count at PLAN_KNOTS and four a texel after it;
 //   CUBE_COLUMNS: x the column's pair of items (ZC_ITEMS / 2 a column, so that a column's items are
-//     worked out side by side, not one after another): the column (zc_column, from the knots sorted in
-//     each), its (azimuth, its span's middle, its span) in row 2 (the pair 0's invocation); its items
-//     at its azimuth (zc_item) in its span's order: col_img, a row a column (y = slot * (columns + 1)
-//     + column), two items a texel;
+//     worked out side by side, not one after another): the column (zc_column of the knots), its
+//     (azimuth, its span's middle, its span) in row 2 (the pair 0's invocation); its two items at its
+//     azimuth (zc_item_of, their pieces only read) in its span's order: col_img, a row a column (y =
+//     slot * (columns + 1) + column), two items a texel;
 //   CUBE: the nodes from those (zc_node).
 //
 // IMAGES: which images of each body are drawn at all. An image thinner across than a quarter of a
@@ -95,6 +97,7 @@ layout(set = 0, binding = 7, rgba32f) uniform restrict image2DArray col_img;
 #include_geo_and_zone
 
 const int PLAN_ROWS = 4;            // plan_img's rows a cube's slot (zone_sections.gd's)
+const int PLAN_KNOTS = 135;         // row 2's texel of the knots' count, ZC_KNOTS / 4 of them after it (to PLAN_W)
 
 // a cube's slot s as zone_cube.gdshaderinc takes it, round the axis en (the eye's direction from the
 // centre, or zc_axis's turned)
@@ -133,6 +136,41 @@ void zs_pieces(int ci, int z, out ZPieces pcs, out ZAxis ax) {
 	ax.l_out = a.z;
 	ax.aax = a.w;
 	ax.en = imageLoad(plan_img, ivec3(109, y, z)).xyz;
+}
+
+// cube ci's piece it's ends' u and azimuths (CUBE_PIECES' out, zs_pieces' one)
+void zs_piece(int ci, int z, int it, out vec3 u, out vec3 t) {
+	int y = ci * PLAN_ROWS + 1, e = it / ZC_PIECES, k = it % ZC_PIECES;
+	vec4 a = imageLoad(plan_img, ivec3(9 * e + 1 + 2 * k, y, z)), b = imageLoad(plan_img, ivec3(9 * e + 2 + 2 * k, y, z));
+	u = a.xyz;
+	t = vec3(a.w, b.xy);
+}
+
+// cube ci's axis (CUBE_PIECES' out, zs_pieces' ax)
+ZAxis zs_axis(int ci, int z) {
+	int y = ci * PLAN_ROWS + 1;
+	vec4 a = imageLoad(plan_img, ivec3(108, y, z));
+	ZAxis ax;
+	ax.rnd = a.x > 0.5;
+	ax.l_in = a.y;
+	ax.l_out = a.z;
+	ax.aax = a.w;
+	ax.en = imageLoad(plan_img, ivec3(109, y, z)).xyz;
+	return ax;
+}
+
+// cube ci's knots (CUBE_SPANS' out), their count
+int zs_knots(int ci, int z, out float kn[ZC_KNOTS]) {
+	int y = ci * PLAN_ROWS + 2;
+	int nk = int(imageLoad(plan_img, ivec3(PLAN_KNOTS, y, z)).x);
+	for (int i = 0; i < ZC_KNOTS / 4; i++) {
+		vec4 v = 4 * i < nk ? imageLoad(plan_img, ivec3(PLAN_KNOTS + 1 + i, y, z)) : vec4(0.0);
+		kn[4 * i] = v.x;
+		kn[4 * i + 1] = v.y;
+		kn[4 * i + 2] = v.z;
+		kn[4 * i + 3] = v.w;
+	}
+	return nk;
 }
 
 // cube ci's span's section (CUBE_SPANS' out) from plan_img: an entry id 8 + face + 1
@@ -241,21 +279,101 @@ void main() {
 #endif
 }
 #elif defined(CUBE_SPANS)
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+// a workgroup a span: its section's stages (zc_sequence's) side by side, through shared memory
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+shared bool s_go;
+shared float s_th;
+shared int s_ni, s_first;
+shared int s_ids[ZC_ITEMS], s_fm[ZC_ITEMS];
+shared vec2 s_pos[ZC_ITEMS];
+shared int s_onf[6 * ZC_ITEMS], s_nof[6];
+shared float s_mg[6 * ZC_ITEMS];
 void main() {
-	uvec3 id = gl_GlobalInvocationID;
-	int span = int(id.x), z = int(id.z);
-	int s = pc.first.x + int(id.y), ci = int(id.y);
+	int span = int(gl_WorkGroupID.x), tid = int(gl_LocalInvocationID.x), z = int(gl_GlobalInvocationID.z);
+	int s = pc.first.x + int(gl_GlobalInvocationID.y), ci = int(gl_GlobalInvocationID.y);
 	ZCube q = zs_cube_mesh(s, ci, z);
-	ZPieces pc_;
-	ZAxis ax;
-	zs_pieces(ci, z, pc_, ax);
-	float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
-	float kn[ZC_KNOTS];
-	int nk = zc_knots(pc_, ax.rnd, th0, kn);
-	int spans = ax.rnd ? nk : nk - 1;
-	if (span >= max(spans, 1)) return;
-	ZSeq sq = zc_sequence(q, pc_, ax, zc_span_mid(span, kn, nk, ax.rnd, th0));
+	ZAxis ax = zs_axis(ci, z);
+	// the knots (span 0 keeps them for CUBE_COLUMNS), the span's middle, its items
+	if (tid == 0) {
+		ZPieces pc_;
+		ZAxis ax_;
+		zs_pieces(ci, z, pc_, ax_);
+		float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
+		float kn[ZC_KNOTS];
+		int nk = zc_knots(pc_, ax.rnd, th0, kn);
+		if (span == 0) {
+			int y2 = ci * PLAN_ROWS + 2;
+			imageStore(plan_img, ivec3(PLAN_KNOTS, y2, z), vec4(float(nk), 0.0, 0.0, 0.0));
+			for (int i = 0; i < ZC_KNOTS / 4; i++) {
+				if (4 * i >= nk) break;
+				imageStore(plan_img, ivec3(PLAN_KNOTS + 1 + i, y2, z), vec4(kn[4 * i], kn[4 * i + 1], kn[4 * i + 2], kn[4 * i + 3]));
+			}
+		}
+		int spans = ax.rnd ? nk : nk - 1;
+		s_go = span < max(spans, 1);
+		if (s_go) {
+			float th = zc_span_mid(span, kn, nk, ax.rnd, th0);
+			int ids[ZC_ITEMS], fm[ZC_ITEMS];
+			int first;
+			s_ni = zc_seq_items(pc_, ax, th, ids, fm, first);
+			s_first = first;
+			s_th = th;
+			for (int i = 0; i < ZC_ITEMS; i++) {
+				s_ids[i] = ids[i];
+				s_fm[i] = fm[i];
+			}
+		}
+	}
+	barrier();
+	if (!s_go) return;
+	float th = s_th;
+	int ni = s_ni;
+	vec3 m;
+	vec3 t = zc_t(q, th, m);
+	// each item's place
+	if (tid < ni) {
+		int it = s_ids[tid];
+		vec3 pu = vec3(0.0), pt = vec3(0.0);
+		if (it < ZC_IN) zs_piece(ci, z, it, pu, pt);
+		int f = s_fm[tid];
+		s_pos[tid] = zc_seq_pos(q, ax, it, pu, pt, th, t, m, f);
+		s_fm[tid] = f;
+	}
+	barrier();
+	// each face's items in order
+	if (tid < 6) {
+		int fm[ZC_ITEMS];
+		vec2 pos[ZC_ITEMS];
+		for (int i = 0; i < ZC_ITEMS; i++) {
+			fm[i] = s_fm[i];
+			pos[i] = s_pos[i];
+		}
+		int o[ZC_ITEMS];
+		s_nof[tid] = zc_seq_face(q, t, tid, fm, pos, ni, o);
+		for (int j = 0; j < ZC_ITEMS; j++) s_onf[tid * ZC_ITEMS + j] = o[j];
+	}
+	barrier();
+	// the margins between each two in turn
+	for (int x = tid; x < 6 * ZC_ITEMS; x += 64) {
+		int f = x / ZC_ITEMS, j = x % ZC_ITEMS;
+		s_mg[x] = j < s_nof[f] - 1 ? zc_margin(q, s_pos[s_onf[x]], s_pos[s_onf[min(x + 1, 6 * ZC_ITEMS - 1)]], f, t) : 0.0;
+	}
+	barrier();
+	if (tid != 0) return;
+	int ids[ZC_ITEMS], fm[ZC_ITEMS];
+	for (int i = 0; i < ZC_ITEMS; i++) {
+		ids[i] = s_ids[i];
+		fm[i] = s_fm[i];
+	}
+	int onf[6 * ZC_ITEMS];
+	float mg[6 * ZC_ITEMS];
+	for (int x = 0; x < 6 * ZC_ITEMS; x++) {
+		onf[x] = s_onf[x];
+		mg[x] = s_mg[x];
+	}
+	int nof[6];
+	for (int f = 0; f < 6; f++) nof[f] = s_nof[f];
+	ZSeq sq = zc_seq_walk(ids, fm, ni, s_first, onf, nof, mg);
 	int y = ci * PLAN_ROWS + 3;
 	imageStore(plan_img, ivec3(5 * span, y, z), vec4(float(sq.k), float(sq.n[0]), float(sq.n[1]), float(sq.n[2])));
 	for (int j = 0; j < 4; j++) {
@@ -272,13 +390,11 @@ void main() {
 	if (float(c) > pc.grid.x) return;
 	int s = pc.first.x + int(id.y), ci = int(id.y);
 	ZCube q = zs_cube_mesh(s, ci, z);
-	ZPieces pc_;
-	ZAxis ax;
-	zs_pieces(ci, z, pc_, ax);
+	ZAxis ax = zs_axis(ci, z);
 	// the column: the sharing out's own (zc_column) of the knots
 	float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
 	float kn[ZC_KNOTS];
-	int nk = zc_knots(pc_, ax.rnd, th0, kn);
+	int nk = zs_knots(ci, z, kn);
 	vec3 col = zc_column(float(c), pc.grid.x, kn, nk, ax.rnd, th0);
 	if (j == 0) imageStore(plan_img, ivec3(c, ci * PLAN_ROWS + 2, z), vec4(col, 0.0));
 	ZSeq sq = zs_seq(ci, z, int(col.z));
@@ -289,9 +405,14 @@ void main() {
 		if (i < sq.k) ne += sq.n[i];
 	}
 	int y = ci * (int(pc.grid.x) + 1) + c;
-	vec2 a = 2 * j < ne ? zc_item(q, pc_, ax, sq.id[2 * j], col.x, t, m) : vec2(0.0);
-	vec2 b = 2 * j + 1 < ne ? zc_item(q, pc_, ax, sq.id[2 * j + 1], col.x, t, m) : vec2(0.0);
-	imageStore(col_img, ivec3(j, y, z), vec4(a, b));
+	vec2 ab[2];
+	for (int h = 0; h < 2; h++) {
+		int it = sq.id[2 * j + h];
+		vec3 pu = vec3(0.0), pt = vec3(0.0);
+		if (2 * j + h < ne && it < ZC_IN) zs_piece(ci, z, it, pu, pt);
+		ab[h] = 2 * j + h < ne ? zc_item_of(q, ax, it, pu, pt, col.x, t, m) : vec2(0.0);
+	}
+	imageStore(col_img, ivec3(j, y, z), vec4(ab[0], ab[1]));
 }
 #elif defined(IMAGES)
 // image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis
