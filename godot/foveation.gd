@@ -58,6 +58,8 @@ const MARGIN := 2                   # texels round the picture's warp: the filte
 const TS_BEGIN := "foveation begin"
 const TS_TABLE := "foveation table"
 const TS_END := "foveation end"
+const TAIL_MAX := 20                # foveation.gdshaderinc's FOV_TAIL_MAX: bodies the tail's passes take
+const TAIL_RANGES := 18             # its FOV_TAIL_RANGES: a side's strips and band, both sides
 
 signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
@@ -99,8 +101,11 @@ var _gaze := Vector3.FORWARD        # where the eyes look, in the head's space
 var _recentre := true               # each eye's g where it looks at the next frame, slack or not
 var _tell := false                  # the log's line at the next frame
 var _centre: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]   # each eye's g before rounding (render thread)
-var _tail_set: RID                  # TAIL's set 1: ZoneSections' cull image and bodies' rows (render_tail)
-var _tail_key := []                 # the two it was made with
+var _tail_set: RID                  # the tail's passes' set 1: ZoneSections' cull image and bodies' rows, and ours (render_tail)
+var _tail_key := []                 # what it was made with
+var _tail_args: RID                 # TAIL's indirect dispatch: the tiles listed, 1, 1
+var _tail_data: RID                 # the bodies' views and the tiles listed (foveation.gdshaderinc's TailData)
+var _tail_tiles := Vector2i.ZERO    # the tiles across and down they were made for
 var _mutex := Mutex.new()
 
 
@@ -235,10 +240,11 @@ func _build() -> void:
 	var body: String = (load("res://shaders/foveation.gdshaderinc") as ShaderInclude).code
 	var n := RegEx.create_from_string("const int GEO_XN = (\\d+);").search(geo)
 	_xt_n = int(n.get_string(1))
-	for kind in ["eyes", "table", "floor", "gravity", "tail"]:
+	for kind in ["eyes", "table", "floor", "gravity", "tail_view", "tail_tiles", "tail"]:
 		var src := RDShaderSource.new()
-		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n", "tail": "#define TAIL\n"}
-		var inc := geo + "\n" + look + "\n" + lens + ("\n" + zone + "\n" + tail if kind == "tail" else "")
+		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n",
+				"tail_view": "#define TAIL_VIEW\n", "tail_tiles": "#define TAIL_TILES\n", "tail": "#define TAIL\n"}
+		var inc := geo + "\n" + look + "\n" + lens + ("\n" + zone + "\n" + tail if kind.begins_with("tail") else "")
 		src.source_compute = "#version 450\n" + defs[kind] + body.replace("#include_geo_and_look", inc)
 		var spirv := _rd.shader_compile_spirv_from_source(src)
 		if spirv.compile_error_compute != "":
@@ -394,35 +400,52 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.capture_timestamp(TS_END)
 
 
-## The tail of the zone's bodies' images into the texture (foveation.gdshaderinc, TAIL), from
-## ZoneSections' render callback once its IMAGES pass has worked out where each body's tail can be
-## seen: cull (its IMAGES' out), bodies (its rows' uniform buffer), the zone's balls and cubes, the
-## cubes' first slot and the images a body; psi_min and strips as zone_tail.gdshader takes them. After
-## this frame's texture (this effect's callback runs before ZoneSections'); nothing while off or
-## probing.
+## The tail of the zone's bodies' images into the texture (foveation.gdshaderinc: TAIL_VIEW, TAIL_TILES,
+## TAIL), from ZoneSections' render callback once its IMAGES pass has worked out where each body's
+## tail can be seen: cull (its IMAGES' out), bodies (its rows' uniform buffer), the zone's balls and
+## cubes, the cubes' first slot and the images a body; psi_min and strips as zone_tail.gdshader takes
+## them. After this frame's texture (this effect's callback runs before ZoneSections'); nothing while
+## off or probing.
 func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: int, views: int, psi_min: float, strips: bool) -> void:
 	if level == 0 or probe or not _tex.is_valid() or not _pipes.has("tail") or counts == Vector2i.ZERO:
 		return
-	var key := [cull, bodies]
+	var tiles := Vector2i(ceili(_n.x / 8.0), ceili(_n.y / 8.0))
+	if _tail_tiles != tiles:
+		for r in [_tail_args, _tail_data]:
+			if r.is_valid():
+				_rd.free_rid(r)
+		# TAIL's dispatch (tiles, 1, 1), and foveation.gdshaderinc's TailData: the bodies' views of
+		# both eyes (FOV_TAIL_MAX of them, a vec4 and FOV_TAIL_RANGES each), then every tile of both
+		_tail_args = _rd.storage_buffer_create(16, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
+		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (1 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y)
+		_tail_tiles = tiles
+	var key := [cull, bodies, _tail_args, _tail_data]
 	if _tail_key != key or not _tail_set.is_valid() or not _rd.uniform_set_is_valid(_tail_set):
 		var us: Array[RDUniform] = []
-		for b in 2:
+		for b in 4:
 			var u := RDUniform.new()
 			u.binding = b
-			u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE if b == 0 else RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
-			u.add_id(cull if b == 0 else bodies)
+			u.uniform_type = [RenderingDevice.UNIFORM_TYPE_IMAGE, RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER,
+					RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER, RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER][b]
+			u.add_id([cull, bodies, _tail_args, _tail_data][b])
 			us.append(u)
 		_tail_set = _rd.uniform_set_create(us, _shaders["tail"], 1)
 		_tail_key = key
 	var pc := PackedInt32Array([counts.x, counts.y, cube0, images]).to_byte_array()
 	pc.append_array(PackedFloat32Array([psi_min, 1.0 if strips else 0.0, 0.0, 0.0]).to_byte_array())
-	var cl := _rd.compute_list_begin()
-	_rd.compute_list_bind_compute_pipeline(cl, _pipes["tail"])
-	_rd.compute_list_bind_uniform_set(cl, _uniform_set("tail"), 0)
-	_rd.compute_list_bind_uniform_set(cl, _tail_set, 1)
-	_rd.compute_list_set_push_constant(cl, pc, pc.size())
-	_rd.compute_list_dispatch(cl, ceili(_n.x / 8.0), ceili(_n.y / 8.0), views)
-	_rd.compute_list_end()
+	for kind in ["tail_view", "tail_tiles", "tail"]:
+		var cl := _rd.compute_list_begin()
+		_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
+		_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
+		_rd.compute_list_bind_uniform_set(cl, _tail_set, 1)
+		_rd.compute_list_set_push_constant(cl, pc, pc.size())
+		if kind == "tail_view":
+			_rd.compute_list_dispatch(cl, 1, 1, views)
+		elif kind == "tail_tiles":
+			_rd.compute_list_dispatch(cl, ceili(tiles.x * tiles.y / 64.0), 1, views)
+		else:
+			_rd.compute_list_dispatch_indirect(cl, _tail_args, 0)
+		_rd.compute_list_end()
 
 
 static func _warp_at(r: float, r0: float, m: float) -> float:
