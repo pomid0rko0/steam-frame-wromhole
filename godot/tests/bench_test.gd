@@ -1,9 +1,10 @@
 extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
 ## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
-## cube before the eyes drawn in its own), logs a line per place, and gives back the foveation, the
-## cube and where the viewer stood. The menu has its row. In a small window: nothing here looks at
-## the picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
+## cube before the eyes drawn in its own), the toys at their start throughout (none in the curved
+## zone but its own bodies), logs a line per place, and gives back the foveation, the cube, the toys
+## and where the viewer stood. The menu has its row. In a small window: nothing here looks at the
+## picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
 ##   godot --path . --resolution 160x90 -s res://tests/bench_test.gd
 
 const U := preload("res://tests/util.gd")
@@ -11,6 +12,8 @@ const U := preload("res://tests/util.gd")
 var main: Main
 var frames := 0
 var pose_before: Array
+var balls_before: Array         # the toys before the check (the same objects come back)
+var cubes_before: Array
 var started := false
 
 
@@ -52,6 +55,13 @@ func _process(_d: float) -> bool:
 		check("the menu has the speed check's row", has_row)
 		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
+		# a toy in the throat, as the demo's throw and drop leave them: the check puts it back to its start
+		var w := main.toys.world
+		var b0: BallWorld.Ball = w.balls[0]
+		b0.l = 0.0              # the middle of the throat's cylinder
+		b0.n = Vector3(0.0, 0.0, -1.0)
+		balls_before = w.balls.duplicate()
+		cubes_before = w.cubes.duplicate()
 		b.warm = 0.1
 		b.time = 0.2
 		b.start()
@@ -77,6 +87,9 @@ func _process(_d: float) -> bool:
 			if b.throat != v.throat or (b.throat and main.renderer.zone_count.y < 1):
 				check("the segment's ball and cube in the throat", false, b.plan[b.step].y)
 				started = false
+			if not v.near and not v.throat and main.renderer.zone_count != Vector2i.ZERO:
+				check("the toys at their start: none in the curved zone", false, main.renderer.zone_count)
+				started = false
 			if main.renderer.tail_shown != v.tail:
 				check("the segment's tail", false, b.plan[b.step].y)
 				started = false
@@ -95,6 +108,8 @@ func _process(_d: float) -> bool:
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("no cube before the eyes after it", not b.near and _cubes() == main.toys.world.cubes.size())
+			check("no bodies in the throat after it", not b.throat and not b.throat_fixed)
+			check("the toys back as they were", main.toys.world.balls == balls_before and main.toys.world.cubes == cubes_before)
 			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the tail drawn again", main.renderer.tail_shown)
