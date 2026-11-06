@@ -329,7 +329,7 @@ void main() {
 		float kn[ZC_KNOTS];
 		int nk = zc_knots(pcs, ax.rnd, th0, kn);
 		vec3 col = zc_column(a.x, a.y, kn, nk, ax.rnd, th0);
-		ZSeq sq = zc_sequence(q, pcs, ax, col.y);
+		ZSeq sq = zc_sequence(q, pcs, ax, zc_span_mid(int(col.z), kn, nk, ax.rnd, th0));
 		vec3 m;
 		vec3 t = zc_t(q, col.x, m);
 		vec2 pos[ZC_ITEMS];

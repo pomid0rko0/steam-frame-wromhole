@@ -296,7 +296,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		_pass("cube_edges", cpc, 1, counts.y, views)
 		_pass("cube_pieces", cpc, 1, counts.y, views)
 		_pass("cube_spans", cpc, 1, counts.y, views)
-		_pass("cube_columns", cpc, int(ceil((_grid.x + 1.0) / 64.0)), counts.y, views)
+		_pass("cube_columns", cpc, int(ceil((_grid.x + 1.0) * COL_W / 64.0)), counts.y, views)
 		_pass("cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
 	# the tables, as far as the images just found drawn need them
 	_pass("paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)

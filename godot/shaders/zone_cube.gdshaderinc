@@ -732,6 +732,16 @@ vec3 zc_column(float c, float columns, float kn[ZC_KNOTS], int nk, bool rnd, flo
 	return r;
 }
 
+// Span i's middle (of the knots kn, nk of them, from th0): zc_column's second for its columns (fewer
+// knots than a span takes: the first one)
+float zc_span_mid(int i, float kn[ZC_KNOTS], int nk, bool rnd, float th0) {
+	int spans = rnd ? nk : nk - 1;
+	if (spans < 1) return th0 + kn[0];
+	float kl = rnd ? kn[0] + 2.0 * GEO_PI : kn[nk - 1];
+	float ka = kn[i], kb = i + 1 < nk ? kn[i + 1] : kl;
+	return th0 + 0.5 * (ka + kb);
+}
+
 // Column c's side of a knot (th_prev, th, th_next: the azimuths zc_column gives c - 1, c, c + 1, the
 // ones past the ends any): +1 the first of a knot's two columns, -1 the second; round the axis the
 // last +1 and the first -1, on one knot a turn apart; else 0. The two are one section's polylines on
