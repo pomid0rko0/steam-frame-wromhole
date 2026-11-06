@@ -238,8 +238,11 @@ func _ready() -> void:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
 		play.add_child(mi)
-	arrows = _images(_arrow_mesh(arrow_arrays(space)), arrow_mat)
-	arrows.visible = false
+	var arr := arrow_arrays(space)
+	arrows = _images(_arrow_mesh(arr), arrow_mat)
+	zone_sections.set_lines(arr, LINE_IMAGES)
+	arrow_mat.set_shader_parameter("line_view", zone_sections.line_tex)
+	_arrows_shown(false)
 	play.add_child(arrows)
 	var tube := _beam_mesh()
 	for m in beam_mats:
@@ -261,7 +264,7 @@ func _process(_delta: float) -> void:
 	_zone_commands()
 	if _warm > 0:
 		_warm -= 1
-		arrows.visible = _warm > 0 or (gravity_view == 2 and _lines_task < 0)
+		_arrows_shown(_warm > 0 or (gravity_view == 2 and _lines_task < 0))
 		_tail_visible()
 		if _warm == 0:
 			for k in beams.size():
@@ -348,7 +351,7 @@ func set_length() -> void:
 	_tail_on = zone_count != Vector2i.ZERO and space.Lc > 0.0
 	_tail_visible()
 	_lines_want = true
-	arrows.visible = false
+	_arrows_shown(false)
 	if _lines_task < 0:
 		_lines_start()
 
@@ -391,7 +394,14 @@ func _lines_ready() -> void:
 		_lines_start()
 		return
 	arrows.multimesh.mesh = _arrow_mesh(_lines_built[0])
-	arrows.visible = gravity_view == 2
+	zone_sections.set_lines(_lines_built[0], LINE_IMAGES)
+	_arrows_shown(gravity_view == 2)
+
+
+## The field lines shown or not, and their places in the view worked out (ZoneSections' LINES) or not.
+func _arrows_shown(on: bool) -> void:
+	arrows.visible = on
+	zone_sections.set_lines_shown(on)
 
 
 var _sweep_tex: ImageTexture
@@ -632,7 +642,7 @@ func set_gravity_view(view: int) -> void:
 	floor_mat = floor_mats[mini(gravity_view, 1)]
 	_floor_material()
 	foveation.gravity = gravity_view > 0
-	arrows.visible = gravity_view == 2 and _lines_task < 0
+	_arrows_shown(gravity_view == 2 and _lines_task < 0)
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 

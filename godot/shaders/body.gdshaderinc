@@ -45,7 +45,8 @@
 //     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR, but for their outline
 //     (arrow_rim): the pixels neither inside the coloured part (CUSTOM0's three numbers all at least
 //     0) nor inside the line's (UV2's two; Renderer._line); COLOR.a 1 (an arrow, coloured over its
-//     line) a hair nearer the eye in depth than 0 (a line), in the same place in the view.
+//     line) a hair nearer the eye in depth than 0 (a line), in the same place in the view; each
+//     vertex's place in the view of each eye and image worked out by ZoneSections (line_view).
 //   BEAM (beam.gdshader): a hand's pointing beam (Renderer.set_beam), a tube round a line of up to
 //     BEAM_POINTS points of R^4 (beam_p, beam_n of them), beam_r[i] in radius at point i; its mesh
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
@@ -103,6 +104,9 @@ uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 #ifdef ARROWS
 uniform vec3 arrow_rim : source_color = vec3(0.02);   // the outline's colour (Renderer.ARROW_RIM_COLOR)
+// each vertex in the view of each eye, image by image (ZoneSections' LINES): at (VERTEX_ID, 2 image +
+// eye) the point (EYE_OFFSET + len dir) and fell
+uniform sampler2D line_view : filter_nearest, repeat_disable;
 #endif
 
 #ifdef CUBE
@@ -304,6 +308,13 @@ void vertex() {
 		POSITION = vec4(2.0, 0.0, 0.5, 1.0);
 	}
 #else
+#ifdef ARROWS
+	// worked out once a frame for each eye and image (ZoneSections' LINES, as below)
+	vec4 lv = texelFetch(line_view, ivec2(VERTEX_ID, 2 * INSTANCE_ID + int(VIEW_INDEX)), 0);
+	float fell = lv.w;
+	arrive = vec4(0.0);
+	POSITION = PROJECTION_MATRIX * vec4(lv.xyz, 1.0);
+#else
 	// image INSTANCE_ID of each vertex, by its own plane (a triangle across the axis
 	// through the eye and the centre would join two images: a long thin line or tube there does)
 	float c = dot(en, pn);
@@ -311,10 +322,8 @@ void vertex() {
 	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
 	float len, fell;
 	vec4 dir = geo_see_image(el, en, pl, pn, t, geo_atan2(sd, c), INSTANCE_ID, len, arrive, fell);
-#ifdef ARROWS
-	len *= 1.0 - 1e-3 * COLOR.a;
-#endif
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+#endif
 #endif
 #endif
 #ifdef ARROWS

@@ -15,7 +15,7 @@ extends Node
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
 ## and the frame is timed on the GPU (the median frame of each segment, and of each of its parts:
-## FrameRate.PARTS, and of each pass of the zone's nodes and paths: ZoneSections.TS_PASS), this
+## FrameRate.PARTS, and of each pass of the zone's nodes, paths and lines: ZoneSections.TS_PASS), this
 ## build's renderer each
 ## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
 ## the eyes (NEAR_CUBE: a body near the eyes with the world round it), and with a ball and a cube
@@ -561,7 +561,7 @@ func _end_segment() -> void:
 	var zc: Vector2i = _zone_counts[plan[step].x]
 	print("bench parts: %s, %.0f deg right, %.0f deg up (%s): %s; with the cube before the eyes, in the curved zone %d balls, %d cubes"
 			% [_name(place[0]), place[1], place[2], ", ".join(FrameRate.PARTS), "; ".join(by), zc.x, zc.y])
-	# the zone's nodes and paths by pass (ZoneSections.TS_PASS): each variant's mean over its segments
+	# the zone's nodes, paths and lines by pass (ZoneSections.TS_PASS): each variant's mean over its segments
 	var zby := []
 	for v in variants.size():
 		var segs_z: Array = zone_results[plan[step].x][v]

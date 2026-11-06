@@ -1,8 +1,8 @@
 // The meshes of the bodies in the curved zone (balls: zone.gdshaderinc, zone_ball_vertex; cubes:
 // zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
 // (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
-// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES, SIZES, LISTS or
-// PATHS) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
+// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES, SIZES, LISTS,
+// PATHS or LINES) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
 // zone_tail.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
@@ -91,6 +91,13 @@ layout(set = 0, binding = 6, rgba32f) uniform restrict image2DArray plan_img;   
 layout(set = 0, binding = 7, rgba32f) uniform restrict image2DArray col_img;
 #ifdef SIZES
 layout(set = 1, binding = 0) uniform sampler2DArray s_paths;   // PATHS' out, as the vertices take it
+#endif
+#ifdef LINES
+// the field lines' vertices (Renderer.arrow_arrays: l, n.y, n.z, 1 for an arrow's) and where each is in
+// the view of each eye, image by image (LINES' out, the lines' vertex shader's in: body.gdshaderinc,
+// ARROWS, line_view)
+layout(set = 1, binding = 0, std430) restrict readonly buffer LineIn { vec4 v[]; } line_in;
+layout(set = 1, binding = 1, rgba32f) uniform restrict writeonly image2D line_out;
 #endif
 #ifdef LISTS
 // the lists of what each zone mesh draws (LISTS' out, the bodies' vertex shader's in: body.gdshaderinc,
@@ -676,6 +683,34 @@ void main() {
 		cmd5.v[1] = s_n[5];
 		cmd6.v[1] = s_n[6];
 	}
+}
+#elif defined(LINES)
+// The gravity view's field lines: each vertex's place in the view of each eye, image by image (an
+// invocation each: x the vertex, y the image, z the eye; pc.first.x the vertices), as the vertex
+// shader would put it (geo_see_image, the point at EYE_OFFSET + len dir; an arrow's a hair nearer,
+// over its line): a search a vertex, image and eye once a frame here, not in each vertex shader the
+// GPU runs on it. Out at (vertex, 2 image + eye): that point, and fell (body.gdshaderinc's colours).
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	if (int(id.x) >= pc.first.x) return;
+	vec4 q = line_in.v[id.x];
+	vec3 pn = vec3(0.0, q.y, q.z);
+	float el;
+	vec3 en;
+	vec4 ex, ey, ez;
+	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
+	// its plane through the centre, as the vertex shader's: a triangle across the axis through the
+	// eye and the centre would join two images
+	float c = dot(en, pn);
+	float sd = length(cross(en, pn));
+	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+	float len, fell;
+	vec4 arrive;
+	vec4 dir = geo_see_image(el, en, q.x, pn, t, geo_atan2(sd, c), int(id.y), len, arrive, fell);
+	len *= 1.0 - 1e-3 * q.w;
+	vec3 pv = zp.eye_off[id.z].xyz + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez));
+	imageStore(line_out, ivec2(id.x, 2 * id.y + id.z), vec4(pv, fell));
 }
 #elif defined(IMAGES)
 // image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis
