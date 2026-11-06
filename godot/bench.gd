@@ -25,6 +25,8 @@ extends Node
 ## before the chest (HAND_BALLS: what the hands' balls cost); at the long throat's places only (LONG)
 ## also with the bodies in the throat at foveation's strongest with the tail and without, and with
 ## the gravity view's field lines at foveation's strongest (what they cost: Renderer.arrow_arrays),
+## and with all the bodies at once (the hands' balls, the ball and the cube in the throat, the cube at
+## the eyes) at foveation's strongest, as play in the long throat has them,
 ## in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
@@ -107,7 +109,9 @@ const VARIANTS := [{"label": "plain"},
 	{"label": "the same, the tail without strips", "throat": true, "strips": false},
 	{"label": "a ball and a cube in the throat, foveation strongest", "foveation": 5, "throat": true, "long": true},
 	{"label": "the same without the tail, foveation strongest", "foveation": 5, "throat": true, "tail": false, "long": true},
-	{"label": "the field lines, foveation strongest", "foveation": 5, "lines": true, "long": true}]
+	{"label": "the field lines, foveation strongest", "foveation": 5, "lines": true, "long": true},
+	{"label": "all at once: the hands' balls, the ball and the cube in the throat, the cube at the eyes, foveation strongest",
+			"foveation": 5, "hands": true, "throat": true, "near": true, "long": true}]
 # the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
 # round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
 # B's, both in view from inside the cylinder looking round it and from out at the mouth
@@ -603,7 +607,7 @@ func _compared() -> void:
 	var fov_bare := -1
 	for v in variants.size():
 		var f := variants[v]
-		if f.foveation == 5 and f.throat:
+		if f.foveation == 5 and f.throat and not f.hands and not f.near:
 			if f.tail:
 				fov_tail = v
 			else:
@@ -616,7 +620,7 @@ func _compared() -> void:
 	var fov5 := -1
 	for v in variants.size():
 		var f := variants[v]
-		if f.hands:
+		if f.hands and not f.throat and not f.near:
 			with_hands = v
 		if f.foveation == 5 and not f.near and not f.throat and not f.hands and not f.lines:
 			fov5 = v
@@ -632,8 +636,14 @@ func _compared() -> void:
 			for r in results:
 				if not r[v].is_empty():
 					lines_ms = maxf(lines_ms, _mean(r[v]) - _mean(r[fov5]))
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс), мячи рук при сильнейшей фовеации — до %.1f мс, силовые линии — до %.1f мс"
-			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms, hands_ms, lines_ms]]
+	# everything at once at foveation's strongest: its slowest place (the long throat's)
+	var all_ms := 0.0
+	for v in variants.size():
+		var f := variants[v]
+		if f.hands and f.throat and f.near:
+			all_ms = maxf(all_ms, _worst(v))
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс), мячи рук при сильнейшей фовеации — до %.1f мс, силовые линии — до %.1f мс, всё сразу на горле 80 м при сильнейшей фовеации — %.1f мс"
+			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms, hands_ms, lines_ms, all_ms]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():

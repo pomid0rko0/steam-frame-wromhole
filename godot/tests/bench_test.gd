@@ -76,7 +76,8 @@ func _process(_d: float) -> bool:
 				check("the place's throat", false, "%.2f m, not %.2f" % [2.0 * main.space.Lc, cyl])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
-			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1):
+			# the cube before the eyes, and the throat's (its own check, below) with it in all at once
+			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1 + (1 if b.throat else 0)):
 				check("the segment's cube before the eyes", false, b.plan[b.step].y)
 				started = false
 			if b.throat != v.throat or (b.throat and main.renderer.zone_count.y < 1):
@@ -118,7 +119,7 @@ func _process(_d: float) -> bool:
 			check("the menu shows the foveation's result and the tail's", main.menu.bench_text.contains("фовеация")
 					and main.menu.bench_text.contains("хвост") and main.menu.bench_text.contains("при сильнейшей фовеации")
 					and main.menu.bench_text.contains("без полосок") and main.menu.bench_text.contains("мячи рук")
-					and main.menu.bench_text.contains("силовые линии"), main.menu.bench_text)
+					and main.menu.bench_text.contains("силовые линии") and main.menu.bench_text.contains("всё сразу"), main.menu.bench_text)
 			U.finish(self)
 			return true
 	if Time.get_ticks_msec() > 600_000:
