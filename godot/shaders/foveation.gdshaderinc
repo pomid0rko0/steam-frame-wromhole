@@ -1,6 +1,6 @@
 // The floor, the sky and what is seen through the curved zone, for foveation (foveation.gd): a
 // compute shader's body, not a Godot shader's; foveation.gd puts the header (the version, EYES,
-// TABLE, GRAVITY, TAIL_VIEW, TAIL_TILES or TAIL) before it and geo.gdshaderinc, look.gdshaderinc and lens.gdshaderinc where it
+// TABLE, GRAVITY, TAIL_VIEW, TAIL_TILES, TAIL_QUADS or TAIL) before it and geo.gdshaderinc, look.gdshaderinc and lens.gdshaderinc where it
 // says.
 //
 // Each eye's picture in a texture warped about the pixel g the eye looks at (foveation.gd's top):
@@ -23,7 +23,9 @@
 // zone_tail.gdshader's top):
 // TAIL_VIEW: each body's sector and ranges for each eye, once (an invocation a body and side), into
 // a buffer; TAIL_TILES: the tiles of 8 x 8 texels that reach into one of them, listed (an invocation
-// a tile); TAIL: those tiles only (a workgroup a tile, dispatched by the list's count). A texel whose
+// a tile); TAIL_QUADS: in those, the quads of 2 x 2 texels one of whose rays lies in one, listed (an
+// invocation a quad, a workgroup a tile, dispatched by the tiles' count); TAIL: those quads only,
+// sixteen to a workgroup, packed as a rasterizer packs a primitive's quads. A texel whose
 // ray lies in a sector looks into the copies of that body its strip or band holds, as
 // zone_tail.gdshader's fragment does; where it meets one nearer than what the texel shows, the texel
 // takes the body's colour there, lit as zone_tail.gdshader lights it. The meshes' images are drawn
@@ -55,7 +57,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 layout(set = 0, binding = 3, std430) buffer Eyes {
 	vec4 eyes[12];      // each eye: (el, en), ex, ey, ez, (r, the root of u, r - rho0), (its rows' ends)
 };
-#if defined(TAIL) || defined(TAIL_VIEW) || defined(TAIL_TILES)
+#if defined(TAIL) || defined(TAIL_VIEW) || defined(TAIL_TILES) || defined(TAIL_QUADS)
 layout(set = 0, binding = 4, rgba16f) uniform restrict image2DArray out_img;
 #else
 layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2DArray out_img;
@@ -130,29 +132,31 @@ void main() {
 	vec3 eye = eyes[6u * v + 4u].xyz;
 	imageStore(xt_img, ivec2(k, row), geo_xt_texel(abs(eyes[6u * v].x), eye, (row & 1) == 0, eyes[6u * v + 5u].xy, k));
 }
-#elif defined(TAIL) || defined(TAIL_VIEW) || defined(TAIL_TILES)
+#elif defined(TAIL) || defined(TAIL_VIEW) || defined(TAIL_TILES) || defined(TAIL_QUADS)
 // ZoneSections': its IMAGES pass's out (a body's tail's view of it after its images' texels: zone_
 // sections.gdshaderinc's IMAGES) and the bodies' rows as Renderer.set_objects has them in its slots
 layout(set = 1, binding = 0, rgba32f) uniform restrict readonly image2DArray zone_cull;
 layout(set = 1, binding = 1, std140) uniform TailBodies {
 	vec4 body[80];      // per slot: C, E1, E2, (size, colour)
 } tb;
-// TAIL's indirect dispatch: the tiles listed, 1, 1 (TAIL_VIEW sets it, TAIL_TILES counts)
+// the indirect dispatches: TAIL_QUADS' (the tiles listed, 1, 1, 0), TAIL's (its workgroups, 1, 1,
+// the quads listed); TAIL_VIEW sets them, TAIL_TILES and TAIL_QUADS count
 layout(set = 1, binding = 2, std430) restrict buffer TailArgs {
-	uint args[4];
+	uint args[8];
 } ta;
 // each eye's view of each body's tail, the same for all its texels: per eye and body, (b1, the
 // sector's half width round the axis with its margins; nought: no tail this frame), and per side and
 // strip k (TAIL_STRIPS: the band) the angles off the eye's inward radial it spans and the copies it
 // looks into, as zone_tail.gdshader's vertices take them: (least, greatest, first, last), past the
 // zone too where first is -1e9 (the band of a body without strips), none where least > greatest;
-// then the tiles of 8 x 8 texels TAIL works on (x | y << 12 | eye << 24)
+// then the tiles of 8 x 8 texels listed (x | y << 12 | eye << 24), and from fov_tail_quads() on the
+// quads of 2 x 2 texels TAIL works on (likewise, in quads)
 #define FOV_TAIL_MAX 20
 #define FOV_TAIL_RANGES (2 * (TAIL_STRIPS + 1))
 layout(set = 1, binding = 3, std430) restrict buffer TailData {
 	vec4 sec[2 * FOV_TAIL_MAX];
 	vec4 rng[2 * FOV_TAIL_MAX * FOV_TAIL_RANGES];
-	uint tiles[];
+	uint lists[];
 } td;
 layout(push_constant, std430) uniform TailKind {
 	ivec4 n;            // the zone's balls, its cubes, the cubes' first slot, the images a body (Renderer.ZONE_IMAGES)
@@ -179,6 +183,40 @@ float fov_tail_azimuth(vec3 d, vec3 ax, vec3 b1, int side) {
 	return side == 0 ? phi : (phi > 0.0 ? phi - GEO_PI : phi + GEO_PI);
 }
 
+// where in td.lists the quads start: past every tile of both eyes
+uint fov_tail_quads() {
+	uvec2 nt = (uvec2(fovp.warp1[0].zw) + 7u) / 8u;
+	return 2u * nt.x * nt.y;
+}
+
+// whether the ray d of eye v (chi off its inward radial ax) lies in one of the bodies' strips or bands
+// within its sector: where TAIL looks into a body's copies
+bool fov_tail_in(vec3 d, uint v, vec3 ax) {
+	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
+	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
+	for (int b = 0; b < nb; b++) {
+		int ob = int(v) * FOV_TAIL_MAX + b;
+		vec4 sec = td.sec[ob];
+		if (sec.w <= 0.0) continue;
+		for (int side = 0; side < 2; side++) {
+			if (abs(fov_tail_azimuth(d, ax, sec.xyz, side)) > sec.w) continue;
+			for (int k = 0; k <= TAIL_STRIPS; k++) {
+				vec4 rg = td.rng[ob * FOV_TAIL_RANGES + side * (TAIL_STRIPS + 1) + k];
+				if (rg.x <= rg.y && chi >= rg.x && chi <= rg.y) return true;
+			}
+		}
+	}
+	return false;
+}
+
+// texel id's ray, as the texture's pass has it (fov_texel's pixel), false if the filter never takes it
+bool fov_tail_texel(uvec3 id, out vec3 d, out vec2 p, out float rho, out float s) {
+	float k;
+	bool used = fov_texel(id, p, rho, s, k) && fovp.pic.w < 0.5;
+	d = normalize((fovp.ray[id.z] * vec4(p / fovp.pic.xy * 2.0 - 1.0, 1.0, 0.0)).xyz);
+	return used;
+}
+
 #if defined(TAIL_VIEW)
 // An invocation a body and side of eye z's: its sector and its strips' and band's ranges into td
 // (from ZoneSections' cull_img, as zone_tail.gdshader's vertices read it); and TAIL's dispatch reset.
@@ -190,6 +228,10 @@ void main() {
 		ta.args[0] = 0u;
 		ta.args[1] = 1u;
 		ta.args[2] = 1u;
+		ta.args[4] = 0u;
+		ta.args[5] = 1u;
+		ta.args[6] = 1u;
+		ta.args[7] = 0u;
 	}
 	int b = i >> 1, side = i & 1;
 	if (b >= FOV_TAIL_MAX) return;
@@ -243,8 +285,8 @@ void main() {
 	}
 }
 #elif defined(TAIL_TILES)
-// An invocation a tile of 8 x 8 texels of eye z's: listed for TAIL if a cone round its middle's ray
-// through its corners' rays reaches into a sector and one of its ranges of any body (all of it a
+// An invocation a tile of 8 x 8 texels of eye z's: listed for TAIL_QUADS if a cone round its middle's
+// ray through its corners' rays reaches into a sector and one of its ranges of any body (all of it a
 // hair wider, against the warp's curving of a tile's edges between its corners).
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 vec3 fov_tail_ray(vec2 t, uint v, out bool used) {
@@ -288,117 +330,167 @@ void main() {
 			for (int k = 0; k <= TAIL_STRIPS; k++) {
 				vec4 rg = td.rng[ob * FOV_TAIL_RANGES + side * (TAIL_STRIPS + 1) + k];
 				if (rg.x > rg.y || chi + rad < rg.x || chi - rad > rg.y) continue;
-				td.tiles[atomicAdd(ta.args[0], 1u)] = xy.x | (xy.y << 12) | (v << 24);
+				td.lists[atomicAdd(ta.args[0], 1u)] = xy.x | (xy.y << 12) | (v << 24);
 				return;
 			}
 		}
 	}
 }
-#else
-// TAIL: a workgroup a tile TAIL_TILES listed, an invocation a texel of it.
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-shared vec4 s_e[64];
+#elif defined(TAIL_QUADS)
+// A workgroup a tile TAIL_TILES listed, an invocation a quad of 2 x 2 texels of it: listed for TAIL
+// if one of its texels' rays lies in a body's strip or band (fov_tail_in), so that TAIL's waves hold
+// only quads where the tail can be, as a rasterizer's hold only those a primitive covers.
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
 void main() {
-	uint tile = td.tiles[gl_WorkGroupID.x];
-	uint v = tile >> 24;
-	uvec3 id = uvec3(8u * uvec2(tile & 0xfffu, (tile >> 12) & 0xfffu) + gl_LocalInvocationID.xy, v);
-	vec4 e = eyes[6u * v];
-	vec4 ex = eyes[6u * v + 1u], ey = eyes[6u * v + 2u], ez = eyes[6u * v + 3u];
+	uint tile = td.lists[gl_WorkGroupID.x];
+	uint v = tile >> 24, l = gl_LocalInvocationIndex;
+	uvec2 q = 4u * uvec2(tile & 0xfffu, (tile >> 12) & 0xfffu) + uvec2(l & 3u, l >> 2);
 	vec3 ax = fov_tail_axis(v);
-	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
+	bool any_in = false;
+	for (uint j = 0u; j < 4u; j++) {
+		vec3 d;
+		vec2 p;
+		float rho, s;
+		if (fov_tail_texel(uvec3(2u * q + uvec2(j & 1u, j >> 1), v), d, p, rho, s) && fov_tail_in(d, v, ax)) any_in = true;
+	}
+	if (!any_in) return;
+	uint i = atomicAdd(ta.args[7], 1u);
+	td.lists[fov_tail_quads() + i] = q.x | (q.y << 12) | (v << 24);
+	atomicMax(ta.args[4], i / 16u + 1u);
+}
+#else
+// TAIL: a workgroup 16 quads TAIL_QUADS listed, an invocation a texel of one: the 2 x 2 texels of a
+// quad side by side, as a fragment shader's.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+shared vec4 s_e[64];
+// the texel of invocation lq of a workgroup in quad (as TAIL_QUADS lists it)
+uvec3 fov_tail_id(uint quad, uint lq) {
+	return uvec3(2u * uvec2(quad & 0xfffu, (quad >> 12) & 0xfffu) + uvec2(lq & 1u, (lq >> 1) & 1u), quad >> 24);
+}
+
+// its ray in the camera's space
+vec3 fov_tail_dir(uint quad, uint lq) {
 	vec2 p;
 	float rho, s, k;
-	bool used = fov_texel(id, p, rho, s, k) && fovp.pic.w < 0.5;
-	// the nearest way into a body among the texel's sectors: its body slot (-1: none), the ray and
-	// where on it
-	int hit = -1;
-	TailRay hz;
-	float hy = 0.0, hang = 0.0, best = FOV_SKY;
-	int hon = 0;
-	if (used) {
-		vec2 clip = p / fovp.pic.xy * 2.0 - 1.0;
-		vec3 d = normalize((fovp.ray[v] * vec4(clip, 1.0, 0.0)).xyz);
-		vec4 D = d.x * ex + d.y * ey + d.z * ez;
-		vec3 eye = eyes[6u * v + 4u].xyz;
-		best = imageLoad(out_img, ivec3(id)).a;
-		float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
-		for (int b = 0; b < nb; b++) {
-			int ob = int(v) * FOV_TAIL_MAX + b;
-			vec4 sec = td.sec[ob];
-			if (sec.w <= 0.0) continue;
-			int sl = fov_tail_slot(b);
-			for (int side = 0; side < 2; side++) {
-				if (abs(fov_tail_azimuth(d, ax, sec.xyz, side)) > sec.w) continue;
-				for (int st = 0; st <= TAIL_STRIPS; st++) {
-					vec4 rg = td.rng[ob * FOV_TAIL_RANGES + side * (TAIL_STRIPS + 1) + st];
-					if (rg.x > rg.y || chi < rg.x || chi > rg.y) continue;
-					bool far = rg.z < -5e8;
-					TailBody q = fov_tail_body(sl);
-					TailRay z;
-					float y, ang, psi;
-					int on;
-					if (!tail_ray(e.x, eye, e.yzw, D, tk.f.x, far, z)) continue;
-					if (!tail_meet(z, q, tk.f.x, rg.z, rg.w, far, y, ang, psi, on)) continue;
-					vec4 P, arrive;
-					float len;
-					tail_hit(z, y, ang, on, P, arrive, len);
-					if (geo_finite(len) && len < best) {
-						best = len;
-						hit = sl;
-						hz = z;
-						hy = y;
-						hang = ang;
-						hon = on;
-					}
-				}
-			}
+	uvec3 id = fov_tail_id(quad, lq);
+	fov_texel(id, p, rho, s, k);
+	return normalize((fovp.ray[id.z] * vec4(p / fovp.pic.xy * 2.0 - 1.0, 1.0, 0.0)).xyz);
+}
+
+// the n-th range of the bodies' sectors (body b's range r: b FOV_TAIL_RANGES + r) its ray lies in
+// (fov_tail_in's), -1 past the last
+int fov_tail_pick(uint quad, uint lq, int n) {
+	uint v = quad >> 24;
+	vec3 d = fov_tail_dir(quad, lq), ax = fov_tail_axis(v);
+	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
+	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
+	for (int b = 0; b < nb; b++) {
+		int ob = int(v) * FOV_TAIL_MAX + b;
+		vec4 sec = td.sec[ob];
+		if (sec.w <= 0.0) continue;
+		for (int r = 0; r < FOV_TAIL_RANGES; r++) {
+			vec4 rg = td.rng[ob * FOV_TAIL_RANGES + r];
+			if (rg.x > rg.y || chi < rg.x || chi > rg.y) continue;
+			if (abs(fov_tail_azimuth(d, ax, sec.xyz, r / (TAIL_STRIPS + 1))) > sec.w) continue;
+			if (n == 0) return b * FOV_TAIL_RANGES + r;
+			n--;
 		}
 	}
-	// lit as zone_tail.gdshader lights it: a cube's dark edges by the measure's differences within
-	// each 2 x 2 square of texels (a fragment shader's fwidth), where the neighbours show the same body
+	return -1;
+}
+void main() {
+	uint lq = gl_LocalInvocationIndex;
+	uint qi = 16u * gl_WorkGroupID.x + (lq >> 2);
+	bool listed = qi < ta.args[7];
+	uint quad = listed ? td.lists[fov_tail_quads() + qi] : 0u;
+	uint v = quad >> 24;
+	bool used;
+	{
+		vec2 p;
+		float rho, s, k;
+		used = listed && fov_texel(fov_tail_id(quad, lq), p, rho, s, k) && fovp.pic.w < 0.5;
+	}
+	// the nearest way into a body among the texel's sectors' ranges: its body slot (-1: none), its
+	// colour there as zone_tail.gdshader lights it, and for a cube its dark edges' measure
+	// (look_box_edge), whose differences within the quad stand for a fragment shader's fwidth. Range
+	// after range (fov_tail_pick: the n-th the ray lies in), each shaded at once: through a search
+	// only these are kept, the ray worked out again for the next (in a fragment shader its varyings
+	// are read again where needed: registers, waves at once)
+	int hit = -1;
+	bool cube = false;
 	vec3 col = vec3(0.0);
 	float edge = -1.0;
-	TailBody q;
-	vec4 P = vec4(0.0), arrive = vec4(0.0), Np = vec4(0.0), sh = vec4(0.0), uh = vec4(0.0), qd = vec4(0.0);
-	float l = 0.0;
-	if (hit >= 0) {
-		q = fov_tail_body(hit);
+	float best = used ? imageLoad(out_img, ivec3(fov_tail_id(quad, lq))).a : FOV_SKY;
+	for (int n = 0; used && n < FOV_TAIL_MAX * FOV_TAIL_RANGES; n++) {
+		int pick = fov_tail_pick(quad, lq, n);
+		if (pick < 0) break;
+		int b = pick / FOV_TAIL_RANGES;
+		int ob = int(v) * FOV_TAIL_MAX + b;
+		vec4 rg = td.rng[ob * FOV_TAIL_RANGES + pick % FOV_TAIL_RANGES];
+		bool far = rg.z < -5e8;
+		int sl = fov_tail_slot(b);
+		TailBody q = fov_tail_body(sl);
+		vec3 d = fov_tail_dir(quad, lq);
+		vec4 D = d.x * eyes[6u * v + 1u] + d.y * eyes[6u * v + 2u] + d.z * eyes[6u * v + 3u];
+		vec4 ev = eyes[6u * v];
+		TailRay z;
+		float y, ang, psi;
+		int on;
+		if (!tail_ray(ev.x, eyes[6u * v + 4u].xyz, ev.yzw, D, tk.f.x, far, z)) continue;
+		if (!tail_meet(z, q, tk.f.x, rg.z, rg.w, far, y, ang, psi, on)) continue;
+		vec4 P, arrive;
 		float len;
-		tail_hit(hz, hy, hang, hon, P, arrive, len);
-		l = hon == 2 ? hz.dl * (g_prof.w + length(P.xyz) - g_prof2.x) : tail_l(hz, hy);
-		Np = geo_normal(P);
+		tail_hit(z, y, ang, on, P, arrive, len);
+		if (!geo_finite(len) || len >= best) continue;
+		// lit as zone_tail.gdshader lights it
+		float l = on == 2 ? z.dl * (g_prof.w + length(P.xyz) - g_prof2.x) : tail_l(z, y);
+		vec4 Np = geo_normal(P);
 		vec4 s4 = look_sun4(l);
 		vec4 sun = s4 - dot(s4, Np) * Np;
 		vec4 up4 = vec4(0.0, 0.0, 1.0, 0.0) - Np.z * Np;
-		sh = sun * inversesqrt(max(dot(sun, sun), 1e-12));
-		uh = up4 * inversesqrt(max(dot(up4, up4), 1e-12));
-		qd = P - q.C;
-		if (q.cube) edge = look_box_edge(vec3(dot(qd, q.E[0]), dot(qd, q.E[1]), dot(qd, q.E[2])) / q.size);
+		vec4 sh = sun * inversesqrt(max(dot(sun, sun), 1e-12));
+		vec4 uh = up4 * inversesqrt(max(dot(up4, up4), 1e-12));
+		vec4 qd = P - q.C;
+		vec3 albedo = tb.body[4 * sl + 3].yzw;
+		vec4 nn;
+		float ed = -1.0;
+		if (q.cube) {
+			vec3 box = vec3(dot(qd, q.E[0]), dot(qd, q.E[1]), dot(qd, q.E[2])) / q.size;
+			vec3 ab = abs(box);
+			int f = ab.x >= ab.y && ab.x >= ab.z ? 0 : (ab.y >= ab.z ? 1 : 2);
+			nn = q.E[f] - dot(q.E[f], Np) * Np;
+			nn *= box[f] < 0.0 ? -1.0 : 1.0;
+			ed = look_box_edge(box);
+		} else {
+			nn = qd - dot(qd, Np) * Np;
+		}
+		nn *= inversesqrt(max(dot(nn, nn), 1e-12));
+		vec3 c = look_body(albedo, dot(nn, sh), dot(nn, uh), -dot(nn, arrive), l);
+		if (!geo_finite(c.r + c.g + c.b)) continue;
+		best = len;
+		hit = sl;
+		cube = q.cube;
+		col = c;
+		edge = ed;
 	}
-	uvec2 lq = gl_LocalInvocationID.xy;
-	s_e[lq.y * 8u + lq.x] = vec4(edge, float(hit), 0.0, 0.0);
+	s_e[lq] = vec4(edge, float(hit), 0.0, 0.0);
 	barrier();
 	if (hit < 0) return;
-	vec3 albedo = tb.body[4 * hit + 3].yzw;
-	if (q.cube) {
-		uint row = lq.y * 8u + (lq.x & ~1u), cl = (lq.y & ~1u) * 8u + lq.x;
+	if (cube) {
+		// the quad's texels: 0 (x, y), 1 (x + 1, y), 2 (x, y + 1), 3 (x + 1, y + 1)
+		uint qb = lq & ~3u, row = qb + (lq & 2u), cl = qb + (lq & 1u);
 		float dx = s_e[row + 1u].y == s_e[row].y ? s_e[row + 1u].x - s_e[row].x : 0.0;
-		float dy = s_e[cl + 8u].y == s_e[cl].y ? s_e[cl + 8u].x - s_e[cl].x : 0.0;
-		vec3 box = vec3(dot(qd, q.E[0]), dot(qd, q.E[1]), dot(qd, q.E[2])) / q.size;
-		vec3 ab = abs(box);
-		int f = ab.x >= ab.y && ab.x >= ab.z ? 0 : (ab.y >= ab.z ? 1 : 2);
-		vec4 a = q.E[f] - dot(q.E[f], Np) * Np;
-		a *= (box[f] < 0.0 ? -1.0 : 1.0) * inversesqrt(max(dot(a, a), 1e-12));
-		col = look_body(albedo, dot(a, sh), dot(a, uh), -dot(a, arrive), l);
+		float dy = s_e[cl + 2u].y == s_e[cl].y ? s_e[cl + 2u].x - s_e[cl].x : 0.0;
 		float fw = max(abs(dx) + abs(dy), 1e-5);
 		col *= mix(0.45, 1.0, clamp((edge - 0.04) / fw + 0.5, 0.0, 1.0));
-	} else {
-		vec4 n = qd - dot(qd, Np) * Np;
-		n *= inversesqrt(max(dot(n, n), 1e-12));
-		col = look_body(albedo, dot(n, sh), dot(n, uh), -dot(n, arrive), l);
 	}
-	if (!geo_finite(col.r + col.g + col.b)) return;
-	if (fovp.pic.z > 0.5 && rho > fovp.warp1[v].x) col = mix(col, fov_tint(s), 0.35);
+	uvec3 id = fov_tail_id(quad, lq);
+	if (fovp.pic.z > 0.5) {
+		vec2 p;
+		float rho, s, k;
+		fov_texel(id, p, rho, s, k);
+		if (rho > fovp.warp1[v].x) col = mix(col, fov_tint(s), 0.35);
+	}
 	imageStore(out_img, ivec3(id), vec4(col, best));
 }
 #endif
