@@ -123,9 +123,11 @@ for c in 0 1 2 3; do
 		grp$c+gravity+plain:app,floor,domain arp$c+arrows+plain:app,floor,domain
 done
 wait
-# any script or shader error, or a render that did not exit 0, fails the suite
-if cat "$LOGS"/*.log | grep -qE "$GODOT_ERRORS"; then
-	cat "$LOGS"/*.log | grep -E "$GODOT_ERRORS" -A3; failed=1
+# any error env.sh's godot_errors finds (script, shader, off the render thread), or a render that did not
+# exit 0, fails the suite
+errs=$(godot_errors "$LOGS"/*.log)
+if [ -n "$errs" ]; then
+	echo "$errs"; failed=1
 fi
 for f in "$LOGS"/*.status; do
 	read -r code unit secs args < "$f"

@@ -136,7 +136,7 @@ jobs:
       # the tests run the project's files: what the export leaves out only an exported build shows.
       # The PC's Linux ones, this machine's, on the desktop (software Vulkan): each starts, prints
       # its commit (main.gd) and runs 300 frames without an error the tests fail on (tools/env.sh's
-      # GODOT_ERRORS), on Godot's render thread of its own, as the export template has it
+      # godot_errors), on Godot's render thread of its own, as the export template has it
       - name: The PC's Linux builds run
         run: |
           ROOT=$PWD; . tools/env.sh
@@ -148,7 +148,8 @@ jobs:
               "$d/wormhole_vr.x86_64" --xr-mode off --quit-after 300 > "$d/log" 2>&1 || { tail -20 "$d/log"; exit 1; }
             grep "^build: " "$d/log"
             grep "^render thread: of its own" "$d/log" || { echo "not on a render thread of its own"; exit 1; }
-            if grep -E "$GODOT_ERRORS" -A3 "$d/log"; then exit 1; fi
+            errs=$(godot_errors "$d/log")
+            if [ -n "$errs" ]; then echo "$errs"; exit 1; fi
           done
       - uses: actions/upload-artifact@v7
         with:
