@@ -94,7 +94,8 @@ for p in 0 1 2 3 4 5 6 7 8 9 10 11 12; do want crv$p && TRACE=1 render crv$p -s 
 # the start looking up at the mouth, out in B looking back at it; and where it works out the tail of
 # the zone's bodies' images (foveation.gdshaderinc, TAIL): on the long throat in it sideways and at
 # the start
-for p in 0 6 9 10; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
+CRF="0 6 9 10"   # the places the verdicts below take too
+for p in $CRF; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 if want desktop; then
 	render desktop --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"
 	render desktop --resolution 1280x720 -s res://tests/multiview_sphere.gd -- "$OUT/sph"
@@ -150,7 +151,7 @@ for p in 0 1 2 3 4 5 6 7 8 9 10 11 12; do
 	want crv$p || continue
 	verdict "simulated headset, place $p where light is bent: balls, cubes and the floor against traced rays, every image, each eye" cat "$LOGS/crv$p.cmp"
 done
-for p in 0 6 10; do
+for p in $CRF; do
 	want crf$p || continue
 	verdict "simulated headset, place $p where light is bent, our own foveation: the same" cat "$LOGS/crf$p.cmp"
 done
