@@ -300,8 +300,15 @@ void main() {
 	}
 }
 #elif defined(CUBE_SPANS)
-// a workgroup a span: its section's stages (zc_sequence's) side by side, through shared memory
+// a workgroup a span: its section's stages (zc_sequence's) side by side, through shared memory: the
+// pieces read an invocation each (not into one invocation's arrays: the headset keeps those in
+// memory, and reading them back is most of such a pass), the knots sorted by each one's rank (as
+// zc_knots' insertion sort, equal ones in their order), the items' places and the faces' joins
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+shared vec3 s_pu[12 * ZC_PIECES], s_pt[12 * ZC_PIECES];
+shared bool s_valid[12 * ZC_PIECES], s_has[12 * ZC_PIECES];
+shared float s_cand[ZC_KNOTS], s_sorted[ZC_KNOTS], s_kn[ZC_KNOTS];
+shared int s_nk, s_nsorted;
 shared bool s_go;
 shared float s_th;
 shared int s_ni, s_first;
@@ -314,50 +321,111 @@ void main() {
 	int s = pc.first.x + int(gl_GlobalInvocationID.y), ci = int(gl_GlobalInvocationID.y);
 	ZCube q = zs_cube_mesh(s, ci, z);
 	ZAxis ax = zs_axis(ci, z);
-	// the knots (span 0 keeps them for CUBE_COLUMNS), the span's middle, its items
+	float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
+	// the pieces, and each piece's ends' azimuths off th0 as zc_knots takes them
+	if (tid < 12 * ZC_PIECES) {
+		int e = tid / ZC_PIECES, k = tid % ZC_PIECES;
+		bool valid = k < int(imageLoad(plan_img, ivec3(9 * e, ci * PLAN_ROWS + 1, z)).x);
+		vec3 pu = vec3(0.0), pt = vec3(0.0);
+		if (valid) zs_piece(ci, z, tid, pu, pt);
+		s_valid[tid] = valid;
+		s_pu[tid] = pu;
+		s_pt[tid] = pt;
+		for (int j = 0; j < 2; j++) {
+			float a = (j == 0 ? pt.x : pt.z) - th0;
+			a -= 2.0 * GEO_PI * floor(a / (2.0 * GEO_PI) + (ax.rnd ? 0.0 : 0.5));
+			s_cand[2 * tid + j] = a;
+		}
+	}
+	barrier();
+	// each knot's place in order: those below it, and those equal to it before it
+	for (int c = tid; c < ZC_KNOTS; c += 64) {
+		if (s_valid[c / 2]) {
+			float a = s_cand[c];
+			int r = 0;
+			for (int o = 0; o < ZC_KNOTS; o++) {
+				if (s_valid[o / 2] && (s_cand[o] < a || (s_cand[o] == a && o < c))) r++;
+			}
+			s_sorted[r] = a;
+		}
+	}
 	if (tid == 0) {
-		ZPieces pc_;
-		ZAxis ax_;
-		zs_pieces(ci, z, pc_, ax_);
-		float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
-		float kn[ZC_KNOTS];
-		int nk = zc_knots(pc_, ax.rnd, th0, kn);
-		if (span == 0) {
-			int y2 = ci * PLAN_ROWS + 2;
-			imageStore(plan_img, ivec3(PLAN_KNOTS, y2, z), vec4(float(nk), 0.0, 0.0, 0.0));
-			for (int i = 0; i < ZC_KNOTS / 4; i++) {
-				if (4 * i >= nk) break;
-				imageStore(plan_img, ivec3(PLAN_KNOTS + 1 + i, y2, z), vec4(kn[4 * i], kn[4 * i + 1], kn[4 * i + 2], kn[4 * i + 3]));
+		int n = 0;
+		for (int i = 0; i < 12 * ZC_PIECES; i++) {
+			if (s_valid[i]) n += 2;
+		}
+		s_nsorted = n;
+	}
+	barrier();
+	// those within 1e-6 of the one before left out (zc_knots'), the span's middle (zc_span_mid's)
+	if (tid == 0) {
+		int n = s_nsorted, m = 0;
+		for (int i = 0; i < ZC_KNOTS; i++) {
+			if (i >= n) break;
+			if (m == 0 || s_sorted[i] - s_kn[m - 1] > 1e-6) {
+				s_kn[m] = s_sorted[i];
+				m++;
 			}
 		}
-		int spans = ax.rnd ? nk : nk - 1;
-		s_go = span < max(spans, 1);
-		if (s_go) {
-			float th = zc_span_mid(span, kn, nk, ax.rnd, th0);
-			int ids[ZC_ITEMS], fm[ZC_ITEMS];
-			int first;
-			s_ni = zc_seq_items(pc_, ax, th, ids, fm, first);
-			s_first = first;
-			s_th = th;
-			for (int i = 0; i < ZC_ITEMS; i++) {
-				s_ids[i] = ids[i];
-				s_fm[i] = fm[i];
+		s_nk = m;
+		int y2 = ci * PLAN_ROWS + 2;
+		if (span == 0) {
+			imageStore(plan_img, ivec3(PLAN_KNOTS, y2, z), vec4(float(m), 0.0, 0.0, 0.0));
+			for (int i = 0; i < ZC_KNOTS / 4; i++) {
+				if (4 * i >= m) break;
+				imageStore(plan_img, ivec3(PLAN_KNOTS + 1 + i, y2, z), vec4(s_kn[4 * i], s_kn[4 * i + 1], s_kn[4 * i + 2], s_kn[4 * i + 3]));
 			}
+		}
+		int spans = ax.rnd ? m : m - 1;
+		s_go = span < max(spans, 1);
+		if (spans < 1) {
+			s_th = th0 + s_kn[0];
+		} else {
+			float kl = ax.rnd ? s_kn[0] + 2.0 * GEO_PI : s_kn[m - 1];
+			float ka = s_kn[span], kb = span + 1 < m ? s_kn[span + 1] : kl;
+			s_th = th0 + 0.5 * (ka + kb);
 		}
 	}
 	barrier();
 	if (!s_go) return;
 	float th = s_th;
+	// the items: the cuts of the pieces whose azimuths hold th, in order (zc_seq_items')
+	if (tid < 12 * ZC_PIECES) s_has[tid] = s_valid[tid] && zc_has(s_pt[tid], th);
+	barrier();
+	if (tid == 0) {
+		int ni = 0;
+		for (int i = 0; i < 12 * ZC_PIECES; i++) {
+			if (ni >= ZC_ITEMS - 2) break;
+			if (s_has[i]) {
+				s_ids[ni] = i;
+				s_fm[ni] = zc_edge_faces(i / ZC_PIECES);
+				ni++;
+			}
+		}
+		s_first = ni;
+		if (ax.rnd) {
+			for (int i = 0; i < 2; i++) {
+				s_ids[ni] = ZC_IN + i;
+				s_fm[ni] = 0;
+				ni++;
+			}
+		}
+		for (int i = ni; i < ZC_ITEMS; i++) {
+			s_ids[i] = 0;
+			s_fm[i] = 0;
+		}
+		s_ni = ni;
+	}
+	barrier();
 	int ni = s_ni;
 	vec3 m;
 	vec3 t = zc_t(q, th, m);
 	// each item's place
 	if (tid < ni) {
 		int it = s_ids[tid];
-		vec3 pu = vec3(0.0), pt = vec3(0.0);
-		if (it < ZC_IN) zs_piece(ci, z, it, pu, pt);
+		int k = min(it, 12 * ZC_PIECES - 1);
 		int f = s_fm[tid];
-		s_pos[tid] = zc_seq_pos(q, ax, it, pu, pt, th, t, m, f);
+		s_pos[tid] = zc_seq_pos(q, ax, it, s_pu[k], s_pt[k], th, t, m, f);
 		s_fm[tid] = f;
 	}
 	barrier();
