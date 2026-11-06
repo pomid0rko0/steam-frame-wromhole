@@ -1,7 +1,7 @@
 // The meshes of the bodies in the curved zone (balls: zone.gdshaderinc, zone_ball_vertex; cubes:
 // zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
 // (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
-// header (the version, BALL, CUBE_EDGES, CUBE_PIECES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES or
+// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES or
 // PATHS) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
 // zone_tail.gdshaderinc where it says.
 //
@@ -16,12 +16,13 @@
 // (zc_side; a ball's 0)) at x = 2 col and 2 col + 1, y = slot * slot_rows + the mesh's first row +
 // row.
 //
-// A cube's nodes come after four passes of its own (zone_cube.gdshaderinc), each into plan_img (a
+// A cube's nodes come after three passes of its own (zone_cube.gdshaderinc), each into plan_img (a
 // layer per eye, PLAN_ROWS rows a cube's slot) or col_img, on what the one before wrote:
-//   CUBE_EDGES: invocation x the edge (zc_edge_near): row 0, texels 2 e, 2 e + 1;
-//   CUBE_PIECES: x the edge, its pieces (zc_pieces) from all edges' row 0: row 1, texels 9 e (the
-//     count) and 9 e + 1 + 2 k, 9 e + 2 + 2 k (piece k); the axis (zc_axis): texels 108 and 109
-//     (the axis the mesh is built round, the later passes' too, and the knots' origin th0);
+//   CUBE_EDGES: a workgroup a cube and eye: its edges near the axis (zc_edge_near's stages side by
+//     side: an invocation a point of an edge, then one a fold or the point nearest the axis), the axis
+//     (zc_axis; round one turned the edges again), then x the edge, its pieces (zc_pieces): row 1,
+//     texels 9 e (the count) and 9 e + 1 + 2 k, 9 e + 2 + 2 k (piece k); the axis: texels 108 and
+//     109 (the axis the mesh is built round, the later passes' too, and the knots' origin th0);
 //   CUBE_SPANS: a workgroup a span (ZC_SPANS of them; the knots, zc_knots, sorted in each): its
 //     section (zc_sequence's stages) at its middle (zc_span_mid), its items' places and its faces'
 //     joins (zc_margin) side by side, row 3, texels 5 s to 5 s + 4; the knots (span 0's), row 2,
@@ -115,10 +116,10 @@ ZCube zs_cube(int s, int z, out vec3 en) {
 	return zs_cube_at(s, en);
 }
 
-// round cube ci's (slot s) mesh's axis for eye z (CUBE_PIECES' out)
+// round cube ci's (slot s) mesh's axis for eye z (CUBE_EDGES' out)
 ZCube zs_cube_mesh(int s, int ci, int z) { return zs_cube_at(s, imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).xyz); }
 
-// cube ci's (of the zone's: its slot less the cubes' first) pieces and axis (CUBE_PIECES' out)
+// cube ci's (of the zone's: its slot less the cubes' first) pieces and axis (CUBE_EDGES' out)
 void zs_pieces(int ci, int z, out ZPieces pcs, out ZAxis ax) {
 	int y = ci * PLAN_ROWS + 1;
 	for (int e = 0; e < 12; e++) {
@@ -138,7 +139,7 @@ void zs_pieces(int ci, int z, out ZPieces pcs, out ZAxis ax) {
 	ax.en = imageLoad(plan_img, ivec3(109, y, z)).xyz;
 }
 
-// cube ci's piece it's ends' u and azimuths (CUBE_PIECES' out, zs_pieces' one)
+// cube ci's piece it's ends' u and azimuths (CUBE_EDGES' out, zs_pieces' one)
 void zs_piece(int ci, int z, int it, out vec3 u, out vec3 t) {
 	int y = ci * PLAN_ROWS + 1, e = it / ZC_PIECES, k = it % ZC_PIECES;
 	vec4 a = imageLoad(plan_img, ivec3(9 * e + 1 + 2 * k, y, z)), b = imageLoad(plan_img, ivec3(9 * e + 2 + 2 * k, y, z));
@@ -146,7 +147,7 @@ void zs_piece(int ci, int z, int it, out vec3 u, out vec3 t) {
 	t = vec3(a.w, b.xy);
 }
 
-// cube ci's axis (CUBE_PIECES' out, zs_pieces' ax)
+// cube ci's axis (CUBE_EDGES' out, zs_pieces' ax)
 ZAxis zs_axis(int ci, int z) {
 	int y = ci * PLAN_ROWS + 1;
 	vec4 a = imageLoad(plan_img, ivec3(108, y, z));
@@ -233,37 +234,58 @@ void main() {
 	vec4 node = zone_path_node(el, en, at.x, at.y);
 	imageStore(path_img, ivec3(k, s * ZONE_PL + i, int(id.z)), node);
 }
-#elif defined(CUBE_EDGES) || defined(CUBE_PIECES)
-layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+#elif defined(CUBE_EDGES)
+// a workgroup a cube and eye: its edges near the axis (zc_edge_near's stages side by side: the 9
+// points of each, then each's folds and point nearest the axis), the axis (zc_axis) and, round an
+// axis turned, the edges anew; then each edge's pieces (zc_pieces)
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+shared vec2 s_gh[12 * 9];
+shared float s_rh[12 * 9];
+shared float s_fold[12 * 2];
+shared vec2 s_low[12];
+shared vec3 s_en;
+shared bool s_turned;
+// edge e's zc_edge_near and its ends' rho from the shared stages
+vec4 zs_near(int e, out vec2 ends) {
+	ends = vec2(s_rh[e * 9], s_rh[e * 9 + 8]);
+	vec2 lw = s_low[e];
+	return vec4(lw.x, lw.x > -2.0 ? lw.y : min(ends.x, ends.y), s_fold[2 * e], s_fold[2 * e + 1]);
+}
 void main() {
-	uvec3 id = gl_GlobalInvocationID;
-	int e = int(id.x), z = int(id.z);
-	if (e >= 12) return;
-	int s = pc.first.x + int(id.y), ci = int(id.y);
+	int tid = int(gl_LocalInvocationID.x), z = int(gl_GlobalInvocationID.z);
+	int s = pc.first.x + int(gl_GlobalInvocationID.y), ci = int(gl_GlobalInvocationID.y);
 	vec3 en;
 	ZCube q = zs_cube(s, z, en);
-#ifdef CUBE_EDGES
-	vec2 ends;
-	vec4 near = zc_edge_near(q, e, ends);
-	imageStore(plan_img, ivec3(2 * e, ci * PLAN_ROWS, z), near);
-	imageStore(plan_img, ivec3(2 * e + 1, ci * PLAN_ROWS, z), vec4(ends, 0.0, 0.0));
-#else
-	vec4 near[12];
-	vec2 ends[12];
-	for (int i = 0; i < 12; i++) {
-		near[i] = imageLoad(plan_img, ivec3(2 * i, ci * PLAN_ROWS, z));
-		ends[i] = imageLoad(plan_img, ivec3(2 * i + 1, ci * PLAN_ROWS, z)).xy;
+	ZAxis ax;
+	for (int round = 0; round < 2; round++) {
+		if (tid < 12 * 9) s_gh[tid] = zc_edge_sample(q, tid / 9, tid % 9, s_rh[tid]);
+		barrier();
+		if (tid < 12 * 3) {
+			int e = tid / 3, r = tid % 3;
+			vec2 gh[9];
+			for (int i = 0; i < 9; i++) gh[i] = s_gh[e * 9 + i];
+			if (r < 2) s_fold[2 * e + r] = zc_edge_fold(q, e, gh, r);
+			else s_low[e] = zc_edge_low(q, e, gh);
+		}
+		barrier();
+		// the axis from the edges round the eye's; round it, if turned, the edges again
+		if (round == 0 && tid == 0) {
+			vec4 near[12];
+			vec2 ends[12];
+			for (int e = 0; e < 12; e++) near[e] = zs_near(e, ends[e]);
+			ax = zc_axis(q, near, ends);
+			s_en = ax.en;
+			s_turned = ax.en != q.en;
+		}
+		barrier();
+		if (round == 1 || !s_turned) break;
+		q = zs_cube_at(s, s_en);
 	}
-	ZAxis ax = zc_axis(q, near, ends);
-	// round an axis turned off a corner or an edge: this edge near it anew
-	vec4 ne = near[e];
-	if (ax.en != q.en) {
-		q = zs_cube_at(s, ax.en);
-		vec2 en_;
-		ne = zc_edge_near(q, e, en_);
-	}
+	if (tid >= 12) return;
+	int e = tid;
 	vec3 pu[ZC_PIECES], pt[ZC_PIECES];
-	int n = zc_pieces(q, e, ne, pu, pt);
+	vec2 ends;
+	int n = zc_pieces(q, e, zs_near(e, ends), pu, pt);
 	int y = ci * PLAN_ROWS + 1;
 	imageStore(plan_img, ivec3(9 * e, y, z), vec4(float(n), 0.0, 0.0, 0.0));
 	for (int k = 0; k < ZC_PIECES; k++) {
@@ -276,7 +298,6 @@ void main() {
 		imageStore(plan_img, ivec3(108, y, z), vec4(ax.rnd ? 1.0 : 0.0, ax.l_in, ax.l_out, ax.aax));
 		imageStore(plan_img, ivec3(109, y, z), vec4(ax.en, th0));
 	}
-#endif
 }
 #elif defined(CUBE_SPANS)
 // a workgroup a span: its section's stages (zc_sequence's) side by side, through shared memory
@@ -413,6 +434,113 @@ void main() {
 		ab[h] = 2 * j + h < ne ? zc_item_of(q, ax, it, pu, pt, col.x, t, m) : vec2(0.0);
 	}
 	imageStore(col_img, ivec3(j, y, z), vec4(ab[0], ab[1]));
+}
+// The cube's passes as they were before their stages went side by side, one invocation an edge, a
+// span, a column (CUBE_OLD_*: the speed check's control, ZoneSections.cube_old; the same out)
+#elif defined(CUBE_OLD_EDGES) || defined(CUBE_OLD_PIECES)
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int e = int(id.x), z = int(id.z);
+	if (e >= 12) return;
+	int s = pc.first.x + int(id.y), ci = int(id.y);
+	vec3 en;
+	ZCube q = zs_cube(s, z, en);
+#ifdef CUBE_OLD_EDGES
+	vec2 ends;
+	vec4 near = zc_edge_near(q, e, ends);
+	imageStore(plan_img, ivec3(2 * e, ci * PLAN_ROWS, z), near);
+	imageStore(plan_img, ivec3(2 * e + 1, ci * PLAN_ROWS, z), vec4(ends, 0.0, 0.0));
+#else
+	vec4 near[12];
+	vec2 ends[12];
+	for (int i = 0; i < 12; i++) {
+		near[i] = imageLoad(plan_img, ivec3(2 * i, ci * PLAN_ROWS, z));
+		ends[i] = imageLoad(plan_img, ivec3(2 * i + 1, ci * PLAN_ROWS, z)).xy;
+	}
+	ZAxis ax = zc_axis(q, near, ends);
+	// round an axis turned off a corner or an edge: this edge near it anew
+	vec4 ne = near[e];
+	if (ax.en != q.en) {
+		q = zs_cube_at(s, ax.en);
+		vec2 en_;
+		ne = zc_edge_near(q, e, en_);
+	}
+	vec3 pu[ZC_PIECES], pt[ZC_PIECES];
+	int n = zc_pieces(q, e, ne, pu, pt);
+	int y = ci * PLAN_ROWS + 1;
+	imageStore(plan_img, ivec3(9 * e, y, z), vec4(float(n), 0.0, 0.0, 0.0));
+	for (int k = 0; k < ZC_PIECES; k++) {
+		if (k >= n) break;
+		imageStore(plan_img, ivec3(9 * e + 1 + 2 * k, y, z), vec4(pu[k], pt[k].x));
+		imageStore(plan_img, ivec3(9 * e + 2 + 2 * k, y, z), vec4(pt[k].yz, 0.0, 0.0));
+	}
+	if (e == 0) {
+		float th0 = ax.rnd ? 0.0 : geo_atan2(dot(q.C.xyz, q.a2), dot(q.C.xyz, q.a1));
+		imageStore(plan_img, ivec3(108, y, z), vec4(ax.rnd ? 1.0 : 0.0, ax.l_in, ax.l_out, ax.aax));
+		imageStore(plan_img, ivec3(109, y, z), vec4(ax.en, th0));
+	}
+#endif
+}
+#elif defined(CUBE_OLD_SPANS)
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int span = int(id.x), z = int(id.z);
+	int s = pc.first.x + int(id.y), ci = int(id.y);
+	ZCube q = zs_cube_mesh(s, ci, z);
+	ZPieces pc_;
+	ZAxis ax;
+	zs_pieces(ci, z, pc_, ax);
+	float th0 = imageLoad(plan_img, ivec3(109, ci * PLAN_ROWS + 1, z)).w;
+	float kn[ZC_KNOTS];
+	int nk = zc_knots(pc_, ax.rnd, th0, kn);
+	int spans = ax.rnd ? nk : nk - 1;
+	if (span >= max(spans, 1)) return;
+	// its columns: the sharing out's own (zc_column), each column's span found in turn
+	float columns = pc.grid.x;
+	float mid = 0.0;
+	for (int c = 0; c <= 128; c++) {
+		if (float(c) > columns) break;
+		vec3 col = zc_column(float(c), columns, kn, nk, ax.rnd, th0);
+		if (int(col.z) != span) continue;
+		mid = col.y;
+		imageStore(plan_img, ivec3(c, ci * PLAN_ROWS + 2, z), vec4(col, 0.0));
+	}
+	ZSeq sq = zc_sequence(q, pc_, ax, mid);
+	int y = ci * PLAN_ROWS + 3;
+	imageStore(plan_img, ivec3(5 * span, y, z), vec4(float(sq.k), float(sq.n[0]), float(sq.n[1]), float(sq.n[2])));
+	for (int j = 0; j < 4; j++) {
+		vec4 v;
+		for (int i = 0; i < 4; i++) v[i] = float(sq.id[4 * j + i] * 8 + sq.face[4 * j + i] + 1);
+		imageStore(plan_img, ivec3(5 * span + 1 + j, y, z), v);
+	}
+}
+#elif defined(CUBE_OLD_COLUMNS)
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	int c = int(id.x), z = int(id.z);
+	if (float(c) > pc.grid.x) return;
+	int s = pc.first.x + int(id.y), ci = int(id.y);
+	ZCube q = zs_cube_mesh(s, ci, z);
+	ZPieces pc_;
+	ZAxis ax;
+	zs_pieces(ci, z, pc_, ax);
+	vec4 col = imageLoad(plan_img, ivec3(c, ci * PLAN_ROWS + 2, z));
+	ZSeq sq = zs_seq(ci, z, int(col.z));
+	vec3 m;
+	vec3 t = zc_t(q, col.x, m);
+	int ne = 0;
+	for (int i = 0; i < ZC_PARTS; i++) {
+		if (i < sq.k) ne += sq.n[i];
+	}
+	int y = ci * (int(pc.grid.x) + 1) + c;
+	for (int j = 0; j < ZC_ITEMS / 2; j++) {
+		vec2 a = 2 * j < ne ? zc_item(q, pc_, ax, sq.id[2 * j], col.x, t, m) : vec2(0.0);
+		vec2 b = 2 * j + 1 < ne ? zc_item(q, pc_, ax, sq.id[2 * j + 1], col.x, t, m) : vec2(0.0);
+		imageStore(col_img, ivec3(j, y, z), vec4(a, b));
+	}
 }
 #elif defined(IMAGES)
 // image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis

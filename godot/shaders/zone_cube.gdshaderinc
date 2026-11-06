@@ -174,25 +174,35 @@ float zc_root(ZCube q, int e, int which, float lo, float hi, float flo, float fh
 	return c;
 }
 
-// Edge e near the axis: (its point nearest the axis u*, or -9 if at an end; rho there; its folds' u,
-// -9 for none), and in ends (rho at u = -1, 1). Each from where g, h change sign at 9 points along it.
-vec4 zc_edge_near(ZCube q, int e, out vec2 ends) {
-	vec2 gh[9];
-	float rh[9];
-	for (int i = 0; i < 9; i++) {
-		vec4 P;
-		gh[i] = zc_gh(q, e, -1.0 + 0.25 * float(i), P);
-		rh[i] = zc_rho(q, P);
-	}
-	ends = vec2(rh[0], rh[8]);
-	vec4 out_ = vec4(-9.0, min(rh[0], rh[8]), -9.0, -9.0);
+// edge e's point i of 9 (u = -1 + i / 4): (g, h) there (zc_gh), and rho (zc_rho)
+vec2 zc_edge_sample(ZCube q, int e, int i, out float rh) {
+	vec4 P;
+	vec2 gh = zc_gh(q, e, -1.0 + 0.25 * float(i), P);
+	rh = zc_rho(q, P);
+	return gh;
+}
+
+// edge e's fold k (0, 1) from its 9 points' gh: where g changes sign the (k + 1)-th time along it
+// (zc_root), -9 for none
+float zc_edge_fold(ZCube q, int e, vec2 gh[9], int k) {
 	int nf = 0;
+	float u = -9.0;
 	for (int i = 0; i < 8; i++) {
 		float lo = -1.0 + 0.25 * float(i), hi = lo + 0.25;
-		if (gh[i].x * gh[i + 1].x < 0.0 && nf < 2) {
-			out_[2 + nf] = zc_root(q, e, 0, lo, hi, gh[i].x, gh[i + 1].x);
+		if (gh[i].x * gh[i + 1].x < 0.0 && nf <= k) {
+			if (nf == k) u = zc_root(q, e, 0, lo, hi, gh[i].x, gh[i + 1].x);
 			nf++;
 		}
+	}
+	return u;
+}
+
+// edge e's point nearest the axis from its 9 points' gh: the first where h turns from below 0 to 0 or
+// above short of its end (zc_root), and rho there; (-9, 0) for none
+vec2 zc_edge_low(ZCube q, int e, vec2 gh[9]) {
+	vec2 out_ = vec2(-9.0, 0.0);
+	for (int i = 0; i < 8; i++) {
+		float lo = -1.0 + 0.25 * float(i), hi = lo + 0.25;
 		if (gh[i].y < 0.0 && gh[i + 1].y >= 0.0 && out_.x < -2.0) {
 			float u = gh[i + 1].y == 0.0 ? hi : zc_root(q, e, 1, lo, hi, gh[i].y, gh[i + 1].y);
 			if (u < 1.0) {
@@ -202,6 +212,19 @@ vec4 zc_edge_near(ZCube q, int e, out vec2 ends) {
 		}
 	}
 	return out_;
+}
+
+// Edge e near the axis: (its point nearest the axis u*, or -9 if at an end; rho there; its folds' u,
+// -9 for none), and in ends (rho at u = -1, 1). Each from where g, h change sign at 9 points along it
+// (zc_edge_sample): its folds (zc_edge_fold), where h turns from below 0 (zc_edge_low). Its stages
+// one after another here; CUBE_EDGES works the points and the roots out side by side.
+vec4 zc_edge_near(ZCube q, int e, out vec2 ends) {
+	vec2 gh[9];
+	float rh[9];
+	for (int i = 0; i < 9; i++) gh[i] = zc_edge_sample(q, e, i, rh[i]);
+	ends = vec2(rh[0], rh[8]);
+	vec2 lw = zc_edge_low(q, e, gh);
+	return vec4(lw.x, lw.x > -2.0 ? lw.y : min(rh[0], rh[8]), zc_edge_fold(q, e, gh, 0), zc_edge_fold(q, e, gh, 1));
 }
 
 // The axis the cube's mesh is built round (near, ends: zc_edge_near's of each edge round the eye's axis
