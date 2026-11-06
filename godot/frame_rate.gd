@@ -39,7 +39,8 @@ extends Node
 ## and the way out's table, our floor's texture, the nodes and tables, and the rest (the 3D pass: the bodies,
 ## those in the curved zone too, the floor's quad, the menu, the output), averaged over the second
 ## in its line, with the dearest frame's of the second (a frame over the budget sends SteamVR to half
-## rate: which part was it), and the last frame read in a late frame's. Like the GPU time, they
+## rate: which part was it), and the last frame read in a late frame's. The nodes and tables also
+## by pass (zone_last, ZoneSections.TS_PASS), averaged over the second where they ran. Like the GPU time, they
 ## belong to a frame two before. The line
 ## also has the longest stretch of a frame on the main thread in the second (before_ms).
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
@@ -93,6 +94,7 @@ var rate := 0.0                 # measured, Hz
 const PARTS := ["before ours", "the eyes and the way out's table", "our floor", "the zone's bodies' nodes and paths", "the rest (the 3D pass)"]
 var parts_frame := -1           # the frame whose GPU timestamps were read last (_read_parts)
 var parts_last := PackedFloat32Array()   # its GPU time by part, ms (empty: none)
+var zone_last := {}             # and its zone's passes' (ZoneSections.TS_PASS): name -> ms (empty: none ran)
 var reported := 0.0             # what the runtime says, Hz (read once a second)
 var vrcmd := VRCMD
 var vrsettings := ""
@@ -195,6 +197,10 @@ func _process(delta: float) -> void:
 		if sum > now.parts_max_sum:
 			now.parts_max_sum = sum
 			now.parts_max = parts_last.duplicate()
+		if not zone_last.is_empty():
+			now.zone_n += 1
+			for k: String in zone_last:
+				now.zone[k] = now.zone.get(k, 0.0) + zone_last[k]
 	if requested > 0.0:
 		if absf(meter.rate() - requested) < 0.5:
 			_answer_request()
@@ -399,12 +405,31 @@ func _read_parts() -> bool:
 		parts_last[1] = (at[Foveation.TS_TABLE] - at[Foveation.TS_BEGIN]) / 1e6
 		parts_last[2] = (at[Foveation.TS_END] - at[Foveation.TS_TABLE]) / 1e6
 		first = at[Foveation.TS_BEGIN]
+	zone_last = {}
 	if at.has(ZoneSections.TS_BEGIN) and at.has(ZoneSections.TS_END):
 		parts_last[3] = (at[ZoneSections.TS_END] - at[ZoneSections.TS_BEGIN]) / 1e6
 		first = at[ZoneSections.TS_BEGIN] if first < 0 else mini(first, at[ZoneSections.TS_BEGIN])
+		# each pass from the mark before it
+		var marks := []
+		for k: String in at:
+			if k.begins_with(ZoneSections.TS_PASS):
+				marks.append([at[k], k.substr(ZoneSections.TS_PASS.length())])
+		marks.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+		var t0: int = at[ZoneSections.TS_BEGIN]
+		for m: Array in marks:
+			zone_last[m[1]] = (m[0] - t0) / 1e6
+			t0 = m[0]
 	parts_last[0] = (first - at[vb]) / 1e6 if first >= 0 else 0.0
 	parts_last[4] = (at[ve] - at[vb]) / 1e6 - parts_last[0] - parts_last[1] - parts_last[2] - parts_last[3]
 	return true
+
+
+## The zone's passes' GPU ms (name -> ms summed over n frames), in the order they ran.
+static func zone_text(sums: Dictionary, n: int) -> String:
+	var out := []
+	for k: String in sums:
+		out.append("%s %.3f" % [k, sums[k] / maxi(n, 1)])
+	return ", ".join(out) + " ms"
 
 
 func _parts_text(p: PackedFloat32Array) -> String:
@@ -526,6 +551,7 @@ func _log() -> void:
 			rad_to_deg(atan(f.z)), rad_to_deg(atan(f.w)), keeps_up(seconds), main.gaze_text(),
 			n - compiled, n, main.view_text()] + "; GPU by part, the second's average: "
 			+ _parts_text(s.parts_mean()) + "; the dearest frame's: " + _parts_text(s.parts_max)
+			+ ("; the zone's passes, the average where they ran: " + zone_text(s.zone, s.zone_n) if s.zone_n > 0 else "")
 			+ "; the main thread's longest frame %.2f ms from main's start to drawn (main's script %.2f), then %.2f ms till the next" % [
 			s.main_max.x, s.main_max.y, s.main_max.z])
 	compiled = n
@@ -543,6 +569,8 @@ class Second:
 	var parts_max := PackedFloat32Array()   # the GPU time by part of the dearest of them
 	var parts_max_sum := 0.0
 	var main_max := Vector3.ZERO    # the longest frame on the main thread (FrameRate.before_ms)
+	var zone := {}                  # the zone's passes' GPU ms (zone_last), summed over zone_n frames
+	var zone_n := 0
 
 	## The GPU time by part per frame, ms (empty: none read).
 	func parts_mean() -> PackedFloat32Array:

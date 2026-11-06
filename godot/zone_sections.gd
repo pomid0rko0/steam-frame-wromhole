@@ -35,6 +35,9 @@ const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a
 # nodes' and tables' part of the frame's GPU time (frame_rate.gd)
 const TS_BEGIN := "zone nodes begin"
 const TS_END := "zone nodes end"
+# and after each of its passes, this and the pass's name ("ball", "images", the cube's passes, "cube",
+# "paths"): what each costs (frame_rate.gd, bench.gd)
+const TS_PASS := "zone pass "
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdshaderinc's)
 const PLAN_W := 160
@@ -278,7 +281,6 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	var nodes := int(_grid.x + 1.0) * int(_grid.y + _grid.z + 2.0)
 	_rd.capture_timestamp(TS_BEGIN)
-	var cl := _rd.compute_list_begin()
 	var pcb := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
 	var bpc := pcb.duplicate()
 	bpc.append_array(PackedInt32Array([0, 0, 0, 0]).to_byte_array())
@@ -287,28 +289,27 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var ipc := pcb.duplicate()
 	ipc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	if counts.x > 0:
-		_dispatch(cl, "ball", bpc, int(ceil(nodes / 64.0)), counts.x, views)
-	_dispatch(cl, "images", ipc, int(ceil((_images + 2 + TAIL_STRIPS) / 32.0)), counts.x + counts.y, views)
+		_pass("ball", bpc, int(ceil(nodes / 64.0)), counts.x, views)
+	_pass("images", ipc, int(ceil((_images + 2 + TAIL_STRIPS) / 32.0)), counts.x + counts.y, views)
 	# a cube's passes, each on the one before (zone_sections.gdshaderinc), then its nodes
 	if counts.y > 0:
-		_dispatch(cl, "cube_edges", cpc, 1, counts.y, views)
-		_rd.compute_list_add_barrier(cl)
-		_dispatch(cl, "cube_pieces", cpc, 1, counts.y, views)
-		_rd.compute_list_add_barrier(cl)
-		_dispatch(cl, "cube_spans", cpc, 1, counts.y, views)
-		_rd.compute_list_add_barrier(cl)
-		_dispatch(cl, "cube_columns", cpc, int(ceil((_grid.x + 1.0) / 64.0)), counts.y, views)
-		_rd.compute_list_add_barrier(cl)
-		_dispatch(cl, "cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
+		_pass("cube_edges", cpc, 1, counts.y, views)
+		_pass("cube_pieces", cpc, 1, counts.y, views)
+		_pass("cube_spans", cpc, 1, counts.y, views)
+		_pass("cube_columns", cpc, int(ceil((_grid.x + 1.0) / 64.0)), counts.y, views)
+		_pass("cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
 	# the tables, as far as the images just found drawn need them
-	_rd.compute_list_add_barrier(cl)
-	_dispatch(cl, "paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
-	_rd.compute_list_end()
+	_pass("paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
 	_rd.capture_timestamp(TS_END)
 
 
-func _dispatch(cl: int, kind: String, push: PackedByteArray, x: int, y: int, z: int) -> void:
+## A pass of its own compute list (the device puts a barrier between those that share a texture),
+## and the GPU's time after it (TS_PASS).
+func _pass(kind: String, push: PackedByteArray, x: int, y: int, z: int) -> void:
+	var cl := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_set_push_constant(cl, push, push.size())
 	_rd.compute_list_dispatch(cl, x, y, z)
+	_rd.compute_list_end()
+	_rd.capture_timestamp(TS_PASS + kind)

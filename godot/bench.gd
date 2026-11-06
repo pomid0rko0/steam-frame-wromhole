@@ -15,7 +15,8 @@ extends Node
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
 ## and the frame is timed on the GPU (the median frame of each segment, and of each of its parts:
-## FrameRate.PARTS), this build's renderer each
+## FrameRate.PARTS, and of each pass of the zone's nodes and paths: ZoneSections.TS_PASS), this
+## build's renderer each
 ## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
 ## the eyes (NEAR_CUBE: a body near the eyes with the world round it), and with a ball and a cube
 ## in the throat's cylinder (THROAT_BODIES: their images past the meshes', the tail, cost pixels
@@ -143,11 +144,13 @@ var phase_t := 0.0
 var gpu_ms: Array = []          # this segment's frames
 var part_ms: Array = []         # and their GPU time by part (FrameRate.PARTS), as read
 var part_frame := -1            # the last frame whose parts were taken (FrameRate.parts_frame)
+var zone_ms: Array = []         # and their zone's passes' (FrameRate.zone_last), as read
 var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
                                 # a hitch of the system does not move it)
 var part_results: Array = []    # the same by part: per place, per variant, per segment its medians
+var zone_results: Array = []    # the zone's passes': per place, per variant, per segment {pass: median}
 var _zone_counts: Array[Vector2i] = []   # per place: the balls and cubes in the zone with the cube there
 var tour: Array[Step] = []      # the tour's steps (_make_tour)
 var tour_results: Array[Tally] = []   # per step
@@ -328,6 +331,7 @@ func start() -> void:
 	plan.clear()
 	results.clear()
 	part_results.clear()
+	zone_results.clear()
 	_zone_counts.clear()
 	tour = _make_tour()
 	tour_results.clear()
@@ -335,11 +339,14 @@ func start() -> void:
 	for i in PLACES.size():
 		var r := []
 		var pr := []
+		var zr := []
 		for v in variants:
 			r.append([])
 			pr.append([])
+			zr.append([])
 		results.append(r)
 		part_results.append(pr)
+		zone_results.append(zr)
 		_zone_counts.append(Vector2i.ZERO)
 		for v: int in order:
 			if not variants[v].long or _long(PLACES[i]):
@@ -444,6 +451,7 @@ func _segment() -> void:
 	if rate.parts_frame != part_frame and rate.parts_last.size() == FrameRate.PARTS.size():
 		part_frame = rate.parts_frame
 		part_ms.append(rate.parts_last)
+		zone_ms.append(rate.zone_last)
 	if phase_t >= warm + time:
 		_clock()
 		_end_segment()
@@ -469,6 +477,7 @@ func _begin(i: int) -> void:
 	phase_t = 0.0
 	gpu_ms.clear()
 	part_ms.clear()
+	zone_ms.clear()
 	part_frame = main.rate.parts_frame
 	if i == 0 or plan[i].x != plan[i - 1].x:
 		clock_lo = 0
@@ -488,6 +497,15 @@ func _end_segment() -> void:
 		xs.sort()
 		med.append(xs[xs.size() / 2] if not xs.is_empty() else 0.0)
 	part_results[plan[step].x][plan[step].y].append(med)
+	var zmed := {}
+	for z: Dictionary in zone_ms:
+		for k: String in z:
+			zmed[k] = []
+	for k: String in zmed:
+		var xs := zone_ms.map(func(z: Dictionary) -> float: return z.get(k, 0.0))
+		xs.sort()
+		zmed[k] = xs[xs.size() / 2]
+	zone_results[plan[step].x][plan[step].y].append(zmed)
 	var last := step + 1 >= plan.size() or plan[step + 1].x != plan[step].x
 	if not last:
 		return
@@ -517,6 +535,18 @@ func _end_segment() -> void:
 	var zc: Vector2i = _zone_counts[plan[step].x]
 	print("bench parts: %s, %.0f deg right, %.0f deg up (%s): %s; with the cube before the eyes, in the curved zone %d balls, %d cubes"
 			% [_name(place[0]), place[1], place[2], ", ".join(FrameRate.PARTS), "; ".join(by), zc.x, zc.y])
+	# the zone's nodes and paths by pass (ZoneSections.TS_PASS): each variant's mean over its segments
+	var zby := []
+	for v in variants.size():
+		var segs_z: Array = zone_results[plan[step].x][v]
+		var sums := {}
+		for z: Dictionary in segs_z:
+			for k: String in z:
+				sums[k] = sums.get(k, 0.0) + z[k]
+		if not sums.is_empty():
+			zby.append("%d: %s" % [v + 1, FrameRate.zone_text(sums, segs_z.size())])
+	if not zby.is_empty():
+		print("bench zone passes: %s, %.0f deg right, %.0f deg up: %s" % [_name(place[0]), place[1], place[2], "; ".join(zby)])
 
 
 func _compared() -> void:
