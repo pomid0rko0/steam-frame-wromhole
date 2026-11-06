@@ -293,7 +293,7 @@ func _gravity(p: Menu) -> void:
 		if v > 0:
 			p.change(1)
 		p.press()
-		seen.append([main.renderer.gravity_view, main.renderer.floor_mat.shader.resource_path.get_file(), main.renderer.arrows.visible,
+		seen.append([main.renderer.gravity_view, main.renderer.floor_mat.shader.resource_path.get_file(), main.renderer.arrows_shown,
 				_value(p, "grav") == p.GRAVITY_NAMES[v]])
 	var want := [[1, "floor_gravity.gdshader", false, true], [2, "floor_gravity.gdshader", true, true],
 			[0, "floor.gdshader", false, true]]

@@ -141,7 +141,7 @@ func _control_checks() -> void:
 		main._process(0.0)
 		U.key(KEY_G, false, true)
 		main._process(0.0)
-		seen.append([r.gravity_view, r.floor_mat.shader.resource_path.get_file(), r.arrows.visible])
+		seen.append([r.gravity_view, r.floor_mat.shader.resource_path.get_file(), r.arrows_shown])
 	U.check("G cycles the gravity views", seen == [[1, "floor_gravity.gdshader", false], [2, "floor_gravity.gdshader", true],
 			[0, "floor.gdshader", false]], str(seen))
 	main.hold = true

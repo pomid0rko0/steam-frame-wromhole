@@ -2,7 +2,7 @@
 // zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
 // (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
 // header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES, SIZES, RIBBONS,
-// LISTS, PATHS or LINES) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
+// LISTS, PATHS, LINES or LINE_LISTS) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
 // zone_tail.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
@@ -104,6 +104,13 @@ layout(set = 1, binding = 1, rgba32f) uniform restrict writeonly image2DArray ri
 // ARROWS, line_view)
 layout(set = 1, binding = 0, std430) restrict readonly buffer LineIn { vec4 v[]; } line_in;
 layout(set = 1, binding = 1, rgba32f) uniform restrict writeonly image2D line_out;
+#endif
+#ifdef LINE_LISTS
+// the field lines' vertices in the view (LINES' out), the chunks' images drawn (texel k: (chunk,
+// image); the lines' vertex shader's in: body.gdshaderinc, ARROWS, line_list) and their draw command
+layout(set = 1, binding = 0, rgba32f) uniform restrict readonly image2D line_view_img;
+layout(set = 1, binding = 1, rgba32f) uniform restrict writeonly image2D line_list_img;
+layout(set = 1, binding = 2, std430) buffer LineCmd { uint v[]; } line_cmd;
 #endif
 #ifdef LISTS
 // the lists of what each zone mesh draws (LISTS' out, the bodies' vertex shader's in: body.gdshaderinc,
@@ -757,6 +764,68 @@ void main() {
 		cmd6.v[1] = s_n[6];
 		cmd7.v[1] = s_n[7];
 	}
+}
+#elif defined(LINE_LISTS)
+// One workgroup: each chunk of the field lines (Renderer.line_chunks: pc.first.x of them) in each of
+// its pc.first.y images, into the list of those drawn (line_list_img) and their count into the draw
+// command (its second number), if in either eye (pc.grid.x views) a triangle of it (Renderer.
+// line_mesh's) is in the picture (its corners' box, 2 pixels past the edges) and at least
+// ZoneSections.CULL_PX of a pixel across (its shortest height), or has a corner behind the eye and
+// another before it (its rest may show); one with a corner not a number is not drawn at all.
+const int LINE_STEPS = 5;           // Renderer.LINE_STEPS, LINE_ARROWS, LINE_CV
+const int LINE_ARROWS = 2;
+const int LINE_CV = 2 * (LINE_STEPS + 1) + 3 * LINE_ARROWS;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+shared uint s_count;
+// vertex v of image j in eye z: its place in pixels from the picture's middle, and its clip w
+vec3 zs_line_px(int v, int j, int z) {
+	vec4 p = imageLoad(line_view_img, ivec2(v, 2 * j + z));
+	vec4 c = zp.proj[z] * vec4(p.xyz, 1.0);
+	return vec3(0.5 * zp.view.xy * c.xy / c.w, c.w);
+}
+// the triangle of corners a, b, c drawn
+bool zs_line_seen(vec3 a, vec3 b, vec3 c) {
+	if (!geo_finite(a.x + a.y + a.z + b.x + b.y + b.z + c.x + c.y + c.z)) return false;
+	int front = int(a.z > 0.0) + int(b.z > 0.0) + int(c.z > 0.0);
+	if (front == 0) return false;
+	if (front < 3) return true;
+	vec2 lo = min(min(a.xy, b.xy), c.xy), hi = max(max(a.xy, b.xy), c.xy);
+	vec2 edge = 0.5 * zp.view.xy + 2.0;
+	if (any(greaterThan(lo, edge)) || any(lessThan(hi, -edge))) return false;
+	float e = max(length(b.xy - a.xy), max(length(c.xy - b.xy), length(a.xy - c.xy)));
+	float twice = abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+	return e > 0.0 && twice / e >= zp.px.z;
+}
+void main() {
+	int tid = int(gl_LocalInvocationID.x);
+	if (tid == 0) s_count = 0u;
+	barrier();
+	int n = pc.first.x, images = pc.first.y, views = int(pc.grid.x + 0.5);
+	for (int it = tid; it < n * images; it += 256) {
+		int ch = it / images, j = it % images, v0 = ch * LINE_CV;
+		bool seen = false;
+		for (int z = 0; z < 2; z++) {
+			if (z >= views || seen) break;
+			// the strip's quads (2 i, 2 i + 2, 2 i + 1) and (2 i + 1, 2 i + 2, 2 i + 3), then the arrows
+			vec3 a = zs_line_px(v0, j, z), b = zs_line_px(v0 + 1, j, z);
+			for (int i = 0; i < LINE_STEPS; i++) {
+				vec3 c = zs_line_px(v0 + 2 * i + 2, j, z), d = zs_line_px(v0 + 2 * i + 3, j, z);
+				seen = seen || zs_line_seen(a, c, b) || zs_line_seen(b, c, d);
+				a = c;
+				b = d;
+			}
+			for (int k = 0; k < LINE_ARROWS; k++) {
+				int u = v0 + 2 * (LINE_STEPS + 1) + 3 * k;
+				seen = seen || zs_line_seen(zs_line_px(u, j, z), zs_line_px(u + 1, j, z), zs_line_px(u + 2, j, z));
+			}
+		}
+		if (seen) {
+			uint k = atomicAdd(s_count, 1u);
+			imageStore(line_list_img, ivec2(int(k), 0), vec4(float(ch), float(j), 0.0, 0.0));
+		}
+	}
+	barrier();
+	if (tid == 0) line_cmd.v[1] = s_count;
 }
 #elif defined(LINES)
 // The gravity view's field lines: each vertex's place in the view of each eye, image by image (an

@@ -35,7 +35,10 @@ extends CompositorEffect
 ## And, while the gravity view's field lines are shown (set_lines), each vertex of theirs in the view
 ## of each eye, image by image (LINES: geo_see_image, as their vertex shader did; line_tex): a search
 ## a vertex once a frame in a compute pass, which costs a fraction of one in the vertex shader (and
-## the GPU runs a vertex's shader for its tiles' binning too).
+## the GPU runs a vertex's shader for its tiles' binning too); then which of their chunks' images are
+## drawn at all (LINE_LISTS: in the picture and a quarter of a pixel across, as IMAGES' bodies'), the
+## list Renderer's chunk mesh is drawn by and its count (line_list_tex): near the mouth most of them
+## are thinner, or out of the picture.
 ##
 ## On the XR camera's compositor (on the desktop the window's camera's), before the opaque pass,
 ## every frame whatever the foveation. Renderer hands it the space's numbers, the head each frame
@@ -48,8 +51,8 @@ const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a
 # nodes' and tables' part of the frame's GPU time (frame_rate.gd)
 const TS_BEGIN := "zone nodes begin"
 const TS_END := "zone nodes end"
-# and after each of its passes, this and the pass's name ("lines", "ball", "images", the cube's passes,
-# "cube", "paths", "sizes", "ribbons", "lists"): what each costs (frame_rate.gd, bench.gd)
+# and after each of its passes, this and the pass's name ("lines", "line_lists", "ball", "images", the
+# cube's passes, "cube", "paths", "sizes", "ribbons", "lists"): what each costs (frame_rate.gd, bench.gd)
 const TS_PASS := "zone pass "
 const CULL_PX := 0.25               # an image thinner across than this share of a pixel is not drawn
 const PLAN_ROWS := 4                # plan_img's rows a cube (zone_sections.gdshaderinc's)
@@ -67,6 +70,8 @@ var list_tex := Texture2DRD.new()   # the zone meshes' lists and the bodies' row
 const LISTS := 8                    # Renderer.ZONE_LODS: balls fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse, ribbon
 var ribbon_tex := Texture2DArrayRD.new()   # a cube's thin image's ribbon: each column's two rows (RIBBONS' out), for the cubes' materials
 var line_tex := Texture2DRD.new()   # the field lines' vertices in the views (LINES' out: a vertex a texel, a row an image's eye), for their material
+var line_data_tex := Texture2DRD.new()   # and their colours and ways inside (Renderer.line_chunks' data: a row a chunk)
+var line_list_tex := Texture2DRD.new()   # and the chunks' images drawn (LINE_LISTS' out: texel k (chunk, image))
 
 var _rd: RenderingDevice
 var _shaders := {}                  # "ball", "cube" -> RID
@@ -100,6 +105,10 @@ var _ribbon_set: RID                # RIBBONS' set 1: _path to sample, _ribbon
 var _line_in: RID                   # the field lines' vertices (set_lines)
 var _line_out: RID                  # line_tex's
 var _line_set: RID                  # LINES' set 1: the two
+var _line_data: RID                 # line_data_tex's
+var _line_list: RID                 # line_list_tex's
+var _line_cmd: RID                  # the lines' draw command (Renderer's MultiMesh)
+var _line_list_set: RID             # LINE_LISTS' set 1: _line_out, _line_list, _line_cmd
 var _line_n := 0                    # their vertices
 var _line_images := 0               # their images
 var _lines_on := false              # shown: LINES runs
@@ -208,44 +217,62 @@ func set_head(l: float, n: Vector3, hf: PackedVector4Array, head_pos: Vector3) -
 	_mutex.unlock()
 
 
-## The gravity view's field lines (Renderer.arrow_arrays' arrays: their vertices, n in ARRAY_VERTEX,
-## l in ARRAY_TEX_UV's x, 1 for an arrow's in ARRAY_COLOR's alpha), drawn in images images; for LINES
-## and line_tex. On the main thread, when they are built.
-func set_lines(arr: Array, images: int) -> void:
+## The gravity view's field lines in chunks (Renderer.line_chunks: n chunks of LINE_CV vertices,
+## each vertex's point and its data for the vertex shader), drawn in images images by the draw
+## command cmd (its MultiMesh's: Renderer.line_mesh, drawn indirect), whose instance count
+## LINE_LISTS writes; for LINES, LINE_LISTS and their textures. On the main thread, when they are
+## built.
+func set_lines(chunks: Dictionary, images: int, cmd: RID) -> void:
 	if _rd == null:
 		return
-	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-	var uv: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
-	var col: PackedColorArray = arr[Mesh.ARRAY_COLOR]
-	var f := PackedFloat32Array()
-	f.resize(4 * maxi(v.size(), 1))
-	for i in v.size():
-		f[4 * i] = uv[i].x
-		f[4 * i + 1] = v[i].y
-		f[4 * i + 2] = v[i].z
-		f[4 * i + 3] = col[i].a
+	var n: int = chunks.n
+	var cv: int = Renderer.LINE_CV
+	var verts := maxi(n * cv, 1)
+	var fin: PackedFloat32Array = chunks.in
+	fin.resize(4 * verts)
+	var fdata: PackedFloat32Array = chunks.data
+	fdata.resize(12 * verts)
 	var t := RDTextureFormat.new()
 	t.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
-	t.width = maxi(v.size(), 1)
+	t.width = verts
 	t.height = 2 * images
 	t.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
-	var bytes := f.to_byte_array()
+	var d := RDTextureFormat.new()
+	d.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	d.width = 3 * cv
+	d.height = maxi(n, 1)
+	d.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	var li := RDTextureFormat.new()
+	li.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	li.width = maxi(n * images, 1)
+	li.height = 1
+	li.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	var bytes := fin.to_byte_array()
 	var line_in := _rd.storage_buffer_create(bytes.size(), bytes)
 	var line_out := _rd.texture_create(t, RDTextureView.new())
+	var line_data := _rd.texture_create(d, RDTextureView.new(), [fdata.to_byte_array()])
+	var line_list := _rd.texture_create(li, RDTextureView.new())
 	_mutex.lock()
-	var old := [_line_in, _line_out]
+	var old := [_line_out, _line_data, _line_list, _line_in]
 	_line_in = line_in
 	_line_out = line_out
+	_line_data = line_data
+	_line_list = line_list
+	_line_cmd = cmd
 	_line_set = RID()
-	_line_n = v.size()
+	_line_list_set = RID()
+	_line_n = n
 	_line_images = images
 	_mutex.unlock()
-	# the texture before: line_tex's own (RenderingServer's) goes with it, then the buffer
+	# the textures before: each Texture2DRD's own (RenderingServer's) goes with it, then the buffer
 	line_tex.texture_rd_rid = line_out
-	if old[1].is_valid() and _rd.texture_is_valid(old[1]):
-		_rd.free_rid(old[1])
-	if old[0].is_valid():
-		_rd.free_rid(old[0])
+	line_data_tex.texture_rd_rid = line_data
+	line_list_tex.texture_rd_rid = line_list
+	for r: RID in old.slice(0, 3):
+		if r.is_valid() and _rd.texture_is_valid(r):
+			_rd.free_rid(r)
+	if old[3].is_valid():
+		_rd.free_rid(old[3])
 
 
 ## Whether the field lines are shown (LINES runs only then).
@@ -292,7 +319,7 @@ func _build() -> void:
 	for k in 2:
 		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
 		_path_n[k] = int(m.get_string(1))
-	for kind in ["ball", "cube", "images", "sizes", "ribbons", "lists", "paths", "lines"] + CUBE_PASSES:
+	for kind in ["ball", "cube", "images", "sizes", "ribbons", "lists", "paths", "lines", "line_lists"] + CUBE_PASSES:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -391,6 +418,21 @@ func _line_set_rid() -> RID:
 	return _line_set
 
 
+## LINE_LISTS' set 1 (the lines' places in the view, its list and the draw command), made when they change.
+func _line_list_set_rid() -> RID:
+	if _line_list_set.is_valid() and _rd.uniform_set_is_valid(_line_list_set):
+		return _line_list_set
+	var us: Array[RDUniform] = []
+	for b in 3:
+		var u := RDUniform.new()
+		u.binding = b
+		u.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER if b == 2 else RenderingDevice.UNIFORM_TYPE_IMAGE
+		u.add_id([_line_out, _line_list, _line_cmd][b])
+		us.append(u)
+	_line_list_set = _rd.uniform_set_create(us, _shaders["line_lists"], 1)
+	return _line_list_set
+
+
 ## LISTS' set 1 (its list image and the draw commands), made when the commands are there; false if not.
 func _lists_set() -> bool:
 	if _list_set.is_valid() and _rd.uniform_set_is_valid(_list_set):
@@ -425,7 +467,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_bodies_bytes = PackedByteArray()
 	var p := PackedFloat32Array(_space)
 	p.append_array(_head)
-	var lines := _lines_on and _line_n > 0 and _line_out.is_valid()
+	var lines := _lines_on and _line_n > 0 and _line_out.is_valid() and _line_cmd.is_valid()
 	var line_n := _line_n
 	var line_images := _line_images
 	_mutex.unlock()
@@ -465,8 +507,11 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var pcb := PackedFloat32Array([_grid.x, _grid.y, _grid.z, _grid.w]).to_byte_array()
 	if lines:
 		var npc := pcb.duplicate()
-		npc.append_array(PackedInt32Array([line_n, 0, 0, 0]).to_byte_array())
-		_pass("lines", npc, int(ceil(line_n / 64.0)), line_images, views)
+		npc.append_array(PackedInt32Array([line_n * Renderer.LINE_CV, 0, 0, 0]).to_byte_array())
+		_pass("lines", npc, int(ceil(line_n * Renderer.LINE_CV / 64.0)), line_images, views)
+		var mpc := PackedFloat32Array([views, 0.0, 0.0, 0.0]).to_byte_array()
+		mpc.append_array(PackedInt32Array([line_n, line_images, 0, 0]).to_byte_array())
+		_pass("line_lists", mpc, 1, 1, 1)
 	if counts == Vector2i.ZERO:
 		_rd.capture_timestamp(TS_END)
 		return
@@ -513,6 +558,8 @@ func _pass(kind: String, push: PackedByteArray, x: int, y: int, z: int) -> void:
 		_rd.compute_list_bind_uniform_set(cl, _ribbon_set_rid(), 1)
 	elif kind == "lines":
 		_rd.compute_list_bind_uniform_set(cl, _line_set_rid(), 1)
+	elif kind == "line_lists":
+		_rd.compute_list_bind_uniform_set(cl, _line_list_set_rid(), 1)
 	_rd.compute_list_set_push_constant(cl, push, push.size())
 	_rd.compute_list_dispatch(cl, x, y, z)
 	_rd.compute_list_end()

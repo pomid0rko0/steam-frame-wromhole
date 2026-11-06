@@ -40,13 +40,12 @@
 //     once a frame too.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
-//   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
-//   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
-//     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR, but for their outline
-//     (arrow_rim): the pixels neither inside the coloured part (CUSTOM0's three numbers all at least
-//     0) nor inside the line's (UV2's two; Renderer._line); COLOR.a 1 (an arrow, coloured over its
-//     line) a hair nearer the eye in depth than 0 (a line), in the same place in the view; each
-//     vertex's place in the view of each eye and image worked out by ZoneSections (line_view).
+//   BEAM: one instance per image, each vertex by its own plane through the centre.
+//   ARROWS (arrows.gdshader): the gravity view's field lines with their arrows, in chunks (below,
+//     line_view), unlit, in their colour, but for their outline (arrow_rim): the pixels neither
+//     inside the coloured part (three numbers all at least 0) nor inside the line's (two; Renderer.
+//     _line_chunks); an arrow, coloured over its line, a hair nearer the eye in depth; each vertex's
+//     place in the view of each eye and image worked out by ZoneSections.
 //   BEAM (beam.gdshader): a hand's pointing beam (Renderer.set_beam), a tube round a line of up to
 //     BEAM_POINTS points of R^4 (beam_p, beam_n of them), beam_r[i] in radius at point i; its mesh
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
@@ -113,9 +112,15 @@ uniform vec3 beam_col : source_color = vec3(1.0);
 #endif
 #ifdef ARROWS
 uniform vec3 arrow_rim : source_color = vec3(0.02);   // the outline's colour (Renderer.ARROW_RIM_COLOR)
-// each vertex in the view of each eye, image by image (ZoneSections' LINES): at (VERTEX_ID, 2 image +
-// eye) the point (EYE_OFFSET + len dir) and fell
+// drawn in chunks (Renderer.line_chunks, line_mesh: VERTEX.x the vertex's place in its chunk), an
+// instance a chunk's image that ZoneSections' LINE_LISTS found drawn: (chunk, image) at (instance, 0)
+// of line_list; each vertex in the view of each eye, image by image (ZoneSections' LINES): at (chunk *
+// LINE_CV + its place, 2 image + eye) of line_view the point (EYE_OFFSET + len dir) and fell; its
+// colour and ways inside the coloured parts at (3 its place + 0, 1, 2, chunk) of line_data
+const int LINE_CV = 18;          // Renderer.LINE_CV
 uniform sampler2D line_view : filter_nearest, repeat_disable;
+uniform sampler2D line_data : filter_nearest, repeat_disable;
+uniform sampler2D line_list : filter_nearest, repeat_disable;
 #endif
 
 #ifdef CUBE
@@ -294,8 +299,8 @@ void vertex() {
 #ifndef ZONE
 	vec3 pn;
 #ifdef ARROWS
-	pn = normalize(VERTEX);
-	float pl = UV.x;
+	pn = vec3(1.0, 0.0, 0.0);       // its place in the view worked out already (below)
+	float pl = 0.0;
 #else
 	float pl = geo_l_of(P, pn);
 #endif
@@ -325,7 +330,9 @@ void vertex() {
 #else
 #ifdef ARROWS
 	// worked out once a frame for each eye and image (ZoneSections' LINES, as below)
-	vec4 lv = texelFetch(line_view, ivec2(VERTEX_ID, 2 * INSTANCE_ID + int(VIEW_INDEX)), 0);
+	vec4 lc = texelFetch(line_list, ivec2(INSTANCE_ID, 0), 0);
+	int chunk = int(lc.x + 0.5), image = int(lc.y + 0.5), place = int(VERTEX.x + 0.5);
+	vec4 lv = texelFetch(line_view, ivec2(chunk * LINE_CV + place, 2 * image + int(VIEW_INDEX)), 0);
 	float fell = lv.w;
 	arrive = vec4(0.0);
 	POSITION = PROJECTION_MATRIX * vec4(lv.xyz, 1.0);
@@ -343,9 +350,9 @@ void vertex() {
 #endif
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
-	v_col = COLOR.rgb;
-	v_inner = CUSTOM0.xyz;
-	v_line = UV2;
+	v_col = texelFetch(line_data, ivec2(3 * place, chunk), 0).rgb;
+	v_inner = texelFetch(line_data, ivec2(3 * place + 1, chunk), 0).xyz;
+	v_line = texelFetch(line_data, ivec2(3 * place + 2, chunk), 0).xy;
 #elif defined(BEAM)
 	vec4 Np = N;
 	v_col = beam_col;

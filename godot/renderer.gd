@@ -96,6 +96,10 @@ const LINE_STEP := 1.0          # m between the lines' starts, across (chart y)
 const LINE_DS := 0.2            # m: the steps a line is traced and drawn in
 const LINE_MAX_STEPS := 300
 const LINE_WIDTH := 0.03        # half a line's width, m
+const LINE_STEPS := 5           # a chunk of a line (line_chunks): its steps, its arrows at most, its vertices
+const LINE_ARROWS := 2
+const LINE_CV := 2 * (LINE_STEPS + 1) + 3 * LINE_ARROWS
+const LINE_CHUNKS := 1024       # chunks at most (the 80 m throat's lines: about half)
 const ARROW_GAP := 1.0          # m along a line between its arrows
 const ARROW_LENGTH := 0.24      # m
 const ARROW_HALF := 0.12        # half an arrow's width, m
@@ -127,7 +131,14 @@ var _zone_cmds := false         # their draw commands handed to zone_sections
 var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader)
 var tail: MultiMeshInstance3D   # an instance per body slot and side (zone_tail.gdshader)
 var statics: Array[MeshInstance3D] = []
-var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
+# the field lines: their chunks (line_mesh) as a MultiMesh drawn indirect (the RenderingServer's: a
+# MultiMesh node has no indirect drawing), an instance a chunk's image ZoneSections' LINE_LISTS found
+# drawn (body.gdshaderinc, ARROWS)
+var _line_mm: RID
+var _line_inst: RID
+var _line_mesh: ArrayMesh
+var arrows_shown := false
+var _lines_pending := {}        # chunks waiting for their draw command (_lines_commands)
 var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
 var foveation := Foveation.new()   # the floor coarser away from the gaze (on the camera's compositor: Main)
@@ -248,12 +259,21 @@ func _ready() -> void:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
 		play.add_child(mi)
-	var arr := arrow_arrays(space)
-	arrows = _images(_arrow_mesh(arr), arrow_mat)
-	zone_sections.set_lines(arr, LINE_IMAGES)
+	_line_mesh = line_mesh()
+	_line_mm = RenderingServer.multimesh_create()
+	_line_inst = RenderingServer.instance_create2(_line_mm, play.get_world_3d().scenario)
+	RenderingServer.instance_set_custom_aabb(_line_inst, AABB(Vector3.ONE * -1e4, Vector3.ONE * 2e4))
+	RenderingServer.instance_set_extra_visibility_margin(_line_inst, 16384.0)
+	RenderingServer.instance_geometry_set_cast_shadows_setting(_line_inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
+	RenderingServer.instance_geometry_set_material_override(_line_inst, arrow_mat.get_rid())
+	# its data once, for the most chunks (its draw command stays the same), before its mesh (else it has none)
+	RenderingServer.multimesh_allocate_data(_line_mm, LINE_CHUNKS * LINE_IMAGES, RenderingServer.MULTIMESH_TRANSFORM_3D, false, false, true)
+	RenderingServer.multimesh_set_mesh(_line_mm, _line_mesh.get_rid())
+	_lines_set(line_chunks(space))
 	arrow_mat.set_shader_parameter("line_view", zone_sections.line_tex)
+	arrow_mat.set_shader_parameter("line_data", zone_sections.line_data_tex)
+	arrow_mat.set_shader_parameter("line_list", zone_sections.line_list_tex)
 	_arrows_shown(false)
-	play.add_child(arrows)
 	var tube := _beam_mesh()
 	for m in beam_mats:
 		var b := _images(tube, m)
@@ -271,6 +291,7 @@ func _ready() -> void:
 ## more on the Frame, and SteamVR at half rate after it).
 func _process(_delta: float) -> void:
 	_lines_ready()
+	_lines_commands()
 	_zone_commands()
 	if _warm > 0:
 		_warm -= 1
@@ -368,7 +389,7 @@ func set_length() -> void:
 
 var _lines_task := -1           # WorkerThreadPool's task building the field lines, -1 none
 var _lines_want := false        # they are stale: built (again) once the task is free
-var _lines_built := []          # what it built: [mesh arrays]
+var _lines_built := []          # what it built: [line_chunks']
 
 
 func _lines_start() -> void:
@@ -380,15 +401,16 @@ func _lines_start() -> void:
 
 ## On a worker thread: reads nothing of the app's, only makes new things.
 func _lines_build(shape: Vector4) -> void:
-	_lines_built = [arrow_arrays(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
+	_lines_built = [line_chunks(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
 
 
 func _exit_tree() -> void:
 	if _lines_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_lines_task)
 		_lines_task = -1
-	# the zone meshes' instances and MultiMeshes (the RenderingServer's: no node frees them)
-	for r in _zone_inst + _zone_mm:
+	# the zone meshes' and the field lines' instances and MultiMeshes (the RenderingServer's: no node
+	# frees them)
+	for r in _zone_inst + _zone_mm + [_line_inst, _line_mm]:
 		RenderingServer.free_rid(r)
 	_zone_inst.clear()
 	_zone_mm.clear()
@@ -403,14 +425,35 @@ func _lines_ready() -> void:
 	if _lines_want:
 		_lines_start()
 		return
-	arrows.multimesh.mesh = _arrow_mesh(_lines_built[0])
-	zone_sections.set_lines(_lines_built[0], LINE_IMAGES)
+	_lines_set(_lines_built[0])
 	_arrows_shown(gravity_view == 2)
+
+
+## The field lines' chunks (line_chunks, LINE_CHUNKS at most) to ZoneSections, with their MultiMesh's
+## draw command.
+func _lines_set(chunks: Dictionary) -> void:
+	assert(chunks.n <= LINE_CHUNKS)
+	chunks.n = mini(chunks.n, LINE_CHUNKS)
+	_lines_pending = chunks
+	_lines_commands()
+
+
+## The field lines' chunks to ZoneSections once their MultiMesh's draw command is there (it is made
+## with the frame after its data).
+func _lines_commands() -> void:
+	if _lines_pending.is_empty():
+		return
+	var cmd := RenderingServer.multimesh_get_command_buffer_rd_rid(_line_mm)
+	if not cmd.is_valid():
+		return
+	zone_sections.set_lines(_lines_pending, LINE_IMAGES, cmd)
+	_lines_pending = {}
 
 
 ## The field lines shown or not, and their places in the view worked out (ZoneSections' LINES) or not.
 func _arrows_shown(on: bool) -> void:
-	arrows.visible = on
+	arrows_shown = on
+	RenderingServer.instance_set_visible(_line_inst, on)
 	zone_sections.set_lines_shown(on)
 
 
@@ -828,15 +871,16 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 
 
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
-## LINE_* and ARROW_*), as mesh arrays (Mesh.ARRAY_*) of the space sp: nothing but sp is read, so
-## they are built off the main thread when the throat's length changes (main.set_length). Vertices
-## as points of the space: n in the vertex, l in UV.x (body.gdshaderinc, ARROWS); each line and arrow
-## once with its outline (_line). Points of the surface n.x = 0 are (l, beta), n = (0, cos beta,
-## sin beta).
-static func arrow_arrays(sp: WormholeSpace) -> Array:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_custom_format(0, SurfaceTool.CUSTOM_RGBA_FLOAT)
+## LINE_* and ARROW_*) of the space sp, in chunks (nothing but sp is read, so they are built off the
+## main thread when the throat's length changes: main.set_length): LINE_STEPS steps of a line, LINE_CV
+## vertices each (line_mesh: its strip, then up to LINE_ARROWS arrows; a chunk's last ones repeated
+## where it has fewer). Each with its outline (_line_chunks). Returns n: the chunks; in: a vertex's
+## point (l, n.y, n.z) and 1 for an arrow's, 0 for the line's (ZoneSections' LINES works out where it
+## is in the view); data: three texels a vertex for the vertex shader (body.gdshaderinc, ARROWS):
+## (its colour, 1 for an arrow's), (how far inside the coloured part), (how far inside its line's).
+## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
+static func line_chunks(sp: WormholeSpace) -> Dictionary:
+	var out := {"n": 0, "in": PackedFloat32Array(), "data": PackedFloat32Array()}
 	var top := sp.Rout + LINE_TOP
 	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
@@ -847,14 +891,29 @@ static func arrow_arrays(sp: WormholeSpace) -> Array:
 			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
 			if pts.size() < 2:
 				continue
-			_line(sp, st, pts)
-	st.index()          # shared corners once (_scene_mesh)
-	return st.commit_to_arrays()
+			_line_chunks(sp, pts, out)
+	return out
 
 
-static func _arrow_mesh(arr: Array) -> ArrayMesh:
+## The chunks' mesh: LINE_CV vertices, VERTEX.x the vertex's place in the chunk: the strip's, two a
+## point (k = 2 i + side), its quads between each two points, then each arrow's triangle.
+static func line_mesh() -> ArrayMesh:
+	var v := PackedVector3Array()
+	for k in LINE_CV:
+		v.append(Vector3(k, 0.0, 0.0))
+	var idx := PackedInt32Array()
+	for i in LINE_STEPS:
+		idx.append_array([2 * i, 2 * i + 2, 2 * i + 1, 2 * i + 1, 2 * i + 2, 2 * i + 3])
+	for a in LINE_ARROWS:
+		var k0 := 2 * (LINE_STEPS + 1) + 3 * a
+		idx.append_array([k0, k0 + 1, k0 + 2])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = v
+	arrays[Mesh.ARRAY_INDEX] = idx
 	var m := ArrayMesh.new()
-	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr, [], {}, Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	m.custom_aabb = AABB(Vector3.ONE * -1e4, Vector3.ONE * 2e4)
 	return m
 
 
@@ -898,17 +957,17 @@ static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -
 
 
 ## A line through pts ([l, beta, g]) LINE_WIDTH to each side, with an arrow every ARROW_GAP along
-## it, in the colour of g where each point is (the strip's two vertices at a point shared by its
-## quads either side), and its dark outline ARROW_RIM wide all round: one mesh, the outline's outer
-## edge, each vertex with how far it is inside the coloured part (CUSTOM0: a strip's way in from its
-## two edges, LINE_WIDTH - x and LINE_WIDTH + x at x across it, and 1; an arrow's place in its
-## coloured triangle's barycentric coordinates; UV2: the way in from the line's edges, for an arrow
-## too, which is coloured over its line), so the outline is the pixels where none of them is all
-## positive (body.gdshaderinc, ARROWS), not a mesh of its own. An arrow (COLOR.a 1) a hair nearer the
-## eye than its line (0).
-static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array) -> void:
+## it, in the colour of g where each point is, and its dark outline ARROW_RIM wide all round: the
+## outline's outer edge, each vertex with how far it is inside the coloured part (a strip's way in
+## from its two edges, LINE_WIDTH - x and LINE_WIDTH + x at x across it, and 1; an arrow's place in
+## its coloured triangle's barycentric coordinates) and inside the line's (the same way in, for an
+## arrow too, which is coloured over its line), so the outline is the pixels where none of them is
+## all positive (body.gdshaderinc, ARROWS), not a mesh of its own. An arrow a hair nearer the eye
+## than its line. Into out (line_chunks), a chunk each LINE_STEPS steps.
+static func _line_chunks(sp: WormholeSpace, pts: Array, out: Dictionary) -> void:
 	var w := LINE_WIDTH + ARROW_RIM
-	var prev: Array = []
+	# each point's two vertices: [(l, beta), x across, colour]
+	var pairs := []
 	for i in pts.size():
 		var a: Array = pts[maxi(i - 1, 0)]
 		var b: Array = pts[mini(i + 1, pts.size() - 1)]
@@ -916,14 +975,11 @@ static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array) -> void:
 		var rr := sp.r(p[0])
 		var t := Vector2(b[0] - a[0], (b[1] - a[1]) * rr).normalized()
 		var side := Vector2(-t.y, t.x)
-		var c := Color(_gravity_color(p[2]), 0.0)
-		var pair := [[Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), w, c], [Vector2(p[0] - w * side.x, p[1] - w * side.y / rr), -w, c]]
-		if not prev.is_empty():
-			for v: Array in [prev[0], pair[0], pair[1], prev[0], pair[1], prev[1]]:
-				var across := Vector2(LINE_WIDTH - v[1], LINE_WIDTH + v[1])
-				_vertex(st, v[0], v[2], Color(across.x, across.y, 1.0, 0.0), across)
-		prev = pair
-	# the arrows, each along the line where it stands
+		var c := _gravity_color(p[2])
+		pairs.append([[Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), w, c], [Vector2(p[0] - w * side.x, p[1] - w * side.y / rr), -w, c]])
+	# the arrows, each along the line where it stands: [its step, its three vertices: [(l, beta), colour,
+	# barycentric, x across the line]]
+	var arrows := []
 	var s := 0.0
 	var next := 0.5 * ARROW_GAP
 	for i in range(1, pts.size()):
@@ -937,17 +993,44 @@ static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array) -> void:
 			var at := Vector2(lerpf(a[0], b[0], f), lerpf(a[1], b[1], f))
 			var t := d / len
 			var side := Vector2(-t.y, t.x)
-			var c := Color(_gravity_color(lerpf(a[2], b[2], f)), 1.0)
+			var c := _gravity_color(lerpf(a[2], b[2], f))
 			# the coloured triangle, and the outline's round it: (along t, across) from where it stands
 			var tip := 0.5 * ARROW_LENGTH * t
 			var inner := [tip, -tip + ARROW_HALF * side, -tip - ARROW_HALF * side]
 			var back := -(0.5 * ARROW_LENGTH + ARROW_RIM) * t
 			var outer := [tip + 2.0 * ARROW_RIM * t, back + (ARROW_HALF + 2.0 * ARROW_RIM) * side, back - (ARROW_HALF + 2.0 * ARROW_RIM) * side]
+			var vs := []
 			for o: Vector2 in outer:
-				var x := o.dot(side)
-				_vertex(st, Vector2(at.x + o.x, at.y + o.y / rr), c, _barycentric(o, inner), Vector2(LINE_WIDTH - x, LINE_WIDTH + x))
+				vs.append([Vector2(at.x + o.x, at.y + o.y / rr), c, _barycentric(o, inner), o.dot(side)])
+			arrows.append([i, vs])
 			next += ARROW_GAP
 		s += len
+	var steps := pts.size() - 1
+	for ch in ceili(float(steps) / LINE_STEPS):
+		var last: Array = pairs[mini(LINE_STEPS * ch + LINE_STEPS, steps)][1]
+		for i in LINE_STEPS + 1:
+			for v: Array in pairs[mini(LINE_STEPS * ch + i, steps)]:
+				var x: float = v[1]
+				var across := Vector2(LINE_WIDTH - x, LINE_WIDTH + x)
+				_line_vertex(out, v[0], v[2], false, Color(across.x, across.y, 1.0), across)
+		var mine := arrows.filter(func(ar: Array) -> bool: return (ar[0] - 1) / LINE_STEPS == ch)
+		for a in LINE_ARROWS:
+			for k in 3:
+				if a < mine.size():
+					var v: Array = mine[a][1][k]
+					var x: float = v[3]
+					_line_vertex(out, v[0], v[1], true, v[2], Vector2(LINE_WIDTH - x, LINE_WIDTH + x))
+				else:
+					var x: float = last[1]
+					_line_vertex(out, last[0], last[2], false, Color(-1.0, -1.0, -1.0), Vector2(LINE_WIDTH - x, LINE_WIDTH + x))
+		out.n += 1
+
+
+## A vertex of the field lines' chunks at (l, beta) of the surface n.x = 0 (line_chunks).
+static func _line_vertex(out: Dictionary, q: Vector2, c: Color, arrow: bool, inner: Color, line: Vector2) -> void:
+	var a := 1.0 if arrow else 0.0
+	out.in.append_array([q.x, cos(q.y), sin(q.y), a])
+	out.data.append_array([c.r, c.g, c.b, a, inner.r, inner.g, inner.b, 0.0, line.x, line.y, 0.0, 0.0])
 
 
 ## Point o's barycentric coordinates in the triangle tri (three Vector2), as a Color's r, g, b.
@@ -959,16 +1042,6 @@ static func _barycentric(o: Vector2, tri: Array) -> Color:
 	var u := q.cross(e2) / den
 	var v := e1.cross(q) / den
 	return Color(1.0 - u - v, u, v, 0.0)
-
-
-## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0: its colour, and how far
-## inside the coloured part it is (_line).
-static func _vertex(st: SurfaceTool, q: Vector2, c: Color, inner: Color, line: Vector2) -> void:
-	st.set_color(c)
-	st.set_uv(Vector2(q.x, 0.0))
-	st.set_uv2(line)
-	st.set_custom(0, inner)
-	st.add_vertex(Vector3(0.0, cos(q.y), sin(q.y)))
 
 
 ## An arrow's colour at g (in g): look.gdshaderinc's look_grav_colour, brighter by ARROW_GLOW.
