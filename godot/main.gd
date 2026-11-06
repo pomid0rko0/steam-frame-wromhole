@@ -107,9 +107,10 @@ var tilting := false            # flying, pitched or rolled this frame (_turns_a
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
 var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lines about late frames)
-# Godot renders on a thread of its own (project.godot's thread model "Separate", or as the menu last
-# chose it for this start: Menu.set_render_thread), the main thread meanwhile on the next frame;
-# else on the main thread after the scripts. Known from the first call on the render thread.
+# Godot renders on a thread of its own (thread model "Separate", as the menu last chose it for this
+# start: Menu.set_render_thread), the main thread meanwhile on the next frame; else (project.godot's
+# "Safe", the default) on the main thread after the scripts. Known from the first call on the render
+# thread.
 var render_thread := false
 # and its parts, PARTS, ms; when it started (Time.get_ticks_usec)
 const PARTS := ["input and motion", "head", "toys", "hands", "drawing", "to the shaders"]

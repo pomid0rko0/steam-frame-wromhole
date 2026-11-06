@@ -138,21 +138,21 @@ func _process(_delta: float) -> bool:
 		U.check("the eye at its full size at first: Monado's own", p.full_eye == 128 and _eye() == Vector2i(128, 128)
 				and main.xr_view.size == Vector2i(128, 128) and _value(p, "scale") == "100% (128×128)",
 				"%s, viewport %s" % [_eye(), main.xr_view.size])
-		U.check("Godot renders on a thread of its own (project.godot), the menu's row says so",
-				main.render_thread and _value(p, "thread") == "свой поток" and _color(p, "thread") == p.COLOR_TEXT)
+		U.check("Godot renders on the main thread (project.godot), the menu's row says so",
+				not main.render_thread and _value(p, "thread") == "главный поток" and _color(p, "thread") == p.COLOR_TEXT)
 		p.select("thread")
 		p.press()
 		var ovr := ConfigFile.new()
 		ovr.load(Menu.OVERRIDE)
-		U.check("отрисовка, A: on the main thread from the next start (yellow), written where Godot reads it, a notice",
-				_value(p, "thread") == "главный поток" and _color(p, "thread") == p.COLOR_PENDING
-				and ovr.get_value("rendering", Menu.THREAD_KEY, 0) == 1
+		U.check("отрисовка, A: on a thread of its own from the next start (yellow), written where Godot reads it, a notice",
+				_value(p, "thread") == "свой поток" and _color(p, "thread") == p.COLOR_PENDING
+				and ovr.get_value("rendering", Menu.THREAD_KEY, 0) == 2
 				and ProjectSettings.get_setting("application/config/project_settings_override") == Menu.OVERRIDE
 				and p.notice_text.contains("выйди и запусти снова"), "%s, %s" % [_value(p, "thread"), p.notice_text])
 		p.press()
 		ovr.load(Menu.OVERRIDE)
-		U.check("... A again: its own thread, as now (white)", _value(p, "thread") == "свой поток"
-				and _color(p, "thread") == p.COLOR_TEXT and ovr.get_value("rendering", Menu.THREAD_KEY, 0) == 2)
+		U.check("... A again: the main thread, as now (white)", _value(p, "thread") == "главный поток"
+				and _color(p, "thread") == p.COLOR_TEXT and ovr.get_value("rendering", Menu.THREAD_KEY, 0) == 1)
 		p.select("scale")
 		p.change(1)
 		U.check("the resolution row, right: 110% picked, not yet in effect", _eye() == Vector2i(128, 128)
