@@ -410,7 +410,7 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms)"
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms), the render thread's lag ms (FrameRate.lag_last)"
 				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -476,7 +476,7 @@ func _segment() -> void:
 		return
 	if gpu_ms.is_empty():
 		_clock()
-	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
+	gpu_ms.append(main.rate.gpu_last)
 	var rate: FrameRate = main.rate
 	if rate.parts_frame != part_frame and rate.parts_last.size() == FrameRate.PARTS.size():
 		part_frame = rate.parts_frame
@@ -662,12 +662,11 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 	meter.add(display_time, period, expected_hz)
 	if not counting or meter.frames == frames_before:
 		return
-	var vp: RID = main.rate.target.get_viewport_rid()
-	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
+	var g: float = main.rate.gpu_last
 	var mt: Vector4 = main.rate.before_ms()
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
-			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z, mt.w])
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
+			meter.refreshes - refreshes_before, g, main.rate.cpu_last,
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z, mt.w, main.rate.lag_last])
 	sec.frames += 1
 	sec.refreshes += meter.refreshes - refreshes_before
 	sec.gpu += g

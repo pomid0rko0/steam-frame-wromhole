@@ -12,7 +12,8 @@ extends SceneTree
 ## every frame the XR viewport is as big as those images; the foveation row turns foveated
 ## rendering on at its level (the floor from foveation.gd's texture, made for the picture's size)
 ## and keeps it, at any size, its fovea ahead without eye tracking (Monado has none); the zones row
-## tints its coarse texels; the gaze dot shows and hides; the gravity row
+## tints its coarse texels; the gaze dot shows and hides; the rendering row (Menu.set_render_thread)
+## writes the thread model Godot takes at the next start; the gravity row
 ## switches the gravity view (the floor, the arrows, off: A steps round);
 ## frames made too slow for the display turn the head and the line below red; and the speed
 ## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
@@ -137,6 +138,21 @@ func _process(_delta: float) -> bool:
 		U.check("the eye at its full size at first: Monado's own", p.full_eye == 128 and _eye() == Vector2i(128, 128)
 				and main.xr_view.size == Vector2i(128, 128) and _value(p, "scale") == "100% (128×128)",
 				"%s, viewport %s" % [_eye(), main.xr_view.size])
+		U.check("Godot renders on a thread of its own (project.godot), the menu's row says so",
+				main.render_thread and _value(p, "thread") == "свой поток" and _color(p, "thread") == p.COLOR_TEXT)
+		p.select("thread")
+		p.press()
+		var ovr := ConfigFile.new()
+		ovr.load(Menu.OVERRIDE)
+		U.check("отрисовка, A: on the main thread from the next start (yellow), written where Godot reads it, a notice",
+				_value(p, "thread") == "главный поток" and _color(p, "thread") == p.COLOR_PENDING
+				and ovr.get_value("rendering", Menu.THREAD_KEY, 0) == 1
+				and ProjectSettings.get_setting("application/config/project_settings_override") == Menu.OVERRIDE
+				and p.notice_text.contains("выйди и запусти снова"), "%s, %s" % [_value(p, "thread"), p.notice_text])
+		p.press()
+		ovr.load(Menu.OVERRIDE)
+		U.check("... A again: its own thread, as now (white)", _value(p, "thread") == "свой поток"
+				and _color(p, "thread") == p.COLOR_TEXT and ovr.get_value("rendering", Menu.THREAD_KEY, 0) == 2)
 		p.select("scale")
 		p.change(1)
 		U.check("the resolution row, right: 110% picked, not yet in effect", _eye() == Vector2i(128, 128)
@@ -154,8 +170,8 @@ func _process(_delta: float) -> bool:
 	if j == 2:
 		var fov := main.foveation
 		U.check("the next frame: the images OpenXR takes 141×141, the XR viewport too, foveation made for them",
-				_eye() == Vector2i(141, 141) and main.xr_view.size == Vector2i(141, 141) and fov._size == Vector2i(141, 141),
-				"%s, viewport %s, foveation %s" % [_eye(), main.xr_view.size, fov._size])
+				_eye() == Vector2i(141, 141) and main.xr_view.size == Vector2i(141, 141) and fov.size == Vector2i(141, 141),
+				"%s, viewport %s, foveation %s" % [_eye(), main.xr_view.size, fov.size])
 		# the menu takes a value by itself after SETTLE, in its own _process: after the XR viewport's
 		# (the size changing there was the headset's lost frames)
 		p.select("scale")
@@ -256,15 +272,15 @@ func _foveation(p: Menu, step: int) -> void:
 				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
 	elif step == 2:
 		var size := main.xr.get_render_target_size()
-		U.check("its texture: made for the picture's 128 pixels, smaller than it", fov._size == Vector2i(128, 128)
+		U.check("its texture: made for the picture's 128 pixels, smaller than it", fov.size == Vector2i(128, 128)
 				and fov.fov_tex.get_width() < size.x and fov.fov_tex.get_layers() == 2,
-				"%s, %d of %d" % [fov._size, fov.fov_tex.get_width(), size.x])
+				"%s, %d of %d" % [fov.size, fov.fov_tex.get_width(), size.x])
 		full_n = fov.fov_tex.get_width()
 		p.choose_scale(0.8)
 	else:
-		U.check("at 80%: its texture made again for the picture's 102 pixels", fov._size == Vector2i(102, 102)
+		U.check("at 80%: its texture made again for the picture's 102 pixels", fov.size == Vector2i(102, 102)
 				and fov.fov_tex.get_width() < full_n and fov.enabled,
-				"%s, %d texels" % [fov._size, fov.fov_tex.get_width()])
+				"%s, %d texels" % [fov.size, fov.fov_tex.get_width()])
 		p.choose_scale(1.0)
 		p.choose_foveation(0)
 		U.check("off again: the floor per pixel", not fov.enabled

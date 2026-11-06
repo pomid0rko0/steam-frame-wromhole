@@ -11,6 +11,10 @@ if ! command -v apt-get >/dev/null; then
 	exec "$ROOT/tools/box.sh" "$(readlink -f "$0")" "$@"
 fi
 GODOT=${GODOT:-$(command -v godot || true)}
+# What a Godot run's log must not have (the tools fail on it): script and shader errors, and calls to
+# the RenderingDevice off the render thread (Main.render_thread: they do nothing there). Godot 4.7.2's
+# own at exit, finalize's, is left out: it leaks nothing a run looks at.
+GODOT_ERRORS='SCRIPT ERROR|SHADER ERROR|This function \(([^f]|f[^i])[a-z_]*\) can only be called from the render thread'
 MESA=${MESA:-$(dirname "$(readlink -f "$GODOT")")/mesa-fd}
 OUTS=$REPO/.wt/.out
 mkdir -p "$OUTS"

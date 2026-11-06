@@ -44,7 +44,9 @@ extends CompositorEffect
 ## every frame whatever the foveation. Renderer hands it the space's numbers, the head each frame
 ## and the bodies in the zone (set_bodies: the same frame's as their instances); the eyes are
 ## worked out as the vertex shaders work them out (geo.gdshaderinc, geo_eye), from the camera Godot
-## renders with.
+## renders with. The setters run on the main thread, the passes on the render thread: everything
+## goes over as Foveation's does (its top, «Threads»), queued with the frame it belongs to, and the
+## RenderingDevice's resources are made and freed on the render thread.
 
 const BODY_ROWS := 80               # zone_sections.gdshaderinc's body[]: four a slot
 # the GPU timestamps of this pass (RenderingDevice.capture_timestamp), before and after it: the
@@ -112,7 +114,6 @@ var _line_list_set: RID             # LINE_LISTS' set 1: _line_out, _line_list, 
 var _line_n := 0                    # their vertices
 var _line_images := 0               # their images
 var _lines_on := false              # shown: LINES runs
-var _mutex := Mutex.new()
 
 
 func _init() -> void:
@@ -128,6 +129,11 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	_grid = Vector4(columns, fine_rows, coarse_rows, slot_rows)
 	_slots = balls + cubes
 	_cube0 = balls
+	_images = images
+	RenderingServer.call_on_render_thread(_setup_rt.bind(columns, slot_rows, balls, cubes, images))
+
+
+func _setup_rt(columns: int, slot_rows: int, balls: int, cubes: int, images: int) -> void:
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
 		return
@@ -142,7 +148,6 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	_tex = _rd.texture_create(f, RDTextureView.new())
 	tex.texture_rd_rid = _tex
 	# no image drawn until the pass has said which: a texel of noughts is no body's
-	_images = images
 	var c := RDTextureFormat.new()
 	c.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	c.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
@@ -196,15 +201,23 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 
 ## The space and its table (Renderer.upload_space), as Foveation.set_space takes them.
 func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, floor_: Vector2) -> void:
-	_mutex.lock()
-	_space = PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
+	var sp := PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
 			tabx.x, tabx.y, tabx.z, tabx.w])
-	var t := RenderingServer.texture_get_rd_texture(tab.get_rid())
+	RenderingServer.call_on_render_thread(_space_rt.bind(sp, tab.get_rid(), floor_))
+
+
+func _space_rt(sp: PackedFloat32Array, tab: RID, floor_: Vector2) -> void:
+	_space = sp
+	var t := RenderingServer.texture_get_rd_texture(tab)
 	if t != _tab:
 		_tab = t
 		_sets.clear()
 	_floor = floor_
-	_mutex.unlock()
+
+
+## On the render thread: a field of its own.
+func _set_rt(field: StringName, value: Variant) -> void:
+	set(field, value)
 
 
 ## Each frame: the head as Renderer.set_head has it.
@@ -212,9 +225,7 @@ func set_head(l: float, n: Vector3, hf: PackedVector4Array, head_pos: Vector3) -
 	var h := PackedFloat32Array([n.x, n.y, n.z, l, head_pos.x, head_pos.y, head_pos.z, 0.0])
 	for v in hf:
 		h.append_array([v.x, v.y, v.z, v.w])
-	_mutex.lock()
-	_head = h
-	_mutex.unlock()
+	RenderingServer.call_on_render_thread(_set_rt.bind("_head", h))
 
 
 ## The gravity view's field lines in chunks (Renderer.line_chunks: n chunks of LINE_CV vertices,
@@ -223,6 +234,10 @@ func set_head(l: float, n: Vector3, hf: PackedVector4Array, head_pos: Vector3) -
 ## LINE_LISTS writes; for LINES, LINE_LISTS and their textures. On the main thread, when they are
 ## built.
 func set_lines(chunks: Dictionary, images: int, cmd: RID) -> void:
+	RenderingServer.call_on_render_thread(_lines_rt.bind(chunks, images, cmd))
+
+
+func _lines_rt(chunks: Dictionary, images: int, cmd: RID) -> void:
 	if _rd == null:
 		return
 	var n: int = chunks.n
@@ -252,7 +267,6 @@ func set_lines(chunks: Dictionary, images: int, cmd: RID) -> void:
 	var line_out := _rd.texture_create(t, RDTextureView.new())
 	var line_data := _rd.texture_create(d, RDTextureView.new(), [fdata.to_byte_array()])
 	var line_list := _rd.texture_create(li, RDTextureView.new())
-	_mutex.lock()
 	var old := [_line_out, _line_data, _line_list, _line_in]
 	_line_in = line_in
 	_line_out = line_out
@@ -263,7 +277,6 @@ func set_lines(chunks: Dictionary, images: int, cmd: RID) -> void:
 	_line_list_set = RID()
 	_line_n = n
 	_line_images = images
-	_mutex.unlock()
 	# the textures before: each Texture2DRD's own (RenderingServer's) goes with it, then the buffer
 	line_tex.texture_rd_rid = line_out
 	line_data_tex.texture_rd_rid = line_data
@@ -277,18 +290,18 @@ func set_lines(chunks: Dictionary, images: int, cmd: RID) -> void:
 
 ## Whether the field lines are shown (LINES runs only then).
 func set_lines_shown(on: bool) -> void:
-	_mutex.lock()
-	_lines_on = on
-	_mutex.unlock()
+	RenderingServer.call_on_render_thread(_set_rt.bind("_lines_on", on))
 
 
 ## The zone meshes' draw commands (RenderingServer.multimesh_get_command_buffer_rd_rid: Renderer's
 ## ZONE_LODS, in their order), whose instance counts LISTS writes.
 func set_commands(cmds: Array[RID]) -> void:
-	_mutex.lock()
+	RenderingServer.call_on_render_thread(_commands_rt.bind(cmds))
+
+
+func _commands_rt(cmds: Array[RID]) -> void:
 	_cmds = cmds
 	_list_set = RID()
-	_mutex.unlock()
 
 
 ## The bodies in the zone (Renderer.set_objects), four rows a slot: centre C, axes E1, E2 (R^4), and
@@ -303,10 +316,12 @@ func set_bodies(rows: PackedVector4Array, balls: int, cubes: int) -> void:
 		f[4 * i + 1] = r.y
 		f[4 * i + 2] = r.z
 		f[4 * i + 3] = r.w
-	_mutex.lock()
-	_bodies_bytes = f.to_byte_array()
-	_counts = Vector2i(balls, cubes)
-	_mutex.unlock()
+	RenderingServer.call_on_render_thread(_bodies_rt.bind(f.to_byte_array(), Vector2i(balls, cubes)))
+
+
+func _bodies_rt(bytes: PackedByteArray, counts: Vector2i) -> void:
+	_bodies_bytes = bytes
+	_counts = counts
 
 
 func _build() -> void:
@@ -437,9 +452,7 @@ func _line_list_set_rid() -> RID:
 func _lists_set() -> bool:
 	if _list_set.is_valid() and _rd.uniform_set_is_valid(_list_set):
 		return true
-	_mutex.lock()
-	var cmds := _cmds.duplicate()
-	_mutex.unlock()
+	var cmds := _cmds
 	if cmds.size() != LISTS or cmds.any(func(r: RID) -> bool: return not r.is_valid()):
 		return false
 	var us: Array[RDUniform] = []
@@ -461,7 +474,6 @@ func _lists_set() -> bool:
 func _render_callback(type: int, render_data: RenderData) -> void:
 	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("cube_columns"):
 		return
-	_mutex.lock()
 	var counts := _counts
 	var bodies := _bodies_bytes
 	_bodies_bytes = PackedByteArray()
@@ -470,7 +482,6 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var lines := _lines_on and _line_n > 0 and _line_out.is_valid() and _line_cmd.is_valid()
 	var line_n := _line_n
 	var line_images := _line_images
-	_mutex.unlock()
 	if not bodies.is_empty():
 		_rd.buffer_update(_bodies, 0, bodies.size(), bodies)
 	if counts == Vector2i.ZERO and not lines:

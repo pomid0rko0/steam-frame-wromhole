@@ -55,7 +55,7 @@ d=$(x_display 950)
   godot_x $d "$LOG" 300 --path . --resolution 320x180 -s "$SCENE" -- "${ARGS[@]}" )
 free_display $d
 [ -z "${KEEP_LOG:-}" ] || cp "$LOG" "$KEEP_LOG"
-if grep -qE "SCRIPT ERROR|SHADER ERROR" "$LOG"; then grep -E "SCRIPT ERROR|SHADER ERROR" -B8 -A3 "$LOG" | grep -v "MESA: info"; exit 1; fi
+if grep -qE "$GODOT_ERRORS" "$LOG"; then grep -E "$GODOT_ERRORS" -B8 -A3 "$LOG" | grep -v "MESA: info"; exit 1; fi
 grep -q "Turnip Adreno" "$LOG" || { echo "Godot did not run on Turnip:"; tail -20 "$LOG"; exit 1; }
 python3 - "$LOG" "$FULL" "$SCENE" <<'EOF'
 import re, sys

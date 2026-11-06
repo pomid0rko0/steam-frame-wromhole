@@ -135,9 +135,11 @@ jobs:
           archive: false
       # the tests run the project's files: what the export leaves out only an exported build shows.
       # The PC's Linux ones, this machine's, on the desktop (software Vulkan): each starts, prints
-      # its commit (main.gd) and runs 300 frames without a script or shader error
+      # its commit (main.gd) and runs 300 frames without an error the tests fail on (tools/env.sh's
+      # GODOT_ERRORS), on Godot's render thread of its own, as the export template has it
       - name: The PC's Linux builds run
         run: |
+          ROOT=$PWD; . tools/env.sh
           for z in "${{ steps.export.outputs.linux }}" "${{ steps.export.outputs.linux_check }}"; do
             d=$(mktemp -d)
             unzip -q "godot/build/$z" -d "$d"
@@ -145,7 +147,8 @@ jobs:
             XDG_DATA_HOME=$d timeout 300 xvfb-run -a -s "-screen 0 1280x720x24" \
               "$d/wormhole_vr.x86_64" --xr-mode off --quit-after 300 > "$d/log" 2>&1 || { tail -20 "$d/log"; exit 1; }
             grep "^build: " "$d/log"
-            if grep -E "SCRIPT ERROR|SHADER ERROR" -A3 "$d/log"; then exit 1; fi
+            grep "^render thread: of its own" "$d/log" || { echo "not on a render thread of its own"; exit 1; }
+            if grep -E "$GODOT_ERRORS" -A3 "$d/log"; then exit 1; fi
           done
       - uses: actions/upload-artifact@v7
         with:

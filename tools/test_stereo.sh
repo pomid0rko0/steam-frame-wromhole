@@ -124,8 +124,8 @@ for c in 0 1 2 3; do
 done
 wait
 # any script or shader error, or a render that did not exit 0, fails the suite
-if cat "$LOGS"/*.log | grep -qE "SCRIPT ERROR|SHADER ERROR"; then
-	cat "$LOGS"/*.log | grep -E "SCRIPT ERROR|SHADER ERROR" -A3; failed=1
+if cat "$LOGS"/*.log | grep -qE "$GODOT_ERRORS"; then
+	cat "$LOGS"/*.log | grep -E "$GODOT_ERRORS" -A3; failed=1
 fi
 for f in "$LOGS"/*.status; do
 	read -r code unit secs args < "$f"

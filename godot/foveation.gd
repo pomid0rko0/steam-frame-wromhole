@@ -42,6 +42,14 @@ extends CompositorEffect
 ## samples with; Main the level and the gaze. Each eye's warp also goes into a small texture
 ## the quad reads (fov_warp): both take the same numbers in the same frame. Its line in the log at
 ## each new level or size says what the level is in degrees on this headset.
+##
+## Threads. The pass runs on the render thread (Godot's own with project.godot's thread model
+## "Separate", else the main thread), the setters on the main thread. A frame's numbers go to the
+## pass through RenderingServer.call_on_render_thread, queued with that frame's drawing: with the
+## render thread a frame behind, a setter called now must not reach the frame being drawn (the floor
+## would be worked out for a head other than the camera's). The pass's own state (the _rt_ fields,
+## the RenderingDevice's resources) is the render thread's alone; fovea, which the tests read on the
+## main thread, under _mutex.
 
 # by level (1 weak .. 5 strongest; 0 is off): [r0, the r where a texel spans 2 pixels], in shares
 # of half the picture's width
@@ -57,17 +65,40 @@ const TS_END := "foveation end"
 signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
 var level := 0                      # 0: off, else LEVELS' index + 1
-var show := false                   # the coarse texels tinted by their size
-var probe := false                  # tests: where each texel's pixel is instead of its colour (the top)
-var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
-var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
+var show := false:                  # the coarse texels tinted by their size
+	set(v):
+		show = v
+		RenderingServer.call_on_render_thread(_set_rt.bind("_rt_show", v))
+var probe := false:                 # tests: where each texel's pixel is instead of its colour (the top)
+	set(v):
+		probe = v
+		RenderingServer.call_on_render_thread(_set_rt.bind("_rt_probe", v))
+var gravity := false:               # the gravity view's floor (floor_gravity.gdshader)
+	set(v):
+		gravity = v
+		RenderingServer.call_on_render_thread(_set_rt.bind("_rt_gravity", v))
+var sample_mat: ShaderMaterial:     # the floor's quad's while on (floor_sample.gdshader): it samples the texture
+	set(v):
+		sample_mat = v
+		sample_mat.set_shader_parameter("fov_tex", fov_tex)
+		sample_mat.set_shader_parameter("fov_warp", warp_tex)
 var xr: XRInterface                 # the picture's size; on the desktop (none) target's
 var target: Viewport
 var gaze_on := false                # the eyes tracked (set_gaze)
-var fovea := PackedFloat32Array()   # the last frame's warp, each eye: g's pixel (x, y), r0, m (the tests)
+var size := Vector2i.ZERO           # the picture's pixels the texture is made for (resize)
 var fov_tex := Texture2DArrayRD.new()
 var warp_tex := Texture2DRD.new()
+# the last frame's warp, each eye: g's pixel (x, y), r0, m (the tests), written by the render thread
+var fovea: PackedFloat32Array:
+	get:
+		_mutex.lock()
+		var f := _fovea
+		_mutex.unlock()
+		return f
+var _fovea := PackedFloat32Array()
+var _mutex := Mutex.new()
 
+# the render thread's
 var _rd: RenderingDevice
 var _shaders := {}                  # "eyes", "table", "floor", "gravity" -> RID
 var _pipes := {}
@@ -82,7 +113,11 @@ var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture
 var _lens: RID                      # the lens list (lens.gdshaderinc), a uniform buffer
 var _n := Vector2i.ZERO             # texels across and down
-var _size := Vector2i.ZERO          # the picture's pixels it was made for
+var _rt_size := Vector2i.ZERO       # the picture's pixels it was made for
+var _rt_level := 0
+var _rt_show := false
+var _rt_probe := false
+var _rt_gravity := false
 var _r0 := 0.0                      # pixels
 var _m := 1.0                       # per pixel
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
@@ -93,8 +128,7 @@ var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 var _gaze := Vector3.FORWARD        # where the eyes look, in the head's space
 var _recentre := true               # each eye's g where it looks at the next frame, slack or not
 var _tell := false                  # the log's line at the next frame
-var _centre: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]   # each eye's g before rounding (render thread)
-var _mutex := Mutex.new()
+var _centre: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]   # each eye's g before rounding
 
 
 func _init() -> void:
@@ -102,18 +136,26 @@ func _init() -> void:
 	enabled = false
 
 
+## On the render thread: a field of its own.
+func _set_rt(field: StringName, value: Variant) -> void:
+	set(field, value)
+
+
 ## The space and its table (Renderer.upload_space): the shaders' g_prof, g_prof2, g_tabx, g_tab,
 ## and (g_lift, g_beta).
 func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, floor_: Vector2) -> void:
-	_mutex.lock()
-	_space = PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
+	var sp := PackedFloat32Array([prof.x, prof.y, prof.z, prof.w, prof2.x, prof2.y, prof2.z, prof2.w,
 			tabx.x, tabx.y, tabx.z, tabx.w])
-	var t := RenderingServer.texture_get_rd_texture(tab.get_rid())
+	RenderingServer.call_on_render_thread(_space_rt.bind(sp, tab.get_rid(), floor_))
+
+
+func _space_rt(sp: PackedFloat32Array, tab: RID, floor_: Vector2) -> void:
+	_space = sp
+	var t := RenderingServer.texture_get_rd_texture(tab)
 	if t != _tab:
 		_tab = t
 		_sets.clear()
 	_floor = floor_
-	_mutex.unlock()
 
 
 ## The lens list as Renderer has it: lens_body's rows and lens_n.
@@ -122,9 +164,7 @@ func set_lens(rows: PackedVector4Array, counts: Vector2) -> void:
 	for r in rows:
 		f.append_array([r.x, r.y, r.z, r.w])
 	f.append_array([counts.x, counts.y, 0.0, 0.0])
-	_mutex.lock()
-	_lens_bytes = f.to_byte_array()
-	_mutex.unlock()
+	RenderingServer.call_on_render_thread(_set_rt.bind("_lens_bytes", f.to_byte_array()))
 
 
 ## Each frame: the head as Renderer.set_head has it.
@@ -132,17 +172,13 @@ func set_head(l: float, n: Vector3, hf: PackedVector4Array, head_pos: Vector3) -
 	var h := PackedFloat32Array([n.x, n.y, n.z, l, head_pos.x, head_pos.y, head_pos.z, 0.0])
 	for v in hf:
 		h.append_array([v.x, v.y, v.z, v.w])
-	_mutex.lock()
-	_head = h
-	_mutex.unlock()
+	RenderingServer.call_on_render_thread(_set_rt.bind("_head", h))
 
 
 ## Each frame: where the eyes look, a direction in the head's space (the XR camera's); on: tracked.
 func set_gaze(dir: Vector3, on: bool) -> void:
 	gaze_on = on
-	_mutex.lock()
-	_gaze = dir
-	_mutex.unlock()
+	RenderingServer.call_on_render_thread(_set_rt.bind("_gaze", dir))
 
 
 ## The level: 0 off, 1.. LEVELS'.
@@ -159,38 +195,40 @@ func set_level(p_level: int) -> void:
 ## made again if its size changes.
 func resize() -> void:
 	if level == 0:
+		RenderingServer.call_on_render_thread(_set_rt.bind("_rt_level", 0))
 		return
-	var size := Vector2i.ONE
+	size = Vector2i.ONE
 	if xr:
 		size = Vector2i(xr.get_render_target_size())
 	elif target:
 		size = Vector2i(target.get_visible_rect().size)
 	var half := 0.5 * size.x
 	var lv: Array = LEVELS[level - 1]
-	_mutex.lock()
-	_r0 = lv[0] * half
-	_m = sqrt(3.0) / ((lv[1] - lv[0]) * half)
+	var r0: float = lv[0] * half
+	var m: float = sqrt(3.0) / ((lv[1] - lv[0]) * half)
+	var n := Vector2i(ceili(2.0 * _warp_at(0.5 * size.x, r0, m)), ceili(2.0 * _warp_at(0.5 * size.y, r0, m))) \
+			+ Vector2i.ONE * (2 * MARGIN + 2)
+	RenderingServer.call_on_render_thread(_resize_rt.bind(level, r0, m, n, size))
+
+
+func _resize_rt(p_level: int, r0: float, m: float, n: Vector2i, size: Vector2i) -> void:
+	_rt_level = p_level
+	_r0 = r0
+	_m = m
 	_recentre = true
 	_tell = true
-	_mutex.unlock()
-	var n := Vector2i(ceili(2.0 * warp(0.5 * size.x)), ceili(2.0 * warp(0.5 * size.y))) + Vector2i.ONE * (2 * MARGIN + 2)
 	if n != _n:
 		_make(n)
-	_size = size
+	_rt_size = size
 
 
-## F: a pixel r pixels from where the eye looks is F(r) texels from its texel.
-func warp(r: float) -> float:
-	return r if r <= _r0 else _r0 + asinh(_m * (r - _r0)) / _m
-
-
+## On the render thread: the texture and the warp's for n texels.
 func _make(n: Vector2i) -> void:
 	if _rd == null:
 		_rd = RenderingServer.get_rendering_device()
 		_build()
 	fov_tex.texture_rd_rid = RID()
 	warp_tex.texture_rd_rid = RID()
-	_mutex.lock()
 	for r in [_tex, _warp]:
 		if r.is_valid() and _rd.texture_is_valid(r):
 			_rd.free_rid(r)
@@ -211,11 +249,8 @@ func _make(n: Vector2i) -> void:
 	var row := [0.0, 0.0, MARGIN, MARGIN, _r0, _m, n.x, n.y, 1.0, 1.0, 0.0, 0.0]
 	_warp = _rd.texture_create(w, RDTextureView.new(), [PackedFloat32Array(row + row).to_byte_array()])
 	_sets.clear()
-	_mutex.unlock()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
-	sample_mat.set_shader_parameter("fov_tex", fov_tex)
-	sample_mat.set_shader_parameter("fov_warp", warp_tex)
 
 
 ## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity.
@@ -287,7 +322,7 @@ func _uniform_set(kind: String) -> RID:
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or not _tex.is_valid() or not _tab.is_valid():
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or _rt_level == 0 or not _tex.is_valid() or not _tab.is_valid():
 		return
 	if not _pipes.has("floor"):
 		return
@@ -299,7 +334,6 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var pic := Vector2(buffers.get_internal_size())
 	var cam := data.get_cam_transform()
 	var corr := Projection.create_depth_correction(false)   # PROJECTION_MATRIX as the shaders have it
-	_mutex.lock()
 	var p := PackedFloat32Array(_space)
 	p.append_array(_head)
 	var gaze := _gaze
@@ -307,12 +341,11 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_lens_bytes = PackedByteArray()
 	var r0 := _r0
 	var m := _m
-	var slack := GAZE_SLACK * 0.5 * _size.x
+	var slack := GAZE_SLACK * 0.5 * _rt_size.x
 	var recentre := _recentre
 	_recentre = false
 	var tell := _tell
 	_tell = false
-	_mutex.unlock()
 	if not lens.is_empty():
 		_rd.buffer_update(_lens, 0, lens.size(), lens)
 	p.append_array([_floor.x, _floor.y, 0.0, 0.0])
@@ -357,11 +390,13 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	p.append_array(off)
 	p.append_array(w0)
 	p.append_array(w1)
-	p.append_array([pic.x, pic.y, 1.0 if show else 0.0, 1.0 if probe else 0.0])
+	p.append_array([pic.x, pic.y, 1.0 if _rt_show else 0.0, 1.0 if _rt_probe else 0.0])
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	_rd.texture_update(_warp, 0, rows.to_byte_array())
-	fovea = used
+	_mutex.lock()
+	_fovea = used
+	_mutex.unlock()
 	if tell:
 		_tell_level(data.get_view_projection(0), pic)
 	# a timestamp orders the GPU's work: what was recorded before it runs before it, what after, after
@@ -377,7 +412,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.compute_list_end()
 	_rd.capture_timestamp(TS_TABLE)
 	cl = _rd.compute_list_begin()
-	var kind := "gravity" if gravity else "floor"
+	var kind := "gravity" if _rt_gravity else "floor"
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_dispatch(cl, ceili(_n.x / 8.0), ceili(_n.y / 8.0), views)
@@ -393,9 +428,9 @@ static func _warp_at(r: float, r0: float, m: float) -> float:
 ## from the middle of its projection (Projection's x scale: a share k of half the width is atan(k /
 ## scale) off its axis).
 func _tell_level(proj: Projection, pic: Vector2) -> void:
-	var lv: Array = LEVELS[level - 1]
+	var lv: Array = LEVELS[_rt_level - 1]
 	var sx := proj.x.x
 	var across := rad_to_deg(atan((1.0 + proj.z.x) / sx) + atan((1.0 - proj.z.x) / sx))
 	print("foveation: %s, the fovea %.0f deg round where the eyes look, a texel 2 pixels across %.0f deg from it; the picture %.0f deg and %d pixels across; the texture %dx%d texels of %dx%d pixels"
-			% [Menu.FOV_LOG[level], rad_to_deg(atan(lv[0] / sx)), rad_to_deg(atan(lv[1] / sx)), across, int(pic.x),
+			% [Menu.FOV_LOG[_rt_level], rad_to_deg(atan(lv[0] / sx)), rad_to_deg(atan(lv[1] / sx)), across, int(pic.x),
 			_n.x, _n.y, int(pic.x), int(pic.y)])

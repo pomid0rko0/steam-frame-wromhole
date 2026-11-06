@@ -21,7 +21,9 @@ extends Node3D
 ## (check_scene.gd). Each frame (_process): the menu takes its buttons,
 ## then the turn, the reset and the gravity view's button, the body's motion (_locomotion), the free
 ## toys (pushed by the hands where they were), the hands and what they hold, and last the toys and
-## the head to the renderer: a toy let go now starts from the hand.
+## the head to the renderer: a toy let go now starts from the hand. Godot then draws the frame on its
+## render thread (render_thread) while this goes on with the next one: what the GPU's passes take
+## from a frame goes to them queued with it (foveation.gd's top, «Threads»), never straight.
 ##
 ## A new button: while the menu is open (menu_active, also the frame that closes it) its buttons,
 ## and those that open it (README.md, «Управление»), are the menu's; during the speed check (hold)
@@ -105,6 +107,10 @@ var tilting := false            # flying, pitched or rolled this frame (_turns_a
 var was := {}                   # buttons down last frame (_pressed)
 var logged_profiles := {}
 var scripts_ms := 0.0           # ms the last _process took (frame_rate.gd's lines about late frames)
+# Godot renders on a thread of its own (project.godot's thread model "Separate", or as the menu last
+# chose it for this start: Menu.set_render_thread), the main thread meanwhile on the next frame;
+# else on the main thread after the scripts. Known from the first call on the render thread.
+var render_thread := false
 # and its parts, PARTS, ms; when it started (Time.get_ticks_usec)
 const PARTS := ["input and motion", "head", "toys", "hands", "drawing", "to the shaders"]
 var parts_ms := PackedFloat32Array([0, 0, 0, 0, 0, 0])
@@ -122,6 +128,7 @@ func _ready() -> void:
 	var build: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://build.json")) \
 			if FileAccess.file_exists("res://build.json") else null
 	print("build: ", build.get("commit", "?") if build is Dictionary else "the source, not an export")
+	RenderingServer.call_on_render_thread(_on_render_thread.bind(OS.get_main_thread_id()))
 	xr = XRServer.find_interface(xr_name)
 	var host: Node = self
 	if xr and xr.is_initialized():
@@ -193,6 +200,12 @@ func _ready() -> void:
 	elif toys.enabled:
 		toys.spawn()
 		draw_toys()
+
+
+## On the render thread, once: whether it is the main one.
+func _on_render_thread(main_id: int) -> void:
+	render_thread = OS.get_thread_caller_id() != main_id
+	print("render thread: ", "of its own" if render_thread else "the main one")
 
 
 ## The controllers, at their aim pose (the buttons and sticks) and at their grip pose (the hands),
