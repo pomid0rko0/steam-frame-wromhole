@@ -20,6 +20,12 @@ const FOVEATIONS := ["выкл", "слабая", "средняя", "сильна
 const FOV_LOG := ["off", "weak", "medium", "strong", "stronger", "strongest"]
 const DEFAULT_FOVEATION := 5    # until one is chosen
 const SETTINGS := "user://settings.cfg"
+# project.godot's application/config/project_settings_override: Godot reads it at the start, before
+# the renderer starts, so a thread model written here takes effect from the next start (set_render_thread)
+const OVERRIDE := "user://override.cfg"
+const THREAD_KEY := "driver/threads/thread_model"   # in its section "rendering": 1 the main thread, 2 its own
+const THREADS := ["свой поток", "главный поток"]    # Main.render_thread true, false
+const NOTE_THREAD := "отрисовка: %s — выйди и запусти снова"
 const GRAVITY_NAMES := ["выкл", "пол", "пол и силовые линии"]   # Renderer.GRAVITY_VIEWS' names, one each
 const TURNS := ["плавный", "рывком %d°"]           # main.smooth_turn true, false (main.SNAP_ANGLE)
 const FALLS := ["с гравитацией", "без гравитации"]  # main.viewer.gravity true, false
@@ -70,6 +76,7 @@ var render_scale := 1.0         # the eye's size chosen, a share of full_eye (th
 var foveation := 0              # the foveation level chosen (the speed check sets others meanwhile)
 var scale_chosen := false       # chosen in the menu, now or before (kept): else the default
 var foveation_chosen := false
+var thread_next := _thread_next()   # Godot renders on a thread of its own from the next start (set_render_thread)
 var runtime_eye := Vector2.ZERO # each eye's picture as the runtime recommends it (SteamVR: its resolution setting for the app)
 var full_eye := 0               # pixels a side at 100%: the Frame's screen under SteamVR, else the runtime's own
 var eye_share := 1.0            # the share of full_eye set_eye was last asked for (from the next frame on)
@@ -565,6 +572,22 @@ static func saved_length(default: float) -> float:
 	return float(_load().get_value("throat", "length", default))
 
 
+## The rate the speed check puts back when it ends, kept while it runs (Bench.start): an app quit
+## in the middle of it (the SteamVR dashboard) leaves SteamVR's setting for the app at the speed
+## check's rate, and the next start puts this one back (FrameRate.put_rate_back). 0: none.
+static func keep_rate_back(r: float) -> void:
+	var cfg := _load()
+	if r > 0.0:
+		cfg.set_value("bench", "rate_back", r)
+	elif cfg.has_section_key("bench", "rate_back"):
+		cfg.erase_section_key("bench", "rate_back")
+	cfg.save(SETTINGS)
+
+
+static func rate_back() -> float:
+	return float(_load().get_value("bench", "rate_back", 0.0))
+
+
 ## A foveation choice; kept for the next start.
 func choose_foveation(level: int) -> void:
 	if xr == null:
@@ -599,6 +622,30 @@ func set_strip(on: bool) -> void:
 	print("menu: the line below %s" % ("on" if on else "off"))
 	_show()
 	refresh()
+
+
+## Godot's rendering on a thread of its own or on the main thread (Main.render_thread), from the
+## next start: written into OVERRIDE.
+func set_render_thread(own: bool) -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(OVERRIDE)
+	cfg.set_value("rendering", THREAD_KEY, 2 if own else 1)
+	cfg.save(OVERRIDE)
+	thread_next = own
+	print("menu: rendering on %s from the next start" % ("its own thread" if own else "the main thread"))
+	if own != main.render_thread:
+		notice(NOTE_THREAD % THREADS[0 if own else 1])
+	_show()
+	refresh()
+
+
+## The thread model the next start takes: OVERRIDE's, else project.godot's.
+static func _thread_next() -> bool:
+	var cfg := ConfigFile.new()
+	var m: Variant = ProjectSettings.get_setting("rendering/" + THREAD_KEY, 1)
+	if cfg.load(OVERRIDE) == OK:
+		m = cfg.get_value("rendering", THREAD_KEY, m)
+	return int(m) == 2
 
 
 ## The settings kept: a setting is written once chosen, so one never chosen follows the default.
@@ -758,7 +805,7 @@ func _make_rows() -> Array[Row]:
 			LengthRow.new(self, "length", "длина горла"),
 			GravRow.new(self, "grav", "гравитация"), FlyRow.new(self, "fly", "полёт"),
 			TurnRow.new(self, "turn", "поворот"),
-			StripRow.new(self, "strip", "строка частоты"),
+			StripRow.new(self, "strip", "строка частоты"), ThreadRow.new(self, "thread", "отрисовка"),
 			BenchRow.new(self, "bench", "замер скорости")]
 
 
@@ -1038,6 +1085,28 @@ class StripRow extends Row:
 
 	func text(i: int) -> String:
 		return ON_OFF[i]
+
+
+## Godot's rendering on a thread of its own or on the main thread (Menu.set_render_thread): from the
+## next start, so the one chosen waits till then.
+class ThreadRow extends Row:
+	func shown() -> bool:
+		return menu.xr != null
+
+	func current() -> int:
+		return 0 if menu.thread_next else 1
+
+	func apply(i: int) -> void:
+		menu.set_render_thread(i == 0)
+
+	func text(i: int) -> String:
+		return THREADS[i]
+
+	func waiting() -> bool:
+		return menu.thread_next != menu.main.render_thread
+
+	func enabled() -> bool:
+		return not menu.main.hold
 
 
 ## The speed check (bench.gd); its result goes under this row.

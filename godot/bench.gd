@@ -350,6 +350,8 @@ func start() -> void:
 	# back to this app's own setting where there is one, else to what the display ran at
 	var rate: FrameRate = main.rate
 	saved_rate = rate.stored if rate.steam_key != "" and rate.stored > 0.0 else rate.rate
+	if _headset() and rate.steam_key != "" and saved_rate > 0.0:
+		Menu.keep_rate_back(saved_rate)
 	var order: Array = range(variants.size())
 	if variants.size() > 1:
 		var back := order.duplicate()
@@ -393,10 +395,12 @@ func start() -> void:
 	_rate(RATE, "prepare")
 
 
-## Ask for a rate (the headset only), then go on to the next phase.
+## Ask for a rate (the headset only), then go on to the next phase: also when the display runs at
+## it already, if the rate chosen (SteamVR's setting for the app) is another, so that the two never
+## part.
 func _rate(hz: float, next: String) -> void:
 	phase_t = 0.0
-	if _headset() and absf(main.rate.rate - hz) > 0.5:
+	if _headset() and (absf(main.rate.rate - hz) > 0.5 or absf(main.rate.chosen() - hz) > 0.5):
 		main.rate.choose(hz)
 		phase = "rate"
 		_next = next
@@ -410,7 +414,7 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms)"
+		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms), the render thread's lag ms (FrameRate.lag_last)"
 				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -476,7 +480,7 @@ func _segment() -> void:
 		return
 	if gpu_ms.is_empty():
 		_clock()
-	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
+	gpu_ms.append(main.rate.gpu_last)
 	var rate: FrameRate = main.rate
 	if rate.parts_frame != part_frame and rate.parts_last.size() == FrameRate.PARTS.size():
 		part_frame = rate.parts_frame
@@ -656,18 +660,17 @@ func _compared() -> void:
 # ---------------------------------------------------------------- the tour
 
 ## The frame timing (main.rate), every frame: while counting, a "tf" line for the frame.
-func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
+func frame_timing(display_time: int, expected_hz: float) -> void:
 	var refreshes_before := meter.refreshes
 	var frames_before := meter.frames
-	meter.add(display_time, period, expected_hz)
+	meter.add(display_time, expected_hz)
 	if not counting or meter.frames == frames_before:
 		return
-	var vp: RID = main.rate.target.get_viewport_rid()
-	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
+	var g: float = main.rate.gpu_last
 	var mt: Vector4 = main.rate.before_ms()
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
-			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z, mt.w])
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
+			meter.refreshes - refreshes_before, g, main.rate.cpu_last,
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z, mt.w, main.rate.lag_last])
 	sec.frames += 1
 	sec.refreshes += meter.refreshes - refreshes_before
 	sec.gpu += g
@@ -793,6 +796,7 @@ func _finish(tour_line: String) -> void:
 	if _headset() and saved_rate > 0.0 and (absf(saved_rate - main.rate.rate) > 0.5
 			or absf(saved_rate - main.rate.chosen()) > 0.5):
 		main.rate.choose(saved_rate)
+	Menu.keep_rate_back(0.0)
 	print("bench: done")
 	var parts := []
 	if tour_line != "":

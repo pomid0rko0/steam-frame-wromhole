@@ -35,7 +35,7 @@ extends Node
 ## drawing took (from RenderingServer.frame_pre_draw: Godot's rendering on this thread, OpenXR's
 ## frame begun and its swapchain image waited for, the commands recorded and submitted), and the
 ## wait from there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
-## The GPU time by part (_read_parts): from the frame's GPU timestamps, the viewport's begin and end
+## The GPU time by part (Readings.read): from the frame's GPU timestamps, the viewport's begin and end
 ## (Godot's, as it measures the viewport), foveation's passes (foveation.gd's TS_*) and the zone's
 ## bodies' nodes and tables of paths with the field lines' places in the view (zone_sections.gd's
 ## TS_*), each where it ran: before them (Godot's setup), the eyes and the way out's table, our
@@ -46,6 +46,14 @@ extends Node
 ## by pass (zone_last, ZoneSections.TS_PASS), averaged over the second where they ran. Like the GPU time, they
 ## belong to a frame two before. The line
 ## also has the longest stretch of a frame on the main thread in the second (before_ms).
+## The GPU's and the render thread's numbers (the measured GPU and render CPU times, the GPU
+## timestamps) are read on the render thread (Readings, queued each frame with call_on_render_thread:
+## RenderingDevice answers there only, and a RenderingServer getter called on the main thread waits
+## for the render thread to finish all it was given, the frame being drawn too). With the render
+## thread of its own (project.godot's thread model "Separate", Main.render_thread) the main thread
+## gets them a frame later than without it, and "the drawing" on the main thread is from the frame's
+## being handed to the render thread to its post-draw signal coming back; the render thread's lag
+## is how long the frame handed over waited for it to finish what it had before.
 ## project.godot keeps application/run/flush_stdout_on_print on: an export otherwise buffers
 ## print(), and an abort at exit loses the log's end.
 
@@ -92,10 +100,10 @@ var seconds: Array[Second] = []   # the last few at the current rate
 var t := 0.0                    # s of this second so far
 var now := Second.new()         # and its counts (shown and refreshes: _second)
 var rate := 0.0                 # measured, Hz
-# the GPU time's parts (_read_parts): with our own foveation off its two are nought, and the nodes'
+# the GPU time's parts (Readings.read): with our own foveation off its two are nought, and the nodes'
 # with no body in the zone
 const PARTS := ["before ours", "the eyes and the way out's table", "our floor", "the zone's bodies' nodes and paths, the field lines' places", "the rest (the 3D pass)"]
-var parts_frame := -1           # the frame whose GPU timestamps were read last (_read_parts)
+var parts_frame := -1           # the frame whose GPU timestamps were read last (Readings.read)
 var parts_last := PackedFloat32Array()   # its GPU time by part, ms (empty: none)
 var zone_last := {}             # and its zone's passes' (ZoneSections.TS_PASS): name -> ms (empty: none ran)
 var reported := 0.0             # what the runtime says, Hz (read once a second)
@@ -109,8 +117,12 @@ var desired := 0.0              # the rate last chosen; written after the one be
 var requested := 0.0            # a rate the display has not followed yet
 var request_from := 0.0
 var request_age := 0.0
-var drawn_us := 0               # when the last frame's drawing ended on the main thread
+var drawn_us := 0               # when the last frame's drawing ended (its post-draw signal on the main thread)
 var drawing_us := 0             # and when it began
+var readings := Readings.new()  # what the render thread reads (this file's top)
+var gpu_last := 0.0             # the last read: the viewport's GPU time, ms
+var cpu_last := 0.0             # and its render CPU time, ms
+var lag_last := 0.0             # and the render thread's lag at the frame's handing over, ms
 var before: Array = []          # the frame before: [main's start (us), its script ms, its parts ms]
 var note := ""                  # what came of the last choice
 var note_failed := false
@@ -132,6 +144,7 @@ func _ready() -> void:
 		xr.refresh_rate_changed.connect(_on_runtime_rate)
 		_find_gpu_clock()
 		find_app_setting()
+		put_rate_back()
 
 
 ## The rate choices: SteamVR's per-app ones on the Frame, else what the runtime offers.
@@ -165,35 +178,34 @@ func find_app_setting() -> void:
 
 
 func _process(delta: float) -> void:
+	_take_readings()
 	var bench := main.bench
 	if api and api.is_running():
 		var now := api.get_predicted_display_time()
-		# predicted display time of the next frame minus this one's: the period the runtime paces us at
-		var period := api.get_next_frame_time() - now
 		var missed_before := meter.missed()
-		meter.add(now, period, reported)
+		meter.add(now, reported)
 		# a late frame gets a line: where, what is before the eyes (main.view_text), the times this
 		# file's top describes and the pipelines compiled so far
 		if meter.missed() > missed_before and late_lines < LATE_LINES and not bench.running:
 			late_lines += 1
 			var look: Vector2 = main.look_angles()
-			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms; %s; pipelines compiled %d; %s"
-					% [meter.missed() - missed_before, main.viewer.l, look.x, look.y,
-					RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid()),
-					RenderingServer.viewport_get_measured_render_time_cpu(target.get_viewport_rid()),
-					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, _before_text(),
+			print("refresh: late frame, %d refresh(es) without a new one, feet l %.2f m, looking %.0f deg from the throat, %.0f deg up, gpu %.2f ms, cpu %.2f ms render %.2f ms process, main's script %.2f ms, render thread's lag %.2f ms; %s; pipelines compiled %d; %s"
+					% [meter.missed() - missed_before, main.viewer.l, look.x, look.y, gpu_last, cpu_last,
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, main.scripts_ms, lag_last, _before_text(),
 					compilations(), main.view_text()] + "; GPU by part, the last frame read: " + _parts_text(parts_last))
-		bench.frame_timing(now, period, reported)
+		bench.frame_timing(now, reported)
 	var mt := before_ms()    # the frame before's, so before "before" turns to this one
 	if mt.x > now.main_max.x:
 		now.main_max = mt
 	before = [main.started_us, main.scripts_ms, main.parts_ms.duplicate()]
 	t += delta
 	now.drawn += 1
-	var g := RenderingServer.viewport_get_measured_render_time_gpu(target.get_viewport_rid())
+	var g := gpu_last
 	now.gpu += g
 	now.gpu_max = maxf(now.gpu_max, g)
-	if _read_parts():
+	now.lag_max = maxf(now.lag_max, lag_last)
+	if _new_parts:
+		_new_parts = false
 		now.parts_n += 1
 		var sum := 0.0
 		for i in parts_last.size():
@@ -244,6 +256,18 @@ func _write() -> void:
 	OS.unset_environment("LD_PRELOAD")
 	print("refresh: setting %s.%s to %.0f" % [steam_key, SETTING, desired])
 	WorkerThreadPool.add_task(_set_stored.bind(desired))
+
+
+## A speed check that did not end (the app quit in the middle of it) left SteamVR's setting for
+## this app at its own rate: the rate from before it goes back (Menu.keep_rate_back).
+func put_rate_back() -> void:
+	var back := Menu.rate_back()
+	if back <= 0.0:
+		return
+	Menu.keep_rate_back(0.0)
+	if steam_key != "" and absf(stored - back) > 0.5:
+		print("refresh: a speed check did not end, SteamVR's setting for the app is %.0f: putting %.0f back" % [stored, back])
+		choose(back)
 
 
 ## This app's rate in SteamVR's settings file (read only: SteamVR rewrites it from memory).
@@ -386,51 +410,103 @@ func _second() -> void:
 
 func _on_drawing() -> void:
 	drawing_us = Time.get_ticks_usec()
+	RenderingServer.call_on_render_thread(Readings.handed.bind(readings, drawing_us))
 
 
 func _on_drawn() -> void:
 	drawn_us = Time.get_ticks_usec()
 
 
-## The GPU time by part (this file's top) of the newest frame whose timestamps are back, into
-## parts_last (PARTS); false if none is newer than the last read.
-func _read_parts() -> bool:
-	var rd := RenderingServer.get_rendering_device()
-	if rd == null or rd.get_captured_timestamps_frame() == parts_frame:
-		return false
-	parts_frame = rd.get_captured_timestamps_frame()
-	var vp := str(target.get_viewport_rid().get_id())
-	# name: GPU time, ns (what Godot 4.7.2 gives: the parts add up to the viewport's measured time)
-	var at := {}
-	for i in rd.get_captured_timestamps_count():
-		at[rd.get_captured_timestamp_name(i)] = rd.get_captured_timestamp_gpu_time(i)
-	var vb := "vp_begin_" + vp
-	var ve := "vp_end_" + vp
-	if not (at.has(vb) and at.has(ve)):
-		return false
-	parts_last = PackedFloat32Array([0, 0, 0, 0, 0])
-	var first: int = -1             # the first of our passes' marks
-	if at.has(Foveation.TS_BEGIN) and at.has(Foveation.TS_TABLE) and at.has(Foveation.TS_END):
-		parts_last[1] = (at[Foveation.TS_TABLE] - at[Foveation.TS_BEGIN]) / 1e6
-		parts_last[2] = (at[Foveation.TS_END] - at[Foveation.TS_TABLE]) / 1e6
-		first = at[Foveation.TS_BEGIN]
-	zone_last = {}
-	if at.has(ZoneSections.TS_BEGIN) and at.has(ZoneSections.TS_END):
-		parts_last[3] = (at[ZoneSections.TS_END] - at[ZoneSections.TS_BEGIN]) / 1e6
-		first = at[ZoneSections.TS_BEGIN] if first < 0 else mini(first, at[ZoneSections.TS_BEGIN])
-		# each pass from the mark before it
-		var marks := []
-		for k: String in at:
-			if k.begins_with(ZoneSections.TS_PASS):
-				marks.append([at[k], k.substr(ZoneSections.TS_PASS.length())])
-		marks.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
-		var t0: int = at[ZoneSections.TS_BEGIN]
-		for m: Array in marks:
-			zone_last[m[1]] = (m[0] - t0) / 1e6
-			t0 = m[0]
-	parts_last[0] = (first - at[vb]) / 1e6 if first >= 0 else 0.0
-	parts_last[4] = (at[ve] - at[vb]) / 1e6 - parts_last[0] - parts_last[1] - parts_last[2] - parts_last[3]
-	return true
+var _new_parts := false         # parts_last is newer than the second's counts have it
+
+
+## This frame's readings on the render thread (Readings.read; at once without a render thread of its
+## own, else after the frames handed to it before), and the last ones it made: gpu_last, cpu_last,
+## lag_last, and the GPU time by part (parts_last, zone_last) if the timestamps read are newer.
+func _take_readings() -> void:
+	RenderingServer.call_on_render_thread(Readings.read.bind(readings, target.get_viewport_rid()))
+	readings.mutex.lock()
+	gpu_last = readings.gpu
+	cpu_last = readings.cpu
+	lag_last = readings.lag
+	if readings.frame != parts_frame and readings.parts.size() == PARTS.size():
+		parts_frame = readings.frame
+		parts_last = readings.parts
+		zone_last = readings.zone
+		_new_parts = true
+	readings.mutex.unlock()
+
+
+## What the render thread reads for FrameRate (its top): read and handed run there, the main thread
+## takes the fields under mutex. Static, the object bound as an argument: a call queued holds it.
+class Readings:
+	var mutex := Mutex.new()
+	var gpu := 0.0                  # the viewport's measured GPU time, ms
+	var cpu := 0.0                  # and render CPU time, ms
+	var lag := 0.0                  # ms the last frame handed over waited for the render thread
+	var frame := -1                 # the frame whose GPU timestamps parts holds
+	var parts := PackedFloat32Array()   # its GPU time by part (PARTS), ms
+	var zone := {}                  # and its zone's passes' (ZoneSections.TS_PASS): name -> ms
+
+	## Once a frame: the measured times, and the GPU time by part (this file's top) of the newest
+	## frame whose timestamps are back, if newer than the last read.
+	static func read(r: Readings, vp: RID) -> void:
+		var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
+		var c := RenderingServer.viewport_get_measured_render_time_cpu(vp)
+		var rd := RenderingServer.get_rendering_device()
+		var f := rd.get_captured_timestamps_frame() if rd else r.frame
+		var p := PackedFloat32Array()
+		var z := {}
+		if f != r.frame:
+			p = _parts(rd, str(vp.get_id()), z)
+		r.mutex.lock()
+		r.gpu = g
+		r.cpu = c
+		if not p.is_empty():
+			r.frame = f
+			r.parts = p
+			r.zone = z
+		r.mutex.unlock()
+
+	## The frame handed over at queued (Time.get_ticks_usec on the main thread) reaches the render
+	## thread now.
+	static func handed(r: Readings, queued: int) -> void:
+		var d := (Time.get_ticks_usec() - queued) / 1000.0
+		r.mutex.lock()
+		r.lag = d
+		r.mutex.unlock()
+
+	static func _parts(rd: RenderingDevice, vp: String, zone_out: Dictionary) -> PackedFloat32Array:
+		# name: GPU time, ns (what Godot 4.7.2 gives: the parts add up to the viewport's measured time)
+		var at := {}
+		for i in rd.get_captured_timestamps_count():
+			at[rd.get_captured_timestamp_name(i)] = rd.get_captured_timestamp_gpu_time(i)
+		var vb := "vp_begin_" + vp
+		var ve := "vp_end_" + vp
+		if not (at.has(vb) and at.has(ve)):
+			return PackedFloat32Array()
+		var p := PackedFloat32Array([0, 0, 0, 0, 0])
+		var first: int = -1             # the first of our passes' marks
+		if at.has(Foveation.TS_BEGIN) and at.has(Foveation.TS_TABLE) and at.has(Foveation.TS_END):
+			p[1] = (at[Foveation.TS_TABLE] - at[Foveation.TS_BEGIN]) / 1e6
+			p[2] = (at[Foveation.TS_END] - at[Foveation.TS_TABLE]) / 1e6
+			first = at[Foveation.TS_BEGIN]
+		if at.has(ZoneSections.TS_BEGIN) and at.has(ZoneSections.TS_END):
+			p[3] = (at[ZoneSections.TS_END] - at[ZoneSections.TS_BEGIN]) / 1e6
+			first = at[ZoneSections.TS_BEGIN] if first < 0 else mini(first, at[ZoneSections.TS_BEGIN])
+			# each pass from the mark before it
+			var marks := []
+			for k: String in at:
+				if k.begins_with(ZoneSections.TS_PASS):
+					marks.append([at[k], k.substr(ZoneSections.TS_PASS.length())])
+			marks.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+			var t0: int = at[ZoneSections.TS_BEGIN]
+			for m: Array in marks:
+				zone_out[m[1]] = (m[0] - t0) / 1e6
+				t0 = m[0]
+		p[0] = (first - at[vb]) / 1e6 if first >= 0 else 0.0
+		p[4] = (at[ve] - at[vb]) / 1e6 - p[0] - p[1] - p[2] - p[3]
+		return p
 
 
 ## The zone's passes' GPU ms (name -> ms summed over n frames), in the order they ran.
@@ -563,8 +639,8 @@ func _log() -> void:
 			n - compiled, n, main.view_text()] + "; GPU by part, the second's average: "
 			+ _parts_text(s.parts_mean()) + "; the dearest frame's: " + _parts_text(s.parts_max)
 			+ ("; the zone's passes, the average where they ran: " + zone_text(s.zone, s.zone_n) if s.zone_n > 0 else "")
-			+ "; the main thread's longest frame %.2f ms from main's start to drawn (main's script %.2f, the drawing %.2f), then %.2f ms till the next" % [
-			s.main_max.x, s.main_max.y, s.main_max.w, s.main_max.z])
+			+ "; the main thread's longest frame %.2f ms from main's start to drawn (main's script %.2f, the drawing %.2f), then %.2f ms till the next; render thread %s, its longest lag %.2f ms" % [
+			s.main_max.x, s.main_max.y, s.main_max.w, s.main_max.z, "of its own" if main.render_thread else "the main one", s.lag_max])
 	compiled = n
 
 
@@ -575,11 +651,12 @@ class Second:
 	var drawn := 0                  # frames Godot drew
 	var gpu := 0.0                  # their GPU ms, summed
 	var gpu_max := 0.0
-	var parts := PackedFloat32Array([0, 0, 0, 0, 0])   # their GPU ms by part (_read_parts, PARTS), summed
+	var parts := PackedFloat32Array([0, 0, 0, 0, 0])   # their GPU ms by part (Readings.read, PARTS), summed
 	var parts_n := 0                # frames in parts
 	var parts_max := PackedFloat32Array()   # the GPU time by part of the dearest of them
 	var parts_max_sum := 0.0
 	var main_max := Vector4.ZERO    # the longest frame on the main thread (FrameRate.before_ms)
+	var lag_max := 0.0              # the render thread's longest lag (FrameRate.lag_last)
 	var zone := {}                  # the zone's passes' GPU ms (zone_last), summed over zone_n frames
 	var zone_n := 0
 

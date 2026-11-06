@@ -135,6 +135,7 @@ var statics: Array[MeshInstance3D] = []
 # MultiMesh node has no indirect drawing), an instance a chunk's image ZoneSections' LINE_LISTS found
 # drawn (body.gdshaderinc, ARROWS)
 var _line_mm: RID
+var _line_cmd: RID              # its draw command (_lines_commands), made with the frame after its data
 var _line_inst: RID
 var _line_mesh: ArrayMesh
 var arrows_shown := false
@@ -443,10 +444,12 @@ func _lines_set(chunks: Dictionary) -> void:
 func _lines_commands() -> void:
 	if _lines_pending.is_empty():
 		return
-	var cmd := RenderingServer.multimesh_get_command_buffer_rd_rid(_line_mm)
-	if not cmd.is_valid():
-		return
-	zone_sections.set_lines(_lines_pending, LINE_IMAGES, cmd)
+	# a getter waits for the render thread to finish all it was given: once, the MultiMesh's is its own
+	if not _line_cmd.is_valid():
+		_line_cmd = RenderingServer.multimesh_get_command_buffer_rd_rid(_line_mm)
+		if not _line_cmd.is_valid():
+			return
+	zone_sections.set_lines(_lines_pending, LINE_IMAGES, _line_cmd)
 	_lines_pending = {}
 
 

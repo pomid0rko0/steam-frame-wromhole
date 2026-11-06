@@ -9,6 +9,7 @@ config/description="Real-time Morris-Thorne wormhole you can walk through, light
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 run/flush_stdout_on_print=true
+config/project_settings_override="user://override.cfg"
 
 [display]
 
@@ -18,6 +19,7 @@ window/size/viewport_height=720
 [rendering]
 
 renderer/rendering_method="mobile"
+driver/threads/thread_model=1
 textures/vram_compression/import_etc2_astc=true
 textures/vram_compression/import_s3tc_bptc=true
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)

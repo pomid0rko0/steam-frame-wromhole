@@ -13,14 +13,14 @@ func check(name: String, got: Variant, want: Variant) -> void:
 
 
 func _initialize() -> void:
-	# a steady 90 Hz display, a frame for every refresh
+	# a steady 90 Hz display, a frame for every refresh: the gaps between display times
 	var p90 := 11_111_111
 	var m := RateMeter.new()
 	var t := 1_000_000_000
-	m.add(t, p90)
+	m.add(t)
 	for i in 90:
 		t += p90
-		m.add(t, p90)
+		m.add(t)
 	check("90 Hz: measured rate", snappedf(m.rate(), 0.01), 90.0)
 	check("90 Hz: frames", m.frames, 90)
 	check("90 Hz: missed", m.missed(), 0)
@@ -29,42 +29,42 @@ func _initialize() -> void:
 	m.reset_window()
 	for i in 90:
 		t += p90 * (2 if i % 10 == 9 else 1)
-		m.add(t, p90)
-		m.add(t, p90)
+		m.add(t)
+		m.add(t)
 	check("90 Hz, every 10th late: frames", m.frames, 90)
 	check("90 Hz, every 10th late: missed", m.missed(), 9)
 
-	# half rate: every frame takes two refreshes
+	# the display goes to 72 Hz and the app at every 2nd refresh (SteamVR's half rate, a runtime
+	# that paces a slow app so): the runtime's rate tells the display's
 	m.reset_window()
 	for i in 36:
 		t += 2 * 13_888_889
-		m.add(t, 13_888_889)
-	check("72 Hz at half rate: missed", m.missed(), 36)
+		m.add(t, 72.0)
 	check("72 Hz at half rate: measured rate", snappedf(m.rate(), 0.01), 72.0)
-
-	# a runtime that paces a slow app at every 2nd refresh (rate_meter.gd): the display is still
-	# 72 Hz, each frame missed one refresh
-	m.reset_window()
-	for i in 36:
-		t += 2 * 13_888_889
-		m.add(t, 2 * 13_888_889)
-	check("72 Hz, paced at 36: display rate", snappedf(m.rate(), 0.01), 72.0)
-	check("72 Hz, paced at 36: paced rate", snappedf(m.paced_rate(), 0.01), 36.0)
-	check("72 Hz, paced at 36: missed", m.missed(), 36)
+	check("72 Hz at half rate: paced rate", snappedf(m.paced_rate(), 0.01), 36.0)
+	check("72 Hz at half rate: missed", m.missed(), 36)
 
 	# slow from the first frame: only the expected rate tells the display's
 	var slow := RateMeter.new()
 	for i in 11:
-		slow.add(t + i * 2 * 13_888_889, 2 * 13_888_889, 72.0)
+		slow.add(t + i * 2 * 13_888_889, 72.0)
 	check("slow from the start, 72 expected: display rate", snappedf(slow.rate(), 0.01), 72.0)
 	check("slow from the start, 72 expected: missed", slow.missed(), 10)
 
-	# an expected rate that does not fit the prediction is ignored
+	# an expected rate that does not fit the gaps is ignored
 	var wrong := RateMeter.new()
 	for i in 11:
-		wrong.add(t + i * 13_888_889, 13_888_889, 120.0)
+		wrong.add(t + i * 13_888_889, 120.0)
 	check("72 Hz, 120 expected: display rate", snappedf(wrong.rate(), 0.01), 72.0)
 	check("72 Hz, 120 expected: missed", wrong.missed(), 0)
+
+	# the Frame with Godot's render thread of its own: SteamVR predicts a period of 144 Hz at any
+	# rate (rate_meter.gd), the display times are 120 Hz apart, and SteamVR says 120
+	var frame := RateMeter.new()
+	for i in 121:
+		frame.add(t + i * 8_333_333, 120.0)
+	check("120 Hz with SteamVR predicting 144: display rate", snappedf(frame.rate(), 0.01), 120.0)
+	check("120 Hz with SteamVR predicting 144: missed", frame.missed(), 0)
 
 	# a whole multiple too large to be pacing (100 ms at 90 Hz expected) is not believed
 	check("20 Hz paced at 10, 90 expected", RateMeter.refresh_period(50_000_000, 100_000_000, 90.0), 50_000_000)
@@ -75,14 +75,14 @@ func _initialize() -> void:
 	check("display 144 -> 72, 72 expected", RateMeter.refresh_period(6_944_444, 13_888_889, 72.0), 13_888_889)
 
 	# seen on the Frame while switching: the display passes through other rates; once the
-	# runtime says the new one, a period that is a whole multiple of it is pacing
+	# runtime says the new one, a gap that is a whole multiple of it is pacing
 	check("Frame, 96 -> 108 via 72: 108 at half", RateMeter.refresh_period(13_888_889, 18_518_519, 108.0), 9_259_259)
 	check("Frame, 144 -> 80: 80 at half, not 120 at a third", RateMeter.refresh_period(6_944_444, 25_000_000, 80.0), 12_500_000)
 
 	# a pause (session not running) is not missed frames; no timing at all is ignored
 	m.reset_window()
-	m.add(t + 3_000_000_000, p90)
-	m.add(0, 0)
+	m.add(t + 3_000_000_000)
+	m.add(0)
 	check("pause: frames", m.frames, 0)
 	check("pause: missed", m.missed(), 0)
 
