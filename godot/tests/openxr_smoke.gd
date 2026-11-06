@@ -16,8 +16,9 @@ extends SceneTree
 ## switches the gravity view (the floor, the arrows, off: A steps round);
 ## frames made too slow for the display turn the head and the line below red; and the speed
 ## check's row runs it through (bench.gd: the comparison, then the tour, at rates Monado does not
-## offer: it stays at 20), closing the menu, the line below saying how it goes and what came out,
-## and puts the rate, the foveation and the viewer back.
+## offer: it stays at 20; the tour all the way with the ball and the cube held in the throat),
+## closing the menu, the line below saying how it goes and what came out, and puts the rate, the
+## foveation, the bodies and the viewer back.
 ## (The menu's buttons themselves: tests/walking_xr_test.gd; Monado's simulated controllers bind
 ## to none of our profiles, so here the menu's own calls stand for them.)
 ##   tools/test_openxr.sh
@@ -33,6 +34,8 @@ var judged := 0                 # the frame the green verdict was seen, or the w
 var green := false
 var mismatched := []            # frames drawn with the XR viewport not the size of the images OpenXR takes
 var full_n := 0                 # foveation's texels across at 100%
+var tour_frames := 0            # frames of the speed check's tour
+var tour_bodies := 0            # of them with the ball and the cube held in the throat, in the curved zone
 const GREEN_WAIT := 400         # frames (20 s at Monado's 20 Hz) to see the frames judged green
 
 
@@ -190,7 +193,14 @@ func _process(_delta: float) -> bool:
 		U.check("speed check: its row and A start it, ask for 72 Hz, close the menu", b.running and r.desired == 72.0
 				and not p.open)
 		U.check("speed check: the line below says how it goes", p.strip.visible and p.strip_label.text.contains("замер:"))
+	if j > 70 and b.running and b.phase == "tour":
+		tour_frames += 1
+		if b.throat_fixed and b.throat and main.renderer.zone_count.x >= 1 and main.renderer.zone_count.y >= 1:
+			tour_bodies += 1
 	if j > 70 and not b.running:
+		U.check("speed check: the tour all the way with the ball and the cube in the throat",
+				tour_frames > 0 and tour_bodies == tour_frames, "%d of %d frames" % [tour_bodies, tour_frames])
+		U.check("speed check: no bodies in the throat after it", not b.throat and not b.throat_fixed)
 		var segs: int = 2 if b.variants.size() > 1 else 1
 		var timed: bool = b.results.all(func(r: Array) -> bool: return r.all(func(v: Array) -> bool: return v.size() == segs))
 		U.check("speed check: every place timed", timed)

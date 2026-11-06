@@ -28,10 +28,16 @@ extends Node
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with the menu's foveation: does
 ## the rate hold all round, and where not: sweeps round at each place, a flight along the axis
 ## through the throat into universe B and back, and its last rows with the cube before the eyes.
+## All the way the ball and the cube of the throat's variant stand in the throat, where the space has
+## them (throat_fixed: THROAT_BALL and THROAT_CUBE round the axis, not round the head): frames miss
+## where bodies in the curved zone are in view, from in the throat, from the start and from under
+## either mouth, and the tour looks there.
 ## Each place starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
 ## (frame_rate.gd).
 ##
-## Afterwards what it changed comes back (_restore, _finish).
+## Throughout, the toys are at their start (Toys.spawn, without the throw and the drop: the toys
+## in the curved zone, their images and tail, cost as much as the bodies timed), so that a check
+## times what another session's does. Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
 # Where a pose is (_put): START, standing at main.START_POS facing the wormhole; Vector3(x, y, side),
@@ -120,7 +126,14 @@ var throat := false:
 		throat = v
 		if main and main.toys.enabled:
 			main.draw_toys()
+# and stand where the space has them, round the axis (the tour), not round the head (the comparison)
+var throat_fixed := false:
+	set(v):
+		throat_fixed = v
+		if main and main.toys.enabled:
+			main.draw_toys()
 var saved_length := 0.0         # the throat's cylinder's length before (a place sets its own)
+var saved_toys: Array = []      # the toys before (start): their balls, cubes, throw's and drop's delays
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
@@ -149,8 +162,9 @@ var verdict := ""               # the comparison's line
 ## What this check draws besides the toys (main.draw_toys, Toys.draw): {"balls": [[centre (R^4),
 ## (colour, radius)]...], "cubes": [[centre, two axes (R^4), (colour, half size)]...]}: the cube
 ## before the eyes while near (the comparison's variant, the tour's last rows), the ball and the cube
-## in the throat while throat. hp: the head as main has it ([l, n, frame]), basis: the head's in the
-## play space.
+## in the throat while throat: round the head's way forward, or with throat_fixed round the axis
+## (n = +x, the tour's places on it), toward +y, which the tour's sweeps to the right look along.
+## hp: the head as main has it ([l, n, frame]), basis: the head's in the play space.
 func extras(hp: Array, basis: Basis) -> Dictionary:
 	var out := {"balls": [], "cubes": []}
 	if near:
@@ -162,6 +176,9 @@ func extras(hp: Array, basis: Basis) -> Dictionary:
 		var T: Vector4 = fwd.x * f[0] + fwd.y * f[1] + fwd.z * f[2]
 		var n0: Vector3 = hp[1]
 		var t := Vector3(T.y, T.z, T.w)
+		if throat_fixed:
+			n0 = Vector3(1.0, 0.0, 0.0)
+			t = Vector3(0.0, 1.0, 0.0)
 		t -= t.dot(n0) * n0
 		if t.length() < 1e-3:
 			t = (Vector3(0.0, 0.0, 1.0) if absf(n0.z) < 0.9 else Vector3(1.0, 0.0, 0.0)).cross(n0)
@@ -291,6 +308,12 @@ func start() -> void:
 	for f in VARIANTS:
 		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4]))
 	saved_pose = main.get_pose()
+	var toys: Toys = main.toys
+	saved_toys = [toys.world.balls.duplicate(), toys.world.cubes.duplicate(), toys.launch_in, toys.drop_in]
+	if toys.enabled:
+		toys.spawn()
+		toys.launch_in = -1.0
+		toys.drop_in = -1.0
 	saved_length = 2.0 * main.space.Lc
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
@@ -352,7 +375,9 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
+		throat_fixed = true
+		throat = true
+		print("tour: start at %.0f Hz, foveation %d, %d steps, the ball and the cube held in the throat; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
 				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -633,6 +658,14 @@ func _finish(tour_line: String) -> void:
 	counting = false
 	phase = ""
 	_restore()
+	# the toys as they were: at the length they were at (_restore)
+	var toys: Toys = main.toys
+	if toys.enabled and not saved_toys.is_empty():
+		toys.world.balls.assign(saved_toys[0])
+		toys.world.cubes.assign(saved_toys[1])
+		toys.launch_in = saved_toys[2]
+		toys.drop_in = saved_toys[3]
+		main.draw_toys()
 	main.hold = false
 	main.set_pose(saved_pose)
 	menu.set_render_scale(menu.render_scale)
@@ -674,9 +707,10 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
-## As it runs: the foveation chosen in the menu, no cube.
+## As it runs: the foveation chosen in the menu, no cube, no bodies in the throat.
 func _restore() -> void:
 	near = false
+	throat_fixed = false
 	throat = false
 	main.renderer.tail_shown = true
 	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
