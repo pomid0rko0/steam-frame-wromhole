@@ -21,8 +21,7 @@ extends Node
 ## in the throat's cylinder (THROAT_BODIES: their images past the meshes', the tail, cost pixels
 ## per body: zone_tail.gdshader), and the same without the tail (what it costs: the difference) and
 ## with it as one band, without its strips; at the long throat's places only (LONG) also with the
-## tail as before its strips (Renderer.TAIL_SHADERS) and the bodies in the throat at foveation's
-## strongest with the tail and without,
+## bodies in the throat at foveation's strongest with the tail and without,
 ## in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
@@ -86,22 +85,20 @@ const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
 # the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
 # eyes, the bodies in the throat, the tail drawn (Renderer.tail_shown), its strips (Renderer.
-# tail_strips: else one band from the first copy past the meshes'), the tail's shader (Renderer.
-# tail_kind), at the long throat's places only]; the first is the reference the others are compared
-# with
-const VARIANTS := [["plain", 0, false, false, true, true, 0, false],
-	["foveation weak", 1, false, false, true, true, 0, false],
-	["foveation medium", 2, false, false, true, true, 0, false],
-	["foveation strong", 3, false, false, true, true, 0, false],
-	["foveation stronger", 4, false, false, true, true, 0, false],
-	["foveation strongest", 5, false, false, true, true, 0, false],
-	["a cube at the eyes", 0, true, false, true, true, 0, false],
-	["a ball and a cube in the throat", 0, false, true, true, true, 0, false],
-	["the same without the tail", 0, false, true, false, true, 0, false],
-	["the same, the tail without strips", 0, false, true, true, false, 0, false],
-	["the same, the tail as before its strips", 0, false, true, true, false, 1, true],
-	["a ball and a cube in the throat, foveation strongest", 5, false, true, true, true, 0, true],
-	["the same without the tail, foveation strongest", 5, false, true, false, true, 0, true]]
+# tail_strips: else one band from the first copy past the meshes'), at the long throat's places only];
+# the first is the reference the others are compared with
+const VARIANTS := [["plain", 0, false, false, true, true, false],
+	["foveation weak", 1, false, false, true, true, false],
+	["foveation medium", 2, false, false, true, true, false],
+	["foveation strong", 3, false, false, true, true, false],
+	["foveation stronger", 4, false, false, true, true, false],
+	["foveation strongest", 5, false, false, true, true, false],
+	["a cube at the eyes", 0, true, false, true, true, false],
+	["a ball and a cube in the throat", 0, false, true, true, true, false],
+	["the same without the tail", 0, false, true, false, true, false],
+	["the same, the tail without strips", 0, false, true, true, false, false],
+	["a ball and a cube in the throat, foveation strongest", 5, false, true, true, true, true],
+	["the same without the tail, foveation strongest", 5, false, true, false, true, true]]
 # the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
 # round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
 # B's, both in view from inside the cylinder looking round it and from out at the mouth
@@ -306,7 +303,7 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]))
+		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4], f[5], f[6]))
 	saved_pose = main.get_pose()
 	var toys: Toys = main.toys
 	saved_toys = [toys.world.balls.duplicate(), toys.world.cubes.duplicate(), toys.launch_in, toys.drop_in]
@@ -429,7 +426,6 @@ func _use(v: Setup) -> void:
 	throat = v.throat
 	main.renderer.tail_shown = v.tail
 	main.renderer.tail_strips = v.strips
-	main.renderer.tail_kind = v.shader
 	if main.foveation.level != v.foveation:
 		main.foveation.set_level(v.foveation)
 
@@ -527,7 +523,7 @@ func _compared() -> void:
 	for v in range(1, variants.size()):
 		summary.append("%s %.3f" % [variants[v].label, _ratio(v, 0)])
 		var f := variants[v]
-		if f.foveation > 0 and not f.near and not f.throat and f.shader == 0 and not f.long:
+		if f.foveation > 0 and not f.near and not f.throat and not f.long:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
 	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
@@ -538,20 +534,16 @@ func _compared() -> void:
 	var one_band := _variant(false, true, true, false)
 	var tail_ms := 0.0
 	var band_ms := 0.0
-	var before_ms := 0.0
 	for r in results:
 		tail_ms = maxf(tail_ms, _mean(r[bodies]) - _mean(r[bare]))
 		band_ms = maxf(band_ms, _mean(r[one_band]) - _mean(r[bare]))
-		for v in variants.size():
-			if variants[v].shader == 1 and not r[v].is_empty():
-				before_ms = maxf(before_ms, _mean(r[v]) - _mean(r[bare]))
 	# and at foveation's strongest (the long throat's places): the most its tail costs there
 	var fov_ms := 0.0
 	var fov_tail := -1
 	var fov_bare := -1
 	for v in variants.size():
 		var f := variants[v]
-		if f.foveation == 5 and f.throat and f.shader == 0:
+		if f.foveation == 5 and f.throat:
 			if f.tail:
 				fov_tail = v
 			else:
@@ -560,8 +552,8 @@ func _compared() -> void:
 		for r in results:
 			if not r[fov_tail].is_empty() and not r[fov_bare].is_empty():
 				fov_ms = maxf(fov_ms, _mean(r[fov_tail]) - _mean(r[fov_bare]))
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс, как до полосок — до %.1f мс)"
-			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms, before_ms]]
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс)"
+			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -751,7 +743,6 @@ func _restore() -> void:
 	throat = false
 	main.renderer.tail_shown = true
 	main.renderer.tail_strips = true
-	main.renderer.tail_kind = 0
 	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
 		main.set_length(saved_length)
 	main.foveation.set_level(menu.foveation)
@@ -761,7 +752,7 @@ func _restore() -> void:
 func _variant(p_near: bool, p_throat: bool, p_tail: bool, p_strips := true) -> int:
 	for v in variants.size():
 		var f := variants[v]
-		if f.foveation == 0 and f.shader == 0 and not f.long and f.near == p_near and f.throat == p_throat and f.tail == p_tail and f.strips == p_strips:
+		if f.foveation == 0 and not f.long and f.near == p_near and f.throat == p_throat and f.tail == p_tail and f.strips == p_strips:
 			return v
 	return 0
 
@@ -791,18 +782,15 @@ class Setup:
 	var throat: bool                # the ball and the cube in the throat
 	var tail: bool                  # the tail drawn (Renderer.tail_shown)
 	var strips: bool                # its strips (Renderer.tail_strips)
-	var shader: int                 # the tail's (Renderer.tail_kind)
 	var long: bool                  # timed at the long throat's places only
 
-	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool, p_tail: bool, p_strips: bool, p_shader: int,
-			p_long: bool) -> void:
+	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool, p_tail: bool, p_strips: bool, p_long: bool) -> void:
 		label = p_label
 		foveation = p_foveation
 		near = p_near
 		throat = p_throat
 		tail = p_tail
 		strips = p_strips
-		shader = p_shader
 		long = p_long
 
 
