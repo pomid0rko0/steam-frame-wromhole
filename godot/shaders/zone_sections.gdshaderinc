@@ -125,9 +125,9 @@ const int PLAN_ROWS = 4;            // plan_img's rows a cube's slot (zone_secti
 // the outline at its tips, where the section shrinks to a point as the root of the way to it, by at
 // most 0.354 sqrt(2 / N) of its half thickness, and where it bends, by an eighth of the second
 // difference over a column's step. The fine mesh (48 round) for the first ZS_FINE images thicker
-// than ZS_COARSE_PX (a cube's: across), else the coarse one (12; 64 azimuths); a ball's thin ones (the
-// coarse one's nodes: 64 by 6, every 2nd point; 32 by 6, every 2nd azimuth too; 16 by 4, every 4th
-// and 3rd) where they keep to that: codes 1 to 5 in that order (cull_img's .w), each mesh keeping to
+// than ZS_COARSE_PX, else the coarse one (12; 64 azimuths); a ball's thin ones (the coarse one's
+// nodes: 64 by 6, every 2nd point; 32 by 6, every 2nd azimuth too; 16 by 4, every 4th and 3rd) where
+// they keep to that (a cube's rows are its sections' corners and the points between): codes 1 to 5 in that order (cull_img's .w), each mesh keeping to
 // what the next keeps to. A turn round the throat's sphere is a ring as long as the body's first
 // image and thinner only as 1 / k: those take the thin ones.
 const int ZS_FINE = 4;
@@ -547,8 +547,8 @@ void main() {
 // them (zone_path_see by the table PATHS made, the eye's projection), in pixels from the picture's
 // middle; from them the image's thickness (its columns' segments' longest; 6 points round, short of
 // the section's by up to 1 - cos(pi / 6)), its bend (the second differences of their middles and
-// lengths), its size across (a cube's) and whether it is out of the picture (every node beyond one
-// side of it, a quarter of the image's size and 2 pixels past, or behind the eye): its mesh (ZS_*;
+// lengths) and whether it is out of the picture (every node beyond one side of it, a quarter of the
+// image's size across and 2 pixels past, or behind the eye): its mesh (ZS_*;
 // 0 out of the picture), into IMAGES' texel. A node not a number, or some behind the eye and some
 // not: the mesh as the index has it.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -623,8 +623,8 @@ void main() {
 	float mesh = cull.w;
 	if (bad == 0u) {
 		if (out_) mesh = 0.0;
-		else if (cube) mesh = j < ZS_FINE && max(across.x, across.y) > ZS_COARSE_PX ? 1.0 : 2.0;
 		else if (j < ZS_FINE && thick > ZS_COARSE_PX) mesh = 1.0;
+		else if (cube) mesh = 2.0;
 		else if (thick <= ZS_THIN_PX.y && bend <= ZS_BEND_PX.z) mesh = 5.0;
 		else if (thick <= ZS_THIN_PX.x && bend <= ZS_BEND_PX.y) mesh = 4.0;
 		else if (thick <= ZS_THIN_PX.x && bend <= ZS_BEND_PX.x) mesh = 3.0;
