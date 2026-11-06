@@ -111,6 +111,7 @@ func _process(_d: float) -> bool:
 			check("back where it stood", absf(p[0] - pose_before[0]) < 1e-4 and p[1].is_equal_approx(pose_before[1])
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("no cube before the eyes after it, nor the hands' balls", not b.near and not b.hand_balls and _cubes() == main.toys.world.cubes.size())
+			check("no bodies in the throat after it", not b.throat and not b.throat_fixed)
 			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the tail drawn again, with its strips", main.renderer.tail_shown and main.renderer.tail_strips)

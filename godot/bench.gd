@@ -35,6 +35,10 @@ extends Node
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with the menu's foveation: does
 ## the rate hold all round, and where not: sweeps round at each place, a flight along the axis
 ## through the throat into universe B and back, and its last rows with the cube before the eyes.
+## All the way the ball and the cube of the throat's variant stand in the throat, where the space has
+## them (throat_fixed: THROAT_BALL and THROAT_CUBE round the axis, not round the head): frames miss
+## where bodies in the curved zone are in view, from in the throat, from the start and from under
+## either mouth, and the tour looks there.
 ## Each place starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
 ## (frame_rate.gd).
 ##
@@ -155,6 +159,12 @@ var throat := false:
 		throat = v
 		if main and main.toys.enabled:
 			main.draw_toys()
+# and stand where the space has them, round the axis (the tour), not round the head (the comparison)
+var throat_fixed := false:
+	set(v):
+		throat_fixed = v
+		if main and main.toys.enabled:
+			main.draw_toys()
 var saved_length := 0.0         # the throat's cylinder's length before (a place sets its own)
 var saved_gravity := 0          # the gravity view before (the field lines' variant sets its own)
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
@@ -188,8 +198,9 @@ var verdict := ""               # the comparison's line
 ## What this check draws besides the toys (main.draw_toys, Toys.draw): {"balls": [[centre (R^4),
 ## (colour, radius)]...], "cubes": [[centre, two axes (R^4), (colour, half size)]...]}: the cube
 ## before the eyes while near (the comparison's variant, the tour's last rows), the ball and the cube
-## in the throat while throat. hp: the head as main has it ([l, n, frame]), basis: the head's in the
-## play space.
+## in the throat while throat: round the head's way forward, or with throat_fixed round the axis
+## (n = +x, the tour's places on it), toward +y, which the tour's sweeps to the right look along.
+## hp: the head as main has it ([l, n, frame]), basis: the head's in the play space.
 func extras(hp: Array, basis: Basis) -> Dictionary:
 	var out := {"balls": [], "cubes": []}
 	if near:
@@ -208,6 +219,9 @@ func extras(hp: Array, basis: Basis) -> Dictionary:
 		var T: Vector4 = fwd.x * f[0] + fwd.y * f[1] + fwd.z * f[2]
 		var n0: Vector3 = hp[1]
 		var t := Vector3(T.y, T.z, T.w)
+		if throat_fixed:
+			n0 = Vector3(1.0, 0.0, 0.0)
+			t = Vector3(0.0, 1.0, 0.0)
 		t -= t.dot(n0) * n0
 		if t.length() < 1e-3:
 			t = (Vector3(0.0, 0.0, 1.0) if absf(n0.z) < 0.9 else Vector3(1.0, 0.0, 0.0)).cross(n0)
@@ -410,7 +424,9 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms)"
+		throat_fixed = true
+		throat = true
+		print("tour: start at %.0f Hz, foveation %d, %d steps, the ball and the cube held in the throat; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms)"
 				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -827,10 +843,11 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
-## As it runs: the foveation chosen in the menu, no cube.
+## As it runs: the foveation chosen in the menu, no cube, no bodies in the throat.
 func _restore() -> void:
 	near = false
 	hand_balls = false
+	throat_fixed = false
 	throat = false
 	main.renderer.tail_shown = true
 	main.renderer.tail_strips = true
