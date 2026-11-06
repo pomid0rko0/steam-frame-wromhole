@@ -17,7 +17,8 @@ extends CompositorEffect
 ## across than CULL_PX of a pixel is not, its vertices go out of the picture at once (cull_tex),
 ## and so is none whose body is not the one the pass took (a slot not worked out this frame). The
 ## same pass works out where the body's tail can be seen (cull_tex's last TAIL_TEXELS of a slot's
-## row), for the tail's sectors and strips (shaders/zone_tail.gdshader).
+## row), for the tail's sectors and strips (shaders/zone_tail.gdshader); under foveation the tail is
+## worked out per texel of its texture after the last of these passes (Foveation.render_tail).
 ##
 ## And which mesh each image drawn takes (SIZES: where the vertex shader puts a few of its nodes;
 ## zone_sections.gdshaderinc's ZS_*): none out of the picture, a thin one for a thin image (a turn
@@ -113,6 +114,12 @@ var _line_n := 0                    # their vertices
 var _line_images := 0               # their images
 var _lines_on := false              # shown: LINES runs
 var _mutex := Mutex.new()
+# the tail of the bodies' images under foveation (Foveation.render_tail): Renderer's foveation, whether
+# the tail is drawn (Renderer.tail_shown) and how (tail_strips; tail_psi_min: zone_tail.gdshader's)
+var foveation: Foveation
+var tail_on := true
+var tail_strips := true
+var tail_psi_min := 0.0
 
 
 func _init() -> void:
@@ -539,6 +546,10 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	var lpc := PackedFloat32Array([views, 0.0, 0.0, 0.0]).to_byte_array()
 	lpc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
 	_pass("lists", lpc, 1, 1, 1)
+	# the tail, per texel of foveation's texture while it is on (Renderer draws it per pixel while off)
+	if foveation and tail_on and foveation.level > 0:
+		foveation.render_tail(_cull, _bodies, counts, _cube0, _images, views, tail_psi_min, tail_strips)
+		_rd.capture_timestamp(TS_PASS + "tail")
 	_rd.capture_timestamp(TS_END)
 
 

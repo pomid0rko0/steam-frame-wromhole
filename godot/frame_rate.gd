@@ -37,10 +37,11 @@ extends Node
 ## wait from there to the next frame's start (OpenXR's pacing and whatever Godot does between frames).
 ## The GPU time by part (_read_parts): from the frame's GPU timestamps, the viewport's begin and end
 ## (Godot's, as it measures the viewport), foveation's passes (foveation.gd's TS_*) and the zone's
-## bodies' nodes and tables of paths with the field lines' places in the view (zone_sections.gd's
-## TS_*), each where it ran: before them (Godot's setup), the eyes and the way out's table, our
-## floor's texture, the nodes, tables and lines, and the rest (the 3D pass: the bodies,
-## those in the curved zone too, the floor's quad, the menu, the output), averaged over the second
+## bodies' nodes and tables of paths with the field lines' places in the view and, under foveation,
+## the tail of their images in its texture (zone_sections.gd's TS_*), each where it ran: before them
+## (Godot's setup), the eyes and the way out's table, our floor's texture, the nodes, tables, tail
+## and lines, and the rest (the 3D pass: the bodies, those in the curved zone too, the tail without
+## foveation, the floor's quad, the menu, the output), averaged over the second
 ## in its line, with the dearest frame's of the second (a frame over the budget sends SteamVR to half
 ## rate: which part was it), and the last frame read in a late frame's. The nodes and tables also
 ## by pass (zone_last, ZoneSections.TS_PASS), averaged over the second where they ran. Like the GPU time, they
@@ -94,7 +95,7 @@ var now := Second.new()         # and its counts (shown and refreshes: _second)
 var rate := 0.0                 # measured, Hz
 # the GPU time's parts (_read_parts): with our own foveation off its two are nought, and the nodes'
 # with no body in the zone
-const PARTS := ["before ours", "the eyes and the way out's table", "our floor", "the zone's bodies' nodes and paths, the field lines' places", "the rest (the 3D pass)"]
+const PARTS := ["before ours", "the eyes and the way out's table", "our floor", "the zone's bodies' nodes, paths and tail, the field lines' places", "the rest (the 3D pass)"]
 var parts_frame := -1           # the frame whose GPU timestamps were read last (_read_parts)
 var parts_last := PackedFloat32Array()   # its GPU time by part, ms (empty: none)
 var zone_last := {}             # and its zone's passes' (ZoneSections.TS_PASS): name -> ms (empty: none ran)
