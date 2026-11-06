@@ -550,14 +550,14 @@ void main() {
 }
 #elif defined(SIZES)
 // A workgroup an image IMAGES draws (x: the image, y: the zone's body, balls first, z: the eye): the
-// coarse mesh's every 8th azimuth's every 2nd point (9 by 7 nodes) where the vertex shader puts
-// them (zone_path_see by the table PATHS made, the eye's projection), in pixels from the picture's
-// middle; from them the image's thickness (its columns' segments' longest; 6 points round, short of
-// the section's by up to 1 - cos(pi / 6)), its bend (the second differences of their middles and
-// lengths) and whether it is out of the picture (every node beyond one side of it, a quarter of the
-// image's size across and 2 pixels past, or behind the eye): its mesh (ZS_*;
-// 0 out of the picture), into IMAGES' texel. A node not a number, or some behind the eye and some
-// not: the mesh as the index has it.
+// coarse mesh's nodes at 9 azimuths an eighth of its columns apart, every 2nd point (9 by 7 nodes),
+// where the vertex shader puts them (zone_path_see by the table PATHS made, the eye's projection), in
+// pixels from the picture's middle; from them the image's thickness (its columns' segments' longest;
+// 6 points round, short of the section's by up to 1 - cos(pi / 6)), its bend (the second
+// differences of their middles and lengths) and whether it is out of the picture (every node beyond
+// one side of it, a quarter of the image's size across and 2 pixels past, or behind the eye): its
+// mesh (ZS_*; 0 out of the picture), into IMAGES' texel. A node not a number, or some behind the eye
+// and some not: the mesh as the index has it.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 shared vec2 s_p[63];
 shared uint s_bad[63];      // 1 behind the eye, 2 not a number
@@ -576,8 +576,9 @@ void main() {
 		vec4 ex, ey, ez;
 		geo_eye(zp.inv_view, zp.eye_off[z].xyz, el, en, ex, ey, ez);
 		int y = s * int(pc.grid.w) + int(pc.grid.y) + 1 + 2 * (tid % 7);
-		vec4 na = imageLoad(out_img, ivec3(16 * (tid / 7), y, z));
-		vec4 nb = imageLoad(out_img, ivec3(16 * (tid / 7) + 1, y, z));
+		int col = (tid / 7) * (int(pc.grid.x) / 8);
+		vec4 na = imageLoad(out_img, ivec3(2 * col, y, z));
+		vec4 nb = imageLoad(out_img, ivec3(2 * col + 1, y, z));
 		vec3 t = vec3(na.zw, nb.x);
 		float alpha = clamp(na.y, 0.0, GEO_PI);
 		vec2 sca = geo_sincos(alpha);
