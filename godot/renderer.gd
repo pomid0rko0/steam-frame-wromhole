@@ -43,15 +43,20 @@ const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
-# a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
-# rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
-# azimuths about the eye's axis, points round each section. Seen from the throat's cylinder, a
-# body's k-th turn round it is a ring that thins only as 1 / k
+# a body in the curved zone: each of its images in the picture (ZONE_IMAGES at most) on the mesh its
+# place there needs (zone_sections.gdshaderinc's SIZES): the fine one for one of the first ZS_FINE
+# when large, a ball's thin ones (ZONE_LODS: the coarse one's nodes, fewer) when thin, else the
+# coarse one (body.gdshaderinc, ZONE: azimuths about the eye's axis, points round each section);
+# each mesh a MultiMesh drawn indirect, its instances the list ZoneSections' LISTS makes and their
+# count written by it. Seen from the throat's cylinder, a body's k-th turn round it is a ring as long
+# as its first image that thins only as 1 / k
 const ZONE_IMAGES := 20
-const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
+# the zone's meshes, in ZoneSections' lists' order: [kind (0 balls, 1 cubes), azimuths, points round a
+# section]: the fine one's nodes, or the coarse one's (each mesh's azimuths and points a divisor of theirs)
+const ZONE_LODS := [[0, 64, 48], [0, 64, 12], [0, 64, 6], [0, 32, 6], [0, 16, 4], [1, 64, 48], [1, 64, 12]]
 const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one (zone_tail.gdshaderinc's)
 const TAIL_PER := ZoneSections.TAIL_STRIPS + 1   # its instances a body slot and side: the strips and the band
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
@@ -102,13 +107,18 @@ var floor_mat: ShaderMaterial   # the one drawn (gravity_view) without our own f
 var floor_sample_mat := ShaderMaterial.new()   # the one drawn with it (FLOOR_SAMPLE_SHADER)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
-var zone_mats: Array[ShaderMaterial] = []   # balls fine, coarse, cubes fine, coarse
+var zone_mats: Array[ShaderMaterial] = []   # ZONE_LODS' meshes'
 var scene_mats: Array[ShaderMaterial] = []
 var arrow_mat := ShaderMaterial.new()
 var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's
 var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
-var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
+# in the curved zone (or reaching into it): ZONE_LODS' meshes, MultiMeshes drawn indirect, and their
+# instances (the RenderingServer's: a MultiMesh node has no indirect drawing); the meshes kept
+var _zone_mm: Array[RID] = []
+var _zone_inst: Array[RID] = []
+var _zone_meshes: Array[Mesh] = []
+var _zone_cmds := false         # their draw commands handed to zone_sections
 var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader)
 var tail: MultiMeshInstance3D   # an instance per body slot and side (zone_tail.gdshader)
 var statics: Array[MeshInstance3D] = []
@@ -147,18 +157,21 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# then the coarse one's (both kinds' meshes alike: one grid for its compute shader)
 	assert(ZONE_AZIMUTHS[0] == ZONE_AZIMUTHS[1])
 	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES, ZONE_IMAGES)
-	for k in 4:
+	for k in ZONE_LODS.size():
+		var kind: int = ZONE_LODS[k][0]
+		var fine: bool = ZONE_LODS[k][2] == ZONE_ROUND
+		assert(ZONE_AZIMUTHS[kind] % ZONE_LODS[k][1] == 0 and (ZONE_ROUND if fine else ZONE_ROUND_COARSE) % ZONE_LODS[k][2] == 0)
 		var m := ShaderMaterial.new()
-		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
-		m.set_shader_parameter("zone_first", 0 if k % 2 == 0 else ZONE_FINE)
-		m.set_shader_parameter("zone_images", ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
-		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
-		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
+		m.shader = ZONE_BALL_SHADER if kind == 0 else ZONE_CUBE_SHADER
+		# the nodes the mesh's VERTEX.xy span: the fine mesh's, else the coarse one's
+		m.set_shader_parameter("zone_round", float(ZONE_ROUND if fine else ZONE_ROUND_COARSE))
+		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[kind]))
 		m.set_shader_parameter("zone_nodes", zone_sections.tex)
 		m.set_shader_parameter("zone_cull", zone_sections.cull_tex)
 		m.set_shader_parameter("zone_paths", zone_sections.path_tex)
-		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
-		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
+		m.set_shader_parameter("zone_list", zone_sections.list_tex)
+		m.set_shader_parameter("zone_list_row", k)
+		m.set_shader_parameter("zone_row", 0 if fine else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
 		zone_mats.append(m)
 	tail_mat.shader = ZONE_TAIL_SHADER
@@ -200,11 +213,23 @@ func _ready() -> void:
 	add_child(tail)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
-	for k in 4:
-		var images := ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE
-		var grid := _zone_mesh(ZONE_AZIMUTHS[k / 2], ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE)
-		zone.append(_multimesh(grid, zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
-	for mm in [balls, cubes] + zone:
+	for k in ZONE_LODS.size():
+		var kind: int = ZONE_LODS[k][0]
+		var grid := _zone_mesh(ZONE_LODS[k][1], ZONE_LODS[k][2])
+		_zone_meshes.append(grid)
+		var mm := RenderingServer.multimesh_create()
+		RenderingServer.multimesh_allocate_data(mm, (MAX_BALLS if kind == 0 else MAX_CUBES) * ZONE_IMAGES,
+				RenderingServer.MULTIMESH_TRANSFORM_3D, false, false, true)
+		RenderingServer.multimesh_set_mesh(mm, grid.get_rid())
+		var inst := RenderingServer.instance_create2(mm, play.get_world_3d().scenario)
+		RenderingServer.instance_set_custom_aabb(inst, AABB(Vector3.ONE * -1e4, Vector3.ONE * 2e4))
+		RenderingServer.instance_set_extra_visibility_margin(inst, 16384.0)
+		RenderingServer.instance_geometry_set_cast_shadows_setting(inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
+		RenderingServer.instance_geometry_set_material_override(inst, zone_mats[k].get_rid())
+		_zone_mm.append(mm)
+		_zone_inst.append(inst)
+	_zone_commands()
+	for mm in [balls, cubes]:
 		play.add_child(mm)
 	_lens_statics()
 	_upload_lens(PackedVector4Array(), PackedVector4Array())
@@ -232,6 +257,7 @@ func _ready() -> void:
 ## more on the Frame, and SteamVR at half rate after it).
 func _process(_delta: float) -> void:
 	_lines_ready()
+	_zone_commands()
 	if _warm > 0:
 		_warm -= 1
 		arrows.visible = _warm > 0 or (gravity_view == 2 and _lines_task < 0)
@@ -244,6 +270,20 @@ func _process(_delta: float) -> void:
 
 func _tail_visible() -> void:
 	tail.visible = _warm > 0 or (_tail_on and tail_shown)
+	for k in _zone_inst.size():
+		RenderingServer.instance_set_visible(_zone_inst[k], _warm > 0 or zone_count[ZONE_LODS[k][0]] > 0)
+
+
+## The zone meshes' draw commands to zone_sections, once they are there.
+func _zone_commands() -> void:
+	if _zone_cmds:
+		return
+	var cmds: Array[RID] = []
+	for mm in _zone_mm:
+		cmds.append(RenderingServer.multimesh_get_command_buffer_rd_rid(mm))
+	if cmds.size() == ZONE_LODS.size() and cmds.all(func(r: RID) -> bool: return r.is_valid()):
+		zone_sections.set_commands(cmds)
+		_zone_cmds = true
 
 
 ## The floor's quad's material: foveation's while it is on (it samples its texture),
@@ -333,6 +373,11 @@ func _exit_tree() -> void:
 	if _lines_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_lines_task)
 		_lines_task = -1
+	# the zone meshes' instances and MultiMeshes (the RenderingServer's: no node frees them)
+	for r in _zone_inst + _zone_mm:
+		RenderingServer.free_rid(r)
+	_zone_inst.clear()
+	_zone_mm.clear()
 
 
 ## The field lines, built: in place, and shown if their view is on and they are not stale again.
@@ -407,7 +452,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k] = C
 			zone_rows[k + 1] = e[0]
 			zone_rows[k + 2] = e[1]
-			zone_rows[k + 3] = Vector4(col[i].w, 0.0, 0.0, 0.0)
+			zone_rows[k + 3] = Vector4(col[i].w, c.r, c.g, c.b)
 			zone_cols[inz[0]] = Vector4(c.r, c.g, c.b, 1.0)
 		if out:
 			flat[0] += 1
@@ -432,7 +477,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k] = C
 			zone_rows[k + 1] = E1
 			zone_rows[k + 2] = E2
-			zone_rows[k + 3] = Vector4(half, 0.0, 0.0, 0.0)
+			zone_rows[k + 3] = Vector4(half, c.r, c.g, c.b)
 			zone_cols[MAX_BALLS + inz[1]] = Vector4(c.r, c.g, c.b, 1.0)
 		if out:
 			flat[1] += 1
@@ -446,8 +491,6 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			inz[1] += 1
 	balls.multimesh.visible_instance_count = flat[0]
 	cubes.multimesh.visible_instance_count = flat[1]
-	for k in 4:
-		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
 	tail_mat.set_shader_parameter("tail_rows", zone_rows)
 	tail_mat.set_shader_parameter("tail_col", zone_cols)
@@ -456,11 +499,11 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 	if tail and _warm == 0:
 		tail.multimesh.visible_instance_count = 2 * TAIL_PER * (inz[0] + inz[1])
 	_tail_on = inz[0] + inz[1] > 0 and space.Lc > 0.0
+	zone_count = Vector2i(inz[0], inz[1])
 	if tail:
 		_tail_visible()
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
-	zone_count = Vector2i(inz[0], inz[1])
 	ball_col = col.slice(0, n)
 	bodies.clear()
 	for i in n:
@@ -469,15 +512,14 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		bodies.append(["cube", cpos[i], ccol[i].w])
 
 
-## Body k of a kind (0 balls, 1 cubes) out of the zone (out: one instance in balls or cubes) or in
-## it (one per image in zone's two of its kind, from k times their count).
+## Body k of a kind (0 balls, 1 cubes) out of the zone (out: one instance in balls or cubes); in it,
+## nothing (the zone's meshes draw ZoneSections' lists, the bodies' rows from set_bodies).
 func _place(kind: int, out: bool, k: int, xf: Transform3D, c: Color) -> void:
-	var mms: Array = [[balls, cubes][kind].multimesh] if out else [zone[2 * kind].multimesh, zone[2 * kind + 1].multimesh]
-	for mm: MultiMesh in mms:
-		var count := 1 if out else (ZONE_FINE if mm == mms[0] else ZONE_IMAGES - ZONE_FINE)
-		for j in count:
-			mm.set_instance_transform(k * count + j, xf)
-			mm.set_instance_custom_data(k * count + j, c)
+	if not out:
+		return
+	var mm: MultiMesh = [balls, cubes][kind].multimesh
+	mm.set_instance_transform(k, xf)
+	mm.set_instance_custom_data(k, c)
 
 
 ## A body round C (a point of R^4) reaching reach (chord) stays out of the curved zone's ball, in a

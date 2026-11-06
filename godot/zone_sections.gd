@@ -19,6 +19,12 @@ extends CompositorEffect
 ## same pass works out where the body's tail can be seen (cull_tex's last TAIL_TEXELS of a slot's
 ## row), for the tail's sectors and strips (shaders/zone_tail.gdshader).
 ##
+## And which mesh each image drawn takes (SIZES: where the vertex shader puts a few of its nodes;
+## zone_sections.gdshaderinc's ZS_*): none out of the picture, a thin one for a thin image (a turn
+## round the throat: a ring as long as the body's first image, 1 / k as thick); and the lists of what
+## each of the zone's meshes draws (LISTS: Renderer's ZONE_LODS, drawn indirect: list_tex, and the
+## draw commands' instance counts written here).
+##
 ## And then each body's table of the ways light takes from each eye (zone.gdshaderinc, «the paths
 ## by a table»; zone_sections.gdshaderinc, PATHS): a node of it by geo_see_to's search, as far along
 ## the turns as the images drawn need (path_tex). A vertex of an image takes its way from the 4 x 4
@@ -51,6 +57,8 @@ const TAIL_TEXELS := 5 + TAIL_STRIPS + 1   # cull_tex's texels after a body's im
 var tex := Texture2DArrayRD.new()   # the nodes (zone_sections.gdshaderinc's out), for the zone's materials
 var cull_tex := Texture2DArrayRD.new()   # which images are drawn (IMAGES' out), for them too
 var path_tex := Texture2DArrayRD.new()   # the bodies' tables of the ways from the eyes (PATHS' out), for them too
+var list_tex := Texture2DRD.new()   # the zone meshes' lists and the bodies' rows (LISTS' out), for them too
+const LISTS := 7                    # Renderer.ZONE_LODS: balls fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse
 
 var _rd: RenderingDevice
 var _shaders := {}                  # "ball", "cube" -> RID
@@ -75,6 +83,10 @@ var _floor := Vector2.ZERO          # (lift, beta)
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
 var _bodies_bytes := PackedByteArray()   # set_bodies' rows as the buffer takes them; empty: sent
 var _counts := Vector2i.ZERO        # balls and cubes in the zone
+var _list: RID                      # list_tex's (a row a list, then the bodies' rows)
+var _cmds: Array[RID] = []          # the zone meshes' draw commands (Renderer: set_commands)
+var _list_set: RID                  # LISTS' set 1: _list and _cmds
+var _sizes_set: RID                 # SIZES' set 1: the bodies' tables (_path) to sample
 var _mutex := Mutex.new()
 
 
@@ -126,6 +138,13 @@ func setup(columns: int, fine_rows: int, coarse_rows: int, balls: int, cubes: in
 	p.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	_path = _rd.texture_create(p, RDTextureView.new())
 	path_tex.texture_rd_rid = _path
+	var li := RDTextureFormat.new()
+	li.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	li.width = maxi(maxi(balls, cubes) * images, BODY_ROWS)
+	li.height = LISTS + 1
+	li.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	_list = _rd.texture_create(li, RDTextureView.new())
+	list_tex.texture_rd_rid = _list
 	for k in 2:
 		var q := RDTextureFormat.new()
 		q.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
@@ -164,8 +183,17 @@ func set_head(l: float, n: Vector3, hf: PackedVector4Array, head_pos: Vector3) -
 	_mutex.unlock()
 
 
+## The zone meshes' draw commands (RenderingServer.multimesh_get_command_buffer_rd_rid: Renderer's
+## ZONE_LODS, in their order), whose instance counts LISTS writes.
+func set_commands(cmds: Array[RID]) -> void:
+	_mutex.lock()
+	_cmds = cmds
+	_list_set = RID()
+	_mutex.unlock()
+
+
 ## The bodies in the zone (Renderer.set_objects), four rows a slot: centre C, axes E1, E2 (R^4), and
-## (radius or half size, 0, 0, 0); balls in slots from 0, cubes from the balls' count of slots, each
+## (radius or half size, colour); balls in slots from 0, cubes from the balls' count of slots, each
 ## kind's first ones; balls and cubes: how many of each.
 func set_bodies(rows: PackedVector4Array, balls: int, cubes: int) -> void:
 	var f := PackedFloat32Array()
@@ -192,7 +220,7 @@ func _build() -> void:
 	for k in 2:
 		var m := RegEx.create_from_string("const int %s = (\\d+);" % ["ZONE_PL", "ZONE_PQ"][k]).search(zone)
 		_path_n[k] = int(m.get_string(1))
-	for kind in ["ball", "cube", "images", "paths"] + CUBE_PASSES:
+	for kind in ["ball", "cube", "images", "sizes", "lists", "paths"] + CUBE_PASSES:
 		var src := RDShaderSource.new()
 		src.source_compute = "#version 450\n#define %s\n" % kind.to_upper() + body
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -203,7 +231,7 @@ func _build() -> void:
 		_pipes[kind] = _rd.compute_pipeline_create(_shaders[kind])
 	var s := RDSamplerState.new()
 	_sampler = _rd.sampler_create(s)
-	_ubo = _rd.uniform_buffer_create(256)
+	_ubo = _rd.uniform_buffer_create(400)
 	_bodies = _rd.uniform_buffer_create(16 * BODY_ROWS)
 
 
@@ -245,6 +273,44 @@ func _uniform_set(kind: String) -> RID:
 	return _sets[kind]
 
 
+## SIZES' set 1: the bodies' tables to sample, as the vertex shader does.
+func _sizes_set_rid() -> RID:
+	if _sizes_set.is_valid() and _rd.uniform_set_is_valid(_sizes_set):
+		return _sizes_set
+	var u := RDUniform.new()
+	u.binding = 0
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u.add_id(_sampler)
+	u.add_id(_path)
+	_sizes_set = _rd.uniform_set_create([u], _shaders["sizes"], 1)
+	return _sizes_set
+
+
+## LISTS' set 1 (its list image and the draw commands), made when the commands are there; false if not.
+func _lists_set() -> bool:
+	if _list_set.is_valid() and _rd.uniform_set_is_valid(_list_set):
+		return true
+	_mutex.lock()
+	var cmds := _cmds.duplicate()
+	_mutex.unlock()
+	if cmds.size() != LISTS or cmds.any(func(r: RID) -> bool: return not r.is_valid()):
+		return false
+	var us: Array[RDUniform] = []
+	var u := RDUniform.new()
+	u.binding = 0
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	u.add_id(_list)
+	us.append(u)
+	for k in LISTS:
+		var b := RDUniform.new()
+		b.binding = 1 + k
+		b.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+		b.add_id(cmds[k])
+		us.append(b)
+	_list_set = _rd.uniform_set_create(us, _shaders["lists"], 1)
+	return _list_set.is_valid()
+
+
 func _render_callback(type: int, render_data: RenderData) -> void:
 	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or not _tex.is_valid() or not _tab.is_valid() or not _pipes.has("cube_columns"):
 		return
@@ -279,6 +345,11 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		var proj := data.get_view_projection(mini(v, views - 1))
 		px.append(minf(absf(2.0 / (proj.x.x * size.x)), absf(2.0 / (proj.y.y * size.y))))   # y may be flipped
 	p.append_array([px[0], px[1], CULL_PX, 0.0])
+	for v in 2:
+		var proj := data.get_view_projection(mini(v, views - 1))
+		for c in [proj.x, proj.y, proj.z, proj.w]:
+			p.append_array([c.x, c.y, c.z, c.w])
+	p.append_array([size.x, size.y, 0.0, 0.0])
 	var bytes := p.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	var nodes := int(_grid.x + 1.0) * int(_grid.y + _grid.z + 2.0)
@@ -301,15 +372,26 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 		_pass("cube", cpc, int(ceil(nodes / 64.0)), counts.y, views)
 	# the tables, as far as the images just found drawn need them
 	_pass("paths", ipc, int(ceil(_path_n.x * _path_n.y / 64.0)), counts.x + counts.y, views)
+	# each image's mesh by its size, the meshes' lists and instance counts
+	_pass("sizes", ipc, _images, counts.x + counts.y, views)
+	var lpc := PackedFloat32Array([views, 0.0, 0.0, 0.0]).to_byte_array()
+	lpc.append_array(PackedInt32Array([counts.x, counts.y, _cube0, _images]).to_byte_array())
+	_pass("lists", lpc, 1, 1, 1)
 	_rd.capture_timestamp(TS_END)
 
 
 ## A pass of its own compute list (the device puts a barrier between those that share a texture),
 ## and the GPU's time after it (TS_PASS).
 func _pass(kind: String, push: PackedByteArray, x: int, y: int, z: int) -> void:
+	if kind == "lists" and not _lists_set():
+		return
 	var cl := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
+	if kind == "lists":
+		_rd.compute_list_bind_uniform_set(cl, _list_set, 1)
+	elif kind == "sizes":
+		_rd.compute_list_bind_uniform_set(cl, _sizes_set_rid(), 1)
 	_rd.compute_list_set_push_constant(cl, push, push.size())
 	_rd.compute_list_dispatch(cl, x, y, z)
 	_rd.compute_list_end()

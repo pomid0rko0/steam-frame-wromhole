@@ -1,13 +1,13 @@
 // The meshes of the bodies in the curved zone (balls: zone.gdshaderinc, zone_ball_vertex; cubes:
 // zone_cube.gdshaderinc), each node once a frame for each eye, for the bodies' vertex shader
 // (body.gdshaderinc, ZONE): a compute shader's body, not a Godot shader's; zone_sections.gd puts the
-// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES or
+// header (the version, BALL, CUBE_EDGES, CUBE_SPANS, CUBE_COLUMNS, CUBE, IMAGES, SIZES, LISTS or
 // PATHS) before it and geo.gdshaderinc, zone.gdshaderinc, zone_cube.gdshaderinc and
 // zone_tail.gdshaderinc where it says.
 //
 // A node's place on the body does not depend on which image of it is drawn, only on the eye (whose
 // direction from the centre is the axis the mesh is built round) and the body, so each node of a
-// body's two meshes (the fine one, ZONE_FINE images, and the coarse one, the rest) is worked out
+// body's two meshes (the fine one and the coarse one, whose nodes the thin ones take) is worked out
 // here once per eye, not in each vertex of each of its images. BALL and CUBE: invocation x a node,
 // the fine mesh's first, column by column; y: the body, of those in the zone of this kind (slots from
 // pc.first.x on); z: the eye. Out: per node two texels of a layer per eye, (l, alpha, t.x, t.y) and
@@ -42,8 +42,10 @@
 // plane, along l and along alpha, and the angle between each pair's directions; a pixel there: its
 // angle at the picture's middle times cos^2 of the way off it. Invocation x: the image, y: the body
 // (the zone's balls, then its cubes), z: the eye. Out: a texel per image, body's slot and eye,
-// (the centre's x, y, z the body was taken at, 1 if drawn, else 0): the vertex shader draws an
-// image only where it says 1 for the centre its instance has. And invocation x = images: the
+// (the centre's x, y, z the body was taken at, its mesh if drawn: 1 fine, 2 coarse as the index has
+// it, then SIZES' as its place in the picture needs, ZS_*, 0 out of it; else 0): the vertex shader
+// draws an image only where it says one for the centre its instance has; LISTS puts it in its mesh's
+// list. And invocation x = images: the
 // tail's view of the body from the eye (zone_tail.gdshaderinc: its band off the inward radial,
 // tail_band, past the last image, and its two sectors round it, tail_sector), once a frame for the
 // tail's sectors (zone_tail.gdshader), not in each of their vertices: five texels after the
@@ -72,19 +74,36 @@ layout(set = 0, binding = 1, std140) uniform Params {
 	mat4 inv_view;      // INV_VIEW_MATRIX
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
 	vec4 px;            // a pixel's angle at the middle of each eye's picture, rad; what share of one is culled
+	mat4 proj[2];       // each eye's PROJECTION_MATRIX
+	vec4 view;          // the pictures' size in pixels
 } zp;
 layout(set = 0, binding = 2, std140) uniform Bodies {
-	vec4 body[80];      // per slot: C, E1, E2, (size, 0, 0, 0)
+	vec4 body[80];      // per slot: C, E1, E2, (size, colour)
 } zb;
 layout(push_constant, std430) uniform Kind {
 	vec4 grid;          // this kind's meshes: columns, the fine one's rows, the coarse one's, a slot's rows
 	ivec4 first;        // its first slot
 } pc;
-layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray out_img;
+layout(set = 0, binding = 3, rgba32f) uniform restrict image2DArray out_img;   // the nodes (SIZES reads them)
 layout(set = 0, binding = 4, rgba32f) uniform restrict image2DArray cull_img;   // IMAGES' out, PATHS' in
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2DArray path_img;   // PATHS' out
 layout(set = 0, binding = 6, rgba32f) uniform restrict image2DArray plan_img;   // the cube passes' (above)
 layout(set = 0, binding = 7, rgba32f) uniform restrict image2DArray col_img;
+#ifdef SIZES
+layout(set = 1, binding = 0) uniform sampler2DArray s_paths;   // PATHS' out, as the vertices take it
+#endif
+#ifdef LISTS
+// the lists of what each zone mesh draws (LISTS' out, the bodies' vertex shader's in: body.gdshaderinc,
+// zone_list), and the draw commands' instance counts (Renderer's zone meshes', drawn indirect)
+layout(set = 1, binding = 0, rgba32f) uniform restrict writeonly image2D list_img;
+layout(set = 1, binding = 1, std430) buffer Cmd0 { uint v[]; } cmd0;
+layout(set = 1, binding = 2, std430) buffer Cmd1 { uint v[]; } cmd1;
+layout(set = 1, binding = 3, std430) buffer Cmd2 { uint v[]; } cmd2;
+layout(set = 1, binding = 4, std430) buffer Cmd3 { uint v[]; } cmd3;
+layout(set = 1, binding = 5, std430) buffer Cmd4 { uint v[]; } cmd4;
+layout(set = 1, binding = 6, std430) buffer Cmd5 { uint v[]; } cmd5;
+layout(set = 1, binding = 7, std430) buffer Cmd6 { uint v[]; } cmd6;
+#endif
 
 #define g_prof zp.prof
 #define g_prof2 zp.prof2
@@ -98,6 +117,25 @@ layout(set = 0, binding = 7, rgba32f) uniform restrict image2DArray col_img;
 #include_geo_and_zone
 
 const int PLAN_ROWS = 4;            // plan_img's rows a cube's slot (zone_sections.gd's)
+// an image's mesh (SIZES; Renderer.ZONE_LODS) by where its nodes come in the picture, each within a
+// quarter of a pixel of the body's outline. A column of a mesh (an azimuth about the eye's axis: a
+// half-surface, whose paths to the eye keep to its plane) is a line in the picture, its points round
+// the section a segment of it as long as the image is thick there; n of them a polygon off the
+// section's curve by a share 1 - cos(pi / n) of its half. Its columns, N uniform in azimuth, are off
+// the outline at its tips, where the section shrinks to a point as the root of the way to it, by at
+// most 0.354 sqrt(2 / N) of its half thickness, and where it bends, by an eighth of the second
+// difference over a column's step. The fine mesh (48 round) for the first ZS_FINE images thicker
+// than ZS_COARSE_PX (a cube's: across), else the coarse one (12; 64 azimuths); a ball's thin ones (the
+// coarse one's nodes: 64 by 6, every 2nd point; 32 by 6, every 2nd azimuth too; 16 by 4, every 4th
+// and 3rd) where they keep to that: codes 1 to 5 in that order (cull_img's .w), each mesh keeping to
+// what the next keeps to. A turn round the throat's sphere is a ring as long as the body's first
+// image and thinner only as 1 / k: those take the thin ones.
+const int ZS_FINE = 4;
+const float ZS_COARSE_PX = 15.0;    // 12 round: 0.034 of the half, a quarter of a pixel at 15 across
+const vec2 ZS_THIN_PX = vec2(3.7, 1.7);   // 6 round: 0.134 of the half; 4: 0.293
+// the second difference over 8 columns, pixels, for 64, 32 and 16 of them: D / 512, D / 128, D / 32 a
+// quarter of a pixel (the tips: 0.0625, 0.088, 0.125 of the half; up to 8, 5.7, 4 across)
+const vec3 ZS_BEND_PX = vec3(128.0, 32.0, 8.0);
 const int PLAN_KNOTS = 135;         // row 2's texel of the knots' count, ZC_KNOTS / 4 of them after it (to PLAN_W)
 
 // a cube's slot s as zone_cube.gdshaderinc takes it, round the axis en (the eye's direction from the
@@ -503,6 +541,142 @@ void main() {
 	}
 	imageStore(col_img, ivec3(j, y, z), vec4(ab[0], ab[1]));
 }
+#elif defined(SIZES)
+// A workgroup an image IMAGES draws (x: the image, y: the zone's body, balls first, z: the eye): the
+// coarse mesh's every 8th azimuth's every 2nd point (9 by 7 nodes) where the vertex shader puts
+// them (zone_path_see by the table PATHS made, the eye's projection), in pixels from the picture's
+// middle; from them the image's thickness (its columns' segments' longest; 6 points round, short of
+// the section's by up to 1 - cos(pi / 6)), its bend (the second differences of their middles and
+// lengths), its size across (a cube's) and whether it is out of the picture (every node beyond one
+// side of it, a quarter of the image's size and 2 pixels past, or behind the eye): its mesh (ZS_*;
+// 0 out of the picture), into IMAGES' texel. A node not a number, or some behind the eye and some
+// not: the mesh as the index has it.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+shared vec2 s_p[63];
+shared uint s_bad[63];      // 1 behind the eye, 2 not a number
+shared vec3 s_col[9];       // a column's segment: its middle, its length
+void main() {
+	int j = int(gl_WorkGroupID.x), b = int(gl_WorkGroupID.y), z = int(gl_WorkGroupID.z);
+	int tid = int(gl_LocalInvocationID.x);
+	int balls = pc.first.x;
+	bool cube = b >= balls;
+	int s = cube ? pc.first.z + b - balls : b;
+	vec4 cull = imageLoad(cull_img, ivec3(j, s, z));
+	if (cull.w < 0.5) return;
+	if (tid < 63) {
+		float el;
+		vec3 en;
+		vec4 ex, ey, ez;
+		geo_eye(zp.inv_view, zp.eye_off[z].xyz, el, en, ex, ey, ez);
+		int y = s * int(pc.grid.w) + int(pc.grid.y) + 1 + 2 * (tid % 7);
+		vec4 na = imageLoad(out_img, ivec3(16 * (tid / 7), y, z));
+		vec4 nb = imageLoad(out_img, ivec3(16 * (tid / 7) + 1, y, z));
+		vec3 t = vec3(na.zw, nb.x);
+		float alpha = clamp(na.y, 0.0, GEO_PI);
+		vec2 sca = geo_sincos(alpha);
+		vec3 pn = sca.y * en + sca.x * t;
+		float len, fell;
+		vec4 arrive;
+		vec4 dir = zone_path_see(s_paths, s * ZONE_PL, z, el, en, na.x, pn, t, alpha, j, len, arrive, fell);
+		vec3 pv = zp.eye_off[z].xyz + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez));
+		vec4 cp = zp.proj[z] * vec4(pv, 1.0);
+		bool nan = nb.y > 0.5 || !geo_finite(cp.x + cp.y + cp.w);
+		s_bad[tid] = nan ? 2u : (cp.w > 0.0 ? 0u : 1u);
+		s_p[tid] = s_bad[tid] == 0u ? 0.5 * zp.view.xy * cp.xy / cp.w : vec2(0.0);
+	}
+	barrier();
+	if (tid < 9) {
+		// the column's farthest two points
+		float far2 = 0.0;
+		vec2 mid = s_p[7 * tid];
+		for (int a = 0; a < 7; a++) {
+			for (int c = a + 1; c < 7; c++) {
+				vec2 d = s_p[7 * tid + c] - s_p[7 * tid + a];
+				if (dot(d, d) > far2) {
+					far2 = dot(d, d);
+					mid = 0.5 * (s_p[7 * tid + c] + s_p[7 * tid + a]);
+				}
+			}
+		}
+		s_col[tid] = vec3(mid, sqrt(far2));
+	}
+	barrier();
+	if (tid != 0) return;
+	uint bad = 0u, behind = 0u;
+	vec2 lo = vec2(1e30), hi = vec2(-1e30);
+	for (int i = 0; i < 63; i++) {
+		bad |= s_bad[i];
+		behind += s_bad[i] & 1u;
+		lo = min(lo, s_p[i]);
+		hi = max(hi, s_p[i]);
+	}
+	float thick = 0.0, bend = 0.0;
+	for (int c = 0; c < 9; c++) thick = max(thick, s_col[c].z);
+	for (int c = 1; c < 8; c++) {
+		vec3 d2 = s_col[c - 1] - 2.0 * s_col[c] + s_col[c + 1];
+		bend = max(bend, length(d2.xy) + 0.5 * abs(d2.z));
+	}
+	thick /= 0.866;
+	vec2 across = hi - lo;
+	vec2 edge = 0.5 * zp.view.xy + 0.25 * max(across.x, across.y) + 2.0;
+	bool out_ = behind == 63u || any(greaterThan(lo, edge)) || any(lessThan(hi, -edge));
+	float mesh = cull.w;
+	if (bad == 0u) {
+		if (out_) mesh = 0.0;
+		else if (cube) mesh = j < ZS_FINE && max(across.x, across.y) > ZS_COARSE_PX ? 1.0 : 2.0;
+		else if (j < ZS_FINE && thick > ZS_COARSE_PX) mesh = 1.0;
+		else if (thick <= ZS_THIN_PX.y && bend <= ZS_BEND_PX.z) mesh = 5.0;
+		else if (thick <= ZS_THIN_PX.x && bend <= ZS_BEND_PX.y) mesh = 4.0;
+		else if (thick <= ZS_THIN_PX.x && bend <= ZS_BEND_PX.x) mesh = 3.0;
+		else mesh = 2.0;
+	} else if (behind == 63u) {
+		mesh = 0.0;
+	}
+	imageStore(cull_img, ivec3(j, s, z), vec4(cull.xyz, mesh));
+}
+#elif defined(LISTS)
+// One workgroup: each body's image drawn in either eye (IMAGES' cull_img, its mesh there, the finer of
+// the two: each mesh of a kind keeps to what the next keeps to), into its mesh's list (rows: balls
+// fine, coarse, 64 by 6, 32 by 6, 16 by 4, cubes fine, coarse; texel k: (slot, image)), the lists'
+// lengths into the draw commands (their second number: the instance count), and the bodies' rows
+// (zb.body) into row ZS_LIST_BODIES for the vertices. pc.first: (balls, cubes, the cubes' first slot,
+// images), pc.grid.x: the views.
+const int ZS_LIST_BODIES = 7;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+shared uint s_n[7];
+void main() {
+	int tid = int(gl_LocalInvocationID.x);
+	if (tid < 7) s_n[tid] = 0u;
+	barrier();
+	int balls = pc.first.x, all = (pc.first.x + pc.first.y) * pc.first.w;
+	int views = int(pc.grid.x + 0.5);
+	for (int it = tid; it < all; it += 256) {
+		int b = it / pc.first.w, j = it % pc.first.w;
+		bool cube = b >= balls;
+		int s = cube ? pc.first.z + b - balls : b;
+		int mesh = 0;
+		for (int z = 0; z < 2; z++) {
+			if (z >= views) break;
+			int m = int(imageLoad(cull_img, ivec3(j, s, z)).w + 0.5);
+			if (m > 0) mesh = mesh == 0 ? m : min(mesh, m);
+		}
+		if (mesh == 0) continue;
+		int list = cube ? 4 + min(mesh, 2) : mesh - 1;
+		uint k = atomicAdd(s_n[list], 1u);
+		imageStore(list_img, ivec2(int(k), list), vec4(float(s), float(j), 0.0, 0.0));
+	}
+	for (int r = tid; r < 80; r += 256) imageStore(list_img, ivec2(r, ZS_LIST_BODIES), zb.body[r]);
+	barrier();
+	if (tid == 0) {
+		cmd0.v[1] = s_n[0];
+		cmd1.v[1] = s_n[1];
+		cmd2.v[1] = s_n[2];
+		cmd3.v[1] = s_n[3];
+		cmd4.v[1] = s_n[4];
+		cmd5.v[1] = s_n[5];
+		cmd6.v[1] = s_n[6];
+	}
+}
 #elif defined(IMAGES)
 // image j's direction (a tangent vector at the eye) of the point at l, alpha off the eye's axis
 // toward t (alpha past 0 or pi: on the far side, toward -t)
@@ -577,7 +751,8 @@ void main() {
 	float px = (id.z == 0u ? zp.px.x : zp.px.y) * max(c * c, 0.0);
 	// not a number anywhere: drawn
 	bool drawn = !geo_finite(thick + c) || thick >= zp.px.z * px;
-	imageStore(cull_img, ivec3(j, s, int(id.z)), vec4(C.xyz, drawn ? 1.0 : 0.0));
+	// and its mesh as the index has it (SIZES makes it the one its place in the picture needs)
+	imageStore(cull_img, ivec3(j, s, int(id.z)), vec4(C.xyz, drawn ? (j < ZS_FINE ? 1.0 : 2.0) : 0.0));
 }
 #else
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;

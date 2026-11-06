@@ -27,7 +27,7 @@ render_mode unshaded, cull_disabled, fog_disabled, shadows_disabled;
 #include "res://shaders/zone_tail.gdshaderinc"
 
 const int TAIL_CUBE0 = 12;          // Renderer.MAX_BALLS: the cubes' first slot
-uniform vec4 tail_rows[80];         // per slot: C, E1, E2, (size, 0, 0, 0)
+uniform vec4 tail_rows[80];         // per slot: C, E1, E2, (size, colour)
 uniform vec4 tail_col[20];          // per slot: its colour (linear)
 uniform ivec2 tail_count = ivec2(0);   // balls, cubes in the zone
 uniform float tail_psi_min = 59.6902604182061;   // (Renderer.ZONE_IMAGES - 1) pi: the meshes' last image on
