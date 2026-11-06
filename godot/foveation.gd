@@ -222,16 +222,14 @@ func _resize_rt(p_level: int, r0: float, m: float, n: Vector2i, size: Vector2i) 
 	_rt_size = size
 
 
-## On the render thread: the texture and the warp's for n texels.
+## On the render thread: the texture and the warp's for n texels. Each Texture2DRD takes the new
+## one in place of the old (RenderingServer's texture stays the same, so sample_mat keeps reading
+## it: an empty RID instead would free that texture, and the quad would read none), then the old goes.
 func _make(n: Vector2i) -> void:
 	if _rd == null:
 		_rd = RenderingServer.get_rendering_device()
 		_build()
-	fov_tex.texture_rd_rid = RID()
-	warp_tex.texture_rd_rid = RID()
-	for r in [_tex, _warp]:
-		if r.is_valid() and _rd.texture_is_valid(r):
-			_rd.free_rid(r)
+	var old := [_tex, _warp]
 	_n = n
 	var f := RDTextureFormat.new()
 	f.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
@@ -251,6 +249,9 @@ func _make(n: Vector2i) -> void:
 	_sets.clear()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
+	for r: RID in old:
+		if r.is_valid() and _rd.texture_is_valid(r):
+			_rd.free_rid(r)
 
 
 ## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity.
