@@ -43,6 +43,7 @@ const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
+const DIRECT_MARGIN := 0.2      # m: an eye's l off the head's, at most (with room to spare)
 # a body in the curved zone: each of its images in the picture (ZONE_IMAGES at most) on the mesh its
 # place there needs (zone_sections.gdshaderinc's SIZES): the fine one for one of the first ZS_FINE
 # when large, a ball's thin ones (ZONE_LODS: the coarse one's nodes, fewer) and a cube's ribbon when
@@ -441,6 +442,14 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		m.set_shader_parameter("head_pos", head_pos)
 	foveation.set_head(l, n, f, head_pos)
 	zone_sections.set_head(l, n, f, head_pos)
+	# the bodies seen straight (body.gdshaderinc, DIRECT: the scene's objects, the toys out in a flat
+	# universe) only from an eye out of the curved zone in their own universe, from anywhere else their
+	# vertices only go off the picture: not drawn then (the eyes within DIRECT_MARGIN of the head)
+	var outside := absf(l) >= space.L - DIRECT_MARGIN
+	for k in statics.size():
+		RenderingServer.instance_set_visible(statics[k].get_instance(), statics[k].visible and outside and (l > 0.0) == (k == 0))
+	for mm in [balls, cubes]:
+		RenderingServer.instance_set_visible(mm.get_instance(), mm.visible and outside)
 
 
 ## The movable balls and cubes: balls by their centres (points of R^4) and (colour, radius), cubes
