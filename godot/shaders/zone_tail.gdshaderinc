@@ -17,15 +17,16 @@
 // the axis) and l within the ball's slab: the profile (r(l), w(l)) within its chord of the ball's
 // centre seen at psi_c (the cylinder a line, the fillet an arc, the flat part a line: each in closed
 // form, tail_slab). On the cylinder the copies n whose l there is within the slab are a run of whole
-// numbers in closed form (a cube's narrowed to its box's l at the window's angles), however many turns
-// on; next to the limit, where l moves by a hair a copy, the run is long, and the copies the ray goes
-// into are a run within it: tried at TAIL_COPIES copies spread over it, then halving back from the
-// first it goes into to the first of all (tail_copy). On the far fillet the few there by psi at the
-// slab's ends. A copy's window of y is its |x| <=
-// dmax, and in it the ray goes into the body where it enters every one of its convex parts (a ball's
-// chord ball, a cube's four slabs of its 4D box): each part's Newton step from the side the ray comes
-// from never passes that part's own way in, so the furthest of them, taken again and again, lands on
-// the way into the body, or finds a part the ray leaves before it is in the others (tail_enter).
+// numbers in closed form (a ball's exactly those it goes into: tail_meet; a cube's narrowed to its
+// box's l at the window's angles), however many turns on; next to the limit, where l moves by a hair
+// a copy, a cube's run is long, and the copies the ray goes into are a run within it: tried at
+// TAIL_COPIES copies spread over it, then halving back from the first it goes into to the first of
+// all (tail_copy). On the far fillet the few there by psi at the slab's ends. A copy's window of y is
+// its |x| <= dmax, and in it the ray goes into the body where it enters every one of its convex
+// parts (a ball's chord ball, a cube's four slabs of its 4D box): each part's Newton step from the
+// side the ray comes from never passes that part's own way in, so the furthest of them, taken again
+// and again, lands on the way into the body, or finds a part the ray leaves before it is in the
+// others (tail_enter).
 // Only ways in at a turn psi >= psi_min count (a point at psi is in image floor(psi / pi)): those
 // before are the meshes' images, drawn already, and a ray already in a body at psi_min went in through
 // one of them. The renderer takes psi_min (ZONE_IMAGES - 1) pi: the meshes' last image is drawn by
@@ -48,7 +49,7 @@
 const float TAIL_PI2 = 6.28318530717959;
 const int TAIL_COPIES = 4;        // copies tried a body and stretch (from the first that can be met)
 const int TAIL_STEPS = 12;        // Newton's rounds into a body
-const int TAIL_HALVE = 12;        // halvings back to the way in, a step past it
+const int TAIL_HALVE = 12;        // steps back to the way in (Newton's, or halving), a step past it
 const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
 const float TAIL_TOL_FILLET = 1e-5;
 const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
@@ -228,7 +229,7 @@ void tail_parts(TailBody q, vec4 P, vec4 dP, out vec4 g, out vec4 dg) {
 // Along the copy by x: on the cylinder its angle off psi_c (there l = lc + lam x, the point a closed
 // form: x keeps its digits however fast the ray winds), on the far fillet y (the angle base + the
 // fillet's sweep, base: at1's psi less 2 pi n).
-vec3 tail_out(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float x, float tol) {
+vec4 tail_out(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float x, float tol) {
 	vec4 P, dP;
 	if (fillet) {
 		tail_point(z, x, base + tail_fillet(z, x).x, tail_rate(z, x).x, P, dP);
@@ -239,15 +240,18 @@ vec3 tail_out(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi
 	}
 	vec4 g, dg;
 	tail_parts(q, P, dP, g, dg);
-	float worst = -1e30, step = 0.0;
+	float worst = -1e30, rate = 0.0, step = 0.0;
 	bool leaves = false;
 	for (int k = 0; k < 4; k++) {
-		worst = max(worst, g[k]);
+		if (g[k] > worst) {
+			worst = g[k];
+			rate = dg[k];
+		}
 		if (g[k] <= tol) continue;
 		if (dg[k] >= 0.0) leaves = true;
 		else step = max(step, -g[k] / dg[k]);
 	}
-	return vec3(worst, leaves ? -1.0 : step, length(dP));
+	return vec4(worst, leaves ? -1.0 : step, length(dP), rate);
 }
 
 // A cube's four slab coordinates over its size at x (in it where all are within [-1, 1])
@@ -287,14 +291,17 @@ bool tail_over(TailRay z, TailBody q, bool fillet, float lc, float lam, float ps
 // From xa (where the ray is out of the body, its angle within dmax of the copy's) to xb: where it
 // goes in (true), by Newton's steps on each part it is out of, the furthest taken; false if it
 // leaves a part (or never reaches one) before it is in all. A part's step from outside never passes
-// its own way in where the part bends away from the ray, but a cube's slab can bend toward it along
-// the helix and the step overshoot into the body: the way in is then halved back between the last
-// point out of it and the first in (TAIL_HALVE). A step can even go over a cube (a thin way through
-// a corner of it) and leave it behind: where the ray then leaves a part, the step's stretch is
-// looked into (tail_over, TAIL_OVER times, each time on the half its slabs say the cube is in), and
-// a point in the cube found there is the first in. Done within TAIL_TOL of the body, or where a step
-// moves the point by less: on the fillet the sweep's table (its filter's weights in 256ths) leaves
-// the point that much uncertain.
+// its own way in where the part bends away from the ray, so a step that lands within TAIL_TOL of
+// the body going in (a ball's always) lands where the ray goes in. But a cube's slab can bend toward
+// the ray along the helix and the step overshoot into the body: the way in is then looked for back
+// between the last point out of it and the first in (TAIL_HALVE steps at most), by Newton's steps
+// on the part a point in is in by least (the face the ray came in through), and halving where such
+// a step would leave that stretch or after a point out. A step can even go over a cube (a thin way
+// through a corner of it) and leave it behind: where the ray then leaves a part, the step's stretch
+// is looked into (tail_over, TAIL_OVER times, each time on the half its slabs say the cube is in),
+// and a point in the cube found there is the first in. Done within TAIL_TOL of the body (on its
+// surface, going in), or where a step moves the point by less: on the fillet the sweep's table (its
+// filter's weights in 256ths) leaves the point that much uncertain.
 bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
 	x = xa;
 	float near = fillet ? TAIL_TOL_FILLET : TAIL_TOL;
@@ -302,10 +309,11 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 	float xo = xa;          // the last point out of the body
 	bool in_ = false;
 	for (int i = 0; i < TAIL_STEPS; i++) {
-		vec3 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
+		vec4 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
 		if (o.x <= tol) {
 			// in at the window's start: it went in before (the meshes' images, or a copy before)
 			if (i == 0) return false;
+			if (o.x >= -tol && o.w <= 0.0) return true;
 			in_ = true;
 			break;
 		}
@@ -339,10 +347,25 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 		if (done) return true;
 	}
 	if (!in_) return false;
+	// x in, xo out; o at the last point worked out, its rate 0 if that was out (then halving). The
+	// point in is worked out again rather than kept from the steps: kept, its numbers would hold
+	// registers all through them (tools/adreno_stats.sh: 48 instead of 32, 4 waves instead of 6)
+	vec4 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
 	for (int i = 0; i < TAIL_HALVE; i++) {
+		if (o.x >= -tol && o.x <= tol && o.w <= 0.0) break;
 		float m = 0.5 * (xo + x);
+		if (o.w < 0.0) {
+			float xn = x - o.x / o.w;
+			if (xn > xo && xn < x) m = xn;
+		}
 		if (m == xo || m == x) break;
-		if (tail_out(z, q, fillet, lc, lam, psi_c, base, m, tol).x <= tol) x = m; else xo = m;
+		o = tail_out(z, q, fillet, lc, lam, psi_c, base, m, tol);
+		if (o.x <= tol) {
+			x = m;
+		} else {
+			xo = m;
+			o.w = 0.0;
+		}
 	}
 	return true;
 }
@@ -387,13 +410,16 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 	float nmin = max(ceil((psi_min - psi_c - dmax) / TAIL_PI2), n_lo);
 	// the cylinder: the copies whose l at psi_c is within the slab, a run of whole numbers (l moves by
 	// 2 pi lambda a copy); a cube's narrowed to its box's l at psi_c where it has one (its slabs
-	// across l at that angle)
+	// across l at that angle), but only where the slab's run is longer than TAIL_COPIES tries one by
+	// one (it spans (hi - lo) / |2 pi lambda| + 2 at most): off the limit it is a copy or two, and
+	// a copy the ray misses costs less than the narrowing
 	if (sl.x <= sl.y && z.cyl.x > 0.0) {
 		float lam = z.dl / z.cyl.x;       // dl / dpsi
+		float s2 = TAIL_PI2 * lam;
 		float D0 = tail_l(z, tail_copy_y(z, psi_c, 0.0)) - q.C.w;
 		float lo = tail_l(z, sl.x) - q.C.w, hi = tail_l(z, sl.y) - q.C.w;
 		if (lo > hi) { float s = lo; lo = hi; hi = s; }
-		if (q.cube) {
+		if (q.cube && hi - lo > float(TAIL_COPIES - 3) * abs(s2)) {
 			// its box's l on the cylinder at angles across the window (TAIL_CUTS of them), each the
 			// slabs across l there; the ray goes along l by lambda dmax across the window, and the
 			// box's l between two angles by up to a step's worth more
@@ -423,9 +449,23 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 				hi = min(hi, chi + mg);
 			}
 		}
+		if (!q.cube) {
+			// a ball's copies the ray goes into, exactly: copy n's line in the window, l = Cw + d + lam
+			// x (d its l at psi_c off the centre's), is in the ball's section of the cylinder where
+			// rho0^2 + |C|^2 - s^2 - k cos x + (d + lam x)^2 <= 0 (k = 2 rho0 A), which it meets where
+			// |d| <= the most of sqrt(k cos x + e - k) + |lam x| over x (e = s^2 - h^2 - (A - rho0)^2,
+			// h: C off the ray's plane), at cos x = 1 - delta; a hair wider than float32 works it out
+			float h = dot(Cx.xyz, cross(z.en, z.t));
+			float e = q.size * q.size - h * h - (A - g_prof.x) * (A - g_prof.x);
+			float k = 2.0 * g_prof.x * A, l2 = lam * lam;
+			float B = 2.0 * k * k + 4.0 * l2 * k;
+			float del = 8.0 * l2 * max(e, 0.0) / max(B + sqrt(max(B * B - 16.0 * k * k * l2 * max(e, 0.0), 0.0)), GEO_TINY20);
+			float ds = e > 0.0 ? (sqrt(max(e - k * del, 0.0)) + 2.0 * abs(lam) * geo_asin(sqrt(0.5 * del))) * 1.001 + 1e-6 : -1.0;
+			lo = max(lo, -ds);
+			hi = min(hi, ds);
+		}
 		float n0 = max(ceil((z.at0.x - psi_c - dmax) / TAIL_PI2), nmin);
 		float n1 = min(floor((z.at1.x - psi_c + dmax) / TAIL_PI2), n_hi);
-		float s2 = TAIL_PI2 * lam;
 		if (abs(s2) > GEO_TINY20) {
 			float na = (lo - D0) / s2, nb = (hi - D0) / s2;
 			n0 = max(n0, ceil(min(na, nb)) - 1.0);
@@ -433,14 +473,16 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 		} else if (D0 < lo || D0 > hi) {
 			n1 = n0 - 1.0;
 		}
+		if (lo > hi) n1 = n0 - 1.0;
 		// the first copy the ray goes into: each of a short run, else TAIL_COPIES spread over it
-		// and halving back from the first of them it goes into
+		// (a ball's run is exact: its first ones, then its last) and halving back from the first
+		// of them it goes into
 		vec3 at;
 		bool met = false;
 		float span = n1 - n0;
 		float prev = n0 - 1.0;
 		for (int c = 0; c < TAIL_COPIES; c++) {
-			float n = span < float(TAIL_COPIES) ? n0 + float(c) : n0 + floor(span * float(c) / float(TAIL_COPIES - 1) + 0.5);
+			float n = span < float(TAIL_COPIES) || (!q.cube && c < TAIL_COPIES - 1) ? n0 + float(c) : n0 + floor(span * float(c) / float(TAIL_COPIES - 1) + 0.5);
 			if (n > n1) break;
 			if (tail_copy(z, q, n, psi_c, dmax, sl.xy, lam, psi_min, at)) {
 				met = true;
