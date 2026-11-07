@@ -105,6 +105,7 @@ var _tail_set: RID                  # the tail's passes' set 1: ZoneSections' cu
 var _tail_key := []                 # what it was made with
 var _tail_args: RID                 # TAIL_QUADS' and TAIL's indirect dispatches (foveation.gdshaderinc's TailArgs)
 var _tail_data: RID                 # the bodies' views, the tiles and the quads listed (its TailData)
+var _tail_picks: RID                # each texel's ranges for TAIL (its pick_img): rg32ui, a layer per eye, every tile's texels
 var _tail_tiles := Vector2i.ZERO    # the tiles across and down they were made for
 var _mutex := Mutex.new()
 
@@ -412,24 +413,33 @@ func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: i
 		return
 	var tiles := Vector2i(ceili(_n.x / 8.0), ceili(_n.y / 8.0))
 	if _tail_tiles != tiles:
-		for r in [_tail_args, _tail_data]:
+		for r in [_tail_args, _tail_data, _tail_picks]:
 			if r.is_valid():
 				_rd.free_rid(r)
 		# TAIL_QUADS' and TAIL's dispatches, and foveation.gdshaderinc's TailData: the bodies' views
-		# of both eyes (FOV_TAIL_MAX of them, a vec4 and FOV_TAIL_RANGES each), then every tile of both
-		# and every quad of them for the balls and for the cubes
+		# of both eyes (FOV_TAIL_MAX of them, two vec4 and FOV_TAIL_RANGES each), then every tile of
+		# both and every quad of them for the balls and for the cubes
 		_tail_args = _rd.storage_buffer_create(48, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
-		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (1 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 33)
+		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (2 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 33)
+		var f := RDTextureFormat.new()
+		f.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+		f.format = RenderingDevice.DATA_FORMAT_R32G32_UINT
+		f.width = 8 * tiles.x
+		f.height = 8 * tiles.y
+		f.array_layers = 2
+		f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
+		_tail_picks = _rd.texture_create(f, RDTextureView.new())
 		_tail_tiles = tiles
-	var key := [cull, bodies, _tail_args, _tail_data]
+	var key := [cull, bodies, _tail_args, _tail_data, _tail_picks]
 	if _tail_key != key or not _tail_set.is_valid() or not _rd.uniform_set_is_valid(_tail_set):
 		var us: Array[RDUniform] = []
-		for b in 4:
+		for b in 5:
 			var u := RDUniform.new()
 			u.binding = b
 			u.uniform_type = [RenderingDevice.UNIFORM_TYPE_IMAGE, RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER,
-					RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER, RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER][b]
-			u.add_id([cull, bodies, _tail_args, _tail_data][b])
+					RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER, RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER,
+					RenderingDevice.UNIFORM_TYPE_IMAGE][b]
+			u.add_id([cull, bodies, _tail_args, _tail_data, _tail_picks][b])
 			us.append(u)
 		_tail_set = _rd.uniform_set_create(us, _shaders["tail"], 1)
 		_tail_key = key
