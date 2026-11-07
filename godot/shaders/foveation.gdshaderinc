@@ -24,8 +24,9 @@
 // TAIL_VIEW: each body's sector and ranges for each eye, once (an invocation a body and side), into
 // a buffer; TAIL_TILES: the tiles of 8 x 8 texels that reach into one of them, listed (an invocation
 // a tile); TAIL_QUADS: in those, the quads of 2 x 2 texels one of whose rays lies in one, listed (an
-// invocation a quad, a workgroup a tile, dispatched by the tiles' count); TAIL: those quads only,
-// sixteen to a workgroup, packed as a rasterizer packs a primitive's quads. A texel whose
+// invocation a quad, a workgroup a tile, dispatched by the tiles' count), a list for the balls and
+// one for the cubes; TAIL: those quads only, sixteen to a workgroup, packed as a rasterizer packs a
+// primitive's quads, the balls' and then in a pass of its own the cubes'. A texel whose
 // ray lies in a sector looks into the copies of that body its strip or band holds, as
 // zone_tail.gdshader's fragment does; where it meets one nearer than what the texel shows, the texel
 // takes the body's colour there, lit as zone_tail.gdshader lights it. The meshes' images are drawn
@@ -139,18 +140,20 @@ layout(set = 1, binding = 0, rgba32f) uniform restrict readonly image2DArray zon
 layout(set = 1, binding = 1, std140) uniform TailBodies {
 	vec4 body[80];      // per slot: C, E1, E2, (size, colour)
 } tb;
-// the indirect dispatches: TAIL_QUADS' (the tiles listed, 1, 1, 0), TAIL's (its workgroups, 1, 1,
-// the quads listed); TAIL_VIEW sets them, TAIL_TILES and TAIL_QUADS count
+// the indirect dispatches: TAIL_QUADS' (the tiles listed, 1, 1, 0), then TAIL's for the balls and
+// for the cubes (its workgroups, 1, 1, the quads listed); TAIL_VIEW sets them, TAIL_TILES and
+// TAIL_QUADS count
 layout(set = 1, binding = 2, std430) restrict buffer TailArgs {
-	uint args[8];
+	uint args[12];
 } ta;
 // each eye's view of each body's tail, the same for all its texels: per eye and body, (b1, the
 // sector's half width round the axis with its margins; nought: no tail this frame), and per side and
 // strip k (TAIL_STRIPS: the band) the angles off the eye's inward radial it spans and the copies it
 // looks into, as zone_tail.gdshader's vertices take them: (least, greatest, first, last), past the
 // zone too where first is -1e9 (the band of a body without strips), none where least > greatest;
-// then the tiles of 8 x 8 texels listed (x | y << 12 | eye << 24), and from fov_tail_quads() on the
-// quads of 2 x 2 texels TAIL works on (likewise, in quads)
+// then the tiles of 8 x 8 texels listed (x | y << 12 | eye << 24), and from fov_tail_quads(kind) on
+// the quads of 2 x 2 texels TAIL works on for the balls (kind 0) and for the cubes (1) (likewise, in
+// quads)
 #define FOV_TAIL_MAX 20
 #define FOV_TAIL_RANGES (2 * (TAIL_STRIPS + 1))
 layout(set = 1, binding = 3, std430) restrict buffer TailData {
@@ -160,7 +163,7 @@ layout(set = 1, binding = 3, std430) restrict buffer TailData {
 } td;
 layout(push_constant, std430) uniform TailKind {
 	ivec4 n;            // the zone's balls, its cubes, the cubes' first slot, the images a body (Renderer.ZONE_IMAGES)
-	vec4 f;             // psi_min (zone_tail.gdshader's tail_psi_min), the strips drawn (Renderer.tail_strips), 0, 0
+	vec4 f;             // psi_min (zone_tail.gdshader's tail_psi_min), the strips drawn (Renderer.tail_strips), TAIL's kind (0 balls, 1 cubes), 0
 } tk;
 
 TailBody fov_tail_body(int s) {
@@ -183,30 +186,34 @@ float fov_tail_azimuth(vec3 d, vec3 ax, vec3 b1, int side) {
 	return side == 0 ? phi : (phi > 0.0 ? phi - GEO_PI : phi + GEO_PI);
 }
 
-// where in td.lists the quads start: past every tile of both eyes
-uint fov_tail_quads() {
+// where in td.lists the quads of a kind (0 balls, 1 cubes) start: past every tile of both eyes, the
+// cubes' past as many quads of the balls' (16 a tile)
+uint fov_tail_quads(uint kind) {
 	uvec2 nt = (uvec2(fovp.warp1[0].zw) + 7u) / 8u;
-	return 2u * nt.x * nt.y;
+	return 2u * nt.x * nt.y * (1u + 16u * kind);
 }
 
-// whether the ray d of eye v (chi off its inward radial ax) lies in one of the bodies' strips or bands
-// within its sector: where TAIL looks into a body's copies
-bool fov_tail_in(vec3 d, uint v, vec3 ax) {
+// which kinds of body the ray d of eye v (chi off its inward radial ax) lies in a strip or band of,
+// within its sector, where TAIL looks into the body's copies: 1 a ball's, 2 a cube's, 3 both, 0 none
+uint fov_tail_in(vec3 d, uint v, vec3 ax) {
 	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
 	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
+	uint kinds = 0u;
 	for (int b = 0; b < nb; b++) {
 		int ob = int(v) * FOV_TAIL_MAX + b;
 		vec4 sec = td.sec[ob];
 		if (sec.w <= 0.0) continue;
+		uint kind = b < tk.n.x ? 1u : 2u;
+		if ((kinds & kind) != 0u) continue;
 		for (int side = 0; side < 2; side++) {
 			if (abs(fov_tail_azimuth(d, ax, sec.xyz, side)) > sec.w) continue;
 			for (int k = 0; k <= TAIL_STRIPS; k++) {
 				vec4 rg = td.rng[ob * FOV_TAIL_RANGES + side * (TAIL_STRIPS + 1) + k];
-				if (rg.x <= rg.y && chi >= rg.x && chi <= rg.y) return true;
+				if (rg.x <= rg.y && chi >= rg.x && chi <= rg.y) kinds |= kind;
 			}
 		}
 	}
-	return false;
+	return kinds;
 }
 
 // texel id's ray, as the texture's pass has it (fov_texel's pixel), false if the filter never takes it
@@ -228,10 +235,12 @@ void main() {
 		ta.args[0] = 0u;
 		ta.args[1] = 1u;
 		ta.args[2] = 1u;
-		ta.args[4] = 0u;
-		ta.args[5] = 1u;
-		ta.args[6] = 1u;
-		ta.args[7] = 0u;
+		for (int j = 4; j < 12; j += 4) {
+			ta.args[j] = 0u;
+			ta.args[j + 1] = 1u;
+			ta.args[j + 2] = 1u;
+			ta.args[j + 3] = 0u;
+		}
 	}
 	int b = i >> 1, side = i & 1;
 	if (b >= FOV_TAIL_MAX) return;
@@ -337,30 +346,35 @@ void main() {
 	}
 }
 #elif defined(TAIL_QUADS)
-// A workgroup a tile TAIL_TILES listed, an invocation a quad of 2 x 2 texels of it: listed for TAIL
-// if one of its texels' rays lies in a body's strip or band (fov_tail_in), so that TAIL's waves hold
-// only quads where the tail can be, as a rasterizer's hold only those a primitive covers.
+// A workgroup a tile TAIL_TILES listed, an invocation a quad of 2 x 2 texels of it: listed for TAIL's
+// balls if one of its texels' rays lies in a ball's strip or band (fov_tail_in), for its cubes if in
+// a cube's, so that TAIL's waves hold only quads where the tail can be, and of one kind of body, as a
+// rasterizer's hold only those a primitive covers (a wave of both would go through both searches).
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
 void main() {
 	uint tile = td.lists[gl_WorkGroupID.x];
 	uint v = tile >> 24, l = gl_LocalInvocationIndex;
 	uvec2 q = 4u * uvec2(tile & 0xfffu, (tile >> 12) & 0xfffu) + uvec2(l & 3u, l >> 2);
 	vec3 ax = fov_tail_axis(v);
-	bool any_in = false;
+	uint kinds = 0u;
 	for (uint j = 0u; j < 4u; j++) {
 		vec3 d;
 		vec2 p;
 		float rho, s;
-		if (fov_tail_texel(uvec3(2u * q + uvec2(j & 1u, j >> 1), v), d, p, rho, s) && fov_tail_in(d, v, ax)) any_in = true;
+		if (fov_tail_texel(uvec3(2u * q + uvec2(j & 1u, j >> 1), v), d, p, rho, s)) kinds |= fov_tail_in(d, v, ax);
 	}
-	if (!any_in) return;
-	uint i = atomicAdd(ta.args[7], 1u);
-	td.lists[fov_tail_quads() + i] = q.x | (q.y << 12) | (v << 24);
-	atomicMax(ta.args[4], i / 16u + 1u);
+	for (uint kind = 0u; kind < 2u; kind++) {
+		if ((kinds & (1u << kind)) == 0u) continue;
+		uint a = 4u + 4u * kind;
+		uint i = atomicAdd(ta.args[a + 3u], 1u);
+		td.lists[fov_tail_quads(kind) + i] = q.x | (q.y << 12) | (v << 24);
+		atomicMax(ta.args[a], i / 16u + 1u);
+	}
 }
 #else
-// TAIL: a workgroup 16 quads TAIL_QUADS listed, an invocation a texel of one: the 2 x 2 texels of a
-// quad side by side, as a fragment shader's.
+// TAIL: a workgroup 16 quads TAIL_QUADS listed for its kind (tk.f.z: the balls, then in a pass of its
+// own the cubes, over what the balls' left: the texture's alpha the way to what a texel shows), an
+// invocation a texel of one: the 2 x 2 texels of a quad side by side, as a fragment shader's.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 shared vec4 s_e[64];
 // the texel of invocation lq of a workgroup in quad (as TAIL_QUADS lists it)
@@ -377,14 +391,15 @@ vec3 fov_tail_dir(uint quad, uint lq) {
 	return normalize((fovp.ray[id.z] * vec4(p / fovp.pic.xy * 2.0 - 1.0, 1.0, 0.0)).xyz);
 }
 
-// the n-th range of the bodies' sectors (body b's range r: b FOV_TAIL_RANGES + r) its ray lies in
-// (fov_tail_in's), -1 past the last
+// the n-th range of the sectors of the bodies of TAIL's kind (body b's range r: b FOV_TAIL_RANGES + r)
+// its ray lies in (fov_tail_in's), -1 past the last
 int fov_tail_pick(uint quad, uint lq, int n) {
 	uint v = quad >> 24;
 	vec3 d = fov_tail_dir(quad, lq), ax = fov_tail_axis(v);
 	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
+	bool cubes = tk.f.z > 0.5;
 	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
-	for (int b = 0; b < nb; b++) {
+	for (int b = cubes ? tk.n.x : 0; b < (cubes ? nb : min(tk.n.x, nb)); b++) {
 		int ob = int(v) * FOV_TAIL_MAX + b;
 		vec4 sec = td.sec[ob];
 		if (sec.w <= 0.0) continue;
@@ -401,8 +416,9 @@ int fov_tail_pick(uint quad, uint lq, int n) {
 void main() {
 	uint lq = gl_LocalInvocationIndex;
 	uint qi = 16u * gl_WorkGroupID.x + (lq >> 2);
-	bool listed = qi < ta.args[7];
-	uint quad = listed ? td.lists[fov_tail_quads() + qi] : 0u;
+	uint kind = tk.f.z > 0.5 ? 1u : 0u;
+	bool listed = qi < ta.args[7u + 4u * kind];
+	uint quad = listed ? td.lists[fov_tail_quads(kind) + qi] : 0u;
 	uint v = quad >> 24;
 	bool used;
 	{

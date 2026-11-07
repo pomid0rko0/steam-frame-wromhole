@@ -417,9 +417,9 @@ func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: i
 				_rd.free_rid(r)
 		# TAIL_QUADS' and TAIL's dispatches, and foveation.gdshaderinc's TailData: the bodies' views
 		# of both eyes (FOV_TAIL_MAX of them, a vec4 and FOV_TAIL_RANGES each), then every tile of both
-		# and every quad of them
-		_tail_args = _rd.storage_buffer_create(32, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
-		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (1 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 17)
+		# and every quad of them for the balls and for the cubes
+		_tail_args = _rd.storage_buffer_create(48, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
+		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (1 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 33)
 		_tail_tiles = tiles
 	var key := [cull, bodies, _tail_args, _tail_data]
 	if _tail_key != key or not _tail_set.is_valid() or not _rd.uniform_set_is_valid(_tail_set):
@@ -433,20 +433,27 @@ func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: i
 			us.append(u)
 		_tail_set = _rd.uniform_set_create(us, _shaders["tail"], 1)
 		_tail_key = key
-	var pc := PackedInt32Array([counts.x, counts.y, cube0, images]).to_byte_array()
-	pc.append_array(PackedFloat32Array([psi_min, 1.0 if strips else 0.0, 0.0, 0.0]).to_byte_array())
-	for kind in ["tail_view", "tail_tiles", "tail_quads", "tail"]:
+	# TAIL twice: the balls', then the cubes' (a wave of one kind of body goes through one search)
+	for step in ["tail_view", "tail_tiles", "tail_quads", "balls", "cubes"]:
+		if (step == "balls" and counts.x == 0) or (step == "cubes" and counts.y == 0):
+			continue
+		var pipe: String = "tail" if step in ["balls", "cubes"] else step
+		var pc := PackedInt32Array([counts.x, counts.y, cube0, images]).to_byte_array()
+		pc.append_array(PackedFloat32Array([psi_min, 1.0 if strips else 0.0, 1.0 if step == "cubes" else 0.0, 0.0]).to_byte_array())
 		var cl := _rd.compute_list_begin()
-		_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
-		_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
+		_rd.compute_list_bind_compute_pipeline(cl, _pipes[pipe])
+		_rd.compute_list_bind_uniform_set(cl, _uniform_set(pipe), 0)
 		_rd.compute_list_bind_uniform_set(cl, _tail_set, 1)
 		_rd.compute_list_set_push_constant(cl, pc, pc.size())
-		if kind == "tail_view":
-			_rd.compute_list_dispatch(cl, 1, 1, views)
-		elif kind == "tail_tiles":
-			_rd.compute_list_dispatch(cl, ceili(tiles.x * tiles.y / 64.0), 1, views)
-		else:
-			_rd.compute_list_dispatch_indirect(cl, _tail_args, 0 if kind == "tail_quads" else 16)
+		match step:
+			"tail_view":
+				_rd.compute_list_dispatch(cl, 1, 1, views)
+			"tail_tiles":
+				_rd.compute_list_dispatch(cl, ceili(tiles.x * tiles.y / 64.0), 1, views)
+			"tail_quads":
+				_rd.compute_list_dispatch_indirect(cl, _tail_args, 0)
+			_:
+				_rd.compute_list_dispatch_indirect(cl, _tail_args, 32 if step == "cubes" else 16)
 		_rd.compute_list_end()
 
 
