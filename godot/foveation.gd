@@ -417,10 +417,10 @@ func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: i
 			if r.is_valid():
 				_rd.free_rid(r)
 		# TAIL_QUADS' and TAIL's dispatches, and foveation.gdshaderinc's TailData: the bodies' views
-		# of both eyes (FOV_TAIL_MAX of them, two vec4 and FOV_TAIL_RANGES each), then every tile of
-		# both and every quad of them for the balls and for the cubes
+		# of both eyes and the bodies' axes (FOV_TAIL_MAX of them, three vec4 and FOV_TAIL_RANGES each),
+		# then every tile of both and every quad of them for the balls and for the cubes
 		_tail_args = _rd.storage_buffer_create(48, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
-		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (2 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 33)
+		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (3 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 33)
 		var f := RDTextureFormat.new()
 		f.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 		f.format = RenderingDevice.DATA_FORMAT_R32G32_UINT

@@ -86,15 +86,15 @@ struct TailBody {
 	bool cube;
 };
 
-TailBody tail_body(bool cube, vec4 C, vec4 E1, vec4 E2, float size) {
+// a body as tail_body has it from its axes all four: E3 = -E1 x E2 x N, N the space's normal at C
+TailBody tail_body_of(bool cube, vec4 C, vec4 E1, vec4 E2, vec4 E3, vec4 N, float size) {
 	TailBody q;
 	q.C = C;
 	q.cube = cube;
 	q.size = size;
-	vec4 N = geo_normal(C);
 	q.E[0] = E1;
 	q.E[1] = E2;
-	q.E[2] = -geo_cross4(E1, E2, N);
+	q.E[2] = E3;
 	q.E[3] = N;
 	// the 4D box [-s, s]^4 lies within 2 s of its centre; a ball's bounding ball a hair wider than
 	// itself, so that a window's edge (tail_meet: where the ray's circle leaves the bounding ball) is
@@ -102,6 +102,11 @@ TailBody tail_body(bool cube, vec4 C, vec4 E1, vec4 E2, float size) {
 	// in there)
 	q.reach = cube ? 2.0 * size : TAIL_REACH * size;
 	return q;
+}
+
+TailBody tail_body(bool cube, vec4 C, vec4 E1, vec4 E2, float size) {
+	vec4 N = geo_normal(C);
+	return tail_body_of(cube, C, E1, E2, -geo_cross4(E1, E2, N), N, size);
 }
 
 // The ray D (as geo_exit takes it) of the eye at (el, en), eye = (r, the root of u, r - rho0): true
@@ -409,17 +414,22 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 	vec4 sl = tail_slab(z, A, q.C.w, q2);
 	float nmin = max(ceil((psi_min - psi_c - dmax) / TAIL_PI2), n_lo);
 	// the cylinder: the copies whose l at psi_c is within the slab, a run of whole numbers (l moves by
-	// 2 pi lambda a copy); a cube's narrowed to its box's l at psi_c where it has one (its slabs
-	// across l at that angle), but only where the slab's run is longer than TAIL_COPIES tries one by
-	// one (it spans (hi - lo) / |2 pi lambda| + 2 at most): off the limit it is a copy or two, and
-	// a copy the ray misses costs less than the narrowing
+	// 2 pi lambda a copy); a cube's those whose window (tail_copy's: the ray goes along l by lambda
+	// dmax across it) reaches into the slab, narrowed to its box's l at angles across the window where
+	// it has one (its slabs across l there), but only where the run is longer than TAIL_COPIES tries
+	// one by one (it spans (hi - lo) / |2 pi lambda| + 1 at most): off the limit it is a copy or two,
+	// and a copy the ray misses costs less than the narrowing
 	if (sl.x <= sl.y && z.cyl.x > 0.0) {
 		float lam = z.dl / z.cyl.x;       // dl / dpsi
 		float s2 = TAIL_PI2 * lam;
 		float D0 = tail_l(z, tail_copy_y(z, psi_c, 0.0)) - q.C.w;
 		float lo = tail_l(z, sl.x) - q.C.w, hi = tail_l(z, sl.y) - q.C.w;
 		if (lo > hi) { float s = lo; lo = hi; hi = s; }
-		if (q.cube && hi - lo > float(TAIL_COPIES - 3) * abs(s2)) {
+		if (q.cube) {
+			lo -= abs(lam) * dmax;
+			hi += abs(lam) * dmax;
+		}
+		if (q.cube && hi - lo > float(TAIL_COPIES - 1) * abs(s2)) {
 			// its box's l on the cylinder at angles across the window (TAIL_CUTS of them), each the
 			// slabs across l there; the ray goes along l by lambda dmax across the window, and the
 			// box's l between two angles by up to a step's worth more
@@ -467,9 +477,12 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 		float n0 = max(ceil((z.at0.x - psi_c - dmax) / TAIL_PI2), nmin);
 		float n1 = min(floor((z.at1.x - psi_c + dmax) / TAIL_PI2), n_hi);
 		if (abs(s2) > GEO_TINY20) {
+			// a hair wider than float32 works out where copy n passes psi_c (tail_copy: from y, l to
+			// some 120 m)
 			float na = (lo - D0) / s2, nb = (hi - D0) / s2;
-			n0 = max(n0, ceil(min(na, nb)) - 1.0);
-			n1 = min(n1, floor(max(na, nb)) + 1.0);
+			float tol = 1e-3 + 1e-6 * (abs(z.el) + z.y1 + abs(q.C.w) + 1.0) / abs(s2);
+			n0 = max(n0, ceil(min(na, nb) - tol));
+			n1 = min(n1, floor(max(na, nb) + tol));
 		} else if (D0 < lo || D0 > hi) {
 			n1 = n0 - 1.0;
 		}

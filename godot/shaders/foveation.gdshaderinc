@@ -149,7 +149,8 @@ layout(set = 1, binding = 2, std430) restrict buffer TailArgs {
 } ta;
 // each eye's view of each body's tail, the same for all its texels: per eye and body, (b1, the
 // sector's half width round the axis with its margins; nought: no tail this frame), (ax x b1, the
-// half width's cosine, -2 for all the way round: fov_tail_ranges), and per side and
+// half width's cosine, -2 for all the way round: fov_tail_ranges), per body its axes E3 and N
+// (tail_body_of's: once a frame, not each texel's), and per side and
 // strip k (TAIL_STRIPS: the band) the angles off the eye's inward radial it spans and the copies it
 // looks into, as zone_tail.gdshader's vertices take them: (least, greatest, first, last), past the
 // zone too where first is -1e9 (the band of a body without strips), none where least > greatest;
@@ -161,6 +162,7 @@ layout(set = 1, binding = 2, std430) restrict buffer TailArgs {
 layout(set = 1, binding = 3, std430) restrict buffer TailData {
 	vec4 sec[2 * FOV_TAIL_MAX];
 	vec4 sec2[2 * FOV_TAIL_MAX];
+	vec4 bod[2 * FOV_TAIL_MAX];
 	vec4 rng[2 * FOV_TAIL_MAX * FOV_TAIL_RANGES];
 	uint lists[];
 } td;
@@ -174,12 +176,14 @@ layout(push_constant, std430) uniform TailKind {
 	vec4 f;             // psi_min (zone_tail.gdshader's tail_psi_min), the strips drawn (Renderer.tail_strips), TAIL's kind (0 balls, 1 cubes), 0
 } tk;
 
-TailBody fov_tail_body(int s) {
-	return tail_body(s >= tk.n.z, tb.body[4 * s], tb.body[4 * s + 1], tb.body[4 * s + 2], tb.body[4 * s + 3].x);
-}
-
 int fov_tail_slot(int b) {
 	return b < tk.n.x ? b : tk.n.z + b - tk.n.x;
+}
+
+// the zone's body b (its slot's row, its other axes as TAIL_VIEW worked them out)
+TailBody fov_tail_body(int b) {
+	int s = fov_tail_slot(b);
+	return tail_body_of(s >= tk.n.z, tb.body[4 * s], tb.body[4 * s + 1], tb.body[4 * s + 2], td.bod[2 * b], td.bod[2 * b + 1], tb.body[4 * s + 3].x);
 }
 
 // eye v's inward radial direction in the camera's space
@@ -203,9 +207,13 @@ uint fov_tail_quads(uint kind) {
 
 // the ranges of the bodies whose strip or band, within its sector, the ray d of eye v (off its
 // inward radial ax) lies in, as pick_img holds them (the balls', the cubes'). Round the axis by the
-// cosine of its way off b1 rather than its angle: the same sector, without an arctangent per body
+// cosine of its way off b1 rather than its angle: the same sector, without an arctangent per body;
+// and a cube's only where the ray's plane through the centre (normal nu) meets its 4D box, which its
+// sector, by the box's bounding ball, takes wider (a hair wider: the sector's margin round the axis)
 uvec2 fov_tail_ranges(vec3 d, uint v, vec3 ax) {
 	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
+	vec4 D = d.x * eyes[6u * v + 1u] + d.y * eyes[6u * v + 2u] + d.z * eyes[6u * v + 3u];
+	vec3 nu = cross(eyes[6u * v].yzw, D.yzw);
 	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
 	uvec2 w = uvec2(0u);
 	for (int b = 0; b < nb; b++) {
@@ -216,6 +224,13 @@ uvec2 fov_tail_ranges(vec3 d, uint v, vec3 ax) {
 		float x = dot(d, sec.xyz), y = dot(d, s2.xyz);
 		float rc = s2.w * sqrt(x * x + y * y);
 		int kind = b < tk.n.x ? 0 : 1;
+		if (kind == 1) {
+			int sl = fov_tail_slot(b);
+			vec3 C = tb.body[4 * sl].xyz;
+			float sup = abs(dot(nu, tb.body[4 * sl + 1].xyz)) + abs(dot(nu, tb.body[4 * sl + 2].xyz))
+					+ abs(dot(nu, td.bod[2 * b].xyz)) + abs(dot(nu, td.bod[2 * b + 1].xyz));
+			if (abs(dot(nu, C)) > tb.body[4 * sl + 3].x * sup + 2e-3 * length(C) * length(nu)) continue;
+		}
 		for (int side = 0; side < 2; side++) {
 			if ((side == 0 ? x : -x) < rc) continue;
 			for (int k = 0; k <= TAIL_STRIPS; k++) {
@@ -241,7 +256,8 @@ bool fov_tail_texel(uvec3 id, out vec3 d, out vec2 p, out float rho, out float s
 
 #if defined(TAIL_VIEW)
 // An invocation a body and side of eye z's: its sector and its strips' and band's ranges into td
-// (from ZoneSections' cull_img, as zone_tail.gdshader's vertices read it); and TAIL's dispatch reset.
+// (from ZoneSections' cull_img, as zone_tail.gdshader's vertices read it), and once the body's axes
+// E3 and N (fov_tail_body); and TAIL's dispatch reset.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 void main() {
 	uint v = gl_WorkGroupID.z;
@@ -268,6 +284,11 @@ void main() {
 	}
 	if (b >= tk.n.x + tk.n.y) return;
 	int i0 = tk.n.w, sl = fov_tail_slot(b);
+	if (v == 0u && side == 0) {
+		TailBody q = tail_body(sl >= tk.n.z, tb.body[4 * sl], tb.body[4 * sl + 1], tb.body[4 * sl + 2], tb.body[4 * sl + 3].x);
+		td.bod[2 * b] = q.E[2];
+		td.bod[2 * b + 1] = q.E[3];
+	}
 	vec4 at = imageLoad(zone_cull, ivec3(i0, sl, v));
 	if (at.w < 0.5 || any(notEqual(at.xyz, tb.body[4 * sl].xyz))) return;
 	vec4 bw = imageLoad(zone_cull, ivec3(i0 + 1, sl, v));
@@ -485,7 +506,7 @@ void main() {
 		vec4 rg = td.rng[ob * FOV_TAIL_RANGES + pick % FOV_TAIL_RANGES];
 		bool far = rg.z < -5e8;
 		int sl = fov_tail_slot(b);
-		TailBody q = fov_tail_body(sl);
+		TailBody q = fov_tail_body(b);
 		vec3 d = fov_tail_dir(quad, lq);
 		vec4 D = d.x * eyes[6u * v + 1u] + d.y * eyes[6u * v + 2u] + d.z * eyes[6u * v + 3u];
 		vec4 ev = eyes[6u * v];
