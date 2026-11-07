@@ -17,15 +17,16 @@
 // the axis) and l within the ball's slab: the profile (r(l), w(l)) within its chord of the ball's
 // centre seen at psi_c (the cylinder a line, the fillet an arc, the flat part a line: each in closed
 // form, tail_slab). On the cylinder the copies n whose l there is within the slab are a run of whole
-// numbers in closed form (a cube's narrowed to its box's l at the window's angles), however many turns
-// on; next to the limit, where l moves by a hair a copy, the run is long, and the copies the ray goes
-// into are a run within it: tried at TAIL_COPIES copies spread over it, then halving back from the
-// first it goes into to the first of all (tail_copy). On the far fillet the few there by psi at the
-// slab's ends. A copy's window of y is its |x| <=
-// dmax, and in it the ray goes into the body where it enters every one of its convex parts (a ball's
-// chord ball, a cube's four slabs of its 4D box): each part's Newton step from the side the ray comes
-// from never passes that part's own way in, so the furthest of them, taken again and again, lands on
-// the way into the body, or finds a part the ray leaves before it is in the others (tail_enter).
+// numbers in closed form (a ball's exactly those it goes into: tail_meet; a cube's narrowed to its
+// box's l at the window's angles), however many turns on; next to the limit, where l moves by a hair
+// a copy, a cube's run is long, and the copies the ray goes into are a run within it: tried at
+// TAIL_COPIES copies spread over it, then halving back from the first it goes into to the first of
+// all (tail_copy). On the far fillet the few there by psi at the slab's ends. A copy's window of y is
+// its |x| <= dmax, and in it the ray goes into the body where it enters every one of its convex
+// parts (a ball's chord ball, a cube's four slabs of its 4D box): each part's Newton step from the
+// side the ray comes from never passes that part's own way in, so the furthest of them, taken again
+// and again, lands on the way into the body, or finds a part the ray leaves before it is in the
+// others (tail_enter).
 // Only ways in at a turn psi >= psi_min count (a point at psi is in image floor(psi / pi)): those
 // before are the meshes' images, drawn already, and a ray already in a body at psi_min went in through
 // one of them. The renderer takes psi_min (ZONE_IMAGES - 1) pi: the meshes' last image is drawn by
@@ -48,7 +49,7 @@
 const float TAIL_PI2 = 6.28318530717959;
 const int TAIL_COPIES = 4;        // copies tried a body and stretch (from the first that can be met)
 const int TAIL_STEPS = 12;        // Newton's rounds into a body
-const int TAIL_HALVE = 12;        // halvings back to the way in, a step past it
+const int TAIL_HALVE = 12;        // steps back to the way in (Newton's, or halving), a step past it
 const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
 const float TAIL_TOL_FILLET = 1e-5;
 const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
