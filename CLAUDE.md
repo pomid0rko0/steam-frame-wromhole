@@ -78,7 +78,7 @@ Install nothing by hand: what the work needs goes into `setup.sh`.
   changed): `tools/box.sh godot --headless --path godot --import` in the tree you run it from.
 - **Speed** is measured in the headset with the speed check (`godot/bench.gd`).
 - **CI** (`.github/workflows/ci.yml`; README, «Проверки») checks every push, on exactly the commit
-  pushed: all the builds and all of the above but `test_box.sh`, shared out over eleven machines
+  pushed: all the builds and all of the above but `test_box.sh`, shared out over twelve machines
   (the stereo test in parts, `tools/stereo_parts.txt`). A branch that differs from `main` only in
   Markdown and `docs/` gets none, as nothing reads them. The tests run in the image of
   `tools/Containerfile` (named by `tools/box_image.sh`): a change to it or to `setup.sh` makes CI
