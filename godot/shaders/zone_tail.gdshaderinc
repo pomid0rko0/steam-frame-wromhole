@@ -445,6 +445,21 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 				hi = min(hi, chi + mg);
 			}
 		}
+		if (!q.cube) {
+			// a ball's copies the ray goes into, exactly: copy n's line in the window, l = Cw + d + lam
+			// x (d its l at psi_c off the centre's), is in the ball's section of the cylinder where
+			// rho0^2 + |C|^2 - s^2 - k cos x + (d + lam x)^2 <= 0 (k = 2 rho0 A), which it meets where
+			// |d| <= the most of sqrt(k cos x + e - k) + |lam x| over x (e = s^2 - h^2 - (A - rho0)^2,
+			// h: C off the ray's plane), at cos x = 1 - delta; a hair wider than float32 works it out
+			float h = dot(Cx.xyz, cross(z.en, z.t));
+			float e = q.size * q.size - h * h - (A - g_prof.x) * (A - g_prof.x);
+			float k = 2.0 * g_prof.x * A, l2 = lam * lam;
+			float B = 2.0 * k * k + 4.0 * l2 * k;
+			float del = 8.0 * l2 * max(e, 0.0) / max(B + sqrt(max(B * B - 16.0 * k * k * l2 * max(e, 0.0), 0.0)), GEO_TINY20);
+			float ds = e > 0.0 ? (sqrt(max(e - k * del, 0.0)) + 2.0 * abs(lam) * geo_asin(sqrt(0.5 * del))) * 1.001 + 1e-6 : -1.0;
+			lo = max(lo, -ds);
+			hi = min(hi, ds);
+		}
 		float n0 = max(ceil((z.at0.x - psi_c - dmax) / TAIL_PI2), nmin);
 		float n1 = min(floor((z.at1.x - psi_c + dmax) / TAIL_PI2), n_hi);
 		float s2 = TAIL_PI2 * lam;
@@ -455,14 +470,16 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 		} else if (D0 < lo || D0 > hi) {
 			n1 = n0 - 1.0;
 		}
+		if (lo > hi) n1 = n0 - 1.0;
 		// the first copy the ray goes into: each of a short run, else TAIL_COPIES spread over it
-		// and halving back from the first of them it goes into
+		// (a ball's run is exact: its first ones, then its last) and halving back from the first
+		// of them it goes into
 		vec3 at;
 		bool met = false;
 		float span = n1 - n0;
 		float prev = n0 - 1.0;
 		for (int c = 0; c < TAIL_COPIES; c++) {
-			float n = span < float(TAIL_COPIES) ? n0 + float(c) : n0 + floor(span * float(c) / float(TAIL_COPIES - 1) + 0.5);
+			float n = span < float(TAIL_COPIES) || (!q.cube && c < TAIL_COPIES - 1) ? n0 + float(c) : n0 + floor(span * float(c) / float(TAIL_COPIES - 1) + 0.5);
 			if (n > n1) break;
 			if (tail_copy(z, q, n, psi_c, dmax, sl.xy, lam, psi_min, at)) {
 				met = true;
