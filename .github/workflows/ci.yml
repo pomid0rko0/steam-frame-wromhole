@@ -4,7 +4,7 @@
 # OpenXR test alone (as tools/test_openxr.sh needs); the Godot tests, then a share; the headset's
 # compiler, then a share; the shaders' accuracy in three, alone (ref/test_gpu.py's pieces take all of
 # a machine's cores): the bodies' meshes in the zone (its check zone, two pieces a throat), the tail
-# (its check tail, two pieces a throat) and the rest with the gravity's; five more machines of the stereo test alone, the longest
+# (its check tail) and the rest with the gravity's; five more machines of the stereo test alone, the longest
 # curved places' traces each on one of them (tools/stereo_parts.txt: the shares, PART=n). A branch that
 # differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
 # («Что изменилось», changes); main, a version, a tag and a release always get them all.
