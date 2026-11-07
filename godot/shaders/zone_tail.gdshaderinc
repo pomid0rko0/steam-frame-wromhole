@@ -291,28 +291,28 @@ bool tail_over(TailRay z, TailBody q, bool fillet, float lc, float lam, float ps
 // goes in (true), by Newton's steps on each part it is out of, the furthest taken; false if it
 // leaves a part (or never reaches one) before it is in all. A part's step from outside never passes
 // its own way in where the part bends away from the ray, so a step that lands within TAIL_TOL of
-// the body (a ball's always) lands where the ray goes in. But a cube's slab can bend toward the ray
-// along the helix and the step overshoot into the body: the way in is then looked for back between
-// the last point out of it and the first in (TAIL_HALVE steps at most), by Newton's steps on the part
-// a point is in by least or out by most while that part's way in is ahead of a point out or behind a
-// point in, and halving where such a step would leave the stretch. A step can even go over a cube (a
-// thin way through a corner of it) and leave it behind: where the ray then leaves a part, the step's
-// stretch is looked into (tail_over, TAIL_OVER times, each time on the half its slabs say the cube
-// is in), and a point in the cube found there is the first in. Done within TAIL_TOL of the body
-// (on its surface, going in), or where a step moves the point by less: on the fillet the sweep's
-// table (its filter's weights in 256ths) leaves the point that much uncertain.
+// the body going in (a ball's always) lands where the ray goes in. But a cube's slab can bend toward
+// the ray along the helix and the step overshoot into the body: the way in is then looked for back
+// between the last point out of it and the first in (TAIL_HALVE steps at most), by Newton's steps
+// on the part a point in is in by least (the face the ray came in through), and halving where such
+// a step would leave that stretch or after a point out. A step can even go over a cube (a thin way
+// through a corner of it) and leave it behind: where the ray then leaves a part, the step's stretch
+// is looked into (tail_over, TAIL_OVER times, each time on the half its slabs say the cube is in),
+// and a point in the cube found there is the first in. Done within TAIL_TOL of the body (on its
+// surface, going in), or where a step moves the point by less: on the fillet the sweep's table (its
+// filter's weights in 256ths) leaves the point that much uncertain.
 bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
 	x = xa;
 	float near = fillet ? TAIL_TOL_FILLET : TAIL_TOL;
 	float tol = q.cube ? near : 2.0 * near * q.size;
 	float xo = xa;          // the last point out of the body
-	vec4 o = vec4(0.0);     // tail_out at x
 	bool in_ = false;
 	for (int i = 0; i < TAIL_STEPS; i++) {
-		o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
+		vec4 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
 		if (o.x <= tol) {
 			// in at the window's start: it went in before (the meshes' images, or a copy before)
 			if (i == 0) return false;
+			if (o.x >= -tol && o.w <= 0.0) return true;
 			in_ = true;
 			break;
 		}
@@ -322,11 +322,9 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 			float a = xo, c = x, u;
 			for (int r = 0; r < TAIL_OVER && !in_; r++) {
 				if (!tail_over(z, q, fillet, lc, lam, psi_c, base, a, c, u)) break;
-				vec4 ou = tail_out(z, q, fillet, lc, lam, psi_c, base, u, tol);
-				if (ou.x <= tol) {
+				if (tail_out(z, q, fillet, lc, lam, psi_c, base, u, tol).x <= tol) {
 					x = u;
 					xo = a;
-					o = ou;
 					in_ = true;
 				} else {
 					// out at u: on the half the slabs, linear on it, say the cube may be in
@@ -348,19 +346,25 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 		if (done) return true;
 	}
 	if (!in_) return false;
-	// x in, xo out; o at the last point worked out, xp
-	float xp = x;
+	// x in, xo out; o at the last point worked out, its rate 0 if that was out (then halving). The
+	// point in is worked out again rather than kept from the steps: kept, its numbers would hold
+	// registers all through them (tools/adreno_stats.sh: 48 instead of 32, 4 waves instead of 6)
+	vec4 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
 	for (int i = 0; i < TAIL_HALVE; i++) {
 		if (o.x >= -tol && o.x <= tol && o.w <= 0.0) break;
 		float m = 0.5 * (xo + x);
 		if (o.w < 0.0) {
-			float xn = xp - o.x / o.w;
+			float xn = x - o.x / o.w;
 			if (xn > xo && xn < x) m = xn;
 		}
 		if (m == xo || m == x) break;
 		o = tail_out(z, q, fillet, lc, lam, psi_c, base, m, tol);
-		xp = m;
-		if (o.x <= tol) x = m; else xo = m;
+		if (o.x <= tol) {
+			x = m;
+		} else {
+			xo = m;
+			o.w = 0.0;
+		}
 	}
 	return true;
 }
