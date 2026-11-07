@@ -16,7 +16,7 @@
 // ray's angle is psi_c + 2 pi n + x with |x| <= dmax (the angle the body's bounding ball spans from
 // the axis) and l within the ball's slab: the profile (r(l), w(l)) within its chord of the ball's
 // centre seen at psi_c (the cylinder a line, the fillet an arc, the flat part a line: each in closed
-// form, tail_slab). On the cylinder the copies n whose l there is within the slab are a run of whole
+// form, tail_slab). On the cylinder the copies n whose window reaches into the slab are a run of whole
 // numbers in closed form (a ball's exactly those it goes into: tail_meet; a cube's narrowed to its
 // box's l at the window's angles), however many turns on; next to the limit, where l moves by a hair
 // a copy, a cube's run is long, and the copies the ray goes into are a run within it: tried at
@@ -26,7 +26,8 @@
 // parts (a ball's chord ball, a cube's four slabs of its 4D box): each part's Newton step from the
 // side the ray comes from never passes that part's own way in, so the furthest of them, taken again
 // and again, lands on the way into the body, or finds a part the ray leaves before it is in the
-// others (tail_enter).
+// others (tail_enter); a ball's on the cylinder from just before the way in, by a parabola its
+// function is no less than (tail_ball_start), and none where that has no root.
 // Only ways in at a turn psi >= psi_min count (a point at psi is in image floor(psi / pi)): those
 // before are the meshes' images, drawn already, and a ray already in a body at psi_min went in through
 // one of them. The renderer takes psi_min (ZONE_IMAGES - 1) pi: the meshes' last image is drawn by
