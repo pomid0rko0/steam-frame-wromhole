@@ -43,16 +43,27 @@ const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
 const ZONE_CUBE_SHADER := preload("res://shaders/zone_cube.gdshader")
 const ZONE_TAIL_SHADER := preload("res://shaders/zone_tail.gdshader")
 const LENS_MAX := 40            # bodies in the lens list (lens.gdshaderinc's LENS_MAX)
-# a body in the curved zone: its images drawn (the first ZONE_FINE on the fine mesh, the rest, thin
-# rings near the throat's photon sphere, on the coarse one), its meshes (body.gdshaderinc, ZONE):
-# azimuths about the eye's axis, points round each section. Seen from the throat's cylinder, a
-# body's k-th turn round it is a ring that thins only as 1 / k
+const DIRECT_MARGIN := 0.2      # m: an eye's l off the head's, at most (with room to spare)
+# a body in the curved zone: each of its images in the picture (ZONE_IMAGES at most) on the mesh its
+# place there needs (zone_sections.gdshaderinc's SIZES): the fine one for one of the first ZS_FINE
+# when large, a ball's thin ones (ZONE_LODS: the coarse one's nodes, fewer) and a cube's ribbon when
+# thin, else the coarse one (body.gdshaderinc, ZONE: azimuths about the eye's axis, points round
+# each section);
+# each mesh a MultiMesh drawn indirect, its instances the list ZoneSections' LISTS makes and their
+# count written by it. Seen from the throat's cylinder, a body's k-th turn round it is a ring as long
+# as its first image that thins only as 1 / k
 const ZONE_IMAGES := 20
-const ZONE_FINE := 4
 const ZONE_AZIMUTHS := [64, 64]  # balls', cubes'
 const ZONE_ROUND := 48
 const ZONE_ROUND_COARSE := 12
-const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one
+# the zone's meshes, in ZoneSections' lists' order: [kind (0 balls, 1 cubes), azimuths, points round a
+# section]: the fine one's nodes, or the coarse one's (each mesh's azimuths and points a divisor of
+# theirs); a cube's last, the ribbon: each column's three nodes of the coarse one that ZoneSections'
+# RIBBONS chose (ZONE_RIBBON)
+const ZONE_LODS := [[0, 64, 48], [0, 64, 12], [0, 64, 6], [0, 32, 6], [0, 16, 4], [1, 64, 48], [1, 64, 12], [1, 64, 2]]
+const ZONE_RIBBON := 7
+const TAIL_SEGMENTS := 32       # the tail's sectors of the view (zone_tail.gdshader): quads across one (zone_tail.gdshaderinc's)
+const TAIL_PER := ZoneSections.TAIL_STRIPS + 1   # its instances a body slot and side: the strips and the band
 const LINE_IMAGES := 6          # images drawn of the field lines and the beams
 const SCENE_SHADER := preload("res://shaders/scene.gdshader")
 const ARROW_SHADER := preload("res://shaders/arrows.gdshader")
@@ -85,6 +96,10 @@ const LINE_STEP := 1.0          # m between the lines' starts, across (chart y)
 const LINE_DS := 0.2            # m: the steps a line is traced and drawn in
 const LINE_MAX_STEPS := 300
 const LINE_WIDTH := 0.03        # half a line's width, m
+const LINE_STEPS := 5           # a chunk of a line (line_chunks): its steps, its arrows at most, its vertices
+const LINE_ARROWS := 2
+const LINE_CV := 2 * (LINE_STEPS + 1) + 3 * LINE_ARROWS
+const LINE_CHUNKS := 1024       # chunks at most (the 80 m throat's lines: about half)
 const ARROW_GAP := 1.0          # m along a line between its arrows
 const ARROW_LENGTH := 0.24      # m
 const ARROW_HALF := 0.12        # half an arrow's width, m
@@ -101,17 +116,29 @@ var floor_mat: ShaderMaterial   # the one drawn (gravity_view) without our own f
 var floor_sample_mat := ShaderMaterial.new()   # the one drawn with it (FLOOR_SAMPLE_SHADER)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
-var zone_mats: Array[ShaderMaterial] = []   # balls fine, coarse, cubes fine, coarse
+var zone_mats: Array[ShaderMaterial] = []   # ZONE_LODS' meshes'
 var scene_mats: Array[ShaderMaterial] = []
 var arrow_mat := ShaderMaterial.new()
 var beam_mats: Array[ShaderMaterial] = [ShaderMaterial.new(), ShaderMaterial.new()]   # each hand's
 var balls: MultiMeshInstance3D          # out in a flat universe: seen straight and through the lens
 var cubes: MultiMeshInstance3D
-var zone: Array[MultiMeshInstance3D] = []  # in the curved zone (or reaching into it): as zone_mats
+# in the curved zone (or reaching into it): ZONE_LODS' meshes, MultiMeshes drawn indirect, and their
+# instances (the RenderingServer's: a MultiMesh node has no indirect drawing); the meshes kept
+var _zone_mm: Array[RID] = []
+var _zone_inst: Array[RID] = []
+var _zone_meshes: Array[Mesh] = []
+var _zone_cmds := false         # their draw commands handed to zone_sections
 var tail_mat := ShaderMaterial.new()   # and their images past ZONE_IMAGES' (zone_tail.gdshader)
 var tail: MultiMeshInstance3D   # an instance per body slot and side (zone_tail.gdshader)
 var statics: Array[MeshInstance3D] = []
-var arrows: MultiMeshInstance3D   # an instance per image (body.gdshaderinc)
+# the field lines: their chunks (line_mesh) as a MultiMesh drawn indirect (the RenderingServer's: a
+# MultiMesh node has no indirect drawing), an instance a chunk's image ZoneSections' LINE_LISTS found
+# drawn (body.gdshaderinc, ARROWS)
+var _line_mm: RID
+var _line_inst: RID
+var _line_mesh: ArrayMesh
+var arrows_shown := false
+var _lines_pending := {}        # chunks waiting for their draw command (_lines_commands)
 var beams: Array[MultiMeshInstance3D] = []
 var floor_quad: MeshInstance3D
 var foveation := Foveation.new()   # the floor coarser away from the gaze (on the camera's compositor: Main)
@@ -146,29 +173,37 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	# then the coarse one's (both kinds' meshes alike: one grid for its compute shader)
 	assert(ZONE_AZIMUTHS[0] == ZONE_AZIMUTHS[1])
 	zone_sections.setup(ZONE_AZIMUTHS[0], ZONE_ROUND, ZONE_ROUND_COARSE, MAX_BALLS, MAX_CUBES, ZONE_IMAGES)
-	for k in 4:
+	for k in ZONE_LODS.size():
+		var kind: int = ZONE_LODS[k][0]
+		var fine: bool = ZONE_LODS[k][2] == ZONE_ROUND
+		assert(ZONE_AZIMUTHS[kind] % ZONE_LODS[k][1] == 0 and (ZONE_ROUND if fine else ZONE_ROUND_COARSE) % ZONE_LODS[k][2] == 0)
 		var m := ShaderMaterial.new()
-		m.shader = ZONE_BALL_SHADER if k < 2 else ZONE_CUBE_SHADER
-		m.set_shader_parameter("zone_first", 0 if k % 2 == 0 else ZONE_FINE)
-		m.set_shader_parameter("zone_images", ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
-		m.set_shader_parameter("zone_round", float(ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE))
-		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[k / 2]))
+		m.shader = ZONE_BALL_SHADER if kind == 0 else ZONE_CUBE_SHADER
+		# the nodes the mesh's VERTEX.xy span: the fine mesh's, else the coarse one's
+		m.set_shader_parameter("zone_round", float(ZONE_ROUND if fine else ZONE_ROUND_COARSE))
+		m.set_shader_parameter("zone_columns", float(ZONE_AZIMUTHS[kind]))
 		m.set_shader_parameter("zone_nodes", zone_sections.tex)
 		m.set_shader_parameter("zone_cull", zone_sections.cull_tex)
 		m.set_shader_parameter("zone_paths", zone_sections.path_tex)
-		m.set_shader_parameter("zone_slot", 0 if k < 2 else MAX_BALLS)
-		m.set_shader_parameter("zone_row", 0 if k % 2 == 0 else ZONE_ROUND + 1)
+		m.set_shader_parameter("zone_list", zone_sections.list_tex)
+		m.set_shader_parameter("zone_list_row", k)
+		m.set_shader_parameter("zone_row", 0 if fine else ZONE_ROUND + 1)
 		m.set_shader_parameter("zone_slot_rows", ZONE_ROUND + ZONE_ROUND_COARSE + 2)
+		if k == ZONE_RIBBON:
+			m.set_shader_parameter("zone_ribbon", true)
+			m.set_shader_parameter("zone_ribbons", zone_sections.ribbon_tex)
+			m.set_shader_parameter("zone_images", ZONE_IMAGES)
+			m.set_shader_parameter("zone_cube0", MAX_BALLS)
 		zone_mats.append(m)
 	tail_mat.shader = ZONE_TAIL_SHADER
 	# from the meshes' last image on: both draw that one (where it meets the next in a ring, round the
 	# eye's axis, the mesh's edge and the tail's first way in would leave pinholes between them)
 	tail_mat.set_shader_parameter("tail_psi_min", (ZONE_IMAGES - 1) * PI)
-	tail_mat.set_shader_parameter("tail_segments", float(TAIL_SEGMENTS))
 	tail_mat.set_shader_parameter("tail_far", Main.FAR)
 	tail_mat.set_shader_parameter("tail_images", ZONE_IMAGES)
 	tail_mat.set_shader_parameter("zone_cull", zone_sections.cull_tex)
 	arrow_mat.shader = ARROW_SHADER
+	arrow_mat.set_shader_parameter("arrow_rim", Vector3(ARROW_RIM_COLOR.r, ARROW_RIM_COLOR.g, ARROW_RIM_COLOR.b))
 	for m in beam_mats:
 		m.shader = BEAM_SHADER
 
@@ -190,8 +225,9 @@ func _ready() -> void:
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
-	# under the camera too: sectors of each eye's view round its radial direction
-	tail = _multimesh(_zone_mesh(TAIL_SEGMENTS, 1), tail_mat, 2 * (MAX_BALLS + MAX_CUBES))
+	# under the camera too: sectors of each eye's view round its radial direction, per body and side
+	# its strips and band (zone_tail.gdshader); those of the bodies in the zone drawn (set_objects)
+	tail = _multimesh(_zone_mesh(TAIL_SEGMENTS, 1), tail_mat, 2 * (MAX_BALLS + MAX_CUBES) * TAIL_PER)
 	for i in tail.multimesh.instance_count:
 		tail.multimesh.set_instance_transform(i, Transform3D.IDENTITY)
 	tail.multimesh.visible_instance_count = tail.multimesh.instance_count
@@ -199,11 +235,23 @@ func _ready() -> void:
 	add_child(tail)
 	balls = _multimesh(_ball_mesh(), ball_mat, MAX_BALLS)
 	cubes = _multimesh(_cube_mesh(), cube_mat, MAX_CUBES)
-	for k in 4:
-		var images := ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE
-		var grid := _zone_mesh(ZONE_AZIMUTHS[k / 2], ZONE_ROUND if k % 2 == 0 else ZONE_ROUND_COARSE)
-		zone.append(_multimesh(grid, zone_mats[k], (MAX_BALLS if k < 2 else MAX_CUBES) * images))
-	for mm in [balls, cubes] + zone:
+	for k in ZONE_LODS.size():
+		var kind: int = ZONE_LODS[k][0]
+		var grid := _zone_mesh(ZONE_LODS[k][1], ZONE_LODS[k][2])
+		_zone_meshes.append(grid)
+		var mm := RenderingServer.multimesh_create()
+		RenderingServer.multimesh_allocate_data(mm, (MAX_BALLS if kind == 0 else MAX_CUBES) * ZONE_IMAGES,
+				RenderingServer.MULTIMESH_TRANSFORM_3D, false, false, true)
+		RenderingServer.multimesh_set_mesh(mm, grid.get_rid())
+		var inst := RenderingServer.instance_create2(mm, play.get_world_3d().scenario)
+		RenderingServer.instance_set_custom_aabb(inst, AABB(Vector3.ONE * -1e4, Vector3.ONE * 2e4))
+		RenderingServer.instance_set_extra_visibility_margin(inst, 16384.0)
+		RenderingServer.instance_geometry_set_cast_shadows_setting(inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
+		RenderingServer.instance_geometry_set_material_override(inst, zone_mats[k].get_rid())
+		_zone_mm.append(mm)
+		_zone_inst.append(inst)
+	_zone_commands()
+	for mm in [balls, cubes]:
 		play.add_child(mm)
 	_lens_statics()
 	_upload_lens(PackedVector4Array(), PackedVector4Array())
@@ -211,9 +259,21 @@ func _ready() -> void:
 		var mi := _body(_scene_mesh(1.0 if k == 0 else -1.0), scene_mats[k])
 		statics.append(mi)
 		play.add_child(mi)
-	arrows = _images(_arrow_mesh(arrow_arrays(space)), arrow_mat)
-	arrows.visible = false
-	play.add_child(arrows)
+	_line_mesh = line_mesh()
+	_line_mm = RenderingServer.multimesh_create()
+	_line_inst = RenderingServer.instance_create2(_line_mm, play.get_world_3d().scenario)
+	RenderingServer.instance_set_custom_aabb(_line_inst, AABB(Vector3.ONE * -1e4, Vector3.ONE * 2e4))
+	RenderingServer.instance_set_extra_visibility_margin(_line_inst, 16384.0)
+	RenderingServer.instance_geometry_set_cast_shadows_setting(_line_inst, RenderingServer.SHADOW_CASTING_SETTING_OFF)
+	RenderingServer.instance_geometry_set_material_override(_line_inst, arrow_mat.get_rid())
+	# its data once, for the most chunks (its draw command stays the same), before its mesh (else it has none)
+	RenderingServer.multimesh_allocate_data(_line_mm, LINE_CHUNKS * LINE_IMAGES, RenderingServer.MULTIMESH_TRANSFORM_3D, false, false, true)
+	RenderingServer.multimesh_set_mesh(_line_mm, _line_mesh.get_rid())
+	_lines_set(line_chunks(space))
+	arrow_mat.set_shader_parameter("line_view", zone_sections.line_tex)
+	arrow_mat.set_shader_parameter("line_data", zone_sections.line_data_tex)
+	arrow_mat.set_shader_parameter("line_list", zone_sections.line_list_tex)
+	_arrows_shown(false)
 	var tube := _beam_mesh()
 	for m in beam_mats:
 		var b := _images(tube, m)
@@ -231,9 +291,11 @@ func _ready() -> void:
 ## more on the Frame, and SteamVR at half rate after it).
 func _process(_delta: float) -> void:
 	_lines_ready()
+	_lines_commands()
+	_zone_commands()
 	if _warm > 0:
 		_warm -= 1
-		arrows.visible = _warm > 0 or (gravity_view == 2 and _lines_task < 0)
+		_arrows_shown(_warm > 0 or (gravity_view == 2 and _lines_task < 0))
 		_tail_visible()
 		if _warm == 0:
 			for k in beams.size():
@@ -243,6 +305,20 @@ func _process(_delta: float) -> void:
 
 func _tail_visible() -> void:
 	tail.visible = _warm > 0 or (_tail_on and tail_shown)
+	for k in _zone_inst.size():
+		RenderingServer.instance_set_visible(_zone_inst[k], _warm > 0 or zone_count[ZONE_LODS[k][0]] > 0)
+
+
+## The zone meshes' draw commands to zone_sections, once they are there.
+func _zone_commands() -> void:
+	if _zone_cmds:
+		return
+	var cmds: Array[RID] = []
+	for mm in _zone_mm:
+		cmds.append(RenderingServer.multimesh_get_command_buffer_rd_rid(mm))
+	if cmds.size() == ZONE_LODS.size() and cmds.all(func(r: RID) -> bool: return r.is_valid()):
+		zone_sections.set_commands(cmds)
+		_zone_cmds = true
 
 
 ## The floor's quad's material: foveation's while it is on (it samples its texture),
@@ -253,6 +329,11 @@ func _floor_material() -> void:
 
 var _warm := 3                  # frames left drawing the gravity views, the beams and the tail (_process)
 var _tail_on := false           # a body in the zone, and a throat with a cylinder: the tail drawn
+# the tail's strips drawn (zone_tail.gdshader), else one band; the speed check compares (bench.gd)
+var tail_strips := true:
+	set(v):
+		tail_strips = v
+		tail_mat.set_shader_parameter("tail_strips_on", v)
 # the tail drawn where it is on; the speed check takes it away to time it (bench.gd's VARIANTS)
 var tail_shown := true:
 	set(v):
@@ -301,14 +382,14 @@ func set_length() -> void:
 	_tail_on = zone_count != Vector2i.ZERO and space.Lc > 0.0
 	_tail_visible()
 	_lines_want = true
-	arrows.visible = false
+	_arrows_shown(false)
 	if _lines_task < 0:
 		_lines_start()
 
 
 var _lines_task := -1           # WorkerThreadPool's task building the field lines, -1 none
 var _lines_want := false        # they are stale: built (again) once the task is free
-var _lines_built := []          # what it built: [mesh arrays]
+var _lines_built := []          # what it built: [line_chunks']
 
 
 func _lines_start() -> void:
@@ -320,13 +401,19 @@ func _lines_start() -> void:
 
 ## On a worker thread: reads nothing of the app's, only makes new things.
 func _lines_build(shape: Vector4) -> void:
-	_lines_built = [arrow_arrays(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
+	_lines_built = [line_chunks(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
 
 
 func _exit_tree() -> void:
 	if _lines_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_lines_task)
 		_lines_task = -1
+	# the zone meshes' and the field lines' instances and MultiMeshes (the RenderingServer's: no node
+	# frees them)
+	for r in _zone_inst + _zone_mm + [_line_inst, _line_mm]:
+		RenderingServer.free_rid(r)
+	_zone_inst.clear()
+	_zone_mm.clear()
 
 
 ## The field lines, built: in place, and shown if their view is on and they are not stale again.
@@ -338,8 +425,36 @@ func _lines_ready() -> void:
 	if _lines_want:
 		_lines_start()
 		return
-	arrows.multimesh.mesh = _arrow_mesh(_lines_built[0])
-	arrows.visible = gravity_view == 2
+	_lines_set(_lines_built[0])
+	_arrows_shown(gravity_view == 2)
+
+
+## The field lines' chunks (line_chunks, LINE_CHUNKS at most) to ZoneSections, with their MultiMesh's
+## draw command.
+func _lines_set(chunks: Dictionary) -> void:
+	assert(chunks.n <= LINE_CHUNKS)
+	chunks.n = mini(chunks.n, LINE_CHUNKS)
+	_lines_pending = chunks
+	_lines_commands()
+
+
+## The field lines' chunks to ZoneSections once their MultiMesh's draw command is there (it is made
+## with the frame after its data).
+func _lines_commands() -> void:
+	if _lines_pending.is_empty():
+		return
+	var cmd := RenderingServer.multimesh_get_command_buffer_rd_rid(_line_mm)
+	if not cmd.is_valid():
+		return
+	zone_sections.set_lines(_lines_pending, LINE_IMAGES, cmd)
+	_lines_pending = {}
+
+
+## The field lines shown or not, and their places in the view worked out (ZoneSections' LINES) or not.
+func _arrows_shown(on: bool) -> void:
+	arrows_shown = on
+	RenderingServer.instance_set_visible(_line_inst, on)
+	zone_sections.set_lines_shown(on)
 
 
 var _sweep_tex: ImageTexture
@@ -370,6 +485,14 @@ func set_head(l: float, n: Vector3, hf: Array, head_pos: Vector3) -> void:
 		m.set_shader_parameter("head_pos", head_pos)
 	foveation.set_head(l, n, f, head_pos)
 	zone_sections.set_head(l, n, f, head_pos)
+	# the bodies seen straight (body.gdshaderinc, DIRECT: the scene's objects, the toys out in a flat
+	# universe) only from an eye out of the curved zone in their own universe, from anywhere else their
+	# vertices only go off the picture: not drawn then (the eyes within DIRECT_MARGIN of the head)
+	var outside := absf(l) >= space.L - DIRECT_MARGIN
+	for k in statics.size():
+		RenderingServer.instance_set_visible(statics[k].get_instance(), statics[k].visible and outside and (l > 0.0) == (k == 0))
+	for mm in [balls, cubes]:
+		RenderingServer.instance_set_visible(mm.get_instance(), mm.visible and outside)
 
 
 ## The movable balls and cubes: balls by their centres (points of R^4) and (colour, radius), cubes
@@ -401,7 +524,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k] = C
 			zone_rows[k + 1] = e[0]
 			zone_rows[k + 2] = e[1]
-			zone_rows[k + 3] = Vector4(col[i].w, 0.0, 0.0, 0.0)
+			zone_rows[k + 3] = Vector4(col[i].w, c.r, c.g, c.b)
 			zone_cols[inz[0]] = Vector4(c.r, c.g, c.b, 1.0)
 		if out:
 			flat[0] += 1
@@ -426,7 +549,7 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			zone_rows[k] = C
 			zone_rows[k + 1] = E1
 			zone_rows[k + 2] = E2
-			zone_rows[k + 3] = Vector4(half, 0.0, 0.0, 0.0)
+			zone_rows[k + 3] = Vector4(half, c.r, c.g, c.b)
 			zone_cols[MAX_BALLS + inz[1]] = Vector4(c.r, c.g, c.b, 1.0)
 		if out:
 			flat[1] += 1
@@ -440,18 +563,19 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 			inz[1] += 1
 	balls.multimesh.visible_instance_count = flat[0]
 	cubes.multimesh.visible_instance_count = flat[1]
-	for k in 4:
-		zone[k].multimesh.visible_instance_count = inz[k / 2] * (ZONE_FINE if k % 2 == 0 else ZONE_IMAGES - ZONE_FINE)
 	zone_sections.set_bodies(zone_rows, inz[0], inz[1])
 	tail_mat.set_shader_parameter("tail_rows", zone_rows)
 	tail_mat.set_shader_parameter("tail_col", zone_cols)
 	tail_mat.set_shader_parameter("tail_count", Vector2i(inz[0], inz[1]))
+	# the zone's bodies' (its balls', then its cubes'); while warming, all
+	if tail and _warm == 0:
+		tail.multimesh.visible_instance_count = 2 * TAIL_PER * (inz[0] + inz[1])
 	_tail_on = inz[0] + inz[1] > 0 and space.Lc > 0.0
+	zone_count = Vector2i(inz[0], inz[1])
 	if tail:
 		_tail_visible()
 	_upload_lens(lens_a, lens_b)
 	toy_count = n + nc
-	zone_count = Vector2i(inz[0], inz[1])
 	ball_col = col.slice(0, n)
 	bodies.clear()
 	for i in n:
@@ -460,15 +584,14 @@ func set_objects(pos: PackedVector4Array, col: PackedVector4Array, cpos := Packe
 		bodies.append(["cube", cpos[i], ccol[i].w])
 
 
-## Body k of a kind (0 balls, 1 cubes) out of the zone (out: one instance in balls or cubes) or in
-## it (one per image in zone's two of its kind, from k times their count).
+## Body k of a kind (0 balls, 1 cubes) out of the zone (out: one instance in balls or cubes); in it,
+## nothing (the zone's meshes draw ZoneSections' lists, the bodies' rows from set_bodies).
 func _place(kind: int, out: bool, k: int, xf: Transform3D, c: Color) -> void:
-	var mms: Array = [[balls, cubes][kind].multimesh] if out else [zone[2 * kind].multimesh, zone[2 * kind + 1].multimesh]
-	for mm: MultiMesh in mms:
-		var count := 1 if out else (ZONE_FINE if mm == mms[0] else ZONE_IMAGES - ZONE_FINE)
-		for j in count:
-			mm.set_instance_transform(k * count + j, xf)
-			mm.set_instance_custom_data(k * count + j, c)
+	if not out:
+		return
+	var mm: MultiMesh = [balls, cubes][kind].multimesh
+	mm.set_instance_transform(k, xf)
+	mm.set_instance_custom_data(k, c)
 
 
 ## A body round C (a point of R^4) reaching reach (chord) stays out of the curved zone's ball, in a
@@ -580,7 +703,7 @@ func set_gravity_view(view: int) -> void:
 	floor_mat = floor_mats[mini(gravity_view, 1)]
 	_floor_material()
 	foveation.gravity = gravity_view > 0
-	arrows.visible = gravity_view == 2 and _lines_task < 0
+	_arrows_shown(gravity_view == 2 and _lines_task < 0)
 	print("gravity view: ", GRAVITY_VIEWS[gravity_view])
 
 
@@ -748,14 +871,16 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 
 
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
-## LINE_* and ARROW_*), as mesh arrays (Mesh.ARRAY_*) of the space sp: nothing but sp is read, so
-## they are built off the main thread when the throat's length changes (main.set_length). Vertices
-## as points of the space: n in the vertex, l in UV.x (body.gdshaderinc, ARROWS); each line and arrow
-## twice, its outline (COLOR.a 0) and itself over it (COLOR.a 1). Points of the surface n.x = 0 are
-## (l, beta), n = (0, cos beta, sin beta).
-static func arrow_arrays(sp: WormholeSpace) -> Array:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+## LINE_* and ARROW_*) of the space sp, in chunks (nothing but sp is read, so they are built off the
+## main thread when the throat's length changes: main.set_length): LINE_STEPS steps of a line, LINE_CV
+## vertices each (line_mesh: its strip, then up to LINE_ARROWS arrows; a chunk's last ones repeated
+## where it has fewer). Each with its outline (_line_chunks). Returns n: the chunks; in: a vertex's
+## point (l, n.y, n.z) and 1 for an arrow's, 0 for the line's (ZoneSections' LINES works out where it
+## is in the view); data: three texels a vertex for the vertex shader (body.gdshaderinc, ARROWS):
+## (its colour, 1 for an arrow's), (how far inside the coloured part), (how far inside its line's).
+## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
+static func line_chunks(sp: WormholeSpace) -> Dictionary:
+	var out := {"n": 0, "in": PackedFloat32Array(), "data": PackedFloat32Array()}
 	var top := sp.Rout + LINE_TOP
 	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
@@ -766,15 +891,29 @@ static func arrow_arrays(sp: WormholeSpace) -> Array:
 			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
 			if pts.size() < 2:
 				continue
-			_line(sp, st, pts, true)
-			_line(sp, st, pts, false)
-	st.index()          # shared corners once (_scene_mesh)
-	return st.commit_to_arrays()
+			_line_chunks(sp, pts, out)
+	return out
 
 
-static func _arrow_mesh(arr: Array) -> ArrayMesh:
+## The chunks' mesh: LINE_CV vertices, VERTEX.x the vertex's place in the chunk: the strip's, two a
+## point (k = 2 i + side), its quads between each two points, then each arrow's triangle.
+static func line_mesh() -> ArrayMesh:
+	var v := PackedVector3Array()
+	for k in LINE_CV:
+		v.append(Vector3(k, 0.0, 0.0))
+	var idx := PackedInt32Array()
+	for i in LINE_STEPS:
+		idx.append_array([2 * i, 2 * i + 2, 2 * i + 1, 2 * i + 1, 2 * i + 2, 2 * i + 3])
+	for a in LINE_ARROWS:
+		var k0 := 2 * (LINE_STEPS + 1) + 3 * a
+		idx.append_array([k0, k0 + 1, k0 + 2])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = v
+	arrays[Mesh.ARRAY_INDEX] = idx
 	var m := ArrayMesh.new()
-	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	m.custom_aabb = AABB(Vector3.ONE * -1e4, Vector3.ONE * 2e4)
 	return m
 
 
@@ -818,12 +957,17 @@ static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -
 
 
 ## A line through pts ([l, beta, g]) LINE_WIDTH to each side, with an arrow every ARROW_GAP along
-## it, in the colour of g where each point is; rim: its outline instead, ARROW_RIM wider all round.
-static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> void:
-	var grow := ARROW_RIM if rim else 0.0
-	var w := LINE_WIDTH + grow
-	# the strip: two vertices a point
-	var prev: Array = []
+## it, in the colour of g where each point is, and its dark outline ARROW_RIM wide all round: the
+## outline's outer edge, each vertex with how far it is inside the coloured part (a strip's way in
+## from its two edges, LINE_WIDTH - x and LINE_WIDTH + x at x across it, and 1; an arrow's place in
+## its coloured triangle's barycentric coordinates) and inside the line's (the same way in, for an
+## arrow too, which is coloured over its line), so the outline is the pixels where none of them is
+## all positive (body.gdshaderinc, ARROWS), not a mesh of its own. An arrow a hair nearer the eye
+## than its line. Into out (line_chunks), a chunk each LINE_STEPS steps.
+static func _line_chunks(sp: WormholeSpace, pts: Array, out: Dictionary) -> void:
+	var w := LINE_WIDTH + ARROW_RIM
+	# each point's two vertices: [(l, beta), x across, colour]
+	var pairs := []
 	for i in pts.size():
 		var a: Array = pts[maxi(i - 1, 0)]
 		var b: Array = pts[mini(i + 1, pts.size() - 1)]
@@ -831,13 +975,11 @@ static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> 
 		var rr := sp.r(p[0])
 		var t := Vector2(b[0] - a[0], (b[1] - a[1]) * rr).normalized()
 		var side := Vector2(-t.y, t.x)
-		var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(p[2]), 1.0)
-		var pair := [Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), Vector2(p[0] - w * side.x, p[1] - w * side.y / rr)]
-		if not prev.is_empty():
-			for q: Vector2 in [prev[0], pair[0], pair[1], prev[0], pair[1], prev[1]]:
-				_vertex(st, q, c)
-		prev = pair
-	# the arrows, each along the line where it stands
+		var c := _gravity_color(p[2])
+		pairs.append([[Vector2(p[0] + w * side.x, p[1] + w * side.y / rr), w, c], [Vector2(p[0] - w * side.x, p[1] - w * side.y / rr), -w, c]])
+	# the arrows, each along the line where it stands: [its step, its three vertices: [(l, beta), colour,
+	# barycentric, x across the line]]
+	var arrows := []
 	var s := 0.0
 	var next := 0.5 * ARROW_GAP
 	for i in range(1, pts.size()):
@@ -851,20 +993,55 @@ static func _line(sp: WormholeSpace, st: SurfaceTool, pts: Array, rim: bool) -> 
 			var at := Vector2(lerpf(a[0], b[0], f), lerpf(a[1], b[1], f))
 			var t := d / len
 			var side := Vector2(-t.y, t.x)
-			var c := Color(ARROW_RIM_COLOR, 0.0) if rim else Color(_gravity_color(lerpf(a[2], b[2], f)), 1.0)
-			var tip := (0.5 * ARROW_LENGTH + 2.0 * grow) * t
-			var back := -(0.5 * ARROW_LENGTH + grow) * t
-			for o: Vector2 in [tip, back + (ARROW_HALF + 2.0 * grow) * side, back - (ARROW_HALF + 2.0 * grow) * side]:
-				_vertex(st, Vector2(at.x + o.x, at.y + o.y / rr), c)
+			var c := _gravity_color(lerpf(a[2], b[2], f))
+			# the coloured triangle, and the outline's round it: (along t, across) from where it stands
+			var tip := 0.5 * ARROW_LENGTH * t
+			var inner := [tip, -tip + ARROW_HALF * side, -tip - ARROW_HALF * side]
+			var back := -(0.5 * ARROW_LENGTH + ARROW_RIM) * t
+			var outer := [tip + 2.0 * ARROW_RIM * t, back + (ARROW_HALF + 2.0 * ARROW_RIM) * side, back - (ARROW_HALF + 2.0 * ARROW_RIM) * side]
+			var vs := []
+			for o: Vector2 in outer:
+				vs.append([Vector2(at.x + o.x, at.y + o.y / rr), c, _barycentric(o, inner), o.dot(side)])
+			arrows.append([i, vs])
 			next += ARROW_GAP
 		s += len
+	var steps := pts.size() - 1
+	for ch in ceili(float(steps) / LINE_STEPS):
+		var last: Array = pairs[mini(LINE_STEPS * ch + LINE_STEPS, steps)][1]
+		for i in LINE_STEPS + 1:
+			for v: Array in pairs[mini(LINE_STEPS * ch + i, steps)]:
+				var x: float = v[1]
+				var across := Vector2(LINE_WIDTH - x, LINE_WIDTH + x)
+				_line_vertex(out, v[0], v[2], false, Color(across.x, across.y, 1.0), across)
+		var mine := arrows.filter(func(ar: Array) -> bool: return (ar[0] - 1) / LINE_STEPS == ch)
+		for a in LINE_ARROWS:
+			for k in 3:
+				if a < mine.size():
+					var v: Array = mine[a][1][k]
+					var x: float = v[3]
+					_line_vertex(out, v[0], v[1], true, v[2], Vector2(LINE_WIDTH - x, LINE_WIDTH + x))
+				else:
+					var x: float = last[1]
+					_line_vertex(out, last[0], last[2], false, Color(-1.0, -1.0, -1.0), Vector2(LINE_WIDTH - x, LINE_WIDTH + x))
+		out.n += 1
 
 
-## A vertex of the field lines' mesh at (l, beta) of the surface n.x = 0.
-static func _vertex(st: SurfaceTool, q: Vector2, c: Color) -> void:
-	st.set_color(c)
-	st.set_uv(Vector2(q.x, 0.0))
-	st.add_vertex(Vector3(0.0, cos(q.y), sin(q.y)))
+## A vertex of the field lines' chunks at (l, beta) of the surface n.x = 0 (line_chunks).
+static func _line_vertex(out: Dictionary, q: Vector2, c: Color, arrow: bool, inner: Color, line: Vector2) -> void:
+	var a := 1.0 if arrow else 0.0
+	out.in.append_array([q.x, cos(q.y), sin(q.y), a])
+	out.data.append_array([c.r, c.g, c.b, a, inner.r, inner.g, inner.b, 0.0, line.x, line.y, 0.0, 0.0])
+
+
+## Point o's barycentric coordinates in the triangle tri (three Vector2), as a Color's r, g, b.
+static func _barycentric(o: Vector2, tri: Array) -> Color:
+	var e1: Vector2 = tri[1] - tri[0]
+	var e2: Vector2 = tri[2] - tri[0]
+	var q: Vector2 = o - tri[0]
+	var den := e1.cross(e2)
+	var u := q.cross(e2) / den
+	var v := e1.cross(q) / den
+	return Color(1.0 - u - v, u, v, 0.0)
 
 
 ## An arrow's colour at g (in g): look.gdshaderinc's look_grav_colour, brighter by ARROW_GLOW.

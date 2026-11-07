@@ -16,7 +16,9 @@
 //     cube [-1, 1]^3, each point taken along the space's normal at C.
 //     Below the floor they are hidden: the floor hides whatever is below it.
 //   ZONE (zone_ball.gdshader, zone_cube.gdshader): toys in the curved zone, each drawn once per image
-//     (zone_first, zone_images), as a mesh made anew for each view round the line
+//     in the picture, on the mesh its place there needs (an instance: its body's slot and image
+//     from its list, zone_list: ZoneSections' LISTS; the body's centre, axes, size and colour from
+//     the same texture's last row), as a mesh made anew for each view round the line
 //     through its eye and the centre (the axis): there the images of a point fold into a ring (an
 //     Einstein ring), and a triangle across the axis would join a point's image on one side with its
 //     neighbour's on the other. So the mesh is a grid (VERTEX.xy in [0, 1]^2) of the azimuth theta
@@ -38,10 +40,12 @@
 //     once a frame too.
 //   STATIC (scene.gdshader): the scene's objects, vertices in chart coordinates of universe
 //     sheet (A +1, B -1), all in the flat sheets.
-//   ARROWS and BEAM: one instance per image, each vertex by its own plane through the centre.
-//   ARROWS (arrows.gdshader): the gravity view's arrows (Renderer._arrow_mesh), vertices as points
-//     (l, n) of the space (n in VERTEX, l in UV.x), unlit, in their COLOR; COLOR.a 1 (the arrow,
-//     over its outline of COLOR.a 0) a hair nearer the eye in depth, in the same place in the view.
+//   BEAM: one instance per image, each vertex by its own plane through the centre.
+//   ARROWS (arrows.gdshader): the gravity view's field lines with their arrows, in chunks (below,
+//     line_view), unlit, in their colour, but for their outline (arrow_rim): the pixels neither
+//     inside the coloured part (three numbers all at least 0) nor inside the line's (two; Renderer.
+//     _line_chunks); an arrow, coloured over its line, a hair nearer the eye in depth; each vertex's
+//     place in the view of each eye and image worked out by ZoneSections.
 //   BEAM (beam.gdshader): a hand's pointing beam (Renderer.set_beam), a tube round a line of up to
 //     BEAM_POINTS points of R^4 (beam_p, beam_n of them), beam_r[i] in radius at point i; its mesh
 //     (Renderer._beam_mesh) a ring a point, VERTEX.x the point, VERTEX.y the angle round it from
@@ -69,20 +73,32 @@ render_mode unshaded, cull_back, fog_disabled, shadows_disabled;
 uniform float sheet = 1.0;       // the universe: A +1, B -1
 #endif
 #ifdef ZONE
-uniform int zone_first = 0;      // instance i draws image zone_first + i % zone_images (Renderer)
-uniform int zone_images = 1;
-uniform float zone_round = 48.0; // the mesh's points round a section and azimuths (Renderer._zone_mesh)
+// instance i draws the body slot and image at texel (i, zone_list_row) of zone_list; the bodies' rows
+// (C, E1, E2, (size, colour)) at (4 slot + k, ZONE_LIST_BODIES) (ZoneSections' LISTS)
+uniform sampler2D zone_list : filter_nearest, repeat_disable;
+uniform int zone_list_row = 0;
+const int ZONE_LIST_BODIES = 8;
+uniform float zone_round = 48.0; // the nodes' points round a section and azimuths a mesh's VERTEX.xy spans (Renderer._zone_mesh)
 uniform float zone_columns = 64.0;
-// the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this kind's
-// first slot (instance i: body i / zone_images), this mesh's first row in a slot, a slot's rows
+// the nodes (zone_sections.gdshaderinc's out): per eye a layer, per node two texels; this mesh's
+// first row in a slot, a slot's rows
 uniform sampler2DArray zone_nodes : filter_nearest, repeat_disable;
-// per image, slot and eye: (the body's centre's x, y, z as the pass took it, 1 if the image is drawn)
+// per image, slot and eye: (the body's centre's x, y, z as the pass took it, its mesh if the image is
+// drawn in this eye, else 0)
 uniform sampler2DArray zone_cull : filter_nearest, repeat_disable;
 // per slot and eye the body's table of the ways from the eye (zone.gdshaderinc, «the paths by a table»)
 uniform sampler2DArray zone_paths : filter_nearest, repeat_disable;
-uniform int zone_slot = 0;
 uniform int zone_row = 0;
 uniform int zone_slot_rows = 62;
+#ifdef CUBE
+// the ribbon (Renderer.ZONE_RIBBON): a column's three rows the coarse mesh's nodes that ZoneSections'
+// RIBBONS chose for this image and eye (the ends of its line, the nearest between), at (column,
+// image + zone_images * (slot - zone_cube0))
+uniform bool zone_ribbon = false;
+uniform sampler2DArray zone_ribbons : filter_nearest, repeat_disable;
+uniform int zone_images = 20;
+uniform int zone_cube0 = 0;
+#endif
 // pixels a knot's two columns are pulled past each other by, each way: beyond the rasterizer's
 // rounding of a vertex (a 256th of a pixel)
 const float ZONE_KNOT_PX = 1.0 / 64.0;
@@ -93,6 +109,18 @@ uniform vec4 beam_p[BEAM_POINTS];
 uniform float beam_r[BEAM_POINTS];
 uniform int beam_n = 0;
 uniform vec3 beam_col : source_color = vec3(1.0);
+#endif
+#ifdef ARROWS
+uniform vec3 arrow_rim : source_color = vec3(0.02);   // the outline's colour (Renderer.ARROW_RIM_COLOR)
+// drawn in chunks (Renderer.line_chunks, line_mesh: VERTEX.x the vertex's place in its chunk), an
+// instance a chunk's image that ZoneSections' LINE_LISTS found drawn: (chunk, image) at (instance, 0)
+// of line_list; each vertex in the view of each eye, image by image (ZoneSections' LINES): at (chunk *
+// LINE_CV + its place, 2 image + eye) of line_view the point (EYE_OFFSET + len dir) and fell; its
+// colour and ways inside the coloured parts at (3 its place + 0, 1, 2, chunk) of line_data
+const int LINE_CV = 18;          // Renderer.LINE_CV
+uniform sampler2D line_view : filter_nearest, repeat_disable;
+uniform sampler2D line_data : filter_nearest, repeat_disable;
+uniform sampler2D line_list : filter_nearest, repeat_disable;
 #endif
 
 #ifdef CUBE
@@ -109,12 +137,13 @@ varying vec4 v_ray;     // the light's way in (R^4)
 #endif
 varying float v_l;
 varying float v_h;      // height above the floor
-#ifdef ZONE
+#if defined(ZONE) && defined(CUBE)
 // 1 at a node no part of the surface (a cube's rows between two parts of its section,
 // zone_cube.gdshaderinc's zc_node): a triangle of three such is dropped, one with fewer has no area
 varying float v_kill;
 // 2 column + its side of a knot (zone_cube.gdshaderinc's zc_side), mod 8: the same at all three
-// vertices only of a triangle of the strip between a knot's two columns
+// vertices only of a triangle of the strip between a knot's two columns (a cube's meshes take every
+// column; a ball has no knots)
 varying float v_knot;
 #endif
 varying vec3 v_col;
@@ -124,6 +153,10 @@ varying flat vec3 v_eye;     // the eye (R^4's xyz)
 #endif
 #ifdef TOY
 varying vec3 v_box;     // a cube's point in its own coordinates [-1, 1]^3
+#endif
+#ifdef ARROWS
+varying vec3 v_inner;   // how far inside the coloured part (CUSTOM0), and inside its line's (UV2)
+varying vec2 v_line;
 #endif
 
 #ifdef ZONE
@@ -140,20 +173,23 @@ void vertex() {
 	vec3 en;
 	vec4 ex, ey, ez;
 	geo_eye(INV_VIEW_MATRIX, EYE_OFFSET, el, en, ex, ey, ez);
-	int image = zone_first + INSTANCE_ID % zone_images;
-	int slot = zone_slot + INSTANCE_ID / zone_images;
-	vec4 C = vec4(MODEL_MATRIX[0].xyz, MODEL_MATRIX[1].x);
-	vec4 E1 = vec4(MODEL_MATRIX[1].yz, MODEL_MATRIX[2].xy);
-	vec4 E2 = vec4(MODEL_MATRIX[2].z, MODEL_MATRIX[3].xyz);
+	vec4 li = texelFetch(zone_list, ivec2(INSTANCE_ID, zone_list_row), 0);
+	int slot = int(li.x + 0.5), image = int(li.y + 0.5);
+	vec4 C = texelFetch(zone_list, ivec2(4 * slot, ZONE_LIST_BODIES), 0);
+	vec4 E1 = texelFetch(zone_list, ivec2(4 * slot + 1, ZONE_LIST_BODIES), 0);
+	vec4 E2 = texelFetch(zone_list, ivec2(4 * slot + 2, ZONE_LIST_BODIES), 0);
+	vec4 sc = texelFetch(zone_list, ivec2(4 * slot + 3, ZONE_LIST_BODIES), 0);
 	vec4 N = geo_normal(C);
 	vec4 E3 = -geo_cross4(E1, E2, N);
-	float size = INSTANCE_CUSTOM.a;
+	float size = sc.x;
 	float pl = 0.0;
 	float len = 0.0, fell = 0.0;
 	vec4 arrive = vec4(0.0);
 	bool none = false;            // the node came out not a number (zone_sections.gdshaderinc)
+#ifdef CUBE
 	v_kill = 0.0;
 	v_knot = 0.0;
+#endif
 	// an image the pass leaves out (thinner than a share of a pixel), or of a body it did not take
 	// this frame (a slot not worked out: its nodes are another's, or none): every vertex out of the
 	// picture at the centre, no triangle drawn, no geodesic sought
@@ -162,13 +198,21 @@ void vertex() {
 		// the node's point on the body: (l, alpha) and its half-surface's direction t
 		// (zone_sections.gdshaderinc)
 		ivec2 node = ivec2(round(VERTEX.xy * vec2(zone_columns, zone_round)));
+#ifdef CUBE
+		if (zone_ribbon) {
+			vec4 rr = texelFetch(zone_ribbons, ivec3(node.x, image + zone_images * (slot - zone_cube0), int(VIEW_INDEX)), 0);
+			node.y = int((VERTEX.y > 0.75 ? rr.y : (VERTEX.y > 0.25 ? rr.z : rr.x)) + 0.5);
+		}
+#endif
 		int row = slot * zone_slot_rows + zone_row + node.y;
 		vec4 na = texelFetch(zone_nodes, ivec3(2 * node.x, row, int(VIEW_INDEX)), 0);
 		vec4 nb = texelFetch(zone_nodes, ivec3(2 * node.x + 1, row, int(VIEW_INDEX)), 0);
 		vec2 pe = na.xy;
 		vec3 t = vec3(na.zw, nb.x);
 		none = nb.y > 0.5;
+#ifdef CUBE
 		v_kill = nb.z;
+#endif
 		pl = pe.x;
 		float alpha = clamp(pe.y, 0.0, GEO_PI);
 		vec2 sca = geo_sincos(alpha);
@@ -182,7 +226,8 @@ void vertex() {
 		// ZONE_KNOT_PX past the line toward the other, the way the picture of a point goes as its
 		// azimuth grows: dir (its radial part, then its part across) turned about the axis, toward
 		// en x t, or -(en x t) in the odd images, which leave on the -t side (zone_path_see). The
-		// strip between them is not drawn (v_knot)
+		// strip between them is not drawn (v_knot). A ball has no knots
+#ifdef CUBE
 		float side = nb.w;
 		v_knot = mod(2.0 * float(node.x) + side, 8.0);
 		if (side != 0.0 && POSITION.w > 0.0) {
@@ -194,6 +239,7 @@ void vertex() {
 				POSITION.xy += side * ZONE_KNOT_PX * 2.0 * normalize(d) / VIEWPORT_SIZE * POSITION.w;
 			}
 		}
+#endif
 	} else {
 		P = C;
 		POSITION = vec4(0.0, 0.0, 2.0, 1.0);
@@ -253,8 +299,8 @@ void vertex() {
 #ifndef ZONE
 	vec3 pn;
 #ifdef ARROWS
-	pn = normalize(VERTEX);
-	float pl = UV.x;
+	pn = vec3(1.0, 0.0, 0.0);       // its place in the view worked out already (below)
+	float pl = 0.0;
 #else
 	float pl = geo_l_of(P, pn);
 #endif
@@ -282,6 +328,15 @@ void vertex() {
 		POSITION = vec4(2.0, 0.0, 0.5, 1.0);
 	}
 #else
+#ifdef ARROWS
+	// worked out once a frame for each eye and image (ZoneSections' LINES, as below)
+	vec4 lc = texelFetch(line_list, ivec2(INSTANCE_ID, 0), 0);
+	int chunk = int(lc.x + 0.5), image = int(lc.y + 0.5), place = int(VERTEX.x + 0.5);
+	vec4 lv = texelFetch(line_view, ivec2(chunk * LINE_CV + place, 2 * image + int(VIEW_INDEX)), 0);
+	float fell = lv.w;
+	arrive = vec4(0.0);
+	POSITION = PROJECTION_MATRIX * vec4(lv.xyz, 1.0);
+#else
 	// image INSTANCE_ID of each vertex, by its own plane (a triangle across the axis
 	// through the eye and the centre would join two images: a long thin line or tube there does)
 	float c = dot(en, pn);
@@ -289,22 +344,26 @@ void vertex() {
 	vec3 t = sd > 1e-9 ? (pn - c * en) / sd : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
 	float len, fell;
 	vec4 dir = geo_see_image(el, en, pl, pn, t, geo_atan2(sd, c), INSTANCE_ID, len, arrive, fell);
-#ifdef ARROWS
-	len *= 1.0 - 1e-3 * COLOR.a;
-#endif
 	POSITION = PROJECTION_MATRIX * vec4(EYE_OFFSET + len * vec3(dot(dir, ex), dot(dir, ey), dot(dir, ez)), 1.0);
+#endif
 #endif
 #endif
 #ifdef ARROWS
 	vec4 Np = vec4(0.0);
-	v_col = COLOR.rgb;
+	v_col = texelFetch(line_data, ivec2(3 * place, chunk), 0).rgb;
+	v_inner = texelFetch(line_data, ivec2(3 * place + 1, chunk), 0).xyz;
+	v_line = texelFetch(line_data, ivec2(3 * place + 2, chunk), 0).xy;
 #elif defined(BEAM)
 	vec4 Np = N;
 	v_col = beam_col;
 #else
 	vec4 Np = geo_normal(P);
-#ifdef TOY
+#ifdef ZONE
+	v_col = sc.yzw;
+#elif defined(TOY)
 	v_col = INSTANCE_CUSTOM.rgb;
+#endif
+#ifdef TOY
 #if defined(CUBE) && !defined(ZONE)
 	v_box = VERTEX;
 #endif
@@ -356,7 +415,10 @@ void fragment() {
 	vec3 m = v_eye + t * d;
 	if (dot(m, m) < g_prof2.x * g_prof2.x) discard;
 #endif
-#if defined(ARROWS) || defined(BEAM)
+#ifdef ARROWS
+	bool inside = min(v_inner.x, min(v_inner.y, v_inner.z)) >= 0.0 || min(v_line.x, v_line.y) >= 0.0;
+	ALBEDO = inside ? v_col : arrow_rim;
+#elif defined(BEAM)
 	ALBEDO = v_col;
 #else
 #ifdef CUBE
@@ -382,8 +444,11 @@ void fragment() {
 	// its vertices: none across it, while across any other triangle it changes by 2 to 6 over a
 	// column, a few thousand pixels at most). Dropped after the derivatives, which take its
 	// neighbours; by the bits (geo_finite): a compiler may take a comparison as if no number were NaN
-	float knot = fwidth(v_knot);
-	if (!geo_finite(col.r + col.g + col.b) || v_kill > 0.5 || knot < 1e-5) discard;
+	bool off = !geo_finite(col.r + col.g + col.b);
+#ifdef CUBE
+	off = off || v_kill > 0.5 || fwidth(v_knot) < 1e-5;
+#endif
+	if (off) discard;
 #endif
 	ALBEDO = col;
 #endif

@@ -15,11 +15,18 @@ extends Node
 ##
 ## 1. Comparison, at RATE. The viewer is put at fixed poses (PLACES), and held there,
 ## and the frame is timed on the GPU (the median frame of each segment, and of each of its parts:
-## FrameRate.PARTS), this build's renderer each
+## FrameRate.PARTS, and of each pass of the zone's nodes, paths and lines: ZoneSections.TS_PASS), this
+## build's renderer each
 ## way VARIANTS lists: without foveation, at each of its levels, and with a cube held right before
 ## the eyes (NEAR_CUBE: a body near the eyes with the world round it), and with a ball and a cube
 ## in the throat's cylinder (THROAT_BODIES: their images past the meshes', the tail, cost pixels
-## per body: zone_tail.gdshader), and the same without the tail (what it costs: the difference),
+## per body: zone_tail.gdshader), and the same without the tail (what it costs: the difference) and
+## with it as one band, without its strips, at foveation's strongest with two balls of a hand's size
+## before the chest (HAND_BALLS: what the hands' balls cost); at the long throat's places only (LONG)
+## also with the bodies in the throat at foveation's strongest with the tail and without, and with
+## the gravity view's field lines at foveation's strongest (what they cost: Renderer.arrow_arrays),
+## and with all the bodies at once (the hands' balls, the ball and the cube in the throat, the cube at
+## the eyes) at foveation's strongest, as play in the long throat has them,
 ## in a palindrome order (1 2 .. n n .. 2 1: a slow drift of heat or clock falls on
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
@@ -28,10 +35,16 @@ extends Node
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with the menu's foveation: does
 ## the rate hold all round, and where not: sweeps round at each place, a flight along the axis
 ## through the throat into universe B and back, and its last rows with the cube before the eyes.
+## All the way the ball and the cube of the throat's variant stand in the throat, where the space has
+## them (throat_fixed: THROAT_BALL and THROAT_CUBE round the axis, not round the head): frames miss
+## where bodies in the curved zone are in view, from in the throat, from the start and from under
+## either mouth, and the tour looks there.
 ## Each place starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
 ## (frame_rate.gd).
 ##
-## Afterwards what it changed comes back (_restore, _finish).
+## Throughout, the toys are at their start (Toys.spawn, without the throw and the drop: the toys
+## in the curved zone, their images and tail, cost as much as the bodies timed), so that a check
+## times what another session's does. Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
 # Where a pose is (_put): START, standing at main.START_POS facing the wormhole; Vector3(x, y, side),
@@ -64,8 +77,10 @@ const PLACES := [   # the comparison's poses: [where, degrees to the right, degr
 	[-6.2, 180.0, 0.0],     # world B, just outside the curved zone, facing the throat
 	[UNDER_B, 0.0, 60.0],   # on B's floor, looking up into its mouth
 	[0.0, 90.0, 0.0, LONG],  # in the middle of a long throat, looking sideways round it
+	[-0.5, 90.0, 0.0, LONG], # 5 m in from its mouth B, sideways: the throat's ball 55 m along, its tail across the view
 	[0.0, 0.0, 0.0, LONG],   # and along it
 	[START, 0.0, 0.0, LONG], # the start, the long throat's mouth ahead
+	[5.0, 0.0, 0.0, LONG],   # inside at its edge, facing the throat: the field lines through the mouth all round
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
@@ -78,14 +93,29 @@ const SWEEP := 2.0              # s for a row: 180 degrees
 const TOUR_RECOVER := 1.5       # s at the start before each place, not counted
 const NOD_PERIOD := 3.0         # s: the tour's nods
 const TILT_PERIOD := 2.0        # s: its tilts (roll)
-# the comparison's variants: [label, foveation level (Foveation.set_level), the cube before the
-# eyes, the bodies in the throat, the tail drawn (Renderer.tail_shown)]; the first is the reference
-# the others are compared with
-const VARIANTS := [["plain", 0, false, false, true], ["foveation weak", 1, false, false, true],
-	["foveation medium", 2, false, false, true], ["foveation strong", 3, false, false, true],
-	["foveation stronger", 4, false, false, true], ["foveation strongest", 5, false, false, true],
-	["a cube at the eyes", 0, true, false, true], ["a ball and a cube in the throat", 0, false, true, true],
-	["the same without the tail", 0, false, true, false]]
+# the comparison's variants, each what it changes from the first (Setup's defaults: without foveation,
+# the tail drawn with its strips, timed at every place): foveation (its level,
+# Foveation.set_level), near (the cube before the eyes), throat (the bodies in the throat), hands
+# (two balls of a hand's size before the chest: HAND_BALLS), tail (Renderer.tail_shown), strips
+# (Renderer.tail_strips: else one band from the first copy past the meshes'), lines (the gravity view
+# with the field lines, Renderer.GRAVITY_VIEWS' last; else the menu's), long (at the long throat's
+# places only); the first is the reference the others are compared with
+const VARIANTS := [{"label": "plain"},
+	{"label": "foveation weak", "foveation": 1},
+	{"label": "foveation medium", "foveation": 2},
+	{"label": "foveation strong", "foveation": 3},
+	{"label": "foveation stronger", "foveation": 4},
+	{"label": "foveation strongest", "foveation": 5},
+	{"label": "the same with the hands' balls", "foveation": 5, "hands": true},
+	{"label": "a cube at the eyes", "near": true},
+	{"label": "a ball and a cube in the throat", "throat": true},
+	{"label": "the same without the tail", "throat": true, "tail": false},
+	{"label": "the same, the tail without strips", "throat": true, "strips": false},
+	{"label": "a ball and a cube in the throat, foveation strongest", "foveation": 5, "throat": true, "long": true},
+	{"label": "the same without the tail, foveation strongest", "foveation": 5, "throat": true, "tail": false, "long": true},
+	{"label": "the field lines, foveation strongest", "foveation": 5, "lines": true, "long": true},
+	{"label": "all at once: the hands' balls, the ball and the cube in the throat, the cube at the eyes, foveation strongest",
+			"foveation": 5, "hands": true, "throat": true, "near": true, "long": true}]
 # the bodies in the throat: [share of the cylinder's half length along l from its middle, angle
 # round the throat from the head's way forward, radius or half size]: a ball on A's side, a cube on
 # B's, both in view from inside the cylinder looking round it and from out at the mouth
@@ -96,6 +126,9 @@ const THROAT_COLOR := Color(0.9, 0.4, 0.3)
 # held, the floor and the sky all round it (one filling the view would be the cheapest frame there
 # is: its pixels only shade)
 const NEAR_CUBE := [0.4, 0.1]
+# the hands' balls (the variant's, not the tracked hands', which a run with the eyes closed seldom has
+# in view): [m ahead of the head, m to its right (each side), m up, radius], as hands hold out
+const HAND_BALLS := [0.35, 0.2, -0.3, 0.04]
 const NEAR_COLOR := Color(0.55, 0.6, 0.95)
 
 var main: Main
@@ -114,24 +147,39 @@ var near := false:
 		near = v
 		if main and main.toys.enabled:
 			main.draw_toys()
+# the hands' balls are drawn (extras), likewise
+var hand_balls := false:
+	set(v):
+		hand_balls = v
+		if main and main.toys.enabled:
+			main.draw_toys()
 # the bodies in the throat are drawn (extras), likewise
 var throat := false:
 	set(v):
 		throat = v
 		if main and main.toys.enabled:
 			main.draw_toys()
+# and stand where the space has them, round the axis (the tour), not round the head (the comparison)
+var throat_fixed := false:
+	set(v):
+		throat_fixed = v
+		if main and main.toys.enabled:
+			main.draw_toys()
 var saved_length := 0.0         # the throat's cylinder's length before (a place sets its own)
+var saved_gravity := 0          # the gravity view before (the field lines' variant sets its own)
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
 var gpu_ms: Array = []          # this segment's frames
 var part_ms: Array = []         # and their GPU time by part (FrameRate.PARTS), as read
 var part_frame := -1            # the last frame whose parts were taken (FrameRate.parts_frame)
+var zone_ms: Array = []         # and their zone's passes' (FrameRate.zone_last), as read
 var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
                                 # a hitch of the system does not move it)
 var part_results: Array = []    # the same by part: per place, per variant, per segment its medians
+var zone_results: Array = []    # the zone's passes': per place, per variant, per segment {pass: median}
 var _zone_counts: Array[Vector2i] = []   # per place: the balls and cubes in the zone with the cube there
 var tour: Array[Step] = []      # the tour's steps (_make_tour)
 var tour_results: Array[Tally] = []   # per step
@@ -141,6 +189,7 @@ var tour_t := 0.0               # s since the tour began counting (the "tf" line
 var pose: Array = [START, 0.0, 0.0, 0.0]     # the tour's pose now: where, degrees right, up, roll
 var sec := Tally.new()          # this second's
 var saved_pose: Array
+var saved_toys: Array = []      # the toys before (start): their balls, cubes, throw's and drop's delays
 var saved_rate := 0.0           # the rate to go back to
 var preparing := 0              # variants left to run untimed before the first segment
 var verdict := ""               # the comparison's line
@@ -149,12 +198,20 @@ var verdict := ""               # the comparison's line
 ## What this check draws besides the toys (main.draw_toys, Toys.draw): {"balls": [[centre (R^4),
 ## (colour, radius)]...], "cubes": [[centre, two axes (R^4), (colour, half size)]...]}: the cube
 ## before the eyes while near (the comparison's variant, the tour's last rows), the ball and the cube
-## in the throat while throat. hp: the head as main has it ([l, n, frame]), basis: the head's in the
-## play space.
+## in the throat while throat: round the head's way forward, or with throat_fixed round the axis
+## (n = +x, the tour's places on it), toward +y, which the tour's sweeps to the right look along.
+## hp: the head as main has it ([l, n, frame]), basis: the head's in the play space.
 func extras(hp: Array, basis: Basis) -> Dictionary:
 	var out := {"balls": [], "cubes": []}
 	if near:
 		out.cubes.append(_near_cube(hp, basis))
+	if hand_balls:
+		var f: Array = hp[2]
+		for side in [-1.0, 1.0]:
+			var v: Vector3 = basis * Vector3(side * HAND_BALLS[1], HAND_BALLS[2], -HAND_BALLS[0])
+			var T: Vector4 = v.x * f[0] + v.y * f[1] + v.z * f[2]
+			var g: Array = main.space.geodesic(hp[0], hp[1], T.normalized(), v.length(), [])
+			out.balls.append([main.space.embed(g[0], g[1]), Vector4(THROAT_COLOR.r, THROAT_COLOR.g, THROAT_COLOR.b, HAND_BALLS[3])])
 	if throat:
 		var sp: WormholeSpace = main.space
 		var f: Array = hp[2]
@@ -162,6 +219,9 @@ func extras(hp: Array, basis: Basis) -> Dictionary:
 		var T: Vector4 = fwd.x * f[0] + fwd.y * f[1] + fwd.z * f[2]
 		var n0: Vector3 = hp[1]
 		var t := Vector3(T.y, T.z, T.w)
+		if throat_fixed:
+			n0 = Vector3(1.0, 0.0, 0.0)
+			t = Vector3(0.0, 1.0, 0.0)
 		t -= t.dot(n0) * n0
 		if t.length() < 1e-3:
 			t = (Vector3(0.0, 0.0, 1.0) if absf(n0.z) < 0.9 else Vector3(1.0, 0.0, 0.0)).cross(n0)
@@ -289,9 +349,16 @@ func start() -> void:
 	running = true
 	variants.clear()
 	for f in VARIANTS:
-		variants.append(Setup.new(f[0], f[1], f[2], f[3], f[4]))
+		variants.append(Setup.new(f))
 	saved_pose = main.get_pose()
+	var toys: Toys = main.toys
+	saved_toys = [toys.world.balls.duplicate(), toys.world.cubes.duplicate(), toys.launch_in, toys.drop_in]
+	if toys.enabled:
+		toys.spawn()
+		toys.launch_in = -1.0
+		toys.drop_in = -1.0
 	saved_length = 2.0 * main.space.Lc
+	saved_gravity = main.renderer.gravity_view
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
 	# back to this app's own setting where there is one, else to what the display ran at
@@ -305,6 +372,7 @@ func start() -> void:
 	plan.clear()
 	results.clear()
 	part_results.clear()
+	zone_results.clear()
 	_zone_counts.clear()
 	tour = _make_tour()
 	tour_results.clear()
@@ -312,14 +380,18 @@ func start() -> void:
 	for i in PLACES.size():
 		var r := []
 		var pr := []
+		var zr := []
 		for v in variants:
 			r.append([])
 			pr.append([])
+			zr.append([])
 		results.append(r)
 		part_results.append(pr)
+		zone_results.append(zr)
 		_zone_counts.append(Vector2i.ZERO)
 		for v: int in order:
-			plan.append(Vector2i(i, v))
+			if not variants[v].long or _long(PLACES[i]):
+				plan.append(Vector2i(i, v))
 	step = -1
 	preparing = variants.size()
 	var names := []
@@ -352,7 +424,9 @@ func _enter(p: String) -> void:
 	if p == "prepare":
 		_prepare()
 	elif p == "tour":
-		print("tour: start at %.0f Hz, foveation %d, %d steps; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after (FrameRate.before_ms)"
+		throat_fixed = true
+		throat = true
+		print("tour: start at %.0f Hz, foveation %d, %d steps, the ball and the cube held in the throat; \"tf\" lines: s, l m (the head's on the axis, the feet's standing), deg right, deg up, deg roll, refreshes the frame took, gpu ms, cpu ms render, cpu ms process, the frame before on the main thread: ms from main's start to drawn, main's script ms, ms waiting after, ms of the first drawing (FrameRate.before_ms)"
 				% [main.rate.rate, main.foveation.level, tour.size()])
 		tour_t = 0.0
 		_tour_step(0)
@@ -382,18 +456,33 @@ func _process(delta: float) -> void:
 
 # ---------------------------------------------------------------- the comparison
 
-## Run a variant untimed at the first place, so its pipelines are compiled before the timing.
+## Run a variant untimed at the first place it is timed at, so its pipelines are compiled before
+## the timing.
 func _prepare() -> void:
 	phase_t = 0.0
-	_put_place(PLACES[0])
-	_use(variants[variants.size() - preparing])
+	var v := variants[variants.size() - preparing]
+	for place: Array in PLACES:
+		if not v.long or _long(place):
+			_put_place(place)
+			break
+	_use(v)
 
 
-## A variant's foveation, cube, bodies in the throat and tail.
+## A place of the long throat (PLACES' fourth).
+static func _long(place: Array) -> bool:
+	return place.size() > 3 and place[3] == LONG
+
+
+## A variant's foveation, cube, hands' balls, bodies in the throat and tail.
 func _use(v: Setup) -> void:
 	near = v.near
+	hand_balls = v.hands
 	throat = v.throat
 	main.renderer.tail_shown = v.tail
+	main.renderer.tail_strips = v.strips
+	var view := Renderer.GRAVITY_VIEWS.size() - 1 if v.lines else saved_gravity
+	if main.renderer.gravity_view != view:
+		main.set_gravity_view(view)
 	if main.foveation.level != v.foveation:
 		main.foveation.set_level(v.foveation)
 
@@ -408,6 +497,7 @@ func _segment() -> void:
 	if rate.parts_frame != part_frame and rate.parts_last.size() == FrameRate.PARTS.size():
 		part_frame = rate.parts_frame
 		part_ms.append(rate.parts_last)
+		zone_ms.append(rate.zone_last)
 	if phase_t >= warm + time:
 		_clock()
 		_end_segment()
@@ -433,6 +523,7 @@ func _begin(i: int) -> void:
 	phase_t = 0.0
 	gpu_ms.clear()
 	part_ms.clear()
+	zone_ms.clear()
 	part_frame = main.rate.parts_frame
 	if i == 0 or plan[i].x != plan[i - 1].x:
 		clock_lo = 0
@@ -452,6 +543,15 @@ func _end_segment() -> void:
 		xs.sort()
 		med.append(xs[xs.size() / 2] if not xs.is_empty() else 0.0)
 	part_results[plan[step].x][plan[step].y].append(med)
+	var zmed := {}
+	for z: Dictionary in zone_ms:
+		for k: String in z:
+			zmed[k] = []
+	for k: String in zmed:
+		var xs := zone_ms.map(func(z: Dictionary) -> float: return z.get(k, 0.0))
+		xs.sort()
+		zmed[k] = xs[xs.size() / 2]
+	zone_results[plan[step].x][plan[step].y].append(zmed)
 	var last := step + 1 >= plan.size() or plan[step + 1].x != plan[step].x
 	if not last:
 		return
@@ -459,6 +559,8 @@ func _end_segment() -> void:
 	var parts := []
 	var segs := []
 	for v in variants.size():
+		if r[v].is_empty():
+			continue
 		var s := "%d: %.2f ms" % [v + 1, _mean(r[v])]
 		if v > 0:
 			s += " (%.3f)" % (_mean(r[v]) / _mean(r[0]))
@@ -470,6 +572,8 @@ func _end_segment() -> void:
 	var by := []
 	for v in variants.size():
 		var segs_v: Array = part_results[plan[step].x][v]
+		if segs_v.is_empty():
+			continue
 		var m := []
 		for k in FrameRate.PARTS.size():
 			m.append("%.2f" % _mean(segs_v.map(func(p: PackedFloat32Array) -> float: return p[k])))
@@ -477,6 +581,18 @@ func _end_segment() -> void:
 	var zc: Vector2i = _zone_counts[plan[step].x]
 	print("bench parts: %s, %.0f deg right, %.0f deg up (%s): %s; with the cube before the eyes, in the curved zone %d balls, %d cubes"
 			% [_name(place[0]), place[1], place[2], ", ".join(FrameRate.PARTS), "; ".join(by), zc.x, zc.y])
+	# the zone's nodes, paths and lines by pass (ZoneSections.TS_PASS): each variant's mean over its segments
+	var zby := []
+	for v in variants.size():
+		var segs_z: Array = zone_results[plan[step].x][v]
+		var sums := {}
+		for z: Dictionary in segs_z:
+			for k: String in z:
+				sums[k] = sums.get(k, 0.0) + z[k]
+		if not sums.is_empty():
+			zby.append("%d: %s" % [v + 1, FrameRate.zone_text(sums, segs_z.size())])
+	if not zby.is_empty():
+		print("bench zone passes: %s, %.0f deg right, %.0f deg up: %s" % [_name(place[0]), place[1], place[2], "; ".join(zby)])
 
 
 func _compared() -> void:
@@ -486,7 +602,8 @@ func _compared() -> void:
 	var pcts := []
 	for v in range(1, variants.size()):
 		summary.append("%s %.3f" % [variants[v].label, _ratio(v, 0)])
-		if variants[v].foveation > 0:
+		var f := variants[v]
+		if f.foveation > 0 and not f.near and not f.throat and not f.hands and not f.long:
 			pcts.append("%s %+d%%" % [Menu.FOVEATIONS[variants[v].foveation], roundi(100.0 * (_ratio(v, 0) - 1.0))])
 	print("bench: compared, on average over the places against %s: %s" % [variants[0].label, ", ".join(summary)])
 	# for the menu: the slowest place without and with the cube before the eyes, and the foveation
@@ -494,11 +611,55 @@ func _compared() -> void:
 	var cube := _variant(true, false, true)
 	var bodies := _variant(false, true, true)
 	var bare := _variant(false, true, false)
+	var one_band := _variant(false, true, true, false)
 	var tail_ms := 0.0
+	var band_ms := 0.0
 	for r in results:
 		tail_ms = maxf(tail_ms, _mean(r[bodies]) - _mean(r[bare]))
-	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс)"
-			% [_worst(0), _worst(cube), _worst(bodies), tail_ms]]
+		band_ms = maxf(band_ms, _mean(r[one_band]) - _mean(r[bare]))
+	# and at foveation's strongest (the long throat's places): the most its tail costs there
+	var fov_ms := 0.0
+	var fov_tail := -1
+	var fov_bare := -1
+	for v in variants.size():
+		var f := variants[v]
+		if f.foveation == 5 and f.throat and not f.hands and not f.near:
+			if f.tail:
+				fov_tail = v
+			else:
+				fov_bare = v
+	if fov_tail >= 0 and fov_bare >= 0:
+		for r in results:
+			if not r[fov_tail].is_empty() and not r[fov_bare].is_empty():
+				fov_ms = maxf(fov_ms, _mean(r[fov_tail]) - _mean(r[fov_bare]))
+	var with_hands := -1
+	var fov5 := -1
+	for v in variants.size():
+		var f := variants[v]
+		if f.hands and not f.throat and not f.near:
+			with_hands = v
+		if f.foveation == 5 and not f.near and not f.throat and not f.hands and not f.lines:
+			fov5 = v
+	# the hands' balls: the most they add at foveation's strongest at a place
+	var hands_ms := 0.0
+	if with_hands >= 0 and fov5 >= 0:
+		for r in results:
+			hands_ms = maxf(hands_ms, _mean(r[with_hands]) - _mean(r[fov5]))
+	# the field lines: the most they add at foveation's strongest at a place (the long throat's)
+	var lines_ms := 0.0
+	for v in variants.size():
+		if variants[v].lines and fov5 >= 0:
+			for r in results:
+				if not r[v].is_empty():
+					lines_ms = maxf(lines_ms, _mean(r[v]) - _mean(r[fov5]))
+	# everything at once at foveation's strongest: its slowest place (the long throat's)
+	var all_ms := 0.0
+	for v in variants.size():
+		var f := variants[v]
+		if f.hands and f.throat and f.near:
+			all_ms = maxf(all_ms, _worst(v))
+	var parts := ["худшее место %.1f мс, с кубом у глаз %.1f мс, с мячом и кубом в горле %.1f мс (хвост — до %.1f мс, при сильнейшей фовеации — до %.1f мс, без полосок — до %.1f мс), мячи рук при сильнейшей фовеации — до %.1f мс, силовые линии — до %.1f мс, всё сразу на горле 80 м при сильнейшей фовеации — %.1f мс"
+			% [_worst(0), _worst(cube), _worst(bodies), tail_ms, fov_ms, band_ms, hands_ms, lines_ms, all_ms]]
 	parts.append("фовеация: " + ", ".join(pcts))
 	verdict = " · ".join(parts)
 	if _headset():
@@ -519,10 +680,10 @@ func frame_timing(display_time: int, period: int, expected_hz: float) -> void:
 		return
 	var vp: RID = main.rate.target.get_viewport_rid()
 	var g := RenderingServer.viewport_get_measured_render_time_gpu(vp)
-	var mt: Vector3 = main.rate.before_ms()
-	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
+	var mt: Vector4 = main.rate.before_ms()
+	print("tf %.3f %.2f %.0f %.0f %.0f %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f" % [tour_t, _l(pose[0]), pose[1], pose[2], pose[3],
 			meter.refreshes - refreshes_before, g, RenderingServer.viewport_get_measured_render_time_cpu(vp),
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z])
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, mt.x, mt.y, mt.z, mt.w])
 	sec.frames += 1
 	sec.refreshes += meter.refreshes - refreshes_before
 	sec.gpu += g
@@ -633,6 +794,14 @@ func _finish(tour_line: String) -> void:
 	counting = false
 	phase = ""
 	_restore()
+	# the toys as they were: at the length they were at (_restore)
+	var toys: Toys = main.toys
+	if toys.enabled and not saved_toys.is_empty():
+		toys.world.balls.assign(saved_toys[0])
+		toys.world.cubes.assign(saved_toys[1])
+		toys.launch_in = saved_toys[2]
+		toys.drop_in = saved_toys[3]
+		main.draw_toys()
 	main.hold = false
 	main.set_pose(saved_pose)
 	menu.set_render_scale(menu.render_scale)
@@ -674,22 +843,26 @@ static func _list(v: Array) -> String:
 	return "[" + ", ".join(parts) + "]"
 
 
-## As it runs: the foveation chosen in the menu, no cube.
+## As it runs: the foveation chosen in the menu, no cube, no bodies in the throat.
 func _restore() -> void:
 	near = false
+	hand_balls = false
+	throat_fixed = false
 	throat = false
 	main.renderer.tail_shown = true
+	main.renderer.tail_strips = true
+	if main.renderer.gravity_view != saved_gravity:
+		main.set_gravity_view(saved_gravity)
 	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
 		main.set_length(saved_length)
 	main.foveation.set_level(menu.foveation)
 
 
-## The first variant without foveation with the cube before the eyes, the bodies in the throat and
-## the tail as asked.
-func _variant(p_near: bool, p_throat: bool, p_tail: bool) -> int:
+## The first variant without foveation, with this build's tail, timed at every place, with the cube before the eyes, the bodies in the throat, the tail and its strips as asked.
+func _variant(p_near: bool, p_throat: bool, p_tail: bool, p_strips := true) -> int:
 	for v in variants.size():
 		var f := variants[v]
-		if f.foveation == 0 and f.near == p_near and f.throat == p_throat and f.tail == p_tail:
+		if f.foveation == 0 and not f.long and not f.hands and f.near == p_near and f.throat == p_throat and f.tail == p_tail and f.strips == p_strips:
 			return v
 	return 0
 
@@ -718,13 +891,22 @@ class Setup:
 	var near: bool                  # the cube before the eyes
 	var throat: bool                # the ball and the cube in the throat
 	var tail: bool                  # the tail drawn (Renderer.tail_shown)
+	var strips: bool                # its strips (Renderer.tail_strips)
+	var long: bool                  # timed at the long throat's places only
+	var hands: bool                 # the two balls of a hand's size before the chest (HAND_BALLS)
+	var lines: bool                 # the gravity view with the field lines
 
-	func _init(p_label: String, p_foveation: int, p_near: bool, p_throat: bool, p_tail: bool) -> void:
-		label = p_label
-		foveation = p_foveation
-		near = p_near
-		throat = p_throat
-		tail = p_tail
+	## From a VARIANTS entry (its top: what each key means), the rest as the first's.
+	func _init(d: Dictionary) -> void:
+		label = d.label
+		foveation = d.get("foveation", 0)
+		near = d.get("near", false)
+		throat = d.get("throat", false)
+		tail = d.get("tail", true)
+		strips = d.get("strips", true)
+		long = d.get("long", false)
+		hands = d.get("hands", false)
+		lines = d.get("lines", false)
 
 
 ## A step of the tour: where (PLACES' top; along the axis if both ends are on it) and yaw (degrees

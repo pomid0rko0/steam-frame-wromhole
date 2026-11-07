@@ -2,7 +2,8 @@ extends SceneTree
 ## What the tail (zone_tail.gdshader) costs, through the simulated headset at each pose of the speed
 ## check (bench.gd's PLACES) with its ball and cube in the throat (Bench.throat), without foveation as
 ## its variant has it. Per pose and eye: the pixels the tail's instances cover, each a fragment that
-## runs its search (an instance at a time, the shader's probe: tail_probe, tail_only), and of them
+## runs its search (a body's side at a time, its strips and band, which never overlap: the shader's
+## probe, tail_probe, tail_only), and of them
 ## those whose ray meets the body, against the eye's pixels. Exit status 1 if an eye's tail
 ## fragments at a pose exceed MAX_SHARE of its pixels. With "time" after "--", also the GPU's 3D
 ## pass (FrameRate's last part: the bodies, the tail and the floor's quad) with the tail and without
@@ -115,8 +116,8 @@ func _probe() -> void:
 	_next_shot()
 
 
-## The next instance of a body in the zone to probe (Renderer's slots: balls' from 0, cubes' from
-## its MAX_BALLS; two sides each), or the place's line once all are.
+## The next side of a body in the zone to probe (2 slot + side: Renderer's slots, balls' from 0,
+## cubes' from its MAX_BALLS), or the place's line once all are.
 func _next_shot() -> void:
 	if shot < 0:
 		shots.clear()
