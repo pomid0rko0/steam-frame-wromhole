@@ -1,6 +1,6 @@
 // The floor, the sky and what is seen through the curved zone, for foveation (foveation.gd): a
 // compute shader's body, not a Godot shader's; foveation.gd puts the header (the version, EYES,
-// TABLE, GRAVITY, TAIL_VIEW, TAIL_TILES, TAIL_QUADS or TAIL) before it and geo.gdshaderinc, look.gdshaderinc and lens.gdshaderinc where it
+// TABLE, GRAVITY, TAIL_VIEW, TAIL_TILES, TAIL_QUADS or TAIL with TAIL_CUBES 0 or 1) before it and geo.gdshaderinc, look.gdshaderinc and lens.gdshaderinc where it
 // says.
 //
 // Each eye's picture in a texture warped about the pixel g the eye looks at (foveation.gd's top):
@@ -27,7 +27,7 @@
 // quads of 2 x 2 texels one of whose rays lies in one listed (an invocation a quad, a workgroup four
 // tiles, dispatched by the tiles' count), a list for the balls and one for the cubes; TAIL: those
 // quads only, sixteen to a workgroup, packed as a rasterizer packs a primitive's quads, the balls'
-// and then in a pass of its own the cubes'. A texel looks into the copies of each body whose strip or
+// and then in a pass of its own the cubes' (a program each: TAIL_CUBES). A texel looks into the copies of each body whose strip or
 // band its ray lies in (TAIL_QUADS' list of them, not looked for again), as
 // zone_tail.gdshader's fragment does; where it meets one nearer than what the texel shows, the texel
 // takes the body's colour there, lit as zone_tail.gdshader lights it. The meshes' images are drawn
@@ -173,17 +173,23 @@ layout(set = 1, binding = 3, std430) restrict buffer TailData {
 layout(set = 1, binding = 4, rg32ui) uniform restrict uimage2DArray pick_img;
 layout(push_constant, std430) uniform TailKind {
 	ivec4 n;            // the zone's balls, its cubes, the cubes' first slot, the images a body (Renderer.ZONE_IMAGES)
-	vec4 f;             // psi_min (zone_tail.gdshader's tail_psi_min), the strips drawn (Renderer.tail_strips), TAIL's kind (0 balls, 1 cubes), 0
+	vec4 f;             // psi_min (zone_tail.gdshader's tail_psi_min), the strips drawn (Renderer.tail_strips), 0, 0
 } tk;
 
 int fov_tail_slot(int b) {
 	return b < tk.n.x ? b : tk.n.z + b - tk.n.x;
 }
 
-// the zone's body b (its slot's row, its other axes as TAIL_VIEW worked them out)
+// the zone's body b (its slot's row, its other axes as TAIL_VIEW worked them out); in TAIL, a body of
+// its program's kind, known as it compiles: the other kind's search is not in it
 TailBody fov_tail_body(int b) {
 	int s = fov_tail_slot(b);
-	return tail_body_of(s >= tk.n.z, tb.body[4 * s], tb.body[4 * s + 1], tb.body[4 * s + 2], td.bod[2 * b], td.bod[2 * b + 1], tb.body[4 * s + 3].x);
+#ifdef TAIL
+	bool cube = TAIL_CUBES == 1;
+#else
+	bool cube = s >= tk.n.z;
+#endif
+	return tail_body_of(cube, tb.body[4 * s], tb.body[4 * s + 1], tb.body[4 * s + 2], td.bod[2 * b], td.bod[2 * b + 1], tb.body[4 * s + 3].x);
 }
 
 // eye v's inward radial direction in the camera's space
@@ -424,7 +430,7 @@ void main() {
 	}
 }
 #else
-// TAIL: a workgroup 16 quads TAIL_QUADS listed for its kind (tk.f.z: the balls, then in a pass of its
+// TAIL: a workgroup 16 quads TAIL_QUADS listed for its kind (TAIL_CUBES: the balls, then in a pass of its
 // own the cubes, over what the balls' left: the texture's alpha the way to what a texel shows), an
 // invocation a texel of one: the 2 x 2 texels of a quad side by side, as a fragment shader's.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -450,7 +456,7 @@ int fov_tail_pick(uint quad, uint lq, int from) {
 	uint v = quad >> 24;
 	vec3 d = fov_tail_dir(quad, lq), ax = fov_tail_axis(v);
 	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
-	bool cubes = tk.f.z > 0.5;
+	bool cubes = TAIL_CUBES == 1;
 	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
 	int b0 = from / FOV_TAIL_RANGES;
 	for (int b = max(b0, cubes ? tk.n.x : 0); b < (cubes ? nb : min(tk.n.x, nb)); b++) {
@@ -469,7 +475,7 @@ int fov_tail_pick(uint quad, uint lq, int from) {
 void main() {
 	uint lq = gl_LocalInvocationIndex;
 	uint qi = 16u * gl_WorkGroupID.x + (lq >> 2);
-	uint kind = tk.f.z > 0.5 ? 1u : 0u;
+	uint kind = uint(TAIL_CUBES);
 	bool listed = qi < ta.args[7u + 4u * kind];
 	uint quad = listed ? td.lists[fov_tail_quads(kind) + qi] : 0u;
 	uint v = quad >> 24;

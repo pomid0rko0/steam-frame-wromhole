@@ -308,17 +308,19 @@ bool tail_over(TailRay z, TailBody q, bool fillet, float lc, float lam, float ps
 // and a point in the cube found there is the first in. Done within TAIL_TOL of the body (on its
 // surface, going in), or where a step moves the point by less: on the fillet the sweep's table (its
 // filter's weights in 256ths) leaves the point that much uncertain.
-bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xb, out float x) {
-	x = xa;
+bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float psi_c, float base, float xa, float xs, float xb, out float x) {
+	x = xs;
 	float near = fillet ? TAIL_TOL_FILLET : TAIL_TOL;
 	float tol = q.cube ? near : 2.0 * near * q.size;
-	float xo = xa;          // the last point out of the body
+	float xo = xa;          // the last point out of the body (the window's start is)
 	bool in_ = false;
 	for (int i = 0; i < TAIL_STEPS; i++) {
 		vec4 o = tail_out(z, q, fillet, lc, lam, psi_c, base, x, tol);
 		if (o.x <= tol) {
-			// in at the window's start: it went in before (the meshes' images, or a copy before)
-			if (i == 0) return false;
+			// in at the window's start: it went in before (the meshes' images, or a copy before);
+			// in where the steps start ahead of it: on it going in, or float32 put the start past
+			// the way in (then looked for back from the window's start)
+			if (i == 0 && x <= xo) return false;
 			if (o.x >= -tol && o.w <= 0.0) return true;
 			in_ = true;
 			break;
@@ -376,43 +378,33 @@ bool tail_enter(TailRay z, TailBody q, bool fillet, float lc, float lam, float p
 	return true;
 }
 
-// A ball's way in along copy n's line on the cylinder, l = lc + lam x at x off psi_c, within the
-// window [xa, xb], e and k as tail_meet has them: there |P - C|^2 - s^2 is g(x) = k (1 - cos x) +
-// (d + lam x)^2 - e (d = lc - Cw), and 1 - cos x >= x^2 / 2 - x^4 / 24 >= (1 - X^2 / 12) x^2 / 2
-// for |x| <= X, so g is no less than that parabola: where it has no root in the window, the ray
-// misses (0), and its first root, a hair before it, is a point before the way in, from which
-// Newton's steps on g (convex there) land on it, a step or two (1, x). -1 where the parabola can't
-// tell: the window may start in the ball (from before it, a turn the meshes or a copy before drew),
-// or is wider than the bound holds (tail_enter from xa decides).
-int tail_ball_enter(TailRay z, TailBody q, float lc, float lam, float psi_c, float xa, float xb, float e, float k, out float x) {
-	x = xa;
+// Where to look for a ball's way in along copy n's line on the cylinder, l = lc + lam x at x off
+// psi_c, within the window [xa, xb]: there |P - C|^2 - s^2 is g(x) = k (1 - cos x) + (d + lam x)^2 -
+// e (d = lc - Cw; e and k as tail_meet has them, worked out again: kept, they would hold registers
+// all through the search, tools/adreno_stats.sh), and 1 - cos x >= x^2 / 2 - x^4 / 24 >= (1 - X^2
+// / 12) x^2 / 2 for |x| <= X, so g is no less than that parabola: where it has no root in the
+// window, the ray misses (false); else xs is its first root a hair before (TAIL_AHEAD), a point
+// before the way in from which tail_enter's steps land on it in a step or two, or xa where the
+// parabola can't tell (the window may start in the ball, or is wider than the bound holds).
+bool tail_ball_start(TailRay z, TailBody q, float lc, float lam, float xa, float xb, out float xs) {
+	xs = xa;
 	float X = max(abs(xa), abs(xb));
-	float c = 0.5 * k * (1.0 - X * X / 12.0) + lam * lam;
-	if (X > 1.0 || c <= 0.0) return -1;
+	float ae = dot(q.C.xyz, z.en), at = dot(q.C.xyz, z.t), h = dot(q.C.xyz, cross(z.en, z.t));
+	float A = sqrt(ae * ae + at * at);
+	float e = q.size * q.size - h * h - (A - g_prof.x) * (A - g_prof.x);
+	float c = g_prof.x * A * (1.0 - X * X / 12.0) + lam * lam;
+	if (X > 1.0 || c <= 0.0) return true;
 	float d = lc - q.C.w;
 	float bq = d * lam, cq = d * d - e;
 	float disc = bq * bq - c * cq;
-	if (disc < 0.0) return 0;
+	if (disc < 0.0) return false;
 	// the roots without cancelling digits: r1 r2 = cq / c
 	float m = -(bq + (bq < 0.0 ? -1.0 : 1.0) * sqrt(disc));
 	float ra = m / c, rb = abs(m) > GEO_TINY20 ? cq / m : ra;
 	float r1 = min(ra, rb), r2 = max(ra, rb);
-	if (r2 < xa || r1 > xb) return 0;
-	float xs = r1 - TAIL_AHEAD * (1.0 + abs(r1));
-	if (xs <= xa) return -1;
-	float tol = 2.0 * TAIL_TOL * q.size;
-	x = xs;
-	for (int i = 0; i < TAIL_STEPS; i++) {
-		vec4 o = tail_out(z, q, false, lc, lam, psi_c, 0.0, x, tol);
-		if (o.x <= tol) return o.x >= -tol && o.w <= 0.0 ? 1 : -1;
-		if (o.y < 0.0) return 0;
-		float xn = x + o.y;
-		if (!(xn <= xb)) return 0;
-		bool done = o.y <= TAIL_EPS * abs(x) || o.y * o.z < TAIL_TOL;
-		x = xn;
-		if (done) return 1;
-	}
-	return -1;
+	if (r2 < xa || r1 > xb) return false;
+	xs = max(r1 - TAIL_AHEAD * (1.0 + abs(r1)), xa);
+	return true;
 }
 
 // where copy n passes the body's angle psi_c on the cylinder (y)
@@ -420,18 +412,18 @@ float tail_copy_y(TailRay z, float psi_c, float n) {
 	return z.y0 + (TAIL_PI2 * n + (psi_c - z.at0.x)) / z.cyl.x;
 }
 
-// copy n on the cylinder (sl: the slab's y on it; e, k a ball's as tail_meet has them): true if the
-// ray goes into the body there at a turn psi_min or more, and where (y, the angle, psi)
-bool tail_copy(TailRay z, TailBody q, float n, float psi_c, float dmax, vec2 sl, float lam, float psi_min, float e, float k, out vec3 at) {
+// copy n on the cylinder (sl: the slab's y on it): true if the ray goes into the body there at a turn
+// psi_min or more, and where (y, the angle, psi)
+bool tail_copy(TailRay z, TailBody q, float n, float psi_c, float dmax, vec2 sl, float lam, float psi_min, out vec3 at) {
 	at = vec3(0.0);
 	float yc = tail_copy_y(z, psi_c, n);
 	// the window in the angle off psi_c: dmax, and the slab's and the cylinder's ends
 	float xa = max(-dmax, (max(sl.x, z.y0) - yc) * z.cyl.x), xb = min(dmax, (min(sl.y, z.y1) - yc) * z.cyl.x);
 	if (!(xa <= xb)) return false;
 	float lc = tail_l(z, yc);
-	float x;
-	int r = q.cube ? -1 : tail_ball_enter(z, q, lc, lam, psi_c, xa, xb, e, k, x);
-	if (r == 0 || (r < 0 && !tail_enter(z, q, false, lc, lam, psi_c, 0.0, xa, xb, x))) return false;
+	float xs = xa, x;
+	if (!q.cube && !tail_ball_start(z, q, lc, lam, xa, xb, xs)) return false;
+	if (!tail_enter(z, q, false, lc, lam, psi_c, 0.0, xa, xs, xb, x)) return false;
 	at = vec3(yc + x / z.cyl.x, psi_c + x, TAIL_PI2 * n + psi_c + x);
 	return at.z >= psi_min;
 }
@@ -501,7 +493,6 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 				hi = min(hi, chi + mg);
 			}
 		}
-		float be = 0.0, bk = 0.0;     // a ball's e and k (tail_ball_enter)
 		if (!q.cube) {
 			// a ball's copies the ray goes into, exactly: copy n's line in the window, l = Cw + d + lam
 			// x (d its l at psi_c off the centre's), is in the ball's section of the cylinder where
@@ -511,8 +502,6 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 			float h = dot(Cx.xyz, cross(z.en, z.t));
 			float e = q.size * q.size - h * h - (A - g_prof.x) * (A - g_prof.x);
 			float k = 2.0 * g_prof.x * A, l2 = lam * lam;
-			be = e;
-			bk = k;
 			float B = 2.0 * k * k + 4.0 * l2 * k;
 			float del = 8.0 * l2 * max(e, 0.0) / max(B + sqrt(max(B * B - 16.0 * k * k * l2 * max(e, 0.0), 0.0)), GEO_TINY20);
 			float ds = e > 0.0 ? (sqrt(max(e - k * del, 0.0)) + 2.0 * abs(lam) * geo_asin(sqrt(0.5 * del))) * 1.001 + 1e-6 : -1.0;
@@ -542,13 +531,13 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 		for (int c = 0; c < TAIL_COPIES; c++) {
 			float n = span < float(TAIL_COPIES) || (!q.cube && c < TAIL_COPIES - 1) ? n0 + float(c) : n0 + floor(span * float(c) / float(TAIL_COPIES - 1) + 0.5);
 			if (n > n1) break;
-			if (tail_copy(z, q, n, psi_c, dmax, sl.xy, lam, psi_min, be, bk, at)) {
+			if (tail_copy(z, q, n, psi_c, dmax, sl.xy, lam, psi_min, at)) {
 				met = true;
 				for (int k = 0; k < 16; k++) {
 					if (n - prev <= 1.0) break;
 					float mid = floor(0.5 * (prev + n));
 					vec3 am;
-					if (tail_copy(z, q, mid, psi_c, dmax, sl.xy, lam, psi_min, be, bk, am)) {
+					if (tail_copy(z, q, mid, psi_c, dmax, sl.xy, lam, psi_min, am)) {
 						n = mid;
 						at = am;
 					} else {
@@ -582,7 +571,7 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 				if (h >= -1e-6) break;
 				ya = min(ya - h / tail_rate(z, ya).x, sl.w);
 			}
-			if (tail_enter(z, q, true, 0.0, 0.0, psi_c, base, ya, sl.w, y)) {
+			if (tail_enter(z, q, true, 0.0, 0.0, psi_c, base, ya, ya, sl.w, y)) {
 				ang = base + tail_fillet(z, y).x;
 				psi = TAIL_PI2 * n + ang;
 				if (psi >= psi_min) {

@@ -241,11 +241,13 @@ func _build() -> void:
 	var body: String = (load("res://shaders/foveation.gdshaderinc") as ShaderInclude).code
 	var n := RegEx.create_from_string("const int GEO_XN = (\\d+);").search(geo)
 	_xt_n = int(n.get_string(1))
-	for kind in ["eyes", "table", "floor", "gravity", "tail_view", "tail_tiles", "tail_quads", "tail"]:
+	# the tail's TAIL in two programs, the balls' and the cubes': each carries one kind's search only
+	# (registers: tools/adreno_stats.sh --fov)
+	for kind in ["eyes", "table", "floor", "gravity", "tail_view", "tail_tiles", "tail_quads", "tail", "tail_cubes"]:
 		var src := RDShaderSource.new()
 		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n",
 				"tail_view": "#define TAIL_VIEW\n", "tail_tiles": "#define TAIL_TILES\n", "tail_quads": "#define TAIL_QUADS\n",
-				"tail": "#define TAIL\n"}
+				"tail": "#define TAIL\n#define TAIL_CUBES 0\n", "tail_cubes": "#define TAIL\n#define TAIL_CUBES 1\n"}
 		var inc := geo + "\n" + look + "\n" + lens + ("\n" + zone + "\n" + tail if kind.begins_with("tail") else "")
 		src.source_compute = "#version 450\n" + defs[kind] + body.replace("#include_geo_and_look", inc)
 		var spirv := _rd.shader_compile_spirv_from_source(src)
@@ -447,9 +449,9 @@ func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: i
 	for step in ["tail_view", "tail_tiles", "tail_quads", "balls", "cubes"]:
 		if (step == "balls" and counts.x == 0) or (step == "cubes" and counts.y == 0):
 			continue
-		var pipe: String = "tail" if step in ["balls", "cubes"] else step
+		var pipe: String = {"balls": "tail", "cubes": "tail_cubes"}.get(step, step)
 		var pc := PackedInt32Array([counts.x, counts.y, cube0, images]).to_byte_array()
-		pc.append_array(PackedFloat32Array([psi_min, 1.0 if strips else 0.0, 1.0 if step == "cubes" else 0.0, 0.0]).to_byte_array())
+		pc.append_array(PackedFloat32Array([psi_min, 1.0 if strips else 0.0, 0.0, 0.0]).to_byte_array())
 		var cl := _rd.compute_list_begin()
 		_rd.compute_list_bind_compute_pipeline(cl, _pipes[pipe])
 		_rd.compute_list_bind_uniform_set(cl, _uniform_set(pipe), 0)
