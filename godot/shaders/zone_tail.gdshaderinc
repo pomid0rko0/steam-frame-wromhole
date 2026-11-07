@@ -18,7 +18,7 @@
 // centre seen at psi_c (the cylinder a line, the fillet an arc, the flat part a line: each in closed
 // form, tail_slab). On the cylinder the copies n whose window reaches into the slab are a run of whole
 // numbers in closed form (a ball's exactly those it goes into: tail_meet; a cube's narrowed to its
-// box's l at the window's angles), however many turns on; next to the limit, where l moves by a hair
+// box's l across the window), however many turns on; next to the limit, where l moves by a hair
 // a copy, a cube's run is long, and the copies the ray goes into are a run within it: tried at
 // TAIL_COPIES copies spread over it, then halving back from the first it goes into to the first of
 // all (tail_copy). On the far fillet the few there by psi at the slab's ends. A copy's window of y is
@@ -53,7 +53,6 @@ const int TAIL_STEPS = 12;        // Newton's rounds into a body
 const int TAIL_HALVE = 12;        // steps back to the way in (Newton's, or halving), a step past it
 const float TAIL_TOL = 2e-6;      // m: a point this near a body's surface is on it (on the far fillet:)
 const float TAIL_TOL_FILLET = 1e-5;
-const int TAIL_CUTS = 9;          // angles a cube's l on the cylinder is taken at across a window
 const float TAIL_EPS = 1.2e-7;    // float32's unit in the last place over the number (2^-23)
 const float TAIL_REACH = 1.02;    // a ball's bounding ball over its radius (tail_body)
 const int TAIL_OVER = 4;          // looks into a step that may have gone over a cube (tail_enter)
@@ -451,8 +450,8 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 	float nmin = max(ceil((psi_min - psi_c - dmax) / TAIL_PI2), n_lo);
 	// the cylinder: the copies whose window (tail_copy's: the ray goes along l by lambda dmax across
 	// it) reaches into the slab (on the cylinder: a copy past its end at psi_c can go in before), a
-	// run of whole numbers (l moves by 2 pi lambda a copy); a cube's narrowed to its box's l at angles
-	// across the window where it has one (its slabs across l there), but only where the run is longer
+	// run of whole numbers (l moves by 2 pi lambda a copy); a cube's narrowed to its box's l across
+	// the window (its slabs across l there), but only where the run is longer
 	// than TAIL_COPIES tries one by one (it spans (hi - lo) / |2 pi lambda| + 1 at most): off the
 	// limit it is a copy or two, and a copy the ray misses costs less than the narrowing; a ball's to
 	// those whose line meets its section of the cylinder
@@ -465,34 +464,28 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 		lo -= abs(lam) * dmax;
 		hi += abs(lam) * dmax;
 		if (q.cube && hi - lo > float(TAIL_COPIES - 1) * abs(s2)) {
-			// its box's l on the cylinder at angles across the window (TAIL_CUTS of them), each the
-			// slabs across l there; the ray goes along l by lambda dmax across the window, and the
-			// box's l between two angles by up to a step's worth more
-			float clo = 1e9, chi = -1e9;
-			for (int j = 0; j < TAIL_CUTS; j++) {
-				vec2 scc = geo_sincos(psi_c + dmax * (2.0 * float(j) / float(TAIL_CUTS - 1) - 1.0));
-				vec4 Pc = vec4(g_prof.x * (scc.y * z.en + scc.x * z.t), q.C.w) - q.C;
-				float a1 = -1e9, a2 = 1e9;
-				for (int i = 0; i < 4; i++) {
-					float m = dot(Pc, q.E[i]), e = q.E[i].w;
-					if (abs(e) > 1e-6) {
-						float u1 = (-q.size - m) / e, u2 = (q.size - m) / e;
-						a1 = max(a1, min(u1, u2));
-						a2 = min(a2, max(u1, u2));
-					} else if (abs(m) > q.size) {
-						a1 = 1e9;
-					}
-				}
-				if (a1 <= a2) {
-					clo = min(clo, a1);
-					chi = max(chi, a2);
+			// its box's l on the cylinder across the window: slab i's at angle psi_c + x is within
+			// (+-s - m_i) / e_i, m_i = E_i . (rho0 n(x), Cw) - E_i . C a sinusoid in x, whose least and
+			// greatest over |x| <= dmax are its ends' or, where its crest is within, P +- R (P, Q its
+			// parts along and across C's way, R = |(P, Q)|; cos dmax = cd): l is within each slab's
+			// widest over the window, so within the narrowest of those, however the slabs bind
+			float sd = sqrt(max(1.0 - cd * cd, 0.0));
+			vec3 u = (ae * z.en + at * z.t) / max(A, GEO_TINY20), w = (ae * z.t - at * z.en) / max(A, GEO_TINY20);
+			float clo = -1e9, chi = 1e9;
+			for (int i = 0; i < 4; i++) {
+				float P = g_prof.x * dot(u, q.E[i].xyz), Q = g_prof.x * dot(w, q.E[i].xyz), c = -dot(q.C.xyz, q.E[i].xyz);
+				float R = sqrt(P * P + Q * Q), e = q.E[i].w;
+				float mhi = c + (P >= R * cd ? R : P * cd + abs(Q) * sd) + 1e-5;
+				float mlo = c + (-P >= R * cd ? -R : P * cd - abs(Q) * sd) - 1e-5;
+				if (abs(e) > 1e-6) {
+					clo = max(clo, e > 0.0 ? -(mhi + q.size) / e : (mlo - q.size) / -e);
+					chi = min(chi, e > 0.0 ? (q.size - mlo) / e : (mhi + q.size) / -e);
+				} else if (mlo > q.size || mhi < -q.size) {
+					clo = 1e9;
 				}
 			}
-			float mg = abs(lam) * dmax + 0.25 * q.size / float(TAIL_CUTS - 1);
-			if (clo <= chi) {
-				lo = max(lo, clo - mg);
-				hi = min(hi, chi + mg);
-			}
+			lo = max(lo, clo - abs(lam) * dmax);
+			hi = min(hi, chi + abs(lam) * dmax);
 		}
 		if (!q.cube) {
 			// a ball's copies the ray goes into, exactly: copy n's line in the window, l = Cw + d + lam
