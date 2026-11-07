@@ -1,6 +1,7 @@
 extends SceneTree
 ## The refresh rate logic without a headset: how display times from OpenXR turn into the
-## measured rate and missed frames, the verdict (frame_rate.gd), and reading the GPU clock.
+## measured rate and missed frames, the verdict (frame_rate.gd), reading the GPU clock, and the
+## speed check's bringing a GPU time to its top clock (bench.gd).
 ##   godot --headless --xr-mode off --path . -s res://tests/refresh_rate_test.gd
 
 const U := preload("res://tests/util.gd")
@@ -110,6 +111,16 @@ func _initialize() -> void:
 	rate._find_gpu_clock()
 	check("GPU clock found among devfreq symlinks", rate.gpu_clock, fake + "/class/3d00000.gpu")
 	check("GPU clock read in MHz", rate.gpu_mhz(), 680)
+	check("GPU's top clock: its highest step", rate.gpu_top_mhz, 1100)
+	# the speed check brings a GPU time to the top clock: times the share of it the clock was
+	var bench := Bench.new()
+	var host := Main.new()
+	host.rate = rate
+	bench.main = host
+	check("speed check: a time at 680 of 1100 MHz brought to the top clock", is_equal_approx(bench._clock(), 680.0 / 1100.0), true)
+	check("speed check: the clock's range", [bench.clock_lo, bench.clock_hi], [680, 680])
+	bench.free()
+	host.free()
 	rate.free()
 
 	# a real sysfs file: says 4096 bytes, holds a few
