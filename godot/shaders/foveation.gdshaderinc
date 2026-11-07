@@ -391,24 +391,24 @@ vec3 fov_tail_dir(uint quad, uint lq) {
 	return normalize((fovp.ray[id.z] * vec4(p / fovp.pic.xy * 2.0 - 1.0, 1.0, 0.0)).xyz);
 }
 
-// the n-th range of the sectors of the bodies of TAIL's kind (body b's range r: b FOV_TAIL_RANGES + r)
-// its ray lies in (fov_tail_in's), -1 past the last
-int fov_tail_pick(uint quad, uint lq, int n) {
+// the first range from the from-th on (body b's range r: b FOV_TAIL_RANGES + r) of the sectors of
+// the bodies of TAIL's kind that its ray lies in (fov_tail_in's), -1 past the last
+int fov_tail_pick(uint quad, uint lq, int from) {
 	uint v = quad >> 24;
 	vec3 d = fov_tail_dir(quad, lq), ax = fov_tail_axis(v);
 	float chi = geo_acos(clamp(dot(d, ax), -1.0, 1.0));
 	bool cubes = tk.f.z > 0.5;
 	int nb = min(tk.n.x + tk.n.y, FOV_TAIL_MAX);
-	for (int b = cubes ? tk.n.x : 0; b < (cubes ? nb : min(tk.n.x, nb)); b++) {
+	int b0 = from / FOV_TAIL_RANGES;
+	for (int b = max(b0, cubes ? tk.n.x : 0); b < (cubes ? nb : min(tk.n.x, nb)); b++) {
 		int ob = int(v) * FOV_TAIL_MAX + b;
 		vec4 sec = td.sec[ob];
 		if (sec.w <= 0.0) continue;
-		for (int r = 0; r < FOV_TAIL_RANGES; r++) {
+		for (int r = b == b0 ? from - b0 * FOV_TAIL_RANGES : 0; r < FOV_TAIL_RANGES; r++) {
 			vec4 rg = td.rng[ob * FOV_TAIL_RANGES + r];
 			if (rg.x > rg.y || chi < rg.x || chi > rg.y) continue;
 			if (abs(fov_tail_azimuth(d, ax, sec.xyz, r / (TAIL_STRIPS + 1))) > sec.w) continue;
-			if (n == 0) return b * FOV_TAIL_RANGES + r;
-			n--;
+			return b * FOV_TAIL_RANGES + r;
 		}
 	}
 	return -1;
@@ -429,7 +429,7 @@ void main() {
 	// the nearest way into a body among the texel's sectors' ranges: its body slot (-1: none), its
 	// colour there as zone_tail.gdshader lights it, and for a cube its dark edges' measure
 	// (look_box_edge), whose differences within the quad stand for a fragment shader's fwidth. Range
-	// after range (fov_tail_pick: the n-th the ray lies in), each shaded at once: through a search
+	// after range (fov_tail_pick: the next the ray lies in), each shaded at once: through a search
 	// only these are kept, the ray worked out again for the next (in a fragment shader its varyings
 	// are read again where needed: registers, waves at once)
 	int hit = -1;
@@ -437,8 +437,9 @@ void main() {
 	vec3 col = vec3(0.0);
 	float edge = -1.0;
 	float best = used ? imageLoad(out_img, ivec3(fov_tail_id(quad, lq))).a : FOV_SKY;
+	int pick = -1;
 	for (int n = 0; used && n < FOV_TAIL_MAX * FOV_TAIL_RANGES; n++) {
-		int pick = fov_tail_pick(quad, lq, n);
+		pick = fov_tail_pick(quad, lq, pick + 1);
 		if (pick < 0) break;
 		int b = pick / FOV_TAIL_RANGES;
 		int ob = int(v) * FOV_TAIL_MAX + b;
