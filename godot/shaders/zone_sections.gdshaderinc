@@ -40,8 +40,9 @@
 // round the throat most of a small body's 20 are (a hand's ball's, seen from beside the zone, all
 // but the first). How thick: the images of the points the body's reach off its centre in the ray's
 // plane, along l and along alpha, and the angle between each pair's directions; a pixel there: its
-// angle at the picture's middle times cos^2 of the way off it. Invocation x: the image, y: the body
-// (the zone's balls, then its cubes), z: the eye. Out: a texel per image, body's slot and eye,
+// angle at the picture's middle times cos^2 of the way off it. Invocation x: the image, y: which of
+// those five ways (its centre's and the four points') it seeks, the workgroup y: the body (the
+// zone's balls, then its cubes), z: the eye. Out: a texel per image, body's slot and eye,
 // (the centre's x, y, z the body was taken at, its mesh if drawn: 1 fine, 2 coarse as the index has
 // it, then SIZES' as its place in the picture needs, ZS_*, 0 out of it; else 0): the vertex shader
 // draws an image only where it says one for the centre its instance has; LISTS puts it in its mesh's
@@ -876,55 +877,71 @@ vec4 zs_see(float el, vec3 en, float pl, vec3 t, float a, int j) {
 // the angle between two directions, small: their unit vectors' distance
 float zs_apart(vec4 a, vec4 b) { return length(a / length(a) - b / length(b)); }
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+// a workgroup a body and eye, x the image (or, past the images, the tail's entry), y which of an
+// image's five ways it seeks (its centre's, and the body's size off it both ways across and along
+// l): side by side, so that the pass takes one search's time, not five one after another
+layout(local_size_x = 32, local_size_y = 5, local_size_z = 1) in;
+shared vec4 s_see[5 * 32];
 void main() {
 	uvec3 id = gl_GlobalInvocationID;
-	int j = int(id.x);
+	int j = int(id.x), lx = int(gl_LocalInvocationID.x), w = int(gl_LocalInvocationID.y);
+	int b = int(gl_WorkGroupID.y);
 	int balls = pc.first.x, all = pc.first.x + pc.first.y;
-	if (j > pc.first.w + 1 + TAIL_STRIPS || int(id.y) >= all) return;
-	bool cube = int(id.y) >= balls;
-	int s = cube ? pc.first.z + int(id.y) - balls : int(id.y);
-	vec4 C = zb.body[4 * s];
-	float size = zb.body[4 * s + 3].x;
-	float reach = cube ? size * 1.7320508 : size;
-	float el;
-	vec3 en;
-	vec4 ex, ey, ez;
-	geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
-	if (j >= pc.first.w) {
-		// the tail's view of the body, from the meshes' last image on (Renderer's tail_psi_min)
-		TailBody q = tail_body(cube, C, zb.body[4 * s + 1], zb.body[4 * s + 2], size);
-		vec3 eye = vec3(geo_r(abs(el)), sqrt(geo_u(abs(el))), geo_dr(abs(el)));
-		float psi_min = float(pc.first.w - 1) * GEO_PI;
-		vec3 u;
-		float half_w = tail_sector(en, q, u);
-		TailStrips ts = tail_strips(el, eye, en, q, half_w, psi_min);
-		int i0 = pc.first.w;
-		if (j == i0) {
-			vec2 band = tail_band(el, eye, q, psi_min);
-			imageStore(cull_img, ivec3(i0, s, int(id.z)), vec4(C.xyz, 1.0));
-			imageStore(cull_img, ivec3(i0 + 1, s, int(id.z)), vec4(band, half_w, 0.0));
-			imageStore(cull_img, ivec3(i0 + 2, s, int(id.z)), vec4(u, 0.0));
-			imageStore(cull_img, ivec3(i0 + 3, s, int(id.z)), vec4(ts.n0, ts.on ? 1.0 : 0.0, ts.outward ? 1.0 : 0.0));
-		} else {
-			float k = float(j - i0 - 1);
-			vec4 st = vec4(0.0);
-			if (ts.on) st = vec4(tail_strip(ts, eye, 0, k), half_w < GEO_PI ? tail_strip(ts, eye, 1, k) : vec2(0.0));
-			imageStore(cull_img, ivec3(i0 + 5 + int(k), s, int(id.z)), st);
+	bool live = j <= pc.first.w + 1 + TAIL_STRIPS && b < all;
+	bool image = live && j < pc.first.w;
+	bool cube = b >= balls;
+	int s = cube ? pc.first.z + b - balls : b;
+	vec4 C = vec4(0.0);
+	float reach = 0.0;
+	float el = 0.0, pl = 0.0, alpha = 0.0;
+	vec3 en = vec3(1.0, 0.0, 0.0), t = vec3(0.0, 1.0, 0.0);
+	vec4 ex, ey, ez = vec4(0.0);
+	if (live) {
+		C = zb.body[4 * s];
+		float size = zb.body[4 * s + 3].x;
+		reach = cube ? size * 1.7320508 : size;
+		geo_eye(zp.inv_view, zp.eye_off[id.z].xyz, el, en, ex, ey, ez);
+		if (!image && w == 0) {
+			// the tail's view of the body, from the meshes' last image on (Renderer's tail_psi_min)
+			TailBody q = tail_body(cube, C, zb.body[4 * s + 1], zb.body[4 * s + 2], size);
+			vec3 eye = vec3(geo_r(abs(el)), sqrt(geo_u(abs(el))), geo_dr(abs(el)));
+			float psi_min = float(pc.first.w - 1) * GEO_PI;
+			vec3 u;
+			float half_w = tail_sector(en, q, u);
+			TailStrips ts = tail_strips(el, eye, en, q, half_w, psi_min);
+			int i0 = pc.first.w;
+			if (j == i0) {
+				vec2 band = tail_band(el, eye, q, psi_min);
+				imageStore(cull_img, ivec3(i0, s, int(id.z)), vec4(C.xyz, 1.0));
+				imageStore(cull_img, ivec3(i0 + 1, s, int(id.z)), vec4(band, half_w, 0.0));
+				imageStore(cull_img, ivec3(i0 + 2, s, int(id.z)), vec4(u, 0.0));
+				imageStore(cull_img, ivec3(i0 + 3, s, int(id.z)), vec4(ts.n0, ts.on ? 1.0 : 0.0, ts.outward ? 1.0 : 0.0));
+			} else {
+				float k = float(j - i0 - 1);
+				vec4 st = vec4(0.0);
+				if (ts.on) st = vec4(tail_strip(ts, eye, 0, k), half_w < GEO_PI ? tail_strip(ts, eye, 1, k) : vec2(0.0));
+				imageStore(cull_img, ivec3(i0 + 5 + int(k), s, int(id.z)), st);
+			}
 		}
-		return;
 	}
-	vec3 n;
-	float pl = geo_l_of(C, n);
-	float ca = dot(n, en);
-	vec3 across = n - ca * en;
-	float sa = length(across);
-	vec3 t = sa > 1e-7 ? across / sa : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
-	float alpha = geo_atan2(sa, ca);
-	vec4 d0 = zs_see(el, en, pl, t, alpha, j);
-	float da = min(reach / geo_r(abs(pl)), 0.5 * GEO_PI);
-	float thick = max(zs_apart(zs_see(el, en, pl, t, alpha + da, j), zs_see(el, en, pl, t, alpha - da, j)),
-			zs_apart(zs_see(el, en, pl + reach, t, alpha, j), zs_see(el, en, pl - reach, t, alpha, j)));
+	if (image) {
+		vec3 n;
+		pl = geo_l_of(C, n);
+		float ca = dot(n, en);
+		vec3 across = n - ca * en;
+		float sa = length(across);
+		t = sa > 1e-7 ? across / sa : normalize(cross(en, abs(en.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+		alpha = geo_atan2(sa, ca);
+		float da = min(reach / geo_r(abs(pl)), 0.5 * GEO_PI);
+		// way w: 0 the centre, 1 and 2 the size across each way, 3 and 4 along l each way
+		float a = alpha + (w == 1 ? da : (w == 2 ? -da : 0.0));
+		float l = pl + (w == 3 ? reach : (w == 4 ? -reach : 0.0));
+		s_see[32 * w + lx] = zs_see(el, en, l, t, a, j);
+	}
+	barrier();
+	if (!image || w != 0) return;
+	vec4 d0 = s_see[lx];
+	float thick = max(zs_apart(s_see[32 + lx], s_see[64 + lx]), zs_apart(s_see[96 + lx], s_see[128 + lx]));
 	float c = -dot(d0, ez) / length(d0);
 	float px = (id.z == 0u ? zp.px.x : zp.px.y) * max(c * c, 0.0);
 	// not a number anywhere: drawn
