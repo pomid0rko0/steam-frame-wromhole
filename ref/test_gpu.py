@@ -1404,7 +1404,8 @@ def outside(ball, X, C, E, size):
 
 
 # ---------- the tail of the bodies' images, per pixel (zone_tail.gdshaderinc) ----------
-TAIL_CASES = 1500           # rays a throat: a fault one ray in a thousand has shows in nine runs of ten
+TAIL_CASES = 750            # rays a throat in each of its two pieces: a fault one ray in a thousand has
+                            # shows in nine runs of ten
 TAIL_STEP = 2e-3             # m: the reference's samples along a ray where it may meet the body
 TAIL_DEEP = 3000.0           # rad past psi_min: the deepest a case aims at (two fifths of them deep)
 TAIL_GRAZE = 2e-4            # m: a ray this near a body's surface at its deepest grazes it (either answer)
@@ -1785,7 +1786,7 @@ def numbers_check():
 CHECKS = ('numbers', 'profile', 'images', 'paths', 'exit', 'zone', 'tail', 'eye')
 # the pieces run apart: (the check that asks for it, its name), the longest first
 PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('paths', 'paths'), ('tail', 'tail'),
-          ('profile', 'profile'), ('images', 'images'), ('eye', 'eye'))
+          ('tail', 'tail2'), ('profile', 'profile'), ('images', 'images'), ('eye', 'eye'))
 
 
 def piece_checks(index, piece):
@@ -1811,7 +1812,7 @@ def piece_checks(index, piece):
         return zone_checks(name, S, gpu, rng)
     if piece == 'mesh':
         return zone_mesh_checks(name, S, gpu, rng)
-    if piece == 'tail':
+    if piece in ('tail', 'tail2'):
         return tail_checks(name, S, gpu, rng)
     return eye_checks(S, gpu, rng)
 
