@@ -87,6 +87,8 @@ var left_hand: XRController3D   # at their aim pose: the buttons and sticks (XR 
 var right_hand: XRController3D
 var gaze: XRNode3D              # where the eyes look (XR_EXT_eye_gaze_interaction), XR only
 var gaze_dot: MeshInstance3D    # drawn where they look, if the menu says so
+var vis_mask: VisualInstance3D  # the runtime's hidden area of each eye (OpenXR only)
+var logged_mask := false
 var gaze_dir := Vector3.FORWARD # where they look in the head's space, for the foveation's fovea
 var gaze_lost := INF            # s since they were last tracked
 var prev_head := Vector2.ZERO
@@ -157,6 +159,12 @@ func _ready() -> void:
 	camera.far = FAR
 	camera.compositor = Compositor.new()
 	origin.add_child(camera)
+	if in_xr and xr_name == "OpenXR":
+		# the parts of each eye's picture the lenses never show (the runtime's hidden area,
+		# XR_KHR_visibility_mask), black at the near plane before the floor's quad: the quad's
+		# pixels there, and a body's behind it, are not worked out
+		vis_mask = OpenXRVisibilityMask.new()
+		camera.add_child(vis_mask)
 	if in_xr:
 		_add_controllers()
 	else:
@@ -519,6 +527,17 @@ func _on_recentered() -> void:
 
 func _on_session_visible() -> void:
 	print("XR session visible (no input focus: dashboard open?)")
+	_log_vis_mask()
+
+
+## Whether the runtime gave the hidden area (vis_mask), to godot.log, once.
+func _log_vis_mask() -> void:
+	if vis_mask == null or logged_mask:
+		return
+	logged_mask = true
+	var m := vis_mask.get_base()
+	var on := m.is_valid() and RenderingServer.mesh_get_surface_count(m) > 0
+	print("visibility mask: ", "the runtime's hidden area is skipped" if on else "none from the runtime")
 
 
 func _on_session_focussed() -> void:

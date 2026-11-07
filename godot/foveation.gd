@@ -95,7 +95,7 @@ var _m := 1.0                       # per pixel
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
 var _floor := Vector2.ZERO          # (lift, beta)
 var _lens_bytes := PackedByteArray()   # the lens list as the buffer takes it; empty: sent
-var _lens_size := 160 * 16 + 16
+var _lens_size := (160 + 40) * 16 + 16
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
 var _gaze := Vector3.FORWARD        # where the eyes look, in the head's space
 var _recentre := true               # each eye's g where it looks at the next frame, slack or not
@@ -129,10 +129,12 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, flo
 	_mutex.unlock()
 
 
-## The lens list as Renderer has it: lens_body's rows and lens_n.
-func set_lens(rows: PackedVector4Array, counts: Vector2) -> void:
+## The lens list as Renderer has it: lens_body's rows, lens_cull's and lens_n.
+func set_lens(rows: PackedVector4Array, cull: PackedVector4Array, counts: Vector2) -> void:
 	var f := PackedFloat32Array()
 	for r in rows:
+		f.append_array([r.x, r.y, r.z, r.w])
+	for r in cull:
 		f.append_array([r.x, r.y, r.z, r.w])
 	f.append_array([counts.x, counts.y, 0.0, 0.0])
 	_mutex.lock()
