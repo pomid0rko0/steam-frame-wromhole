@@ -9,6 +9,10 @@
 //     (centre, kind: 0 a sphere, 1 a box, 2 a box with dark edges (a toy cube), 3 an upright
 //      cylinder), (E1, s1), (E2, s2), (colour, s3): a box's axes E1, E2 (E3 = E1 x E2) and half
 //      sizes; a sphere's radius s1; a cylinder's radius s1 and half height s3 along E3
+//   lens_cull[LENS_MAX]: the bodies' centres and reaches (the distance from the centre within
+//     which the body lies: Renderer._lens_reach) four bodies to four rows: bodies 4g .. 4g + 3's x,
+//     their y, their z, their reaches; lens_trace tests the ray's plane against four at once, and
+//     a body it passes costs a fraction of a row
 //   lens_n = (A's count, B's count)
 
 #define LENS_MAX 40
@@ -125,18 +129,28 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 		m = ml > 1e-6 ? m / ml : vec3(0.0);
 		int i0 = sheet > 0.0 ? 0 : int(lens_n.x);
 		int i1 = i0 + int(sheet > 0.0 ? lens_n.x : lens_n.y);
-		for (int i = i0; i < i1; i++) {
-			vec4 r0 = lens_body[4 * i], r1 = lens_body[4 * i + 1], r2 = lens_body[4 * i + 2], r3 = lens_body[4 * i + 3];
-			int kind = int(r0.w + 0.5);
-			float reach = kind == 0 ? r1.w : (kind == 3 ? length(vec2(r1.w, r3.w)) : length(vec3(r1.w, r2.w, r3.w)));
-			if (abs(dot(r0.xyz, m)) > reach || dot(r0.xyz - pos, dir) < -reach) continue;
-			float t;
-			if (kind == 0) t = lens_sphere(pos, dir, r0.xyz, r1.w, tmax);
-			else if (kind == 3) t = lens_cylinder(pos, dir, r0.xyz, r1.xyz, r2.xyz, r1.w, r3.w, tmax);
-			else t = lens_box(pos, dir, r0.xyz, r1.xyz, r2.xyz, vec3(r1.w, r2.w, r3.w), tmax);
-			if (t < tmax) {
-				tmax = t;
-				hit = i;
+		// four bodies at a time (lens_cull): as bits, those that the plane passes within their reach
+		// and whose reach is not all behind the ray's start, of this universe's; then each of them
+		float pd = dot(pos, dir);
+		for (int g = i0 >> 2; 4 * g < i1; g++) {
+			vec4 X = lens_cull[4 * g], Y = lens_cull[4 * g + 1], Z = lens_cull[4 * g + 2], R = lens_cull[4 * g + 3];
+			uvec4 on = uvec4(lessThanEqual(abs(X * m.x + Y * m.y + Z * m.z), R))
+					* uvec4(greaterThanEqual(X * dir.x + Y * dir.y + Z * dir.z + R, vec4(pd)));
+			uint lo = uint(clamp(i0 - 4 * g, 0, 4)), hi = uint(clamp(i1 - 4 * g, 0, 4));
+			uint near = (on.x | (on.y * 2u) | (on.z * 4u) | (on.w * 8u)) & ((1u << hi) - 1u) & ~((1u << lo) - 1u);
+			while (near != 0u) {
+				int i = 4 * g + int(findLSB(near));
+				near &= near - 1u;
+				vec4 r0 = lens_body[4 * i], r1 = lens_body[4 * i + 1], r2 = lens_body[4 * i + 2], r3 = lens_body[4 * i + 3];
+				int kind = int(r0.w + 0.5);
+				float t;
+				if (kind == 0) t = lens_sphere(pos, dir, r0.xyz, r1.w, tmax);
+				else if (kind == 3) t = lens_cylinder(pos, dir, r0.xyz, r1.xyz, r2.xyz, r1.w, r3.w, tmax);
+				else t = lens_box(pos, dir, r0.xyz, r1.xyz, r2.xyz, vec3(r1.w, r2.w, r3.w), tmax);
+				if (t < tmax) {
+					tmax = t;
+					hit = i;
+				}
 			}
 		}
 	}

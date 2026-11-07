@@ -654,10 +654,41 @@ func _upload_lens(toys_a: PackedVector4Array, toys_b: PackedVector4Array) -> voi
 	ca = mini(ca, LENS_MAX)
 	rows.resize(4 * LENS_MAX)
 	_lens_toys = [toys_a, toys_b]
+	# lens_cull: four bodies to four rows, their x, y, z and reaches (bodies past the count none)
+	var cull := PackedVector4Array()
+	cull.resize(LENS_MAX)
+	for i in total:
+		var c := rows[4 * i]
+		var g := 4 * (i >> 2)
+		var k := i & 3
+		var row: Vector4
+		for j in 4:
+			row = cull[g + j]
+			row[k] = [c.x, c.y, c.z, _lens_reach(rows, i)][j]
+			cull[g + j] = row
 	for m in floor_mats:
 		m.set_shader_parameter("lens_body", rows)
+		m.set_shader_parameter("lens_cull", cull)
 		m.set_shader_parameter("lens_n", Vector2(ca, cb))
-	foveation.set_lens(rows, Vector2(ca, cb))
+	foveation.set_lens(rows, cull, Vector2(ca, cb))
+
+
+## How far from its centre body i of the lens list (rows of four, lens.gdshaderinc) reaches: a
+## sphere its radius, a cylinder and a box their corners'. A tenth of a millimetre over it, far over
+## what the last bits of the float sums of lens_cull's tests could take off: they pass every body
+## the ray can meet.
+static func _lens_reach(rows: PackedVector4Array, i: int) -> float:
+	var r1 := rows[4 * i + 1]
+	var r3 := rows[4 * i + 3]
+	var reach: float
+	match int(rows[4 * i].w + 0.5):
+		0:
+			reach = r1.w
+		3:
+			reach = Vector2(r1.w, r3.w).length()
+		_:
+			reach = Vector3(r1.w, rows[4 * i + 2].w, r3.w).length()
+	return reach + 1e-4
 
 
 var _lens_toys := [PackedVector4Array(), PackedVector4Array()]

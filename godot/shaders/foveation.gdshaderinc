@@ -39,6 +39,7 @@
 layout(set = 0, binding = 0) uniform sampler2D g_tab;
 layout(set = 0, binding = 1, std140) uniform Lens {
 	vec4 body[160];     // lens_body (4 LENS_MAX)
+	vec4 cull[40];      // lens_cull (LENS_MAX)
 	vec4 n;             // lens_n
 } lensp;
 layout(set = 0, binding = 2, std140) uniform Params {
@@ -77,6 +78,7 @@ layout(set = 0, binding = 5, rgba32f) uniform restrict image2D xt_img;
 #define g_lift fovp.floor_.x
 #define g_beta fovp.floor_.y
 #define lens_body lensp.body
+#define lens_cull lensp.cull
 #define lens_n lensp.n.xy
 
 #include_geo_and_look
@@ -618,9 +620,14 @@ void main() {
 			geo_exit_at(e.yzw, tr, b, w.x, pos, dir);
 			way = w.y;
 		}
-		// two texels' turn: the quad filters between neighbouring texels (lens_near)
-		float ang = length(normalize((fovp.ray[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 1.0, 0.0)).xyz) - d);
-		sn = lens_trace(pos, dir, sheet, way, lensed || lens_near(e.x, eye.x, D, ang));
+		// a ray that misses the zone: two texels' turn, as the quad filters between neighbouring
+		// texels (lens_near); one through it looks for the bodies anyway
+		bool bodies = lensed;
+		if (!lensed) {
+			float ang = length(normalize((fovp.ray[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 1.0, 0.0)).xyz) - d);
+			bodies = lens_near(e.x, eye.x, D, ang);
+		}
+		sn = lens_trace(pos, dir, sheet, way, bodies);
 		a = look_ground_at(lens_floor_xy(pos, dir, sheet));
 		edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;
 	}
