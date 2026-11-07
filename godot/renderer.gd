@@ -13,7 +13,8 @@ extends Node3D
 ##   of the ways light takes from each eye worked out once a frame (zone_sections.gd), each image's
 ##   vertices only take their geodesics from that table. Their images past those ZONE_IMAGES, which
 ##   close in on the rays that wind round the throat's cylinder, per pixel along those rays
-##   (shaders/zone_tail.gdshader), only in each body's sectors of the view where they can be.
+##   (shaders/zone_tail.gdshader), only in each body's sectors of the view where they can be; under
+##   foveation per texel of its texture instead (foveation.gd, render_tail), behind the meshes.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
 ##   image of them (shaders/floor.gdshaderinc).
@@ -202,6 +203,10 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 	tail_mat.set_shader_parameter("tail_far", Main.FAR)
 	tail_mat.set_shader_parameter("tail_images", ZONE_IMAGES)
 	tail_mat.set_shader_parameter("zone_cull", zone_sections.cull_tex)
+	# under foveation the tail goes into its texture per texel instead (Foveation.render_tail, from
+	# zone_sections' passes)
+	zone_sections.foveation = foveation
+	zone_sections.tail_psi_min = (ZONE_IMAGES - 1) * PI
 	arrow_mat.shader = ARROW_SHADER
 	arrow_mat.set_shader_parameter("arrow_rim", Vector3(ARROW_RIM_COLOR.r, ARROW_RIM_COLOR.g, ARROW_RIM_COLOR.b))
 	for m in beam_mats:
@@ -222,6 +227,7 @@ func _ready() -> void:
 	floor_quad.mesh = q
 	_floor_material()
 	foveation.toggled.connect(_floor_material)
+	foveation.toggled.connect(_tail_visible)
 	floor_quad.extra_cull_margin = 16384.0
 	floor_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(floor_quad)
@@ -304,7 +310,8 @@ func _process(_delta: float) -> void:
 
 
 func _tail_visible() -> void:
-	tail.visible = _warm > 0 or (_tail_on and tail_shown)
+	tail.visible = _warm > 0 or (_tail_on and tail_shown and not foveation.enabled)
+	zone_sections.tail_on = _tail_on and tail_shown
 	for k in _zone_inst.size():
 		RenderingServer.instance_set_visible(_zone_inst[k], _warm > 0 or zone_count[ZONE_LODS[k][0]] > 0)
 
@@ -334,6 +341,7 @@ var tail_strips := true:
 	set(v):
 		tail_strips = v
 		tail_mat.set_shader_parameter("tail_strips_on", v)
+		zone_sections.tail_strips = v
 # the tail drawn where it is on; the speed check takes it away to time it (bench.gd's VARIANTS)
 var tail_shown := true:
 	set(v):

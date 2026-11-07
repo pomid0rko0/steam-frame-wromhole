@@ -3,12 +3,16 @@ extends CompositorEffect
 ## Foveated rendering: where the eyes look the picture is as without it; away from there the floor
 ## is worked out coarser, smoothly, with no edge anywhere.
 ##
-## Per pixel only the floor's quad costs much (a ray's way out of the curved zone, and through it
-## the bodies out in the flat universes); the bodies seen straight and in the zone are geometry,
-## drawn at the picture's full resolution always. So before the bodies are drawn, a compute shader
-## (shaders/foveation.gdshaderinc) works out what the quad would draw into a texture per eye, and
-## the quad then only takes each pixel's colour from there, filtered, with a program of its own
+## Per pixel the floor's quad costs much (a ray's way out of the curved zone, and through it the
+## bodies out in the flat universes), and so does the tail of the zone's bodies' images (their turns
+## round the throat past the meshes': zone_tail.gdshaderinc); the bodies seen straight and the zone's
+## meshes are geometry, drawn at the picture's full resolution always. So before the bodies are
+## drawn, a compute shader (shaders/foveation.gdshaderinc) works out what the quad would draw into a
+## texture per eye, and the tail over it where it is nearer (render_tail, from ZoneSections' passes),
+## and the quad then only takes each pixel's colour from there, filtered, with a program of its own
 ## (shaders/floor_sample.gdshader, sample_mat: Renderer draws the quad with it while this is on).
+## The meshes are drawn over the quad, as they were over the tail by depth: along a ray the tail's
+## ways into a body are at turns past the meshes' images.
 ##
 ## The warp, per eye, about the pixel g the eye looks at: the pixel centred at p, r = |p - g| from
 ## g, takes the texture at c + (p - g) F(r) / r, c being g's texel, with
@@ -34,8 +38,9 @@ extends CompositorEffect
 ## pixel of the floor and the sky, not only the fovea, takes the colour worked out where it is.
 ##
 ## Three passes: the eyes, their rows of the way out of the zone (a ray's sigma to where it leaves:
-## geo.gdshaderinc, «the way out by a table»), the texture. GPU timestamps before, between and after
-## them (TS_*) give frame_rate.gd the GPU time of each part of the frame.
+## geo.gdshaderinc, «the way out by a table»), the texture; and the tail's, later, while a body is in
+## the zone. GPU timestamps before, between and after them (TS_*; the tail's is ZoneSections') give
+## frame_rate.gd the GPU time of each part of the frame.
 ##
 ## On the XR camera's compositor, before the opaque pass (the 3D scene's render pass stays one).
 ## Renderer hands it the space's numbers, the head each frame, and the material the floor's quad
@@ -53,6 +58,8 @@ const MARGIN := 2                   # texels round the picture's warp: the filte
 const TS_BEGIN := "foveation begin"
 const TS_TABLE := "foveation table"
 const TS_END := "foveation end"
+const TAIL_MAX := 20                # foveation.gdshaderinc's FOV_TAIL_MAX: bodies the tail's passes take
+const TAIL_RANGES := 18             # its FOV_TAIL_RANGES: a side's strips and band, both sides
 
 signal toggled                      # turned on or off (Renderer draws the quad with sample_mat while on)
 
@@ -94,6 +101,11 @@ var _gaze := Vector3.FORWARD        # where the eyes look, in the head's space
 var _recentre := true               # each eye's g where it looks at the next frame, slack or not
 var _tell := false                  # the log's line at the next frame
 var _centre: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]   # each eye's g before rounding (render thread)
+var _tail_set: RID                  # the tail's passes' set 1: ZoneSections' cull image and bodies' rows, and ours (render_tail)
+var _tail_key := []                 # what it was made with
+var _tail_args: RID                 # TAIL_QUADS' and TAIL's indirect dispatches (foveation.gdshaderinc's TailArgs)
+var _tail_data: RID                 # the bodies' views, the tiles and the quads listed (its TailData)
+var _tail_tiles := Vector2i.ZERO    # the tiles across and down they were made for
 var _mutex := Mutex.new()
 
 
@@ -223,14 +235,18 @@ func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var look: String = (load("res://shaders/look.gdshaderinc") as ShaderInclude).code
 	var lens: String = (load("res://shaders/lens.gdshaderinc") as ShaderInclude).code
+	var zone: String = (load("res://shaders/zone.gdshaderinc") as ShaderInclude).code
+	var tail: String = (load("res://shaders/zone_tail.gdshaderinc") as ShaderInclude).code
 	var body: String = (load("res://shaders/foveation.gdshaderinc") as ShaderInclude).code
-	body = body.replace("#include_geo_and_look", geo + "\n" + look + "\n" + lens)
 	var n := RegEx.create_from_string("const int GEO_XN = (\\d+);").search(geo)
 	_xt_n = int(n.get_string(1))
-	for kind in ["eyes", "table", "floor", "gravity"]:
+	for kind in ["eyes", "table", "floor", "gravity", "tail_view", "tail_tiles", "tail_quads", "tail"]:
 		var src := RDShaderSource.new()
-		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n"}
-		src.source_compute = "#version 450\n" + defs[kind] + body
+		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n",
+				"tail_view": "#define TAIL_VIEW\n", "tail_tiles": "#define TAIL_TILES\n", "tail_quads": "#define TAIL_QUADS\n",
+				"tail": "#define TAIL\n"}
+		var inc := geo + "\n" + look + "\n" + lens + ("\n" + zone + "\n" + tail if kind.begins_with("tail") else "")
+		src.source_compute = "#version 450\n" + defs[kind] + body.replace("#include_geo_and_look", inc)
 		var spirv := _rd.shader_compile_spirv_from_source(src)
 		if spirv.compile_error_compute != "":
 			push_error("foveation (%s): %s" % [kind, spirv.compile_error_compute])
@@ -383,6 +399,62 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.compute_list_dispatch(cl, ceili(_n.x / 8.0), ceili(_n.y / 8.0), views)
 	_rd.compute_list_end()
 	_rd.capture_timestamp(TS_END)
+
+
+## The tail of the zone's bodies' images into the texture (foveation.gdshaderinc: TAIL_VIEW, TAIL_TILES,
+## TAIL_QUADS, TAIL), from ZoneSections' render callback once its IMAGES pass has worked out where each body's
+## tail can be seen: cull (its IMAGES' out), bodies (its rows' uniform buffer), the zone's balls and
+## cubes, the cubes' first slot and the images a body; psi_min and strips as zone_tail.gdshader takes
+## them. After this frame's texture (this effect's callback runs before ZoneSections'); nothing while
+## off or probing.
+func render_tail(cull: RID, bodies: RID, counts: Vector2i, cube0: int, images: int, views: int, psi_min: float, strips: bool) -> void:
+	if level == 0 or probe or not _tex.is_valid() or not _pipes.has("tail") or counts == Vector2i.ZERO:
+		return
+	var tiles := Vector2i(ceili(_n.x / 8.0), ceili(_n.y / 8.0))
+	if _tail_tiles != tiles:
+		for r in [_tail_args, _tail_data]:
+			if r.is_valid():
+				_rd.free_rid(r)
+		# TAIL_QUADS' and TAIL's dispatches, and foveation.gdshaderinc's TailData: the bodies' views
+		# of both eyes (FOV_TAIL_MAX of them, a vec4 and FOV_TAIL_RANGES each), then every tile of both
+		# and every quad of them for the balls and for the cubes
+		_tail_args = _rd.storage_buffer_create(48, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
+		_tail_data = _rd.storage_buffer_create(16 * 2 * TAIL_MAX * (1 + TAIL_RANGES) + 4 * 2 * tiles.x * tiles.y * 33)
+		_tail_tiles = tiles
+	var key := [cull, bodies, _tail_args, _tail_data]
+	if _tail_key != key or not _tail_set.is_valid() or not _rd.uniform_set_is_valid(_tail_set):
+		var us: Array[RDUniform] = []
+		for b in 4:
+			var u := RDUniform.new()
+			u.binding = b
+			u.uniform_type = [RenderingDevice.UNIFORM_TYPE_IMAGE, RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER,
+					RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER, RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER][b]
+			u.add_id([cull, bodies, _tail_args, _tail_data][b])
+			us.append(u)
+		_tail_set = _rd.uniform_set_create(us, _shaders["tail"], 1)
+		_tail_key = key
+	# TAIL twice: the balls', then the cubes' (a wave of one kind of body goes through one search)
+	for step in ["tail_view", "tail_tiles", "tail_quads", "balls", "cubes"]:
+		if (step == "balls" and counts.x == 0) or (step == "cubes" and counts.y == 0):
+			continue
+		var pipe: String = "tail" if step in ["balls", "cubes"] else step
+		var pc := PackedInt32Array([counts.x, counts.y, cube0, images]).to_byte_array()
+		pc.append_array(PackedFloat32Array([psi_min, 1.0 if strips else 0.0, 1.0 if step == "cubes" else 0.0, 0.0]).to_byte_array())
+		var cl := _rd.compute_list_begin()
+		_rd.compute_list_bind_compute_pipeline(cl, _pipes[pipe])
+		_rd.compute_list_bind_uniform_set(cl, _uniform_set(pipe), 0)
+		_rd.compute_list_bind_uniform_set(cl, _tail_set, 1)
+		_rd.compute_list_set_push_constant(cl, pc, pc.size())
+		match step:
+			"tail_view":
+				_rd.compute_list_dispatch(cl, 1, 1, views)
+			"tail_tiles":
+				_rd.compute_list_dispatch(cl, ceili(tiles.x * tiles.y / 64.0), 1, views)
+			"tail_quads":
+				_rd.compute_list_dispatch_indirect(cl, _tail_args, 0)
+			_:
+				_rd.compute_list_dispatch_indirect(cl, _tail_args, 32 if step == "cubes" else 16)
+		_rd.compute_list_end()
 
 
 static func _warp_at(r: float, r0: float, m: float) -> float:

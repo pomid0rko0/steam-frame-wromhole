@@ -18,8 +18,9 @@
 # forces them one way at a time), the program Godot specialises and runs for it: what a pixel on
 # that way costs.
 # --fov: instead, foveation's compute programs (foveation.gd: the eyes, the way out's table, the
-# floor plain and coloured by gravity; tests/multiview_check.gd with fov), which work out the floor
-# in the headset by default: the floor's quad then only samples their texture.
+# floor plain and coloured by gravity, the tail of the zone's bodies' images in four; tests/multiview_check.gd
+# with fov), which work out the floor and the tail in the headset by default: the floor's quad then
+# only samples their texture.
 #   tools/adreno_stats.sh [--full] [--paths | --fov]      (--full: ir3's own lines too)
 # KEEP_LOG=file keeps the compiler's whole log (on the Frame a file in the repository, which the host
 # sees too). Needs the driver from tools/setup.sh (mesa-fd next to Godot). Timings are not measured:
@@ -82,15 +83,16 @@ if sys.argv[3].endswith('floor_paths.gd'):
               f'{cat4} cat4, {cat5} cat5')
     sys.exit(0)
 if sys.argv[3].endswith('multiview_check.gd'):
-    # foveation.gd compiles its four last, after Godot's own (their order: Foveation._build)
+    # foveation.gd compiles its eight last, after Godot's own (their order: Foveation._build)
     progs = [(m.group(1), [int(v) for v in m.groups()[1:]]) for m in re.finditer(
         r'; CL prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full, (\d+) constlen.*\n'
         r'.*?(\d+) cat0.*?(\d+) cat4, (\d+) cat5.*\n.*?(\d+) loops\n.*?(\d+) max_waves, (\d+) double', text)]
-    if len(progs) < 4:
+    if len(progs) < 8:
         sys.exit('no compute program statistics in the log')
     print('foveation\'s compute programs (foveation.gd):')
     for name, (p, (n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl)) in zip(
-            ('the eyes', 'the way out\'s table', 'the floor', 'the floor by gravity'), progs[-4:]):
+            ('the eyes', 'the way out\'s table', 'the floor', 'the floor by gravity', 'the tail\'s view of the bodies',
+             'the tail\'s tiles', 'the tail\'s quads', 'the tail'), progs[-8:]):
         print(f"  {name} (prog {p}): {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, "
               f"{cat4} cat4, {cat5} cat5, {loops} loops")
     sys.exit(0)

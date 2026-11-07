@@ -1,6 +1,7 @@
 shader_type spatial;
-// The tail of the zone bodies' images, per pixel (zone_tail.gdshaderinc), only where a body's tail can
-// be: per body slot and side TAIL_STRIPS + 1 instances, each a ring sector of the view round the
+// The tail of the zone bodies' images, per pixel (zone_tail.gdshaderinc), while foveation is off (with
+// it on foveation.gdshaderinc's TAIL works it out per texel of its texture, from the same sectors,
+// strips and bands, and Renderer draws none of this), only where a body's tail can be: per body slot and side TAIL_STRIPS + 1 instances, each a ring sector of the view round the
 // eye's inward radial direction (Renderer._zone_mesh: VERTEX.x across the sector, VERTEX.y 0 its
 // inner edge, 1 its outer): round the axis the azimuths whose rays' planes pass by the body
 // (tail_sector: two, round its direction and the opposite), off it a strip of the angles whose rays

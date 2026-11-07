@@ -31,7 +31,8 @@
 // one of them. The renderer takes psi_min (ZONE_IMAGES - 1) pi: the meshes' last image is drawn by
 // both (the same points, at the same depth), else where it meets the next in a ring round the eye's
 // axis the mesh's edge and the tail's first way in would leave pinholes between them.
-//   Drawn where it can be (zone_tail.gdshader): per body and side of the eye's axis its sector of
+//   Drawn where it can be (zone_tail.gdshader per pixel; under foveation foveation.gdshaderinc's TAIL
+// per texel, by the same tests): per body and side of the eye's axis its sector of
 // azimuths (tail_sector) and, off the inward radial, a strip of launch angles per copy (tail_strip):
 // copy n is met only by rays whose turn reaches its least at the body's far end and not yet its
 // greatest at the near end, as far as the copies' strips stay apart (on a long throat, a body tens of
