@@ -31,6 +31,13 @@ extends Node
 ## all alike). RATE is low because a frame that misses its refresh sends SteamVR to half rate
 ## (frame_rate.gd), and the GPU time then grows: a variant over the frame's budget reads dearer than
 ## it is, and so does the segment after it.
+##    At RATE a light frame keeps the GPU busy a small share of the time, and the kernel's governor
+## (simple_ondemand on the Frame) lowers its clock: 629..903 MHz at foveation's strongest, where the
+## heavier variants keep 903, and a frame at a lower clock takes longer. So each frame's GPU time,
+## and its parts', is taken at the clock it ran at (read each frame of a segment: FrameRate.gpu_mhz)
+## and brought to the top one (FrameRate.gpu_top_mhz): times the share of it the clock was. That is
+## exact for work the GPU's core clock bounds; work the memory bounds it brings a little below what
+## it would take at the top clock, so the line has the times as they ran too.
 ##
 ## 2. The tour (_make_tour), at TOUR_RATE if the display follows, with the menu's foveation: does
 ## the rate hold all round, and where not: sweeps round at each place, a flight along the axis
@@ -170,14 +177,16 @@ var saved_gravity := 0          # the gravity view before (the field lines' vari
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
 var phase_t := 0.0
-var gpu_ms: Array = []          # this segment's frames
+var gpu_ms: Array = []          # this segment's frames, brought to the GPU's top clock
+var raw_ms: Array = []          # and as they ran
 var part_ms: Array = []         # and their GPU time by part (FrameRate.PARTS), as read
 var part_frame := -1            # the last frame whose parts were taken (FrameRate.parts_frame)
 var zone_ms: Array = []         # and their zone's passes' (FrameRate.zone_last), as read
 var clock_lo := 0
 var clock_hi := 0
 var results: Array = []         # per place: per variant, the segments' GPU ms (the median frame:
-                                # a hitch of the system does not move it)
+                                # a hitch of the system does not move it), at the top clock
+var raw_results: Array = []     # the same as they ran
 var part_results: Array = []    # the same by part: per place, per variant, per segment its medians
 var zone_results: Array = []    # the zone's passes': per place, per variant, per segment {pass: median}
 var _zone_counts: Array[Vector2i] = []   # per place: the balls and cubes in the zone with the cube there
@@ -371,6 +380,7 @@ func start() -> void:
 		order += back
 	plan.clear()
 	results.clear()
+	raw_results.clear()
 	part_results.clear()
 	zone_results.clear()
 	_zone_counts.clear()
@@ -379,13 +389,16 @@ func start() -> void:
 	verdict = ""
 	for i in PLACES.size():
 		var r := []
+		var rr := []
 		var pr := []
 		var zr := []
 		for v in variants:
 			r.append([])
+			rr.append([])
 			pr.append([])
 			zr.append([])
 		results.append(r)
+		raw_results.append(rr)
 		part_results.append(pr)
 		zone_results.append(zr)
 		_zone_counts.append(Vector2i.ZERO)
@@ -490,16 +503,22 @@ func _use(v: Setup) -> void:
 func _segment() -> void:
 	if phase_t < warm:
 		return
-	if gpu_ms.is_empty():
-		_clock()
-	gpu_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid()))
+	var k := _clock()
+	var g := RenderingServer.viewport_get_measured_render_time_gpu(main.rate.target.get_viewport_rid())
+	raw_ms.append(g)
+	gpu_ms.append(g * k)
 	var rate: FrameRate = main.rate
 	if rate.parts_frame != part_frame and rate.parts_last.size() == FrameRate.PARTS.size():
 		part_frame = rate.parts_frame
-		part_ms.append(rate.parts_last)
-		zone_ms.append(rate.zone_last)
+		var parts := PackedFloat32Array(rate.parts_last)
+		for i in parts.size():
+			parts[i] *= k
+		part_ms.append(parts)
+		var zone := {}
+		for pass_name: String in rate.zone_last:
+			zone[pass_name] = rate.zone_last[pass_name] * k
+		zone_ms.append(zone)
 	if phase_t >= warm + time:
-		_clock()
 		_end_segment()
 		if step + 1 < plan.size():
 			_begin(step + 1)
@@ -507,12 +526,17 @@ func _segment() -> void:
 			_compared()
 
 
-## The GPU's clock now (read twice a segment: a kernel file each frame is not free).
-func _clock() -> void:
+## The GPU's clock now, into the place's range, as a share of its top clock: what a GPU time read
+## now is multiplied by to bring it to the top clock (this file's top), 1 where the kernel does not
+## show the clock. Each frame of a segment: the governor moves the clock every few tens of
+## milliseconds, and the time read now is of the frame two before (FrameRate's top).
+func _clock() -> float:
 	var mhz: int = main.rate.gpu_mhz()
-	if mhz > 0:
-		clock_lo = mhz if clock_lo == 0 else mini(clock_lo, mhz)
-		clock_hi = maxi(clock_hi, mhz)
+	if mhz <= 0 or main.rate.gpu_top_mhz <= 0:
+		return 1.0
+	clock_lo = mhz if clock_lo == 0 else mini(clock_lo, mhz)
+	clock_hi = maxi(clock_hi, mhz)
+	return float(mhz) / float(main.rate.gpu_top_mhz)
 
 
 func _begin(i: int) -> void:
@@ -522,6 +546,7 @@ func _begin(i: int) -> void:
 	_use(variants[plan[i].y])
 	phase_t = 0.0
 	gpu_ms.clear()
+	raw_ms.clear()
 	part_ms.clear()
 	zone_ms.clear()
 	part_frame = main.rate.parts_frame
@@ -535,6 +560,8 @@ func _end_segment() -> void:
 	var r: Array = results[plan[step].x]
 	gpu_ms.sort()
 	r[plan[step].y].append(gpu_ms[gpu_ms.size() / 2] if not gpu_ms.is_empty() else 0.0)
+	raw_ms.sort()
+	raw_results[plan[step].x][plan[step].y].append(raw_ms[raw_ms.size() / 2] if not raw_ms.is_empty() else 0.0)
 	if near:
 		_zone_counts[plan[step].x] = main.renderer.zone_count
 	var med := PackedFloat32Array()
@@ -558,6 +585,8 @@ func _end_segment() -> void:
 	var place: Array = PLACES[plan[step].x]
 	var parts := []
 	var segs := []
+	var ran := []
+	var rr: Array = raw_results[plan[step].x]
 	for v in variants.size():
 		if r[v].is_empty():
 			continue
@@ -566,8 +595,10 @@ func _end_segment() -> void:
 			s += " (%.3f)" % (_mean(r[v]) / _mean(r[0]))
 		parts.append(s)
 		segs.append(_list(r[v]))
-	print("bench: %s, %.0f deg right, %.0f deg up, cylinder %.0f m: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [_name(place[0]), place[1], place[2], 2.0 * main.space.Lc, ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
+		ran.append("%d: %.2f" % [v + 1, _mean(rr[v])])
+	print("bench: %s, %.0f deg right, %.0f deg up, cylinder %.0f m: %s; %.0f Hz, gpu clock %d..%d MHz (times at %d MHz; as they ran: %s), segments %s"
+			% [_name(place[0]), place[1], place[2], 2.0 * main.space.Lc, ", ".join(parts), main.rate.rate, clock_lo, clock_hi,
+			main.rate.gpu_top_mhz, ", ".join(ran), " ".join(segs)])
 	# by part: each variant's mean over its segments of their medians, ms (FrameRate.PARTS)
 	var by := []
 	for v in variants.size():

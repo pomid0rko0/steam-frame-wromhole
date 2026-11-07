@@ -119,6 +119,7 @@ var note_left := 0
 var late_lines := 0             # late frames logged this second (LATE_LINES: none more)
 var devfreq := DEVFREQ
 var gpu_clock := ""             # the GPU's devfreq directory, if the kernel shows one
+var gpu_top_mhz := 0            # its highest clock (available_frequencies' last step)
 var clock_mhz := 0              # read once a second: a kernel file each frame is not free
 var compiled := 0               # pipelines Godot had compiled at the last second's line (compilations())
 
@@ -335,6 +336,10 @@ func _find_gpu_clock() -> void:
 		var dir := devfreq + "/" + n
 		if n.to_lower().contains("gpu") and FileAccess.file_exists(dir + "/cur_freq"):
 			gpu_clock = dir
+			for f in read_line(dir + "/available_frequencies").split(" ", false):
+				gpu_top_mhz = maxi(gpu_top_mhz, f.to_int() / 1_000_000)
+			if gpu_top_mhz == 0:
+				gpu_top_mhz = read_line(dir + "/max_freq").to_int() / 1_000_000
 			print("refresh: GPU clock %s: governor %s, %s..%s Hz, steps %s"
 					% [dir, read_line(dir + "/governor"), read_line(dir + "/min_freq"),
 					read_line(dir + "/max_freq"), read_line(dir + "/available_frequencies")])
