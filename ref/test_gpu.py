@@ -1404,7 +1404,7 @@ def outside(ball, X, C, E, size):
 
 
 # ---------- the tail of the bodies' images, per pixel (zone_tail.gdshaderinc) ----------
-TAIL_CASES = 1500           # rays a throat: at 480 a cube's first copy lost on 1 ray in 1200 went by unseen
+TAIL_CASES = 1500           # rays a throat: a fault one ray in a thousand has shows in nine runs of ten
 TAIL_STEP = 2e-3             # m: the reference's samples along a ray where it may meet the body
 TAIL_DEEP = 3000.0           # rad past psi_min: the deepest a case aims at (two fifths of them deep)
 TAIL_GRAZE = 2e-4            # m: a ray this near a body's surface at its deepest grazes it (either answer)
