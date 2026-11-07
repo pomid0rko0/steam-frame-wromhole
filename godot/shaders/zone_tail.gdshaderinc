@@ -456,22 +456,21 @@ bool tail_meet(TailRay z, TailBody q, float psi_min, float n_lo, float n_hi, boo
 	float dmax = cd > -1.0 ? geo_acos(cd) : GEO_PI;
 	vec4 sl = tail_slab(z, A, q.C.w, q2);
 	float nmin = max(ceil((psi_min - psi_c - dmax) / TAIL_PI2), n_lo);
-	// the cylinder: the copies whose l at psi_c is within the slab, a run of whole numbers (l moves by
-	// 2 pi lambda a copy); a cube's those whose window (tail_copy's: the ray goes along l by lambda
-	// dmax across it) reaches into the slab, narrowed to its box's l at angles across the window where
-	// it has one (its slabs across l there), but only where the run is longer than TAIL_COPIES tries
-	// one by one (it spans (hi - lo) / |2 pi lambda| + 1 at most): off the limit it is a copy or two,
-	// and a copy the ray misses costs less than the narrowing
+	// the cylinder: the copies whose window (tail_copy's: the ray goes along l by lambda dmax across
+	// it) reaches into the slab (on the cylinder: a copy past its end at psi_c can go in before), a
+	// run of whole numbers (l moves by 2 pi lambda a copy); a cube's narrowed to its box's l at angles
+	// across the window where it has one (its slabs across l there), but only where the run is longer
+	// than TAIL_COPIES tries one by one (it spans (hi - lo) / |2 pi lambda| + 1 at most): off the
+	// limit it is a copy or two, and a copy the ray misses costs less than the narrowing; a ball's to
+	// those whose line meets its section of the cylinder
 	if (sl.x <= sl.y && z.cyl.x > 0.0) {
 		float lam = z.dl / z.cyl.x;       // dl / dpsi
 		float s2 = TAIL_PI2 * lam;
 		float D0 = tail_l(z, tail_copy_y(z, psi_c, 0.0)) - q.C.w;
 		float lo = tail_l(z, sl.x) - q.C.w, hi = tail_l(z, sl.y) - q.C.w;
 		if (lo > hi) { float s = lo; lo = hi; hi = s; }
-		if (q.cube) {
-			lo -= abs(lam) * dmax;
-			hi += abs(lam) * dmax;
-		}
+		lo -= abs(lam) * dmax;
+		hi += abs(lam) * dmax;
 		if (q.cube && hi - lo > float(TAIL_COPIES - 1) * abs(s2)) {
 			// its box's l on the cylinder at angles across the window (TAIL_CUTS of them), each the
 			// slabs across l there; the ray goes along l by lambda dmax across the window, and the
