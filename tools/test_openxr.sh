@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # main through the real OpenXR path, no headset: Monado's simulated headset with its null
-# compositor (its one rate and eye size: tests/openxr_smoke.gd checks them), then that test.
+# compositor (its one rate, which tests/openxr_smoke.gd checks, and its eye size, which it takes as
+# the full one: Ubuntu's Monado and nixpkgs' differ in it), then that test.
 #   tools/test_openxr.sh            (GODOT=path/to/godot to override the binary)
 # Monado's socket goes into XDG_RUNTIME_DIR, here a directory of this run's own (also its logs:
 # their end is printed if Monado does not start, their path if the test fails): any Godot that

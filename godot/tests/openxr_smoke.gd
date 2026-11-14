@@ -137,36 +137,36 @@ func _process(_delta: float) -> bool:
 		U.check("foveation at first: предельная, the default, the floor from its texture", main.foveation.level == p.DEFAULT_FOVEATION
 				and _value(p, "fov") == "предельная" and main.foveation.enabled
 				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
-		U.check("the eye at its full size at first: Monado's own", p.full_eye == 128 and _eye() == Vector2i(128, 128)
-				and main.xr_view.size == Vector2i(128, 128) and _value(p, "scale") == "100% (128×128)",
-				"%s, viewport %s" % [_eye(), main.xr_view.size])
+		U.check("the eye at its full size at first: Monado's own", p.full_eye == int(p.runtime_eye.x)
+				and _eye() == _at(p, 1.0) and main.xr_view.size == _at(p, 1.0) and _value(p, "scale") == _shown(p, 1.0),
+				"%s, viewport %s, Monado's %s" % [_eye(), main.xr_view.size, p.runtime_eye])
 		p.select("scale")
 		p.change(1)
-		U.check("the resolution row, right: 110% picked, not yet in effect", _eye() == Vector2i(128, 128)
-				and _value(p, "scale") == "110% (141×141)" and _color(p, "scale") == p.COLOR_PENDING)
+		U.check("the resolution row, right: 110% picked, not yet in effect", _eye() == _at(p, 1.0)
+				and _value(p, "scale") == _shown(p, 1.1) and _color(p, "scale") == p.COLOR_PENDING)
 		p.move(1)       # another row: what was picked takes effect
 		var cfg := ConfigFile.new()
 		cfg.load("user://settings.cfg")
 		U.check("on to the next row: 110% chosen, kept, the foveation as it was; the size from the next frame on",
 				p.render_scale == 1.1 and cfg.get_value("render", "eye", 0.0) == 1.1 and p.picked() == "fov"
-				and main.foveation.level == p.DEFAULT_FOVEATION and _eye() == Vector2i(128, 128))
+				and main.foveation.level == p.DEFAULT_FOVEATION and _eye() == _at(p, 1.0))
 		U.check("the old settings gone from the file, the foveation not written till chosen",
 				not cfg.has_section_key("render", "scale") and not cfg.has_section_key("render", "foveation")
 				and not cfg.has_section_key("render", "foveation_level"))
-		U.check("the row shows it", _value(p, "scale") == "110% (141×141)" and _color(p, "scale") == p.COLOR_TEXT)
+		U.check("the row shows it", _value(p, "scale") == _shown(p, 1.1) and _color(p, "scale") == p.COLOR_TEXT)
 	if j == 2:
 		var fov := main.foveation
-		U.check("the next frame: the images OpenXR takes 141×141, the XR viewport too, foveation made for them",
-				_eye() == Vector2i(141, 141) and main.xr_view.size == Vector2i(141, 141) and fov._size == Vector2i(141, 141),
+		U.check("the next frame: the images OpenXR takes at 110%, the XR viewport too, foveation made for them",
+				_eye() == _at(p, 1.1) and main.xr_view.size == _at(p, 1.1) and fov._size == _at(p, 1.1),
 				"%s, viewport %s, foveation %s" % [_eye(), main.xr_view.size, fov._size])
 		# the menu takes a value by itself after SETTLE, in its own _process: after the XR viewport's
 		# (the size changing there was the headset's lost frames)
 		p.select("scale")
 		p.change(-1)
 	if j == 20:
-		U.check("left, then nothing: the menu took 100% by itself, the images and the XR viewport 128×128",
-				p.pending == -1 and p.render_scale == 1.0 and _eye() == Vector2i(128, 128)
-				and main.xr_view.size == Vector2i(128, 128), "%s, viewport %s" % [_eye(), main.xr_view.size])
+		U.check("left, then nothing: the menu took 100% by itself, the images and the XR viewport at 100%",
+				p.pending == -1 and p.render_scale == 1.0 and _eye() == _at(p, 1.0)
+				and main.xr_view.size == _at(p, 1.0), "%s, viewport %s" % [_eye(), main.xr_view.size])
 		_foveation(p, 0)
 	if j == 22:
 		_foveation(p, 1)
@@ -254,7 +254,7 @@ func _foveation(p: Menu, step: int) -> void:
 		U.check("foveation on: the eye stays at 80%, both kept", p.render_scale == 0.8
 				and cfg.get_value("render", "foveation_level", -1) == 2 and cfg.get_value("render", "eye", 0.0) == 0.8)
 	elif step == 1:
-		U.check("... the images 102×102", _eye() == Vector2i(102, 102) and main.xr_view.size == Vector2i(102, 102), str(_eye()))
+		U.check("... the images at 80%", _eye() == _at(p, 0.8) and main.xr_view.size == _at(p, 0.8), str(_eye()))
 		p.choose_scale(0.9)
 		cfg.load("user://settings.cfg")
 		U.check("another size: the foveation stays, kept", fov.level == 2 and fov.enabled
@@ -266,13 +266,13 @@ func _foveation(p: Menu, step: int) -> void:
 				and main.renderer.floor_quad.material_override == main.renderer.floor_sample_mat)
 	elif step == 2:
 		var size := main.xr.get_render_target_size()
-		U.check("its texture: made for the picture's 128 pixels, smaller than it", fov._size == Vector2i(128, 128)
+		U.check("its texture: made for the picture at 100%, smaller than it", fov._size == _at(p, 1.0)
 				and fov.fov_tex.get_width() < size.x and fov.fov_tex.get_layers() == 2,
 				"%s, %d of %d" % [fov._size, fov.fov_tex.get_width(), size.x])
 		full_n = fov.fov_tex.get_width()
 		p.choose_scale(0.8)
 	else:
-		U.check("at 80%: its texture made again for the picture's 102 pixels", fov._size == Vector2i(102, 102)
+		U.check("at 80%: its texture made again for the picture at 80%", fov._size == _at(p, 0.8)
 				and fov.fov_tex.get_width() < full_n and fov.enabled,
 				"%s, %d texels" % [fov._size, fov.fov_tex.get_width()])
 		p.choose_scale(1.0)
@@ -315,6 +315,20 @@ func _gravity(p: Menu) -> void:
 ## The images OpenXR takes for each eye, as Godot makes them (truncated).
 func _eye() -> Vector2i:
 	return Vector2i(main.xr.get_render_target_size())
+
+
+## Each eye's picture at share s of the runtime's own size, worked out here as the menu should make
+## it (Menu._multiplier): s of its width rounded, the height in proportion, Godot truncating both.
+## Monado's simulated eye is square in some versions (Ubuntu's, CI's), not in others (nixpkgs').
+func _at(p: Menu, s: float) -> Vector2i:
+	var w := roundf(p.runtime_eye.x * s)
+	return Vector2i(int(w), int(p.runtime_eye.y * (w + 0.25) / p.runtime_eye.x))
+
+
+## The resolution row's value at share s.
+func _shown(p: Menu, s: float) -> String:
+	var e := _at(p, s)
+	return "%d%% (%d×%d)" % [roundi(s * 100.0), e.x, e.y]
 
 
 func _row(p: Menu, key: String) -> Menu.Row:
