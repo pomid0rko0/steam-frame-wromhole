@@ -38,7 +38,7 @@ the comment at its top (what a change to it must keep, what was learnt about it)
 
 ## The owner and the headset
 
-- **What they have:** a Valve Steam Frame (standalone VR headset, SteamOS), a Windows 11 PC and an
+- **What they have:** a Valve Steam Frame (standalone VR headset, SteamOS), a PC and an
   Android phone on one Wi-Fi (often the phone's hotspot); SSH into the Frame takes a password.
 - **You run** on the Frame, in a VSCodium outside Flatpak (inside it `flatpak-spawn --host` is
   refused), or in a cloud session (an Ubuntu container, no headset), while the owner wears the
@@ -47,7 +47,7 @@ the comment at its top (what a change to it must keep, what was learnt about it)
   in. On the Frame whatever runs Godot or opens a GPU goes through `tools/box.sh` (its top says why
   and how), never straight on the Frame.
 - **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session
-  attach its zip to the chat. `--pc-windows` makes the build that runs on the owner's PC and
+  attach its zip to the chat. `--pc-linux` makes the build that runs on the owner's PC and
   streams to the headset (README, «Запуск»). CI's run of the pushed commit has the same zips: link
   it too. Say what to look at.
 - **Verifying is your job:** the owner can't judge test images or numbers. What they check in the

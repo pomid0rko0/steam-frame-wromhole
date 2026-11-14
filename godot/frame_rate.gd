@@ -9,8 +9,8 @@ extends Node
 ## (XR_FB_display_refresh_rate) and ignores it, offering a single rate
 ## (ValveSoftware/SteamVR-for-Linux#1020). What it follows is the app's own SteamVR setting
 ## steam.app.<SteamAppId>.preferredRefreshRate, which SteamVR's vrcmd sets while SteamVR runs; on
-## the owner's Frame (SteamVR 2.18; the headset log's "refresh:" lines, which tools/frame_logs.ps1
-## fetches) the running app switches within a second, others report it only from the next start.
+## the owner's Frame (SteamVR 2.18; the headset log's "refresh:" lines) the running app switches
+## within a second, others report it only from the next start.
 ## So a choice sets that setting where it can (find_app_setting), else asks the runtime.
 ## Until a rate is stored for the app SteamVR runs it at 72 Hz (the log's "refresh:" lines). It has
 ## no XR_EXT_performance_settings.
