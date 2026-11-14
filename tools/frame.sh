@@ -13,6 +13,7 @@
 # stereo test (one per line of tools/stereo_parts.txt: «…стерео-тест n») passed on exactly its
 # commit; put waits for CI while they run. A build of a tree that differs from its commit ("+" after
 # the commit in its name) never goes on. No older build is kept: the library's entry is the one.
+# put and run leave alone an app in the middle of a speed check (one the owner started from the menu).
 # Nobody wearing it, the Frame stands by after 5 s (vrserver.txt: "entering standby"): SteamVR
 # pauses its compositor, the session never gets visible and Godot draws nothing (the log's
 # "refresh:" lines: gpu 0.00 ms, no "XR session visible"). run sets power.pauseCompositorOnStandby
@@ -33,6 +34,10 @@ if [ "${1:-}" = --here ]; then
 	VRCMD=/opt/steamvr/bin/linuxarm64/vrcmd
 	vrcmd() { env LD_PRELOAD= LD_LIBRARY_PATH="${VRCMD%/*}" "$VRCMD" "$@"; }
 	running() { pgrep -f "^$EXE" >/dev/null; }
+	busy() {   # the running app is in a speed check (the menu's, or another run's): left alone
+		running && [ "$(grep -E '^bench: (start|done)' "$LOGS/godot.log" | tail -1 | cut -c1-12)" = "bench: start" ] \
+			&& echo "a speed check runs in the app now: not touching it (tools/frame.sh stop ends it)"
+	}
 	awake() {   # on: the headset draws unworn; off: SteamVR's defaults
 		if [ "$1" = on ]; then
 			vrcmd --set-settings-bool power.pauseCompositorOnStandby 0
@@ -66,6 +71,7 @@ EOF
 	}
 	case $1 in
 		put)
+			busy && { rm -f "$HOME/$2"; exit 1; }
 			stop
 			awake off >/dev/null
 			mkdir -p "${EXE%/*}"
@@ -76,6 +82,7 @@ EOF
 		run)
 			id=$(game_id)
 			[ -n "$id" ] || { echo "$EXE is not in the Steam library: steamos-add-to-steam $EXE adds it (once)"; exit 1; }
+			busy && exit 1
 			stop
 			awake on
 			ASK=$HOME/$DATA/bench_at_start   # bench.gd's ASKED
@@ -94,7 +101,7 @@ EOF
 			running && { echo "the speed check did not end within an hour"; stop; }
 			awake off
 			grep -q '^bench: done' "$LOGS/godot.log" || { echo "the speed check did not finish:"; tail -5 "$LOGS/godot.log"; exit 1; }
-			grep -E '^(bench: (start|compared)|tour: (start|done|.*without a new frame))' "$LOGS/godot.log"
+			grep -E '^(bench: (start|compared)|tour: (start|done)|tour: .*: [1-9][0-9]* of [0-9]+ refreshes)' "$LOGS/godot.log"
 			;;
 		stop) stop; rm -f "$HOME/$DATA/bench_at_start"; awake off ;;
 		log) tail -n "${2:-60}" "$LOGS/godot.log" ;;
