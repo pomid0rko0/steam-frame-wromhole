@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # What the Steam Frame's shader compiler (Mesa's ir3 in the Turnip driver, Adreno 750) makes of the
 # renderer's shaders, without a headset: Godot runs tests/shots.gd on Turnip over the drm-shim
 # (tools/env.sh, turnip), and ir3 prints each program's statistics. Per program:

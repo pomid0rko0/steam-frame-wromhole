@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # main through the real OpenXR path, no headset: Monado's simulated headset with its null
 # compositor (its one rate and eye size: tests/openxr_smoke.gd checks them), then that test.
 #   tools/test_openxr.sh            (GODOT=path/to/godot to override the binary)

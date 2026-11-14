@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Stereo correctness through Godot's real multiview path (the one OpenXR uses), no headset:
 # in each eye, what the app's renderer draws must coincide with what Godot's standard renderer
 # draws at the same place, in the flat universe; in the curved zone, where Godot has nothing to

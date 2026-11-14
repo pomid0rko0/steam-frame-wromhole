@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Runs a command where the tests run: on the Steam Frame (SteamOS: no apt, a read-only root, no
 # lavapipe, no Monado) in an Ubuntu container (podman), set up once with all of tools/setup.sh. It
 # is made from the image CI publishes of setup.sh (tools/box_image.sh), where setup.sh then finds
@@ -10,7 +10,9 @@
 # On the Frame's host Godot takes SteamVR as its OpenXR runtime unless XR_RUNTIME_JSON points
 # elsewhere, and gamescope's Vulkan layer puts its swapchains on the owner's screen even under
 # xvfb-run; without the layer Turnip finds no queue that presents to Xvfb, and there is no lavapipe.
-# Anywhere with apt (a cloud session, the container itself) it runs the command right here.
+# Anywhere with apt (a cloud session, the container itself) it runs the command right here; on
+# NixOS, in flake.nix's shell (tools/repo.sh enters it), which keeps Godot off the PC's GPUs and
+# SteamVR without a container (its top says how).
 #   tools/box.sh godot --headless --path godot --import   (any command, in the same directory
 #                                                          there; from outside the repository, at its top)
 # The tools and ref/'s checks go there by themselves (tools/env.sh, ref/in_box.py), so this is for
@@ -23,10 +25,10 @@
 # (git -C .wt/<branch> checkout --detach <branch>), then run there, and export a headset build
 # there too: its stereo test must have run on exactly its source (CLAUDE.md).
 set -euo pipefail
-if command -v apt-get >/dev/null; then exec "$@"; fi
-command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/tools/repo.sh"
+if command -v apt-get >/dev/null || [ -n "${WORMHOLE_SHELL:-}" ]; then exec "$@"; fi
+command -v podman >/dev/null || { echo "tools/box.sh: no apt and no podman: no place to run this off the headset" >&2; exit 2; }
 NAME=wormhole-box
 IMAGE=docker.io/library/ubuntu:24.04
 # SteamVR and the owner's view share this machine's memory and cores with the container: a stereo

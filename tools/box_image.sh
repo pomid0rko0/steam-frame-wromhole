@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # The name of the tests' environment as an image in the repository's Packages (tools/Containerfile)
 # for a machine: its tag is the hash of the Containerfile and setup.sh, so a change to either names
 # a new image, which CI builds on the first push with it (.github/workflows/image.yml).

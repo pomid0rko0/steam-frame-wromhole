@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # The headset's build: Godot exports the Steam Frame preset into godot/build/wormhole_vr.arm64
 # (where the tools run: tools/box.sh), then it goes where the headset takes it from:
 #   on the Frame itself: ~/wormhole-vr/wormhole_vr.arm64, the Steam library's entry, at once
@@ -19,6 +19,13 @@ if [ "${1:-}" = --godot ]; then   # the export itself (preset, file), in the con
 	. "$ROOT/tools/env.sh"
 	[ -x "$GODOT" ] || { echo "no Godot: run tools/setup.sh"; exit 2; }
 	import_scripts
+	# the flake's export templates, in the store: Godot takes them only from its user data
+	if [ -n "${GODOT_TEMPLATES:-}" ]; then
+		export XDG_DATA_HOME
+		XDG_DATA_HOME=$(mktemp -d "$OUTS/export.XXXXXX")
+		mkdir -p "$XDG_DATA_HOME/godot"
+		ln -s "$GODOT_TEMPLATES" "$XDG_DATA_HOME/godot/export_templates"
+	fi
 	cd "$ROOT/godot"
 	mkdir -p build
 	exec "$GODOT" --headless --path . --export-release "$2" "build/$3"

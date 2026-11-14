@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # What tools/box.sh promises, run on the Steam Frame (elsewhere there is no container): the
 # container's limits are box.sh's; a stopped run leaves nothing running in it; two runs at once keep
 # their files apart; test_openxr.sh's Monado is where no other run's Godot finds it; a fresh

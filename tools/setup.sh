@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Everything the tests and exports need on a Linux machine with apt, as root (a cloud environment's
 # setup script is a copy of it; tools/Containerfile's image and tools/box.sh's container run it):
 # Godot (V below) into DIR below and onto PATH as godot, where the tools take it from
@@ -13,9 +13,11 @@
 # of the renderer's shaders).
 # No package has the drm-shim (built once).
 # On the Steam Frame all of it goes into tools/box.sh's container, where the tools run
-# (tools/env.sh).
+# (tools/env.sh). On NixOS flake.nix gives the same from nixpkgs, Godot of V below and Turnip of
+# MESA_V: nothing here runs there.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+[ ! -f /etc/NIXOS ] || { echo "tools/setup.sh: on NixOS the tools take all of this from flake.nix (its shell: nix develop)"; exit 2; }
 # not there when it runs as a copy outside the repository (a cloud environment's, the image's)
 [ ! -f "$ROOT/tools/env.sh" ] || . "$ROOT/tools/env.sh"
 V=4.7.2
@@ -93,7 +95,7 @@ get_pip() {
 }
 
 # what Mesa's build needs (Turnip, X11 for Godot's window, the drm-shim)
-MESA_V=25.2.8
+MESA_V=25.2.8   # flake.nix has its source's hash: a new one with it
 MESA_DEBS="build-essential xz-utils python3-pip ninja-build python3-mako python3-yaml python3-pycparser flex bison pkg-config glslang-tools
 	libdrm-dev libexpat1-dev zlib1g-dev libzstd-dev libelf-dev libx11-dev libxext-dev libxfixes-dev
 	libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-dri3-dev libxcb-present-dev libxcb-randr0-dev
