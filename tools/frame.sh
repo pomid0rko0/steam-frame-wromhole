@@ -35,10 +35,10 @@ if [ "${1:-}" = --here ]; then
 	running() { pgrep -f "^$EXE" >/dev/null; }
 	awake() {   # on: the headset draws unworn; off: SteamVR's defaults
 		if [ "$1" = on ]; then
-			vrcmd --set-settings-bool power.pauseCompositorOnStandby false
+			vrcmd --set-settings-bool power.pauseCompositorOnStandby 0
 			vrcmd --set-settings-float power.turnOffScreensTimeout 3600
 		else
-			vrcmd --set-settings-bool power.pauseCompositorOnStandby true
+			vrcmd --set-settings-bool power.pauseCompositorOnStandby 1
 			vrcmd --set-settings-float power.turnOffScreensTimeout 5
 		fi
 		vrcmd --handlewakeup >/dev/null 2>&1 &   # it stays running: it waits for SteamVR's events
@@ -67,6 +67,7 @@ EOF
 	case $1 in
 		put)
 			stop
+			awake off >/dev/null
 			mkdir -p "${EXE%/*}"
 			chmod +x "$HOME/$2"
 			mv -f "$HOME/$2" "$EXE"
