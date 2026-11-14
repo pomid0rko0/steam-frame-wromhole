@@ -152,7 +152,8 @@ put() {
 		python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("wormhole_vr.arm64", sys.argv[2])' "$build" "$tmp"
 	else
 		git -C "$ROOT" fetch -q origin 2>/dev/null || true
-		commit=$(git -C "$ROOT" rev-parse "origin/$build^{commit}" 2>/dev/null || git -C "$ROOT" rev-parse "$build^{commit}")
+		commit=$(git -C "$ROOT" rev-parse -q --verify "origin/$build^{commit}" \
+			|| git -C "$ROOT" rev-parse -q --verify "$build^{commit}") || { echo "$build: no such commit or branch"; return 1; }
 	fi
 	local s=0 waited=0
 	while :; do
