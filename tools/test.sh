@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # The Godot tests, godot/tests/<name>_test.gd, each with the flags its header gives (its line
 # "##   godot <flags> -s res://tests/<name>_test.gd"), JOBS at a time (default: one per core; on the
 # Frame tools/box.sh sets it), each with its own X display and user data, but Godot's shader cache

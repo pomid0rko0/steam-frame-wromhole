@@ -67,6 +67,8 @@ tools/setup.sh      # на Linux с apt, от root: Godot (в /opt/wormhole-vr �
 tools/export.sh     # сборка: на шлеме — сразу на место (если её нет в библиотеке Steam, скажет, как добавить), иначе — godot/build/wormhole_vr_<ветка>_<коммит>_steam_frame.zip
 ```
 
+На NixOS `tools/setup.sh` не нужен: всё то же самое даёт `flake.nix` из nixpkgs, и инструменты сами входят в его окружение (`nix develop`); чтобы `godot`, `python3` и `gh` были и в своём терминале — один раз `direnv allow` в папке репозитория. В этом окружении Vulkan программный, а OpenXR — Monado, не SteamVR: запущенное из него в шлем не попадает.
+
 Zip для шлема распаковывают на шлеме в `~/wormhole-vr/`; в первый раз сборку добавляют в библиотеку Steam: `steamos-add-to-steam ~/wormhole-vr/wormhole_vr.arm64`. Логи на шлеме — в `~/.local/share/godot/app_userdata/Wormhole VR/logs`, каждый запуск отдельным файлом.
 
 С ПК, стримом в шлем: приложение идёт на ПК со SteamVR, к которому шлем подключён стримом.
@@ -77,7 +79,7 @@ tools/export.sh --pc-linux   # godot/build/wormhole_vr_<ветка>_<комми�
 
 С `--check` — сборка для проверки одним глазом (ниже, «Проверки»), и для шлема, и для ПК.
 
-Распаковать, подключить шлем к SteamVR на ПК и запустить файл. Логи — в `~/.local/share/godot/app_userdata/Wormhole VR/logs`.
+Распаковать, подключить шлем к SteamVR на ПК и запустить файл (на NixOS — `steam-run ./wormhole_vr.x86_64` или из библиотеки Steam). Логи — в `~/.local/share/godot/app_userdata/Wormhole VR/logs`.
 
 Готовые сборки: версий — в [релизах](https://github.com/pomid0rko0/steam-frame-wromhole/releases) (`wormhole_vr.arm64` и zip для шлема, zip для ПК), любого пуша — в его запуске CI ([Actions](https://github.com/pomid0rko0/steam-frame-wromhole/actions), «Проверки» ниже).
 
@@ -113,6 +115,7 @@ tools/adreno_stats.sh   # что делает из шейдеров компил
 godot/    приложение; godot/tests/ — тесты в Godot
 ref/      эталон во float64 и тесты точности
 tools/    установка, тесты, сборка, установка в шлем, модель цены кадра
+flake.nix окружение инструментов на NixOS (.envrc — для direnv)
 docs/     ниже, «Документация»
 .github/  CI: сборки, проверки, релизы, образ для проверок
 CLAUDE.md правила для ИИ-агента, который пишет код

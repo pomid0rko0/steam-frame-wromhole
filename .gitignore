@@ -8,3 +8,4 @@ __pycache__/
 *.zip
 # tasks' worktrees, runs' files, box.sh's lock (tools/box.sh)
 .wt/
+.direnv/

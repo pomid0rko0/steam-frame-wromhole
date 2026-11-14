@@ -38,14 +38,17 @@ the comment at its top (what a change to it must keep, what was learnt about it)
 
 ## The owner and the headset
 
-- **What they have:** a Valve Steam Frame (standalone VR headset, SteamOS), a PC and an
-  Android phone on one Wi-Fi (often the phone's hotspot); SSH into the Frame takes a password.
+- **What they have:** a Valve Steam Frame (standalone VR headset, SteamOS), a PC with NixOS (a
+  laptop: Intel and NVIDIA GPUs, Steam and SteamVR, which streams to the headset) and an Android
+  phone on one Wi-Fi (often the phone's hotspot); SSH into the Frame takes a password.
 - **You run** on the Frame, in a VSCodium outside Flatpak (inside it `flatpak-spawn --host` is
-  refused), or in a cloud session (an Ubuntu container, no headset), while the owner wears the
-  headset. The tools find out where they run.
+  refused), on the PC, or in a cloud session (an Ubuntu container, no headset), while the owner
+  wears the headset. The tools find out where they run.
 - **Never start the app, SteamVR, `vrcmd` or any window yourself:** it takes the view the owner is
   in. On the Frame whatever runs Godot or opens a GPU goes through `tools/box.sh` (its top says why
-  and how), never straight on the Frame.
+  and how), never straight on the Frame. On the PC SteamVR is the OpenXR runtime: Godot and
+  Python's GPU checks run only in `flake.nix`'s shell (its top says why; the tools enter it
+  themselves, a command of your own goes through `tools/box.sh`), never straight on the PC.
 - **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session
   attach its zip to the chat. `--pc-linux` makes the build that runs on the owner's PC and
   streams to the headset (README, «Запуск»). CI's run of the pushed commit has the same zips: link
@@ -59,16 +62,19 @@ the comment at its top (what a change to it must keep, what was learnt about it)
   deliver the build and say the tests still run. Every run of minutes goes to the background;
   report and fix what it finds afterwards. A run reads the code from disk while it goes: run it
   from your task's worktree in `.wt/<branch>` (`tools/box.sh` says how), never from the tree you
-  edit. On the Frame let CI run the tests: `tools/box.sh` gives them one core.
+  edit. On the Frame let CI run the tests: `tools/box.sh` gives them one core. On the PC they take
+  every core: while the owner plays from it, streamed to the headset, let CI run them too.
 
 ## Commands
 
 Nothing to set up: the tools find Godot and the rest themselves (`tools/env.sh`: the `godot` on
 PATH, the Frame's driver next to it). A cloud environment has them installed by its setup script, a
-copy of `tools/setup.sh`; on the Frame `tools/box.sh` sets its container up. If a tool in a cloud
+copy of `tools/setup.sh`; on the Frame `tools/box.sh` sets its container up; on NixOS `flake.nix`
+gives them (`tools/repo.sh` enters its shell, with direnv `.envrc` does). If a tool in a cloud
 session says something is missing, the environment's copy lacks a step of `setup.sh`: tell the
 owner which, and that they paste the current `setup.sh` into the environment's setup script.
-Install nothing by hand: what the work needs goes into `setup.sh`.
+Install nothing by hand: what the work needs goes into `setup.sh` and `flake.nix`, both (CI and
+the Frame run `setup.sh`'s).
 
 - **Runs of minutes**, so in the background: `tools/test_stereo.sh`, `tools/test.sh`,
   `tools/test_openxr.sh` (alone: its top says why), `python3 ref/test_gpu.py`, `tools/test_box.sh`
@@ -85,11 +91,12 @@ Install nothing by hand: what the work needs goes into `setup.sh`.
   build a new one first, minutes longer. Push what you deliver: that run is the check of record,
   also of the tests you didn't run yourself. Watch it: in a cloud session subscribe to the PR,
   whose activity brings CI's failures, and read logs with the GitHub MCP's `actions_list`,
-  `actions_get`, `get_job_logs`; on the Frame `gh run watch` and `gh run view --log-failed`. A red
-  run is yours to fix.
-- **GitHub:** on the Frame git pushes as the owner through `gh` (`~/.local/bin/gh`,
-  `gh auth setup-git`) and commits as `Claude <noreply@anthropic.com>`. In a cloud session branch
-  pushes go through the session's proxy and tag pushes are refused.
+  `actions_get`, `get_job_logs`; on the Frame and the PC `gh run watch` and
+  `gh run view --log-failed`. A red run is yours to fix.
+- **GitHub:** on the Frame and the PC git pushes as the owner through `gh` (on the Frame
+  `~/.local/bin/gh`, on the PC the flake's; `gh auth setup-git`) and commits as
+  `Claude <noreply@anthropic.com>`. In a cloud session branch pushes go through the session's
+  proxy and tag pushes are refused.
 
 ## Branches, PRs, issues
 

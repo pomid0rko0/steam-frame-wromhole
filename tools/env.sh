@@ -1,13 +1,14 @@
-# Sourced first thing by the tools, after they set ROOT: the same commands in a cloud session and
-# on the Steam Frame.
-# On a machine without apt (the Frame's SteamOS) it runs the calling script again, with its
-# arguments, in tools/box.sh's container (box.sh says why; without podman it stops), and the script
-# goes on there past this line. Elsewhere (a cloud session, the container) it sets GODOT, the
-# Godot the tools run (setup.sh's, the godot on PATH), MESA, the Frame's driver setup.sh builds next
-# to it, OUTS, where runs keep their files (in the repository: the host sees them too),
-# import_scripts and x_display.
+# Sourced first thing by the tools, after they set ROOT: the same commands in a cloud session, on
+# NixOS and on the Steam Frame.
+# On NixOS the tool is in flake.nix's shell by now (tools/repo.sh). On a machine without apt
+# outside that shell (the Frame's SteamOS) it runs the calling script again, with its arguments, in
+# tools/box.sh's container (box.sh says why; without podman it stops), and the script goes on there
+# past this line. Where the tests run (a cloud session, the container, the flake's shell) it sets
+# GODOT, the Godot the tools run (the godot on PATH: setup.sh's, the flake's), MESA, the Frame's
+# driver (setup.sh builds it next to Godot, the flake sets MESA), OUTS, where runs keep their files
+# (in the repository: the host sees them too), import_scripts and x_display.
 . "$ROOT/tools/repo.sh"
-if ! command -v apt-get >/dev/null; then
+if ! command -v apt-get >/dev/null && [ -z "${WORMHOLE_SHELL:-}" ]; then
 	exec "$ROOT/tools/box.sh" "$(readlink -f "$0")" "$@"
 fi
 GODOT=${GODOT:-$(command -v godot || true)}
@@ -19,9 +20,10 @@ find "$OUTS" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/de
 # Godot on Turnip (Mesa's driver for the Frame's Adreno 750) over Mesa's "noop" drm-shim (no GPU,
 # nothing is drawn): turnip DIR writes the driver's manifest into DIR, pointing at the library where
 # it is now (the installed one has the build's path), and sets TURNIP, the environment to run
-# under (env "${TURNIP[@]}" ...); exit status 2 without setup.sh's Turnip.
+# under (env "${TURNIP[@]}" ...); exit status 2 without setup.sh's or the flake's Turnip.
 turnip() {
-	local lib=$MESA/lib/$(uname -m)-linux-gnu
+	local lib=$MESA/lib/$(uname -m)-linux-gnu   # Debian's place for libraries; the flake's: lib/
+	[ -d "$lib" ] || lib=$MESA/lib
 	[ -f "$lib/libfreedreno_noop_drm_shim.so" ] || { echo "no Turnip build in $MESA: run tools/setup.sh"; return 2; }
 	sed "s#\"library_path\": *\"[^\"]*\"#\"library_path\": \"$lib/libvulkan_freedreno.so\"#" \
 		"$MESA"/share/vulkan/icd.d/freedreno_icd.*.json > "$1/icd.json"
