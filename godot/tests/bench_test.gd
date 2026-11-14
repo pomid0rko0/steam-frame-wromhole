@@ -3,7 +3,7 @@ extends SceneTree
 ## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
 ## cube before the eyes drawn in its own; the long throat's ways at its places only), the toys at their
 ## start throughout, logs a line per place, and gives back the foveation, the cube, the tail, the
-## toys and where the viewer stood. The menu has its row. In a small window: nothing here looks at
+## toys and where the viewer stood. The menu has its row; the file Bench.ASKED starts it, once. In a small window: nothing here looks at
 ## the picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
 ##   godot --path . --resolution 160x90 -s res://tests/bench_test.gd
 
@@ -59,8 +59,15 @@ func _process(_d: float) -> bool:
 		toys_before = main.toys.world.balls.duplicate() + main.toys.world.cubes.duplicate()
 		b.warm = 0.1
 		b.time = 0.2
-		b.start()
+		b.start_if_asked()
+		check("not without the file asking for it", not b.running)
+		FileAccess.open(Bench.ASKED, FileAccess.WRITE).close()
+		b.start_if_asked()
 		started = true
+		check("running when the file asks for it, the file taken away, to quit after it",
+				b.running and b.quit_after and not FileAccess.file_exists(Bench.ASKED))
+		b.quit_after = false    # the checks below run after it
+		b.start_if_asked()      # a second ask while it runs: none here, and it keeps going
 		check("running", b.running)
 		print("variants: ", b.variants.map(func(v: Bench.Setup) -> String: return v.label))
 		return false

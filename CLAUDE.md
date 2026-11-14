@@ -40,20 +40,27 @@ the comment at its top (what a change to it must keep, what was learnt about it)
 
 - **What they have:** a Valve Steam Frame (standalone VR headset, SteamOS), a PC with NixOS (a
   laptop: Intel and NVIDIA GPUs, Steam and SteamVR, which streams to the headset) and an Android
-  phone on one Wi-Fi (often the phone's hotspot); SSH into the Frame takes a password.
+  phone on one Wi-Fi (often the phone's hotspot); the PC's SSH key gets into the Frame
+  (`steamos@frame.local`), others take a password.
 - **You run** on the Frame, in a VSCodium outside Flatpak (inside it `flatpak-spawn --host` is
   refused), on the PC, or in a cloud session (an Ubuntu container, no headset), while the owner
   wears the headset. The tools find out where they run.
-- **Never start the app, SteamVR, `vrcmd` or any window yourself:** it takes the view the owner is
-  in. On the Frame whatever runs Godot or opens a GPU goes through `tools/box.sh` (its top says why
-  and how), never straight on the Frame. On the PC SteamVR is the OpenXR runtime: Godot and
+- **Start the app in the headset only with `tools/frame.sh`, only while the owner said in this
+  chat that the headset is not on them** or let you run it, and only a build whose stereo test
+  passed in CI (`frame.sh` checks it); once they say they put it on, stop. Never start SteamVR, a
+  `vrcmd` of your own or any window: it takes the view the owner is in. On the Frame whatever else
+  runs Godot or opens a GPU goes through `tools/box.sh` (its top says why and how), never straight
+  on the Frame. On the PC SteamVR is the OpenXR runtime: Godot and
   Python's GPU checks run only in `flake.nix`'s shell (its top says why; the tools enter it
   themselves, a command of your own goes through `tools/box.sh`), never straight on the PC.
-- **Builds:** `tools/export.sh` puts the build where the headset takes it; in a cloud session
+- **Builds:** `tools/export.sh` puts the build where the headset takes it (on the PC,
+  `tools/frame.sh put` takes it there, or CI's of a commit); in a cloud session
   attach its zip to the chat. `--pc-linux` makes the build that runs on the owner's PC and
   streams to the headset (README, «Запуск»). CI's run of the pushed commit has the same zips: link
   it too. Say what to look at.
-- **Verifying is your job:** the owner can't judge test images or numbers. What they check in the
+- **Verifying is your job:** the owner can't judge test images or numbers. While the headset is
+  free (the rule above), run the build there yourself with `tools/frame.sh`: its log, the speed
+  check (`run --bench`). What they check in the
   headset is a yes/no they can see; after any change to rendering, the one-eye check (README,
   «Проверки»).
 - **The build at once, long runs in the background.** The owner checks builds without waiting for
@@ -82,7 +89,8 @@ the Frame run `setup.sh`'s).
   `python3 ref/test_gravity.py`.
 - **Before a Godot run of your own with `-s`** (the tools import by themselves when a script
   changed): `tools/box.sh godot --headless --path godot --import` in the tree you run it from.
-- **Speed** is measured in the headset with the speed check (`godot/bench.gd`).
+- **Speed** is measured in the headset with the speed check (`godot/bench.gd`): with nobody in it,
+  `tools/frame.sh run --bench <build>` (minutes, so in the background).
 - **CI** (`.github/workflows/ci.yml`; README, «Проверки») checks every push, on exactly the commit
   pushed: all the builds and all of the above but `test_box.sh`, shared out over twelve machines
   (the stereo test in parts, `tools/stereo_parts.txt`). A branch that differs from `main` only in
