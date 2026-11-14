@@ -8,18 +8,17 @@
 # curved places' traces each on one of them (tools/stereo_parts.txt: the shares, PART=n). A branch that
 # differs from main only in Markdown (*.md) and docs/ gets none of them, as no check reads those
 # («Что изменилось», changes); main, a version, a tag and a release always get them all.
-# The builds (tools/export.sh: the headset's, its one-eye check's, the PC's for Windows and Linux)
-# are the run's files at once, named as export.sh names them (tools/deploy_frame.ps1 takes the
-# headset's); they are deleted from the run unless the stereo test passes on the same commit (the
-# hard rule in CLAUDE.md): a run stopped by a newer push deletes them too, and a rerun of the stereo
-# test alone does not bring them back ("Re-run all jobs" does). «Все проверки» (all) is the run's
-# verdict, the one check main's ruleset requires.
+# The builds (tools/export.sh: the headset's, the PC's, and each one's for the one-eye check) are
+# the run's files at once, named as export.sh names them; they are deleted from the run unless the
+# stereo test passes on the same commit (the hard rule in CLAUDE.md): a run stopped by a newer push
+# deletes them too, and a rerun of the stereo test alone does not bring them back ("Re-run all
+# jobs" does). «Все проверки» (all) is the run's verdict, the one check main's ruleset requires.
 # A version: the owner's button (Actions > CI > Run workflow on main, "исправление" or "новое": the
 # newest version tag's last or middle number up by one), or a version tag, or a release published
 # with GitHub's form (its tag comes with it: one run takes both). The same, then, once every job
 # here has passed, the release: notes generated from the titles of the PRs merged since the last
 # version (unless the form has some), the headset's build as wormhole_vr.arm64 and as its zip, and
-# the PC's zips.
+# the PC's zip.
 name: CI
 on:
   push:
@@ -102,7 +101,6 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       frame: ${{ steps.export.outputs.frame }}
-      windows: ${{ steps.export.outputs.windows }}
       linux: ${{ steps.export.outputs.linux }}
       stereo: ${{ steps.stereo.outcome }}
     steps:
@@ -111,8 +109,7 @@ jobs:
       # each build (export.sh's flags), its zip (the newest) as the step's output of that name
       - id: export
         run: |
-          for b in frame "frame_check --check" "windows --pc-windows" "windows_check --check --pc-windows" \
-              "linux --pc-linux" "linux_check --check --pc-linux"; do
+          for b in frame "frame_check --check" "linux --pc-linux" "linux_check --check --pc-linux"; do
             set -- $b
             tools/export.sh "${@:2}" "$GITHUB_REF_NAME"
             echo "$1=$(basename "$(ls -t godot/build/*.zip | head -1)")" >> "$GITHUB_OUTPUT"
@@ -124,14 +121,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           path: godot/build/${{ steps.export.outputs.frame_check }}
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          path: godot/build/${{ steps.export.outputs.windows }}
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          path: godot/build/${{ steps.export.outputs.windows_check }}
           archive: false
       # the tests run the project's files: what the export leaves out only an exported build shows.
       # The PC's Linux ones, this machine's, on the desktop (software Vulkan): each starts, prints
@@ -388,11 +377,10 @@ jobs:
           skip-decompress: true
       - env:
           FRAME: ${{ needs.build.outputs.frame }}
-          WINDOWS: ${{ needs.build.outputs.windows }}
           LINUX: ${{ needs.build.outputs.linux }}
         run: |
           mkdir out
-          for z in "$FRAME" "$WINDOWS" "$LINUX"; do
+          for z in "$FRAME" "$LINUX"; do
             f=$(find dl -type f -name "$z" | head -1)
             [ -n "$f" ] || { echo "no $z among:"; find dl; exit 1; }
             cp "$f" out/

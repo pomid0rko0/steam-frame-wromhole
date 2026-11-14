@@ -54,4 +54,4 @@ body:
     id: logs
     attributes:
       label: Лог
-      description: 'Сборка в шлеме — файл запуска из папки wormhole_vr_logs в «Загрузках» после двойного щелчка по tools/frame_logs.bat на ПК; сборка с ПК — из %APPDATA%\Godot\app_userdata\Wormhole VR\logs. Перетащите файл сюда.'
+      description: 'Файл запуска из ~/.local/share/godot/app_userdata/Wormhole VR/logs — на шлеме или, у сборки с ПК, на ПК. Перетащите файл сюда.'
