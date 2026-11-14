@@ -42,11 +42,16 @@ extends Node
 ## Each place starts from a cheap pose (TOUR_RECOVER), which is not enough to undo SteamVR's half rate
 ## (frame_rate.gd).
 ##
+## Asked for by a file (ASKED, tools/frame.sh run --bench: nobody in the headset to press the menu's
+## row), it starts once the session is visible (main._on_session_visible: only then does the headset
+## draw) and the app quits after it (quit_after), the file gone so that the next start is a plain one.
+##
 ## Throughout, the toys are at their start (Toys.spawn, without the throw and the drop: the toys
 ## in the curved zone, their images and tail, cost as much as the bodies timed), so that a check
 ## times what another session's does. Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
+const ASKED := "user://bench_at_start"   # tools/frame.sh's: run the check at the start, then quit
 # Where a pose is (_put): START, standing at main.START_POS facing the wormhole; Vector3(x, y, side),
 # standing on universe side's floor at chart (x, y), facing the point under the throat's centre;
 # a float, the head at that l on the axis through the throat's centre (main.place_on_axis: flying,
@@ -137,6 +142,7 @@ var warm := 0.3                 # s after each switch, not timed
 var time := 0.8                 # s timed per segment
 var tour_scale := 1.0           # the tour's durations, scaled (tests)
 var running := false
+var quit_after := false         # asked by ASKED: the app quits when it is done
 var phase := ""                 # rate, prepare, segments, tour
 var _next := ""                 # the phase after a rate request
 var variants: Array[Setup] = []   # this run's (start)
@@ -341,6 +347,16 @@ func _st(at0: Variant, at1: Variant, y0: float, y1: float, p: float, secs: float
 	st.recover = recover
 	st.what = what
 	return st
+
+
+## The check if ASKED asks for it (the file taken away), the app quitting after it.
+func start_if_asked() -> void:
+	if running or not FileAccess.file_exists(ASKED):
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ASKED))
+	quit_after = true
+	print("bench: asked for by %s: the app quits after it" % ProjectSettings.globalize_path(ASKED))
+	start()
 
 
 func start() -> void:
@@ -816,6 +832,9 @@ func _finish(tour_line: String) -> void:
 	if verdict != "":
 		parts.append(verdict)
 	_show(" · ".join(parts) if not parts.is_empty() else "замер готов, он в логе")
+	if quit_after:
+		quit_after = false
+		get_tree().quit()
 
 
 ## Variant a's time against b's, averaged over the places (geometric mean).

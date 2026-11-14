@@ -528,6 +528,7 @@ func _on_recentered() -> void:
 func _on_session_visible() -> void:
 	print("XR session visible (no input focus: dashboard open?)")
 	_log_vis_mask()
+	bench.start_if_asked()
 
 
 ## Whether the runtime gave the hidden area (vis_mask), to godot.log, once.
