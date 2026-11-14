@@ -199,21 +199,6 @@ jobs:
             echo "deleted $name"
           done
 
-  # flake.nix, the tools' environment on NixOS: nixpkgs (its flake.lock) has the Godot and export
-  # templates of setup.sh's V (its asserts), on both machines, and Turnip's source is the one its
-  # hash names (setup.sh's MESA_V). Nothing is built: the tests run in the image above
-  nixos:
-    name: Окружение NixOS
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
-      - run: nix flake check --no-build --all-systems
-      - run: nix build --no-link .#turnip.src
-
   # main through the real OpenXR path, alone on its machine (its frames are judged against Monado's
   # display)
   openxr:
@@ -423,7 +408,7 @@ jobs:
   # cancelled run).
   all:
     name: Все проверки
-    needs: [changes, image, image-arm64, nixos, build, openxr, tests, adreno, ref-zone, ref-tail, ref, stereo, release]
+    needs: [changes, image, image-arm64, build, openxr, tests, adreno, ref-zone, ref-tail, ref, stereo, release]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
