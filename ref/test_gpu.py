@@ -67,6 +67,7 @@ first; their lines come throat by throat. Exit status 1 on any failure.
    python3 ref/test_gpu.py [numbers profile images paths exit zone tail eye]   (all, or those checks;
                                                                              -check: all but it)"""
 import copy
+import math
 import os
 import re
 import subprocess
@@ -297,6 +298,23 @@ void main() {
 			sb[k] = v.zw;
 		}
 		outp[O + 2] = vec4(half_w, float(tail_apart(sa, half_w)), float(tail_apart(sb, half_w)), 0.0);
+	} else if (mode == 17) {    // a = (eye l, n), c = a ray there: the floor before the ray leaves the zone
+		// (geo_floor): (0 none, 1 in the zone, 2 before it; psi, l, way), (r, wd, 1 if the ray enters the zone, its turn)
+		float al = abs(a.x);
+		vec3 eye = vec3(geo_r(al), sqrt(geo_u(al)), geo_dr(al));
+		float ca, sa, b, gap, sigma;
+		vec3 t;
+		bool hit = geo_exit_ray(a.x, eye, a.yzw, c, ca, sa, t, b, gap, sigma);
+		GeoFloor f;
+		f.psi = 0.0; f.l = 0.0; f.way = 0.0; f.r = 0.0; f.wd = 0.0;
+		int code = 0;
+		float turn = 0.0;
+		if (hit) {
+			turn = geo_exit_way(al, eye, b, sigma, gap, ca >= 0.0).x;
+			code = geo_floor(a.x, eye, a.yzw, t, ca, sa, b, gap, sigma, turn, f);
+		}
+		outp[O] = vec4(float(code), f.psi, f.l, f.way);
+		outp[O + 1] = vec4(f.r, f.wd, hit ? 1.0 : 0.0, turn);
 	} else if (mode == 9) {     // a = (u, v), c = (en, size), C: a ball's node (l, alpha), t
 		vec3 t;
 		vec2 p = zone_ball_vertex(a.xy, c.xyz, inp[I + 2], c.w, t);
@@ -935,6 +953,122 @@ def exit_checks(name, S, gpu, rng, table=False):
     fails += not check(f'{name}: where the way out {"by the table " if table else ""}meets the floor', not wrong and not wrong_floor,
                        f'{worst["fl"]:.2f} of the limit at most ({floors} rays onto the floor within {FLOOR_SEEN:.0f} m, where it shows; {len(wrong_floor)} wrong; '
                        f'{horizon} floor for sky or back within the direction\'s error of the horizon)')
+    return fails
+
+
+def floor_lifts(S):
+    """The floor's places against the throat the floor's checks take: through each fillet below the
+    throat, through the throat's lower half, its middle and its upper half, through the fillets above
+    it (the throat's centre under the floor)."""
+    return (S.rho0 + 0.5 * S.R, 0.6 * S.rho0, 0.0, -0.5 * S.rho0, -(S.rho0 + 0.4 * S.R))
+
+
+def floor_reference(S, X, lift, d=0.0):
+    """What the ray X (an Exit), its launch turned by d, meets before it leaves the zone, the floor at
+    z = -lift: (0, ...) nothing, (1, psi, l, way) the floor in the zone, (2, ...) the flat floor on its
+    straight way to the zone; None if it never enters the zone. By DOP853 in the ray's plane with the
+    floor as an event, up to where leave says it goes out."""
+    c, s = np.cos(d), np.sin(d)
+    ca, sa = float(X.ca * c - X.sa * s), float(X.sa * c + X.ca * s)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        res = leave(S, X.el, ca, sa)
+    if res is None:
+        return None
+    if not np.isfinite(res[2]) or res[2] > FLOOR_RAY:
+        return (-1, 0.0, 0.0, 0.0)
+    zc, zs = X.en[2], X.t[2]
+
+    def under(_s, y):
+        l = y[0]
+        return float(S.r(l)) * (zc * math.cos(y[2]) + zs * math.sin(y[2])) + lift
+    under.terminal = True
+    under.direction = -1
+    sol = shoot(S, X.el, math.atan2(sa, ca), float(res[2]) + 1e-6, events=[under])
+    if sol.t_events[0].size == 0:
+        return (0, 0.0, 0.0, 0.0)
+    l, _, phi = sol.y_events[0][0]
+    way = float(sol.t_events[0][0])
+    if abs(l) >= S.L:
+        # out in a flat universe: before the zone, or (a hair before the event's end) just out of it
+        return (2 if abs(X.el) >= S.L and way < 0.5 * res[2] and l * X.el > 0 else 0, phi, l, way)
+    return (1, phi, l, way)
+
+
+FLOOR_RAY = 400.0            # m: longer ways across the zone (next to the photon sphere) are left out
+FLOOR_ILL = 2e-4             # m: a ray whose answer changes as the floor moves by this grazes it
+
+
+def floor_checks(name, S, gpu, rng):
+    """The floor in the curved zone (geo_floor): rays from eyes over the floor, the floor at each of
+    floor_lifts' heights: whether the ray meets it before it leaves the zone, and where (its point on
+    the floor within the floor's limit, its way). A ray that grazes the floor (the reference's answer
+    changes as the floor is moved FLOOR_ILL up or down, or as the launch turns by ALPHA_TOL) must be
+    one of those answers."""
+    if crease_off(name, S, 'the floor in the zone'):
+        return 0
+    places = eye_places(S)
+    fails = 0
+    for lift in floor_lifts(S):
+        rows = []
+        while len(rows) < 400:
+            el = eye_at(places, rng)
+            side = 1.0 if el >= 0 else -1.0
+            re = float(S.r(el))
+            en, t = frame(rng)
+            if re * en[2] + lift < 0.05:        # an eye under the floor: none
+                continue
+            kind = len(rows) % 4
+            alpha = launch_rmin(S, re, rng) if kind == 3 else launch(rng, kind == 0)
+            if alpha is None:
+                alpha = launch(rng, False)
+            rows.append([el, *en, side * np.cos(alpha), *(np.sin(alpha) * t)])
+        rows = np.asarray(rows, 'f4')
+        gpu.prog['g_lift'] = lift
+        o = gpu.run(17, rows, out_per=2)
+        gpu.prog['g_lift'] = LIFT
+        counts = {0: 0, 1: 0, 2: 0}
+        wrong, ill, left, worst, worst_way = [], 0, 0, 0.0, 0.0
+        for k, row in enumerate(rows):
+            g = o[2 * k:2 * k + 2]
+            X = Exit(S, row)
+            ref = floor_reference(S, X, lift)
+            if ref is None or ref[0] < 0:
+                left += ref is not None
+                if ref is None and g[1][2] > 0.5:
+                    wrong.append((k, row, g, ref, 'enters'))
+                continue
+
+            def off(r):
+                """The GPU's answer against the reference's r: None if another, else its error's share of the limit."""
+                if int(round(float(g[0][0]))) != r[0]:
+                    return None
+                if r[0] != 1:
+                    return 0.0, 0.0
+                rr = float(S.r(r[2]))
+                dpsi = (float(g[0][1]) - r[1] + np.pi) % (2 * np.pi) - np.pi
+                dist = np.hypot(float(g[0][2]) - r[2], rr * dpsi)
+                return dist / (FLOOR_ABS + FLOOR_REL * r[3]), abs(float(g[0][3]) - r[3]) / (1e-3 + LENGTH_REL * r[3])
+            e = off(ref)
+            if e is not None and e[0] <= 1 and e[1] <= 1:
+                counts[ref[0]] += 1
+                worst, worst_way = max(worst, e[0]), max(worst_way, e[1])
+                continue
+            # grazing: the floor a hair up or down, the launch a hair either way
+            alts = [floor_reference(S, X, lift + dl) for dl in (-FLOOR_ILL, FLOOR_ILL)] + [floor_reference(S, X, lift, d) for d in (-ALPHA_TOL, ALPHA_TOL)]
+            alts = [a for a in alts if a is not None and a[0] >= 0]
+            if any(a[0] != ref[0] or (a[0] == 1 and np.hypot(a[2] - ref[2], float(S.r(ref[2])) * (a[1] - ref[1])) > 0.5 * (FLOOR_ABS + FLOOR_REL * ref[3])) for a in alts):
+                es = [off(a) for a in alts]
+                if any(x is not None and x[0] <= 30 and x[1] <= 30 for x in es):
+                    ill += 1
+                    continue
+            wrong.append((k, row, g, ref, e))
+        fails += not check(f'{name}: the floor in the zone at lift {lift:.2f} (geo_floor)', not wrong,
+                           f'its point off by {worst:.2f} of the limit, the way by {worst_way:.2f} at most; {len(wrong)} wrong '
+                           f'({len(rows)} rays: {counts[1]} meet it in the zone, {counts[2]} before the zone, {counts[0]} leave the zone; '
+                           f'{ill} grazing it, {left} longer than {FLOOR_RAY:.0f} m left out)')
+        for k, row, g, ref, e in wrong[:8]:
+            print(f'    ray {k}: eye l {row[0]!r}, n {tuple(row[1:4])}, D {tuple(row[4:8])}: GPU (code, psi, l, way) {tuple(g[0])}, (r, wd, enters, turn) {tuple(g[1])}; '
+                  f'reference {ref}; {e}')
     return fails
 
 
@@ -1782,9 +1916,9 @@ def numbers_check():
                          f'{count} numbers in {files} files, {len(changed)} changed' + ''.join(f'\n    {c}' for c in changed)))
 
 
-CHECKS = ('numbers', 'profile', 'images', 'paths', 'exit', 'zone', 'tail', 'eye')
+CHECKS = ('numbers', 'profile', 'images', 'paths', 'exit', 'floor', 'zone', 'tail', 'eye')
 # the pieces run apart: (the check that asks for it, its name), the longest first
-PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('paths', 'paths'), ('tail', 'tail'),
+PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('floor', 'floor'), ('paths', 'paths'), ('tail', 'tail'),
           ('profile', 'profile'), ('images', 'images'), ('eye', 'eye'))
 
 
@@ -1807,6 +1941,8 @@ def piece_checks(index, piece):
         # the table's on the same rays
         same = copy.deepcopy(rng)
         return exit_checks(name, S, gpu, rng) + exit_checks(name, S, gpu, same, table=True)
+    if piece == 'floor':
+        return floor_checks(name, S, gpu, rng)
     if piece == 'zone':
         return zone_checks(name, S, gpu, rng)
     if piece == 'mesh':
