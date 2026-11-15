@@ -8,10 +8,18 @@ extends RefCounted
 ## A tangent vector is Vector4(U_l, u.x, u.y, u.z): U_l along d/dl, u the physical
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 ##
-## The floor is the plane lift below the throat's centre in each flat universe (R^4's z = -lift
-## in either sheet), out of the curved zone (lift_min). The charts (chart_position)
-## put it at z = 0: chart A is R^4's xyz in sheet A raised by lift, chart B the same in sheet B,
-## mirrored in x.
+## The floor is the space cut by R^4's hyperplane z = -lift: the points (l, n) of height
+## H = r(l) n_z + lift = 0 (height); above it is H > 0. lift is any number (docs/geometry.md,
+## «Пространство»): above Rout the floor is two planes, one in each flat universe, out of the curved
+## zone; below it the floor runs through the zone (floor_in_zone), bent there, and with
+## |lift| < r_min through the throat itself (floor_through): one surface, a way on foot from one
+## universe to the other; at lift <= -Rout the whole zone is under two flat floors. The charts
+## (chart_position, point_from_chart) are R^4's xyz raised by lift, chart A of the half l > 0, chart
+## B of the half l < 0, mirrored in x: coordinates of a universe and its fillet (the throat's cylinder
+## is the one sphere r = rho0 in both), in which the floor is the plane z = 0 everywhere and the
+## height is z. What a floor needs: floor_point (the floor's point at a chart's (x, y)), floor_normal
+## (up there), to_floor (the foot of a point near it), floor_distance (how far a body's centre is from
+## it) and height_hess (how the height bends); tests/floor_test.gd checks them at every kind of lift.
 
 const STEP := 0.1  # the longest RK4 step geodesic takes on a fillet, in fillet radii (it takes none elsewhere)
 const GRAV_NODES := 256  # spans of the gravity table on the fillet (GRAV_NODES + 1 nodes, (L - Lc) / GRAV_NODES apart)
@@ -190,6 +198,22 @@ func dr(l: float) -> float:
 	return signf(l) * sin(_theta(al))
 
 
+## r''(l): cos(theta) / fillet on a fillet, 0 on the cylinder and in the flat universes.
+func ddr(l: float) -> float:
+	var al := absf(l)
+	if al >= L or al < Lc:
+		return 0.0
+	return cos(_theta(al)) / fillet
+
+
+## |l| where the sphere's radius is rr, in a universe or on its fillet: r's inverse there (rr below
+## r_min: the cylinder's end, Lc).
+func l_of_r(rr: float) -> float:
+	if rr >= Rout:
+		return rr - Rout + L
+	return Lc + fillet * (acos(clampf(1.0 - (rr - rho0) / fillet, 0.0, cos(th0))) - th0)
+
+
 ## Follow the geodesic from (l, n) with initial direction dir (a unit vector) for length dist,
 ## transporting frame (Array of Vector4). Returns [l, n, frame].
 ## The geodesic lies in the plane through the centre spanned by n and dir's tangential part e
@@ -297,6 +321,20 @@ func geodesic(l: float, n: Vector3, dir: Vector4, dist: float, frame: Array, tra
 				var bt := b / r(target)
 				y1[0] = target
 				y1[1] = (sg if out else -sg) * sqrt(maxf(1.0 - bt * bt, 0.0))
+			if trace != null and _plane_height(y1[0], y1[2], n, e) < 0.0:
+				# a traced step through the floor: only as far as the path's own point a hair
+				# under it (halving the step's length), where _trace ends the ray
+				var a := 0.0
+				var z := hs
+				for _it in 14:
+					var m := 0.5 * (a + z)
+					var ym := _fillet_step(l, vl, psi, b, m, sg)
+					if _plane_height(ym[0], ym[2], n, e) < 0.0:
+						z = m
+						y1 = ym
+					else:
+						a = m
+				hs = z
 			l = y1[0]
 			vl = y1[1]
 			psi = y1[2]
@@ -345,9 +383,15 @@ func _fillet_rate(l: float, b: float, sg: float) -> PackedFloat64Array:
 	return PackedFloat64Array([sg * sin(th) * b * b * ip2 / p, b * ip2])
 
 
+## The height over the floor at (l, psi) of the plane of n and e.
+func _plane_height(l: float, psi: float, n: Vector3, e: Vector3) -> float:
+	return r(l) * (cos(psi) * n.z + sin(psi) * e.z) + lift
+
+
 ## A point of a traced geodesic (ray): at (l, psi) of the plane of n and e, s along, appended to
 ## trace; true if the path went through the floor on its way there, where it is cut instead (on a
-## straight piece exactly).
+## straight piece exactly; a fillet's step ends a hair under the floor: geodesic; on the cylinder
+## where the chord between two points of the helix does).
 func _trace(trace: Array, l: float, psi: float, n: Vector3, e: Vector3, s: float) -> bool:
 	var pts: Array = trace[0]
 	var lens: Array = trace[1]
@@ -464,7 +508,8 @@ func toward(l: float, n: Vector3, tl: float, tn: Vector3) -> Vector4:
 ## floor (height 0): as points of R^4 and their lengths along it, [Array of Vector4, Array
 ## of float], the first at (l, n). In a flat universe a geodesic is a straight line of R^4, given by
 ## its ends; on the cylinder a helix, by points RAY_TOL off its chords at most; on a fillet by the
-## ends of RK4 steps of RAY_STEP fillet radii. What a hand points at (hands.gd).
+## ends of RK4 steps of RAY_STEP fillet radii. The floor is wherever the throat's height puts it
+## (this file's top), in the curved zone too. What a hand points at (hands.gd).
 func ray(l: float, n: Vector3, dir: Vector4, dist: float) -> Array:
 	var trace := [[embed(l, n)], [0.0]]
 	if trace[0][0].z > -lift:
@@ -485,19 +530,28 @@ func bend(l: float) -> float:
 	return rho0 if al <= Lc else fillet
 
 
-## A chart position of the flat region on one side to a manifold point. Chart A is R^4's xyz in
-## sheet A raised by lift (the floor at z = 0); chart B is sheet B's, mirrored in x (a frame
-## right-handed in either chart has the same orientation in the space).
+## A chart position on one side (+1: chart A, -1: chart B) to the point of the space there. A chart
+## is R^4's xyz in that side's half of the space (l > 0 or l < 0) raised by lift (the floor at
+## z = 0), chart B's mirrored in x (a frame right-handed in either chart has the same orientation in
+## the space): the point at x is the one on that side whose sphere has the radius of x from the
+## throat's centre (0, 0, lift), in x's direction from it: in the flat universe from Rout on, on the
+## fillet below it. Nearer the centre than r_min no point is: there it gives the cylinder's end in
+## that direction.
 func point_from_chart(side: float, x: Vector3) -> Array:
 	var c := Vector3(x.x, x.y, x.z - lift)
 	var rr := c.length()
-	var n := c / rr
+	var n := c / rr if rr > 1e-9 else Vector3(0.0, 0.0, -1.0)
 	if side < 0.0:
 		n.x = -n.x
-	return [side * (rr - Rout + L), n]
+	if rr >= Rout:
+		return [side * (rr - Rout + L), n]
+	return [side * l_of_r(rr), n]
 
 
-## Chart direction d at manifold point (l, n), l on that side's flat region.
+## Chart direction d at the point (l, n) of that side as a tangent vector: the chart's radial
+## direction is the space's l, away from the throat. In a flat universe that is the vector itself;
+## on a fillet and the cylinder it is the one of the same length and angles to n's sphere and to l (not
+## R^4's xyz of it, which is shorter along l there).
 static func vector_from_chart(side: float, n: Vector3, d: Vector3) -> Vector4:
 	var md := d
 	if side < 0.0:
@@ -547,6 +601,20 @@ func point_of(P: Vector4) -> Array:
 	return [sg * (Lc + fillet * (atan2(a - ka, Rout - rho) - th0)), n]
 
 
+## How far the point P of R^4 is from the space, along the space's normal there (normal4; 0 on it):
+## in the plane of (distance from the w axis, |w|) the profile is the line w = h from Rout on, the
+## line of radius rho0 up to the fillet's start, and the fillet's circle between them.
+func off_surface(P: Vector4) -> float:
+	var rho := sqrt(P.x * P.x + P.y * P.y + P.z * P.z)
+	var a := absf(P.w)
+	var ka := Lc - fillet * sin(th0)
+	if rho >= Rout:
+		return a - h
+	if a <= ka:
+		return rho0 - rho
+	return sqrt((Rout - rho) * (Rout - rho) + (a - ka) * (a - ka)) - fillet
+
+
 ## A vector of R^4 projected onto the tangent space at (l, n), in the (U_l, u) representation.
 func project(l: float, n: Vector3, D: Vector4) -> Vector4:
 	var dx := Vector3(D.x, D.y, D.z)
@@ -568,10 +636,10 @@ func normal4(l: float, n: Vector3) -> Vector4:
 	return Vector4(p.x, p.y, p.z, dr(l))
 
 
-## Height above the floor, H = r(l) n_z + lift: exactly the chart height z in both flat universes,
-## extended smoothly through the throat, where it is at least lift - Rout > 0. Its gradient
-## (r' n_z, e_z - n_z n) has length 1 in the flat universes: where a body touches the floor and
-## which way the floor pushes it.
+## Height above the floor, H = r(l) n_z + lift: R^4's z from the floor's hyperplane, the chart
+## height z in either chart. Its gradient (r' n_z, e_z - n_z n) is no longer than 1 (the floor is no
+## nearer than H), 1 in the flat universes and shorter in the curved zone; it is zero on the
+## cylinder's top and bottom lines (n = +-z).
 func height(l: float, n: Vector3) -> float:
 	return r(l) * n.z + lift
 
@@ -579,6 +647,118 @@ func height(l: float, n: Vector3) -> float:
 func height_grad(l: float, n: Vector3) -> Vector4:
 	var u := Vector3(0.0, 0.0, 1.0) - n.z * n
 	return Vector4(dr(l) * n.z, u.x, u.y, u.z)
+
+
+## The height's second derivative (its Hessian) at (l, n) applied to the tangent vector X: the
+## gradient changes by this along X, per metre. Hess(X, Y) = n_z (r'' X_l Y_l - (1 - r'^2) / r x . y):
+## zero in the flat universes.
+func height_hess(l: float, n: Vector3, X: Vector4) -> Vector4:
+	if absf(l) >= L:
+		return Vector4.ZERO
+	var rp := dr(l)
+	var k := -n.z * (1.0 - rp * rp) / r(l)
+	return Vector4(n.z * ddr(l) * X.x, k * X.y, k * X.z, k * X.w)
+
+
+# ---------------------------------------------------------------- the floor
+
+## The floor runs through the curved zone (bent there); else it is the charts' planes alone.
+func floor_in_zone() -> bool:
+	return absf(lift) < Rout
+
+
+## The floor runs through the throat: one surface from universe A to B.
+func floor_through() -> bool:
+	return absf(lift) < r(0.0)
+
+
+## The chart radius (from the point under or over the throat's centre) from which the floor is the
+## chart's flat plane: inside it the floor is in the curved zone. 0: flat everywhere.
+func floor_edge() -> float:
+	return sqrt(maxf(Rout * Rout - lift * lift, 0.0))
+
+
+## The chart radius of the floor's hole, the circle where it meets the throat's cylinder
+## (floor_through); 0: no hole.
+func floor_hole() -> float:
+	var rm := r(0.0)
+	return sqrt(maxf(rm * rm - lift * lift, 0.0))
+
+
+## The floor's point at chart (x, y) of universe side: [l, n]. In the charts the floor is the plane
+## z = 0 down to its hole (point_from_chart); a place inside the hole, where no floor is, gives the
+## hole's rim in the same direction from the axis (toward +x from the axis itself): the floor's
+## circle on the cylinder's end of that side.
+func floor_point(side: float, xy: Vector2) -> Array:
+	var rho := xy.length()
+	if rho >= floor_hole():
+		return point_from_chart(side, Vector3(xy.x, xy.y, 0.0))
+	var nz := clampf(-lift / r(0.0), -1.0, 1.0)
+	var d := xy / rho if rho > 1e-9 else Vector2(1.0, 0.0)
+	var s := sqrt(1.0 - nz * nz)
+	return [side * Lc, Vector3(side * s * d.x, s * d.y, nz)]
+
+
+## Up on the floor at (l, n): the height's unit gradient (a tangent vector); zero where the height
+## has none (height's comment), which the floor reaches only at lift = +-r_min.
+func floor_normal(l: float, n: Vector3) -> Vector4:
+	var g := height_grad(l, n)
+	var gl := g.length()
+	return g / gl if gl > 1e-6 else Vector4.ZERO
+
+
+## The foot of (l, n) on the floor, or on the surface of height level: Newton's steps along the
+## height's gradient, each a geodesic no longer than half the length the space bends over there (in a
+## flat universe: than that past the way to the curved zone's ball), vecs carried along; where the
+## height has no gradient, a step round the sphere. [l, n, vecs]. From a point near the floor it
+## is near the floor's nearest point: off it by about the square of the way over the length the
+## space bends over (the gradient's lines are not the floor's normals in the curved zone).
+func to_floor(l: float, n: Vector3, vecs: Array = [], level := 0.0) -> Array:
+	var out := vecs.duplicate()
+	for _it in 40:
+		var H := height(l, n) - level
+		if absf(H) < FLOOR_TOL:
+			break
+		var g := height_grad(l, n)
+		var gl := g.length()
+		var most := 0.5 * bend(l) if absf(l) < L else r(l) - Rout + 0.5 * minf(fillet, rho0)
+		var dir: Vector4
+		var d: float
+		if gl < 1e-6:
+			var t := _normal_to(n)
+			dir = Vector4(0.0, t.x, t.y, t.z)
+			d = minf(sqrt(2.0 * rho0 * absf(H)), most)
+		else:
+			dir = g * (-signf(H) / gl)
+			d = minf(absf(H) / gl, most)
+		var res := nudge(l, n, dir * d, out) if d < 0.002 else geodesic(l, n, dir, d, out)
+		l = res[0]
+		n = res[1]
+		out = res[2]
+	return [l, n, out]
+
+
+const FLOOR_TOL := 1e-7         # m: to_floor's foot is this near the floor (a point's n is single precision)
+
+
+## How far (l, n) is from the floor, m, positive above it: the way along the height's unit gradient
+## N to where the height's second-order expansion there, H - t |grad H| + t^2 Hess(N, N) / 2, is zero
+## (in a flat universe the height itself: exact where the floor under the point is flat). INF where
+## that never is: above a floor that bends away. What a ball's centre is from the floor: for the
+## toys' sizes the third order is millimetres (tests/floor_test.gd, 1).
+func floor_distance(l: float, n: Vector3) -> float:
+	var H := height(l, n)
+	if absf(l) >= L:
+		return H
+	var g := height_grad(l, n)
+	var gl := g.length()
+	if gl < 1e-6:
+		return INF if H >= 0.0 else H
+	var q := height_hess(l, n, g).dot(g) / (gl * gl)
+	var disc := gl * gl - 2.0 * H * q
+	if disc < 0.0:
+		return INF if H >= 0.0 else 2.0 * H / gl
+	return 2.0 * H / (gl + sqrt(disc))
 
 
 # ---------------------------------------------------------------- gravity
@@ -697,13 +877,18 @@ func potential_grad(l: float, n: Vector3) -> Vector4:
 	return Vector4(F[1] * n.z, u.x, u.y, u.z)
 
 
-## Strength of gravity on the floor, in g, rho metres (along the floor) from the point under the
-## throat's centre: there, in a flat universe, the potential is z' (1 + beta / r^3) + lift (z' =
-## -lift the floor's height against the centre, r^2 = rho^2 + lift^2), whose gradient has the
-## parts 3 beta lift rho / r^5 along the floor and 1 + beta / r^3 - 3 beta lift^2 / r^5 up.
-## look.gdshaderinc's look_grav_floor is the same.
+## Strength of gravity on the floor, in g, at chart radius rho, m (along the chart's plane from the
+## point under or over the throat's centre). Where the floor is flat (rho >= floor_edge()) the
+## potential is z' (1 + beta / r^3) + lift (z' = -lift the floor's height against the centre,
+## r^2 = rho^2 + lift^2), whose gradient has the parts 3 beta lift rho / r^5 along the floor and
+## 1 + beta / r^3 - 3 beta lift^2 / r^5 up: look.gdshaderinc's look_grav_floor is the same. Where the
+## floor is in the curved zone, the field at its point there (floor_point; inside the floor's hole:
+## on its rim). Anywhere on the floor it is potential_grad's length at the point.
 func floor_gravity(rho: float) -> float:
 	var r2 := rho * rho + lift * lift
+	if r2 < Rout * Rout:
+		var p := floor_point(1.0, Vector2(rho, 0.0))
+		return potential_grad(p[0], p[1]).length()
 	var r1 := sqrt(r2)
 	var r5 := r2 * r2 * r1
 	var along := 3.0 * grav_beta * lift * rho / r5
@@ -771,7 +956,7 @@ static func _transport_rate(A: Vector4, nn: Vector3, UU: Vector4, rr: float, k: 
 	return Vector4(k * v.dot(au), da.x, da.y, da.z)
 
 
-## Chart direction of a tangent vector at (l, n) in a flat region (the inverse of vector_from_chart).
+## Chart direction of a tangent vector at (l, n) of that side (the inverse of vector_from_chart).
 static func vector_to_chart(side: float, n: Vector3, U: Vector4) -> Vector3:
 	var d := side * U.x * n + Vector3(U.y, U.z, U.w)
 	if side < 0.0:
@@ -779,7 +964,8 @@ static func vector_to_chart(side: float, n: Vector3, U: Vector4) -> Vector3:
 	return d
 
 
-## The chart position of a point in a flat region (its side: the sign of l).
+## The chart position of a point (its side: the sign of l; point_from_chart's inverse off the
+## cylinder, whose every point is r = rho0 from the centre in both charts).
 func chart_position(l: float, n: Vector3) -> Vector3:
 	var x := r(l) * n
 	if l < 0.0:
