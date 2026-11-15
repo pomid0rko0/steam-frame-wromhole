@@ -67,7 +67,8 @@ var level := 0                      # 0: off, else LEVELS' index + 1
 var show := false                   # the coarse texels tinted by their size
 var probe := false                  # tests: where each texel's pixel is instead of its colour (the top)
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
-var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
+var floor_zone := false             # the floor reaches into the zone's ball: the programs that look for it there (Renderer.floor_zone)
+var sample_mats: Array[ShaderMaterial] = []   # the floor's quad's while on (floor_sample.gdshaderinc's): they sample the texture
 var xr: XRInterface                 # the picture's size; on the desktop (none) target's
 var target: Viewport
 var gaze_on := false                # the eyes tracked (set_gaze)
@@ -94,6 +95,8 @@ var _r0 := 0.0                      # pixels
 var _m := 1.0                       # per pixel
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
 var _floor := Vector2.ZERO          # (lift, beta)
+var _grav := Vector2.ZERO           # gravity on the cylinder (a, k), and on a fillet its table's RD texture (set_gravity)
+var _gravtab: RID
 var _lens_bytes := PackedByteArray()   # the lens list as the buffer takes it; empty: sent
 var _lens_size := (160 + 40) * 16 + 16
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
@@ -126,6 +129,18 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, flo
 		_tab = t
 		_sets.clear()
 	_floor = floor_
+	_mutex.unlock()
+
+
+## Gravity in the zone, for the gravity view's floor there (look.gdshaderinc, look_grav_at): g_grav and
+## g_gravtab.
+func set_gravity(grav: Vector2, tab: Texture2D) -> void:
+	_mutex.lock()
+	_grav = grav
+	var t := RenderingServer.texture_get_rd_texture(tab.get_rid())
+	if t != _gravtab:
+		_gravtab = t
+		_sets.clear()
 	_mutex.unlock()
 
 
@@ -229,11 +244,13 @@ func _make(n: Vector2i) -> void:
 	_mutex.unlock()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
-	sample_mat.set_shader_parameter("fov_tex", fov_tex)
-	sample_mat.set_shader_parameter("fov_warp", warp_tex)
+	for sm in sample_mats:
+		sm.set_shader_parameter("fov_tex", fov_tex)
+		sm.set_shader_parameter("fov_warp", warp_tex)
 
 
-## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity.
+## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity,
+## each also for a floor that reaches into the zone's ball (FLOOR_ZONE).
 func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var look: String = (load("res://shaders/look.gdshaderinc") as ShaderInclude).code
@@ -245,9 +262,10 @@ func _build() -> void:
 	_xt_n = int(n.get_string(1))
 	# the tail's TAIL in two programs, the balls' and the cubes': each carries one kind's search only
 	# (registers: tools/adreno_stats.sh --fov)
-	for kind in ["eyes", "table", "floor", "gravity", "tail_view", "tail_tiles", "tail_quads", "tail", "tail_cubes"]:
+	for kind in ["eyes", "table", "floor", "gravity", "floor_zone", "gravity_zone", "tail_view", "tail_tiles", "tail_quads", "tail", "tail_cubes"]:
 		var src := RDShaderSource.new()
 		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n",
+				"floor_zone": "#define FLOOR_ZONE\n", "gravity_zone": "#define GRAVITY\n#define FLOOR_ZONE\n",
 				"tail_view": "#define TAIL_VIEW\n", "tail_tiles": "#define TAIL_TILES\n", "tail_quads": "#define TAIL_QUADS\n",
 				"tail": "#define TAIL\n#define TAIL_CUBES 0\n", "tail_cubes": "#define TAIL\n#define TAIL_CUBES 1\n"}
 		var inc := geo + "\n" + look + "\n" + lens + ("\n" + zone + "\n" + tail if kind.begins_with("tail") else "")
@@ -279,10 +297,14 @@ func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 6:
+	for b in 7:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
+			6:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+				u.add_id(_sampler)
+				u.add_id(_gravtab)
 			0:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
 				u.add_id(_sampler)
@@ -308,7 +330,7 @@ func _uniform_set(kind: String) -> RID:
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or not _tex.is_valid() or not _tab.is_valid():
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or not _tex.is_valid() or not _tab.is_valid() or not _gravtab.is_valid():
 		return
 	if not _pipes.has("floor"):
 		return
@@ -336,7 +358,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_mutex.unlock()
 	if not lens.is_empty():
 		_rd.buffer_update(_lens, 0, lens.size(), lens)
-	p.append_array([_floor.x, _floor.y, 0.0, 0.0])
+	p.append_array([_floor.x, _floor.y, _grav.x, _grav.y])
 	for c in [cam.basis.x, cam.basis.y, cam.basis.z]:
 		p.append_array([c.x, c.y, c.z, 0.0])
 	p.append_array([cam.origin.x, cam.origin.y, cam.origin.z, 1.0])
@@ -398,7 +420,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.compute_list_end()
 	_rd.capture_timestamp(TS_TABLE)
 	cl = _rd.compute_list_begin()
-	var kind := "gravity" if gravity else "floor"
+	var kind := ("gravity" if gravity else "floor") + ("_zone" if floor_zone else "")
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_dispatch(cl, ceili(_n.x / 8.0), ceili(_n.y / 8.0), views)

@@ -556,6 +556,16 @@ func _grav_sum() -> void:
 		_grav_tab[i] = (f * s0[i] + p * s1[i]) / a
 
 
+## The fillet's table as the renderer takes it (look.gdshaderinc, look_grav_at): f, f' at its
+## GRAV_NODES + 1 nodes from the fillet's start to its end, interleaved, single precision.
+func gravity_table() -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(_grav_tab.size())
+	for i in _grav_tab.size():
+		out[i] = _grav_tab[i]
+	return out
+
+
 ## [f, df/dl] at l (docs/gravity.md's f). f is even, f' odd. On the fillet a cubic Hermite
 ## interpolant of the table, and f' is its derivative, so the force is exactly minus the
 ## gradient of the potential (energy is conserved). Plain floats, not a Vector2.

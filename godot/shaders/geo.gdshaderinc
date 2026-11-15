@@ -899,8 +899,9 @@ GeoFloor geo_floor_on_leg(float side, float psi, float way, vec2 se) {
 // enters the zone, turn its whole turn up to where it leaves it (geo_exit_way's): 0 if it meets no
 // floor before it leaves the zone; 2 if it meets the floor on its straight way to the zone (an eye
 // outside: the flat floor, on the line from the eye); 1 if in the zone, at f.
-// First what costs little: no floor in the zone at all (|lift| >= Rout), none in the ray's plane (the
-// floor is 1 / A as far from the centre there, A = |z|), and, the throat's centre over the floor, the
+// First what costs little: no floor in the zone in the ray's plane (the floor is 1 / A as far from the
+// centre there as lift, A = |z|: at Rout or further, as in every plane where |lift| >= Rout; the zone
+// wholly under the floor, every ray to it meets the floor first), and, the throat's centre over the floor, the
 // ray's angles in the zone short of those at which the floor is in it: further than To = acos(-lift /
 // (A Rout)) from the plane's highest direction (the centre under the floor, it is in the zone within
 // To of it, where the ray comes in).
@@ -911,7 +912,6 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 	f.r = eye.x;
 	f.wd = 0.0;
 	float Rout = g_prof2.x, L = g_prof.w, Lc = g_prof.z, R2 = 2.0 * g_prof.y;
-	if (abs(g_lift) >= Rout) return 0;
 	float le = abs(el), side = el < 0.0 ? -1.0 : 1.0, re = eye.x;
 	vec2 z = vec2(en.z, t.z);
 	bool outward = ca >= 0.0;

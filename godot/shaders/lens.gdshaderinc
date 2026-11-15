@@ -1,9 +1,12 @@
 // What a pixel's ray meets, and its colour (after look.gdshaderinc), for the floor's quad (floor.gdshaderinc) and foveation's
-// compute shader (foveation.gdshaderinc): docs/geometry.md, «Как рисуется кадр». After geo_exit
-// (geo.gdshaderinc) the ray is a straight line in universe A or B; along it the floor (R^4's z =
-// -lift), the sky, and, if it came through the curved zone, the bodies out in the flat universes
-// (Renderer's lens list: those seen straight from an eye outside are drawn as meshes, in front of
-// this, and those in the zone are meshes too). The includer declares (lens_uniforms.gdshaderinc, or
+// compute shader (foveation.gdshaderinc): docs/geometry.md, «Как рисуется кадр». After its way
+// across the zone (geo.gdshaderinc: geo_exit_ray, geo_exit_way or the eye's table, geo_exit_at) the
+// ray is a straight line in universe A or B; along it the floor (R^4's z = -lift), the sky, and, if
+// it came through the curved zone, the bodies out in the flat universes (Renderer's lens list: those
+// seen straight from an eye outside are drawn as meshes, in front of this, and those in the zone are
+// meshes too). With FLOOR_ZONE defined (the floor reaches into the zone's ball, lift < Rout:
+// Renderer picks the programs) the floor is looked for before that too: on the ray's straight way to
+// the zone and inside it (geo_floor), lens_seen. The includer declares (lens_uniforms.gdshaderinc, or
 // the compute shader's buffer):
 //   lens_body[4 LENS_MAX]: per body, A's first then B's, in R^4's xyz of its universe:
 //     (centre, kind: 0 a sphere, 1 a box, 2 a box with dark edges (a toy cube), 3 an upright
@@ -21,6 +24,8 @@
 struct LensSeen {
 	int kind;
 	float sheet;     // the universe: +1 A, -1 B
+	float ab;        // the floor's share of universe A's colours there (look_side)
+	vec4 a;          // the floor's pattern where the ray meets it or would (look_ground_at's)
 	float way;       // m along the ray from the eye
 	vec3 d;          // the ray's direction there (R^4's xyz)
 	vec3 p;          // the point (R^4's xyz)
@@ -108,6 +113,7 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 	LensSeen s;
 	s.kind = 0;
 	s.sheet = sheet;
+	s.ab = sheet > 0.0 ? 1.0 : 0.0;
 	s.way = way;
 	s.d = dir;
 	s.p = pos;
@@ -163,6 +169,10 @@ LensSeen lens_trace(vec3 pos, vec3 dir, float sheet, float way, bool bodies) {
 		s.n = lens_normal(hit, s.p, s.box);
 		s.albedo = lens_body[4 * hit + 3].rgb;
 	}
+	// the floor's pattern on the line, whether or not something is in front: its neighbours' are smooth
+	// across a body's edge. Far off (no floor ahead) the point under the horizon's haze.
+	float tf = dir.z < -1e-6 ? (-lift - pos.z) / dir.z : 1e5;
+	s.a = look_ground_at(pos.xy + tf * dir.xy);
 	return s;
 }
 
@@ -182,24 +192,69 @@ bool lens_near(float el, float re, vec4 D, float ang) {
 	return ca < 0.0 && b < g_prof2.x + ang * sqrt(max(re * re - b * b, 0.0));
 }
 
-// where the straight ray from pos along dir (sheet) meets the floor, as look_ground_at takes it
-// (chart x, y), whether or not something is in front: its pattern's neighbours are smooth across
-// a body's edge. Far off (none) the point under the horizon's haze.
-vec2 lens_floor_xy(vec3 pos, vec3 dir, float sheet) {
-	float t = dir.z < -1e-6 ? (-g_lift - pos.z) / dir.z : 1e5;
-	vec2 xy = pos.xy + t * dir.xy;
-	return vec2(sheet * xy.x, xy.y);
+// The depth of a point way metres along a pixel's ray d (unit, in the camera's space) from the eye
+// at eye_offset there, by projection P: as the zone's meshes put their vertices (body.gdshaderinc: at
+// the length of the light's way along its direction at the eye), and past half the far plane shrunk
+// as 1 / way, as the tail's (zone_tail.gdshader): still ordered by the way.
+float lens_depth(mat4 P, vec3 eye_offset, vec3 d, float way, float far) {
+	float lc = min(way, 0.5 * far);
+	vec4 c = P * vec4(eye_offset + lc * d, 1.0);
+	return c.z / c.w * (lc / max(way, 1e-6));
 }
 
-// The colour of what lens_trace met: the sky, the floor (a = look_ground_at at
-// the point, dx, dy its neighbours' differences), or a body (edge: a toy cube's dark edges, the
-// distance to its face's nearest edge in box units and that distance's footprint)
-vec3 lens_colour(LensSeen s, vec3 a, vec3 dx, vec3 dy, vec2 edge, float px) {
+// What the ray of the eye at (el, en) meets: the ray as geo_exit_ray gives it (lensed: its result;
+// ca, sa, t, b, gap, sigma), eye as geo_exit has it, w its way across the zone if lensed (geo_exit_way's,
+// or by the eye's table: geo_xt_way), near: a ray that misses the zone looks for the bodies on its
+// line too (lens_near). With FLOOR_ZONE, first the floor before the ray leaves the zone (geo_floor):
+// on its straight way to the zone it is the flat floor's (the ray as one that misses the zone), in
+// the zone the floor's point there, its pattern from R^4's x, y and w of it.
+LensSeen lens_seen(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float sigma, bool lensed, vec3 w, bool near) {
+	float sheet = el < 0.0 ? -1.0 : 1.0;
+	vec3 pos = eye.x * en, dir = ca * en + sa * t;
+#ifdef FLOOR_ZONE
+	if (lensed) {
+		GeoFloor f;
+		int met = geo_floor(el, eye, en, t, ca, sa, b, gap, sigma, w.x, f);
+		if (met == 1) {
+			vec2 sc = geo_sincos(f.psi);
+			vec3 n = sc.y * en + sc.x * t;
+			LensSeen s;
+			s.kind = 1;
+			s.sheet = f.l < 0.0 ? -1.0 : 1.0;
+			s.ab = look_side(f.l);
+			s.way = f.way;
+			s.d = dir;
+			s.p = f.r * n;
+			s.n = vec3(0.0, 0.0, 1.0);
+			s.albedo = vec3(0.0);
+			s.box = vec3(0.0);
+			s.a = vec4(s.p.xy, f.wd + 0.5, 0.0);
+#ifdef GRAVITY
+			s.a.w = look_grav_level(look_grav_at(f.l, f.r, n.z));
+#endif
+			return s;
+		}
+		if (met == 2) lensed = false;
+	}
+#endif
+	float way = 0.0;
+	if (lensed) {
+		if (w.z > 0.5) sheet = -sheet;
+		geo_exit_at(en, t, b, w.x, pos, dir);
+		way = w.y;
+	}
+	return lens_trace(pos, dir, sheet, way, lensed || near);
+}
+
+// The colour of what lens_seen met: the sky, the floor (dx, dy: its pattern's differences to the
+// neighbours', s.a's), or a body (edge: a toy cube's dark edges, the distance to its face's nearest
+// edge in box units and that distance's footprint)
+vec3 lens_colour(LensSeen s, vec4 dx, vec4 dy, vec2 edge, float px) {
 	if (s.kind == 0) {
 		vec3 d = normalize(s.d);
 		return look_sky(vec3(s.sheet * d.x, d.yz), s.sheet);
 	}
-	if (s.kind == 1) return look_ground(a, dx, dy, px, s.sheet, s.way);
+	if (s.kind == 1) return look_ground(s.a, dx, dy, px, s.ab, s.way);
 	vec4 sun = look_sun4(100.0 * s.sheet);
 	float nl = dot(s.n, sun.xyz);
 	vec3 col = look_body(s.albedo, nl, s.n.z, -dot(s.n, s.d), 100.0 * s.sheet);

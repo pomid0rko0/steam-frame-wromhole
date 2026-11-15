@@ -27,7 +27,10 @@ const U := preload("res://tests/util.gd")
 # zone_tail.gdshader) are many pixels wide: in it sideways, at the start (crf9 and crf10 also with
 # foveation, as the headset draws its floor and the tail: crf10's seen through the throat); on one of MID, in A's
 # fillet looking in; and on one with no cylinder (h = R, the menu's shortest: no tail), in the
-# throat looking along it
+# throat looking along it; then with the throat lower, the floor through the curved zone (the last
+# number: the throat's centre over the floor, m): through the throat itself, at the start looking
+# into it and flying in it over its floor; the throat's centre under the floor, at the bump left of
+# it; and the floor through the fillets only, under the throat
 const LONG := WormholeSpace.LENGTH_MAX
 const MID := 40.0
 const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
@@ -42,7 +45,11 @@ const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 90.0, -10.0, LONG],
 		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0, LONG],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0, MID],
-		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0]]
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0],
+		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 0.0, Main.LENGTH, 1.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 0.3, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, Main.LENGTH, 1.0],
+		[Vector2(8.0, 1.0), Vector2(-1.0, 0.0), [], 0.0, -5.0, Main.LENGTH, -2.0],
+		[Vector2(7.0, 0.5), Vector2(-1.0, 0.0), [], 0.0, 10.0, Main.LENGTH, 3.5]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
@@ -93,6 +100,9 @@ func _process(_delta: float) -> bool:
 		main.renderer.show_scene(false)
 		if place.size() > 5:
 			main.set_length(place[5])
+		if place.size() > 6:
+			main.space.lift = place[6]
+			main.renderer.set_lift()
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
 		var v: Viewer = main.viewer
 		var fwd := main._head_forward_xz()

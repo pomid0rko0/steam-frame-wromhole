@@ -16,7 +16,9 @@
 // table»): each eye's way out of the zone by a ray's sigma, outward and inward. A texel of the
 // picture then takes its ray's way out from there (geo_xt_way), not from geo_exit's closed forms.
 // The texture (neither): each texel's colour, and in its alpha the light's way to what it shows
-// (the sky's FOV_SKY), for TAIL.
+// (the sky's FOV_SKY), for TAIL and for the quad's depth where the floor can hide a body
+// (floor_sample.gdshaderinc, FLOOR_ZONE). With FLOOR_ZONE (the floor reaches into the zone's ball) a
+// texel's ray looks for the floor before it leaves the zone too (lens_seen).
 // The tail of the zone's bodies' images (zone_tail.gdshaderinc), per texel instead of per pixel, in
 // three passes after the texture and after ZoneSections' IMAGES pass, which works out where each
 // body's tail can be seen (its sectors round the eye's axis and its strips and band off it:
@@ -49,7 +51,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 head_nl;       // head_n, head_l
 	vec4 head_p;        // head_pos
 	vec4 head_fr[3];    // head_f
-	vec4 floor_;        // (g_lift, g_beta)
+	vec4 floor_;        // (g_lift, g_beta, g_grav)
 	mat4 inv_view;      // INV_VIEW_MATRIX
 	mat4 ray[2];        // each eye's rays: ray * (clip, 1, 0) is geo_view_ray(PROJECTION_MATRIX, clip)
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
@@ -67,6 +69,7 @@ layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2DArray ou
 #endif
 // the way out's rows: GEO_XN texels each, eye 0 outward and inward, then eye 1's (geo_xt_texel)
 layout(set = 0, binding = 5, rgba32f) uniform restrict image2D xt_img;
+layout(set = 0, binding = 6) uniform sampler2D g_gravtab;
 
 #define g_prof fovp.prof
 #define g_prof2 fovp.prof2
@@ -77,6 +80,7 @@ layout(set = 0, binding = 5, rgba32f) uniform restrict image2D xt_img;
 #define head_pos fovp.head_p.xyz
 #define g_lift fovp.floor_.x
 #define g_beta fovp.floor_.y
+#define g_grav fovp.floor_.zw
 #define lens_body lensp.body
 #define lens_cull lensp.cull
 #define lens_n lensp.n.xy
@@ -586,6 +590,7 @@ void main() {
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 shared vec4 s_a[64];
+shared float s_e[64];
 void main() {
 	uvec3 id = gl_GlobalInvocationID;
 	uint v = id.z;
@@ -593,7 +598,7 @@ void main() {
 	float rho, s, k;
 	bool used = fov_texel(id, p, rho, s, k);
 	float r0 = fovp.warp1[v].x;
-	vec3 a = vec3(0.0);
+	vec4 a = vec4(0.0);
 	float edge = -1.0;
 	LensSeen sn;
 	if (used) {
@@ -607,39 +612,36 @@ void main() {
 		float ca, sa, b, gap, sigma;
 		vec3 tr;
 		bool lensed = geo_exit_ray(e.x, eye, e.yzw, D, ca, sa, tr, b, gap, sigma);
-		vec3 pos = eye.x * e.yzw, dir = ca * e.yzw + sa * tr;
-		float sheet = e.x < 0.0 ? -1.0 : 1.0, way = 0.0;
+		vec3 w = vec3(0.0);
 		if (lensed) {
 			float ale = abs(e.x);
 			bool outward = ca >= 0.0;
 			int xk;
 			float x = geo_xt_place(ale, b, gap, sigma, eyes[6u * v + 5u].xy, xk);
 			int xrow = 2 * int(v) + (outward ? 0 : 1);
-			vec3 w = geo_xt_way(imageLoad(xt_img, ivec2(xk, xrow)), imageLoad(xt_img, ivec2(xk + 1, xrow)), x, ale, eye, b, sigma, gap, outward);
-			if (w.z > 0.5) sheet = -sheet;
-			geo_exit_at(e.yzw, tr, b, w.x, pos, dir);
-			way = w.y;
+			w = geo_xt_way(imageLoad(xt_img, ivec2(xk, xrow)), imageLoad(xt_img, ivec2(xk + 1, xrow)), x, ale, eye, b, sigma, gap, outward);
 		}
 		// a ray that misses the zone: two texels' turn, as the quad filters between neighbouring
 		// texels (lens_near); one through it looks for the bodies anyway
-		bool bodies = lensed;
+		bool near = false;
 		if (!lensed) {
 			float ang = length(normalize((fovp.ray[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 1.0, 0.0)).xyz) - d);
-			bodies = lens_near(e.x, eye.x, D, ang);
+			near = lens_near(e.x, eye.x, D, ang);
 		}
-		sn = lens_trace(pos, dir, sheet, way, bodies);
-		a = look_ground_at(lens_floor_xy(pos, dir, sheet));
+		sn = lens_seen(e.x, eye, e.yzw, tr, ca, sa, b, gap, sigma, lensed, w, near);
+		a = sn.a;
 		edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;
 	}
 	// a fragment shader's dFdx and dFdy: the differences within each 2 x 2 square of texels
 	uvec2 lq = gl_LocalInvocationID.xy;
-	s_a[lq.y * 8u + lq.x] = vec4(a, edge);
+	s_a[lq.y * 8u + lq.x] = a;
+	s_e[lq.y * 8u + lq.x] = edge;
 	barrier();
 	if (!used) return;
 	uint row = lq.y * 8u + (lq.x & ~1u), col = (lq.y & ~1u) * 8u + lq.x;
 	vec4 dx = s_a[row + 1u] - s_a[row];
 	vec4 dy = s_a[col + 8u] - s_a[col];
-	vec3 c = lens_colour(sn, a, dx.xyz, dy.xyz, vec2(edge, abs(dx.w) + abs(dy.w)), sqrt(s * k));
+	vec3 c = lens_colour(sn, dx, dy, vec2(edge, abs(s_e[row + 1u] - s_e[row]) + abs(s_e[col + 8u] - s_e[col])), sqrt(s * k));
 	if (fovp.pic.z > 0.5 && rho > r0) c = mix(c, fov_tint(s), 0.35);
 	vec4 o = vec4(c, sn.kind == 0 ? FOV_SKY : min(sn.way, FOV_SKY));
 	if (fovp.pic.w > 0.5) {
