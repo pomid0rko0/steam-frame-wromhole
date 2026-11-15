@@ -967,15 +967,15 @@ def floor_reference(S, X, lift, d=0.0):
     """What the ray X (an Exit), its launch turned by d, meets before it leaves the zone, the floor at
     z = -lift: (0, ...) nothing, (1, psi, l, way) the floor in the zone, (2, ...) the flat floor on its
     straight way to the zone; None if it never enters the zone. By DOP853 in the ray's plane with the
-    floor as an event, up to where leave says it goes out."""
+    floor as an event, up to where leave says it goes out, FLOOR_RAY at most: (-1, ...) for a ray
+    still over the floor in the zone that far (many turns round the throat, next to the photon sphere)."""
     c, s = np.cos(d), np.sin(d)
     ca, sa = float(X.ca * c - X.sa * s), float(X.sa * c + X.ca * s)
     with np.errstate(divide='ignore', invalid='ignore'):
         res = leave(S, X.el, ca, sa)
     if res is None:
         return None
-    if not np.isfinite(res[2]) or res[2] > FLOOR_RAY:
-        return (-1, 0.0, 0.0, 0.0)
+    far = not np.isfinite(res[2]) or res[2] > FLOOR_RAY
     zc, zs = X.en[2], X.t[2]
 
     def under(_s, y):
@@ -983,9 +983,9 @@ def floor_reference(S, X, lift, d=0.0):
         return float(S.r(l)) * (zc * math.cos(y[2]) + zs * math.sin(y[2])) + lift
     under.terminal = True
     under.direction = -1
-    sol = shoot(S, X.el, math.atan2(sa, ca), float(res[2]) + 1e-6, events=[under])
+    sol = shoot(S, X.el, math.atan2(sa, ca), FLOOR_RAY if far else float(res[2]) + 1e-6, events=[under])
     if sol.t_events[0].size == 0:
-        return (0, 0.0, 0.0, 0.0)
+        return (-1 if far else 0, 0.0, 0.0, 0.0)
     l, _, phi = sol.y_events[0][0]
     way = float(sol.t_events[0][0])
     if abs(l) >= S.L:
@@ -997,7 +997,7 @@ def floor_reference(S, X, lift, d=0.0):
     return (1, phi, l, way)
 
 
-FLOOR_RAY = 400.0            # m: longer ways across the zone (next to the photon sphere) are left out
+FLOOR_RAY = 400.0            # m: a ray still in the zone and over the floor this far is left out
 FLOOR_ILL = 2e-4             # m: a ray whose answer changes as the floor moves by this grazes it
 
 
@@ -1068,7 +1068,7 @@ def floor_checks(name, S, gpu, rng):
         fails += not check(f'{name}: the floor in the zone at lift {lift:.2f} (geo_floor)', not wrong,
                            f'its point off by {worst:.2f} of the limit, the way by {worst_way:.2f} at most; {len(wrong)} wrong '
                            f'({len(rows)} rays: {counts[1]} meet it in the zone, {counts[2]} before the zone, {counts[0]} leave the zone; '
-                           f'{ill} grazing it, {left} longer than {FLOOR_RAY:.0f} m left out)')
+                           f'{ill} grazing it, {left} still over it in the zone {FLOOR_RAY:.0f} m on left out)')
         for k, row, g, ref, e in wrong[:8]:
             print(f'    ray {k}: eye l {row[0]!r}, n {tuple(row[1:4])}, D {tuple(row[4:8])}: GPU (code, psi, l, way) {tuple(g[0])}, (r, wd, enters, turn) {tuple(g[1])}; '
                   f'reference {ref}; {e}')
