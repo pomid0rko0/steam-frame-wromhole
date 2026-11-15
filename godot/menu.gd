@@ -837,8 +837,9 @@ class Row:
 ## A part of the throat's shape (main.set_shape; key: SHAPE_KEYS'): its cylinder's length, its
 ## radius, its fillet's radius, its centre's height over the floor. Held left or right it shrinks or
 ## grows as it is held, within what WormholeSpace.fit takes, and the other rows follow where they
-## must: a throat grown wider than its height allows rises, one made narrow gets a sharper fillet,
-## a fillet made soft widens the throat; A: the video's. The value is the one asked for, shown as
+## must: a throat made narrow gets a sharper fillet, a fillet made soft widens the throat; the
+## height goes down to where the curved zone is wholly under the floor (below its radius the floor
+## runs through the zone); A: the video's. The value is the one asked for, shown as
 ## waiting until the space has it (a radius or a fillet: once its sweep table is built).
 class ShapeRow extends Row:
 	func part() -> int:

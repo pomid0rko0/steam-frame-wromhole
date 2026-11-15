@@ -65,8 +65,8 @@ const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
 const GAZE_HOLD := 0.5              # s the foveation's fovea stays where the eyes last looked while they are not tracked (a blink)
 
-# the space; a test that wants the throat at another height sets space.lift before _ready (before
-# the node enters the tree): all that is built in _ready and after reads it from there
+# the space, of the shape kept (Menu.saved_shape) or else shape_want's as it is before _ready: a test
+# that wants another throat sets shape_want before the node enters the tree, or calls set_shape after
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET, LIFT)
 var viewer := Viewer.new(space)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
