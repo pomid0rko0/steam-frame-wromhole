@@ -1,9 +1,10 @@
 class_name Renderer
 extends Node3D
-## How a frame is drawn (docs/geometry.md, «Как рисуется кадр»). The floor and everything else
-## stands out of the curved zone, where light goes straight, and the zone is a lens: a ray that
-## enters its ball comes out straight into universe A or B, turned in its plane through the centre
-## by what its impact parameter gives (however many times round the throat).
+## How a frame is drawn (docs/geometry.md, «Как рисуется кадр»). Out of the curved zone light goes
+## straight, and the zone is a lens: a ray that enters its ball comes out straight into universe A
+## or B, turned in its plane through the centre by what its impact parameter gives (however many
+## times round the throat), unless it meets the floor in there first: the floor is out of the zone
+## only while the throat's centre is its radius or more over it (floor_zone).
 ## - Bodies out in a flat universe seen straight: meshes Godot's rasterizer draws with an ordinary
 ##   camera from each eye out in that universe (shaders/body.gdshaderinc, DIRECT; the scene's static
 ##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
@@ -17,7 +18,9 @@ extends Node3D
 ##   foveation per texel of its texture instead (foveation.gd, render_tail), behind the meshes.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
-##   image of them (shaders/floor.gdshaderinc).
+##   image of them (shaders/floor.gdshaderinc). With the floor in the zone's ball a ray looks for it
+##   there too, and what it draws has its depth, the light's way to it: the floor hides the bodies
+##   and images behind it (the floor's programs for that: FLOOR_SHADERS' last two, foveation's).
 ## A body costs its vertices and one cheap shading per pixel it covers where it is seen straight or
 ## in the zone; through the lens a few dot products a pixel (a test of the ray's plane) and its
 ## intersection where that passes. Each view's own eye is worked out in the shaders from the head
