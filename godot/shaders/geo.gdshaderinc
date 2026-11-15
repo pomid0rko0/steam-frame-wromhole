@@ -866,7 +866,9 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 	vec2 cyl = geo_exit_cyl(b, sigma);
 	// The ray's fillets, one after the other (two for a ray that comes in on one and goes out on
 	// another or the same; the cylinder between them, or before the only one from an eye on it): each
-	// from xa to xb, its position angle pb and its way wb at xa, dir +1 going out and -1 coming in.
+	// from xa to xb, dir +1 going out and -1 coming in, its position angle and its way pb + dir psi(x)
+	// and wb + dir len(x) (from pb and wb at xa at first: the leg's first point takes its own psi and
+	// len out of them; a leg that comes in ends at x = 0, where both are nought: at pb, wb).
 	bool two = le > Lc && !outward;
 	float xa = 0.0, xb = g.xL, dir = 1.0;
 	float pb = base, wb = way0;
@@ -921,31 +923,34 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 		// known (mode 2), all through one working out of the leg's point (the program holds it once).
 		int n = clamp(int(ceil(abs(xb - xa) * max(1.0 / GEO_FLOOR_DX, 2.0 * g.f0.x / GEO_FLOOR_DPSI))), 1, GEO_FLOOR_NODES);
 		float hx = (xb - xa) / float(n);
-		int i = 0, mode = 0, left = GEO_FLOOR_ITERS;
-		float x = xa, x0 = xa, x1 = xa, lo = xa, hi = xa;
-		vec2 h0 = vec2(0.0), h1 = vec2(0.0), pref = vec2(0.0), pn = vec2(pb, wb), se = vec2(0.0);
+		int i = 0, mode = 0;        // i: the node being worked out; in mode 2 Newton's steps left
+		float x = xa, x0 = xa, x1 = xa;   // the last node above and the one after it; in mode 2 the bracket
+		vec2 h0 = vec2(0.0), h1 = vec2(0.0), se = vec2(0.0);
 		float psi = pb, way = wb;
 		bool met = false;
 		for (int it = 0; it < 2 * GEO_FLOOR_NODES + GEO_FLOOR_ITERS + 2; it++) {
 			vec2 pl, rate;
 			geo_leg_at(g, x, pl, rate, se);
-			if (i == 0) pref = pl;
-			psi = pb + dir * (pl.x - pref.x);
-			way = wb + dir * (pl.y - pref.y);
+			if (i == 0 && mode == 0) {
+				pb -= dir * pl.x;
+				wb -= dir * pl.y;
+			}
+			psi = pb + dir * pl.x;
+			way = wb + dir * pl.y;
 			vec2 sc = geo_sincos(psi);
 			float r = g_prof.x + R2 * se.x * se.x;
 			float nz = z.x * sc.y + z.y * sc.x;
 			// the height over the floor there and its rate a unit of x
 			vec2 hk = vec2(r * nz + g_lift, 2.0 * R2 * se.x * se.y * nz + r * (z.y * sc.y - z.x * sc.x) * dir * rate.x);
 			if (mode == 2) {
-				if (abs(hk.x) <= GEO_FLOOR_TOL || left <= 1) {
+				if (abs(hk.x) <= GEO_FLOOR_TOL || i <= 1) {
 					met = true;
 					break;
 				}
-				left--;
-				if (hk.x > 0.0) lo = x; else hi = x;
+				i--;
+				if (hk.x > 0.0) x0 = x; else x1 = x;
 				float xn = x - hk.x / hk.y;
-				x = geo_finite(xn) && (xn - lo) * (xn - hi) < 0.0 ? xn : 0.5 * (lo + hi);
+				x = geo_finite(xn) && (xn - x0) * (xn - x1) < 0.0 ? xn : 0.5 * (x0 + x1);
 				continue;
 			}
 			bool under = hk.x <= 0.0;
@@ -953,7 +958,6 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 			if (node) {
 				x1 = x;
 				h1 = hk;
-				pn = vec2(psi, way);
 			}
 			mode = 0;
 			if (i > 0 && (under || node)) {
@@ -963,15 +967,15 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 				if (under) {
 					// from the cubic's first way down, Newton's steps on the height itself, halving
 					// where one would leave the bracket
-					lo = x0;
-					hi = x;
+					x1 = x;
 					float ta = 0.0, tb = 1.0;
 					for (int k = 0; k < 4; k++) {
 						float tm = 0.5 * (ta + tb);
 						if (h0.x + tm * (d0 + tm * (c2 + tm * c3)) > 0.0) ta = tm; else tb = tm;
 					}
-					x = x0 + 0.5 * (ta + tb) * (x - x0);
+					x = x0 + 0.5 * (ta + tb) * (x1 - x0);
 					mode = 2;
+					i = GEO_FLOOR_ITERS;
 					continue;
 				}
 				if (d0 < 0.0 && d1 > 0.0) {
@@ -996,8 +1000,6 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 			f = geo_floor_on_leg(side, psi, way, se);
 			return 1;
 		}
-		pb = pn.x;
-		wb = pn.y;
 	}
 	return 0;
 }
