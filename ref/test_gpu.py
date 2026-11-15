@@ -1924,9 +1924,10 @@ def numbers_check():
 
 
 CHECKS = ('numbers', 'profile', 'images', 'paths', 'exit', 'floor', 'zone', 'tail', 'eye')
-# the pieces run apart: (the check that asks for it, its name), the longest first
-PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('floor', 'floor'), ('paths', 'paths'), ('tail', 'tail'),
-          ('profile', 'profile'), ('images', 'images'), ('eye', 'eye'))
+# the pieces run apart: (the check that asks for it, its name), the longest first; a piece's place
+# here seeds its random draws (piece_checks): a new one goes last, or the others' draws change
+PIECES = (('zone', 'mesh'), ('zone', 'zone'), ('exit', 'exit'), ('paths', 'paths'), ('tail', 'tail'),
+          ('profile', 'profile'), ('images', 'images'), ('eye', 'eye'), ('floor', 'floor'))
 
 
 def piece_checks(index, piece):
