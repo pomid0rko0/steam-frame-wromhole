@@ -31,7 +31,7 @@ JOBS=${JOBS:-$(nproc)}
 # balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation), each
 # case of the stereo check scene with its floor lines and foveation (checkN), each case of the
 # gravity view (gravityN)
-ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crv9 crv10 crv11 crv12 crf0 crf6 crf9 crf10 check0
+ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crv9 crv10 crv11 crv12 crv13 crv14 crv15 crv16 crf0 crf6 crf9 crf10 crf13 crf14 check0
 check1 check2 check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
 if [ -n "${PART:-}" ]; then
 	# CI's share: every part on exactly one of its lines, or a part would go unchecked
@@ -86,15 +86,17 @@ verdict() {   # name, comparison command...
 # where light is bent: at the start looking up at the lifted throat, level with it, at the curved
 # zone's edge, in A's fillet, in the throat along it and sideways, out in B looking back, far off as
 # a control, under the mouth looking up, and on a long throat in it sideways, at the start and in
-# A's fillet (curved_check.gd's PLACES); first, as their rays, traced after each
+# A's fillet, and with the throat lower, the floor through the curved zone: through the throat at
+# the start and flying in it, the throat's centre under the floor, the floor through the fillets
+# (curved_check.gd's PLACES); first, as their rays, traced after each
 # (tools/compare/curved.py, each eye on a core of its own), take minutes a place (more in the throat,
 # where they go round it), beside the other renders
-for p in 0 1 2 3 4 5 6 7 8 9 10 11 12; do want crv$p && TRACE=1 render crv$p -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
+for p in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do want crv$p && TRACE=1 render crv$p -s res://tests/curved_check.gd -- "$OUT/crv$p" $p; done
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it; and where it works out the tail of
 # the zone's bodies' images (foveation.gdshaderinc, TAIL): on the long throat in it sideways and at
-# the start
-CRF="0 6 9 10"   # the places the verdicts below take too
+# the start; and the floor through the throat, at the start and flying in it
+CRF="0 6 9 10 13 14"   # the places the verdicts below take too
 for p in $CRF; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 if want desktop; then
 	render desktop --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"
@@ -147,7 +149,7 @@ for c in 0 1; do
 	verdict "simulated headset, case $c: turned cubes, each eye" python3 "$CMP/silhouettes.py" "$OUT/cub$c"
 	verdict "simulated headset, case $c: the hands' beams, each eye" python3 "$CMP/silhouettes.py" "$OUT/bea$c" 2
 done
-for p in 0 1 2 3 4 5 6 7 8 9 10 11 12; do
+for p in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
 	want crv$p || continue
 	verdict "simulated headset, place $p where light is bent: balls, cubes and the floor against traced rays, every image, each eye" cat "$LOGS/crv$p.cmp"
 done
