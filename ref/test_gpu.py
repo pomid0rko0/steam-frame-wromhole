@@ -1,8 +1,10 @@
 """The shaders' geometry (godot/shaders/geo.gdshaderinc and zone.gdshaderinc) on a GPU, float32,
 against float64: headless (EGL), as a compute shader, with the table and series built as
-WormholeSpace.sweep_table builds them (ref/geo.py), on three throats: the app's, h = R, a crease
-(h < R). Every sin and cos goes through the headset driver's range reduction (TURNIP below), and the
-table is filtered with weights rounded to 1/256 (HW8), as on the headset.
+WormholeSpace.sweep_table builds them (ref/geo.py), on the video's throat, the same without a
+cylinder (h = R), with a crease (h < R) and with the longest cylinder, and on the far corners of the
+shapes the menu gives (MENU: ref/geo.py's menu_profiles), each with the floor where the app has it
+under that throat (lift_of). Every sin and cos goes through the headset driver's range reduction
+(TURNIP below), and the table is filtered with weights rounded to 1/256 (HW8), as on the headset.
   sweep and length from a ray's origin: against quadrature of the integrals (ref/geo.py, exact);
   which way the eye sees a point, the first image (geo_see): rays shot by DOP853 from an eye to a
     point within its first half turn, the GPU given the point must find that ray (angle) and its
@@ -20,7 +22,7 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     the headset's marking of such vertices, body.gdshaderinc's, has never shown);
   the paths by a body's table (zone_path_see, the zone bodies' vertices): eyes as above, bodies of
     the toys' sizes about the eye, across the cylinder's and the zone's ends and anywhere in the
-    zone, the table's nodes worked out as the table's pass does (zone_path_frame, zone_path_at,
+    zone (none wholly out in a flat universe: those have no table), the table's nodes worked out as the table's pass does (zone_path_frame, zone_path_at,
     zone_path_node); points along shot rays within the body's l, every image up to the last
     Renderer.ZONE_IMAGES draws: the direction within PATH_DIRECTION, the length as above, the
     direction the light comes in at the point (the lighting's) within PATH_ARRIVE;
@@ -53,6 +55,8 @@ table is filtered with weights rounded to 1/256 (HW8), as on the headset.
     radian, and exactly), and issue #147's four;
   the eye (geo_eye): against the head moved along its geodesic by RK4, the frame carried along;
   a ball's surface (geo_onto, the chord): every vertex at chord distance radius, on the space.
+Off on the menu's corners until issue #181 (MENU_CUBES_OFF): the cubes' meshes in the zone, which
+fail there, and on the video's throat too, on some random draws.
 Off on a throat with a crease (h < R) until issue #118 (CREASE_OFF): the cubes' meshes in the zone
 and a ball's surface. The zone's steps take the profile smooth, and there cubes across the crease
 came out with vertices hundreds of metres off, a ball next to it off its chord by 5.8e-5 m. And
@@ -65,7 +69,9 @@ Each throat's checks run in pieces, each in a process of its own (a GPU context 
 of its own, seeded by the throat and the piece), as many at once as there are cores, the longest
 first; their lines come throat by throat. Exit status 1 on any failure.
    python3 ref/test_gpu.py [numbers profile images paths exit zone tail eye]   (all, or those checks;
-                                                                             -check: all but it)"""
+                                                                             -check: all but it)
+With WH_PROFILES="rho0,h,R;rho0,h,R;..." in the environment, on those throats instead (to try the
+method on a shape; a throat written twice, as 3,5,1;3,5,1.0, gets two random draws)."""
 import copy
 import math
 import os
@@ -78,7 +84,7 @@ import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from scipy import optimize
-from geo import Space, shoot, plane_rhs, app_profile, app_lift, lift_of, leave
+from geo import Space, shoot, plane_rhs, app_profile, app_lift, lift_of, menu_profiles, leave
 from scipy import integrate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -130,7 +136,10 @@ INC = INC.replace('if (i >= GEO_ITERS + nbad) break;', 'if (i >= GEO_ITERS + nba
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
 PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0),
             'long, h = 41': (3.0, 41.0, 1.0)}
-# other throats instead, to try the method on: WH_PROFILES="rho0,h,R;rho0,h,R;..." in the environment
+# and the corners of the shapes the menu gives (WormholeSpace.fit)
+MENU = menu_profiles()
+PROFILES.update(MENU)
+# other throats instead (this file's top)
 if os.environ.get('WH_PROFILES'):
     PROFILES = {q: tuple(float(x) for x in q.split(',')) for q in os.environ['WH_PROFILES'].split(';')}
 # the floor at z = -LIFT, under the curved zone: a throat's own (piece_checks sets it: lift_of)
@@ -477,6 +486,18 @@ CREASE_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/118'
 CREASE_PATHS_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/145'
 
 
+# The cubes' meshes in the zone on the menu's corners: off until they pass on the video's throat
+# with any random draw (there they fail on 4 seeds of 14: the issue)
+MENU_CUBES_OFF = 'https://github.com/pomid0rko0/steam-frame-wromhole/issues/181'
+
+
+def menu_cubes_off(name):
+    """True (and a SKIP line) on a corner of the menu's shapes: the cubes' meshes are off there."""
+    if name in MENU:
+        print(f'SKIP {name}: a cube\'s mesh in the zone  off on the menu\'s corners until {MENU_CUBES_OFF}', flush=True)
+    return name in MENU
+
+
 def crease_off(name, S, what, issue=CREASE_OFF):
     """True (and a SKIP line) where the throat has a crease: the check what is off (until issue)."""
     if S.th0 > 0:
@@ -689,6 +710,10 @@ def path_checks(name, S, gpu, rng):
         else:
             lc = rng.uniform(-(S.L + 0.6), S.L + 0.6)
         reach = float(rng.choice([0.04, 0.1, 0.2, 0.25, 0.35, 0.4, 1.8 * 0.1, 1.8 * 0.15, 1.8 * 0.3]))
+        if abs(lc) >= S.L + reach:
+            # wholly out in a flat universe: drawn straight or through the lens, with no table
+            # (Renderer.out_of_zone)
+            continue
         en, t = frame(rng)
         m = unit(rng.normal(size=3))
         C = np.r_[float(S.r(lc)) * m, float(S.w(lc))]
@@ -1386,7 +1411,7 @@ def zone_mesh_checks(name, S, gpu, rng):
     mode 14), for eyes' axes through and beside them."""
     fails = 0
     for ball in (True, False):
-        if not ball and crease_off(name, S, 'a cube\'s mesh in the zone'):
+        if not ball and (crease_off(name, S, 'a cube\'s mesh in the zone') or menu_cubes_off(name)):
             continue
         bodies = []
         while len(bodies) < 30:

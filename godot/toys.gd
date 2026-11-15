@@ -40,7 +40,8 @@ const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
 const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
 const DROP_OFF := Vector3(0.0, -0.2, 1.5)   # chart A, from the curved zone's top: 1.5 m over it, 20 cm off the throat's axis
 # the ball's throw, chart A: from where, and the velocity that takes it through the video's throat,
-# whose centre is THROW_LIFT over the floor: THROW_TIME s on its way there
+# whose centre is THROW_LIFT over the floor; THROW_TIME s later it is level with the mouth (over
+# the point under the centre, in plain gravity): a throat hung higher gets that much more speed up
 const THROW_FROM := Vector3(9.0, -2.0, 1.4)
 const THROW := Vector3(-10.0, 3.5, 9.5)
 const THROW_LIFT := 5.0

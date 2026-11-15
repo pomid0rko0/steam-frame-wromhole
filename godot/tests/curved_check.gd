@@ -19,7 +19,7 @@ const U := preload("res://tests/util.gd")
 # flights from there (main.viewer: off the floor, then each a geodesic along the head's x right, y
 # up, -z ahead, the room's axes carried along), a turn of the room to the right after, in degrees,
 # the head's pitch in degrees (util.gd's headset), and the throat's cylinder's length if not the
-# video's (main.set_length)]: standing at the start looking up at the mouth; level with the throat's
+# video's (main.set_length), or its whole shape (NARROW, WIDE: main.set_shape)]: standing at the start looking up at the mouth; level with the throat's
 # centre 9 m out; at the curved zone's edge; in A's fillet; in the throat looking along it and
 # sideways; out in universe B looking back at the mouth; far off, a control; under the mouth looking
 # up into it; on the menu's longest throat (the bodies of the space carried with it, as stretching
@@ -27,12 +27,19 @@ const U := preload("res://tests/util.gd")
 # zone_tail.gdshader) are many pixels wide: in it sideways, at the start (crf9 and crf10 also with
 # foveation, as the headset draws its floor and the tail: crf10's seen through the throat); on one of MID, in A's
 # fillet looking in; and on one with no cylinder (h = R, the menu's shortest: no tail), in the
-# throat looking along it; then with the throat lower, the floor through the curved zone (the last
-# number: the throat's centre over the floor, m): through the throat itself, at the start looking
-# into it and flying in it over its floor; the throat's centre under the floor, at the bump left of
-# it; and the floor through the fillets only, under the throat
+# throat looking along it; on the menu's narrowest throat (_shape: 2 m, its curved zone's radius 3 m),
+# in A's fillet looking in; on its widest with its softest fillet (6 m and 2 m, the zone's radius 8 m,
+# its centre 9 m over the floor: the floor lower under the lens), in A's fillet looking in and at the
+# start looking up at the mouth (crf15 also with foveation). The bodies of the space stand where
+# changing the video's throat to that one carries them; then with the throat lower, the floor through the
+# curved zone (the last number: the throat's centre over the floor, m): through the throat itself, at
+# the start looking into it and flying in it over its floor (crf16 and crf17 also with foveation);
+# the throat's centre under the floor, at the pit left of it; and the floor through the fillets only,
+# under the throat
 const LONG := WormholeSpace.LENGTH_MAX
 const MID := 40.0
+const NARROW := "narrow"
+const WIDE := "wide"
 const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0)], 0.0, 0.0],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -4.6)], 0.0, -5.0],
@@ -46,6 +53,9 @@ const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0, LONG],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0, MID],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0],
+		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -6.6)], 0.0, -5.0, NARROW],
+		[Vector2(13.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 7.4, 0.0), Vector3(0.0, 0.0, -6.2)], 0.0, -5.0, WIDE],
+		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 30.0, WIDE,
 		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 0.0, Main.LENGTH, 1.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 0.3, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, Main.LENGTH, 1.0],
 		[Vector2(8.0, 1.0), Vector2(-1.0, 0.0), [], 0.0, -5.0, Main.LENGTH, -2.0],
@@ -99,7 +109,12 @@ func _process(_delta: float) -> bool:
 		main.menu.visible = false
 		main.renderer.show_scene(false)
 		if place.size() > 5:
-			main.set_length(place[5])
+			if place[5] is String:
+				var s := _shape(place[5])
+				main.set_shape(s[0], s[1], s[2], s[3], true)
+			else:
+				main.set_length(place[5], true)
+			print("throat: ", main.shape_text())
 		if place.size() > 6:
 			main.set_lift(place[6], true)
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
@@ -198,6 +213,14 @@ func _bodies() -> void:
 
 
 var _objects := []
+
+
+## A place's throat: the menu's narrowest (NARROW) or its widest with its softest fillet, its curved
+## zone a metre over the floor (WIDE), on the video's cylinder.
+static func _shape(which: String) -> PackedFloat64Array:
+	if which == NARROW:
+		return WormholeSpace.fit(WormholeSpace.RADIUS_MIN, Main.LENGTH, WormholeSpace.FILLET_MIN, Main.LIFT)
+	return WormholeSpace.fit(WormholeSpace.RADIUS_MAX, Main.LENGTH, WormholeSpace.FILLET_MAX, WormholeSpace.RADIUS_MAX + WormholeSpace.FILLET_MAX + 1.0)
 
 
 static func _fov() -> bool:

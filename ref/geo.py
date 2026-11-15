@@ -48,6 +48,18 @@ def space_const(k):
     return float(re.search(r'^const %s := ([\d.]+)' % k, src, re.M).group(1))
 
 
+def menu_profiles():
+    """The throats at the far corners of the shapes the menu gives (WormholeSpace.fit), {name: (rho0,
+    h, R)}: the narrowest, and the widest with the softest fillet, each without a cylinder (h = R)
+    and with the longest."""
+    c = {k: space_const(k) for k in ('RADIUS_MIN', 'RADIUS_MAX', 'FILLET_MIN', 'FILLET_MAX', 'WIDE', 'LENGTH_MAX')}
+    def soft(r):
+        return max(c['FILLET_MIN'], min(c['FILLET_MAX'], r / c['WIDE']))
+    lo, hi, long = c['RADIUS_MIN'], c['RADIUS_MAX'], 0.5 * c['LENGTH_MAX']
+    return {'narrow, h = R': (lo, soft(lo), soft(lo)), 'narrow, long': (lo, soft(lo) + long, soft(lo)),
+            'wide and soft, long': (hi, soft(hi) + long, soft(hi)), 'wide and soft, h = R': (hi, soft(hi), soft(hi))}
+
+
 def lift_of(rho0, R):
     """A height of the centre of a throat of radius rho0 and fillet R above the floor that keeps the
     floor out of its curved zone, a metre under it at least (the checks of a ray's way out to the

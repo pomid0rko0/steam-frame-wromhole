@@ -2,8 +2,9 @@ extends SceneTree
 ## The speed check (bench.gd) on the desktop, with short timings: it goes through every place each
 ## way of VARIANTS (the viewer there: standing on the floor, or flying with the head on the axis; the
 ## cube before the eyes drawn in its own; the long throat's ways at its places only), the toys at their
-## start throughout, logs a line per place, and gives back the foveation, the cube, the tail, the
-## toys and where the viewer stood. The menu has its row; the file Bench.ASKED starts it, once. In a small window: nothing here looks at
+## start throughout, the throat with the video's radius, fillet and height whatever the menu's (here
+## the widest, softest and highest it gives), logs a line per place, and gives back the foveation,
+## the cube, the tail, the throat's shape, the toys and where the viewer stood. The menu has its row; the file Bench.ASKED starts it, once. In a small window: nothing here looks at
 ## the picture, and what is timed is the speed check's own flow (a frame costs by its pixels).
 ##   godot --path . --resolution 160x90 -s res://tests/bench_test.gd
 
@@ -14,6 +15,8 @@ var frames := 0
 var pose_before: Array
 var toys_before: Array          # the toys' balls and cubes before (the check puts them at their start)
 var started := false
+# the menu's shape before the check: the widest, softest and highest throat it gives, the video's cylinder
+var shape_before := WormholeSpace.fit(WormholeSpace.RADIUS_MAX, Main.LENGTH, WormholeSpace.FILLET_MAX, WormholeSpace.LIFT_MAX)
 
 
 func check(name: String, good: bool, got: Variant = "") -> void:
@@ -52,6 +55,7 @@ func _process(_d: float) -> bool:
 		for r in main.menu.rows:
 			has_row = has_row or r.key == "bench"
 		check("the menu has the speed check's row", has_row)
+		main.set_shape(shape_before[0], shape_before[1], shape_before[2], shape_before[3], true)
 		main.place(Vector3(9.0, 1.0, 0.0), Vector3(-1.0, 0.2, 0.0))
 		pose_before = main.get_pose()
 		# a ball let go in the throat, as the demo's drop does: the check takes it away while it runs
@@ -79,8 +83,10 @@ func _process(_d: float) -> bool:
 				check("at the place being timed", false, "%s: %.4f m off" % [b._name(place[0]), miss])
 				started = false
 			var cyl: float = place[3] if place.size() > 3 else b.saved_length
-			if not is_equal_approx(2.0 * main.space.Lc, cyl):
-				check("the place's throat", false, "%.2f m, not %.2f" % [2.0 * main.space.Lc, cyl])
+			var sp := main.space
+			if not is_equal_approx(2.0 * sp.Lc, cyl) or sp.rho0 != Main.THROAT_RADIUS or sp.fillet != Main.FILLET or sp.lift != Main.LIFT:
+				check("the place's throat: its cylinder, the video's radius, fillet and height", false,
+						"%s, not a cylinder of %.2f m" % [sp.shape(), cyl])
 				started = false
 			var lift: float = place[4] if place.size() > 4 else Main.LIFT
 			if not is_equal_approx(main.space.lift, lift):
@@ -123,7 +129,7 @@ func _process(_d: float) -> bool:
 					and p[2][2].is_equal_approx(pose_before[2][2]), "l %.3f" % p[0])
 			check("no cube before the eyes after it, nor the hands' balls", not b.near and not b.hand_balls and _cubes() == main.toys.world.cubes.size())
 			check("no bodies in the throat after it", not b.throat and not b.throat_fixed)
-			check("the throat's length back", is_equal_approx(2.0 * main.space.Lc, Main.LENGTH), "%.2f m" % (2.0 * main.space.Lc))
+			check("the throat's shape back", main.space.shape() == shape_before and main.shape_want == shape_before, main.space.shape())
 			check("the foveation back (off)", main.foveation.level == 0 and not main.foveation.enabled)
 			check("the tail drawn again, with its strips", main.renderer.tail_shown and main.renderer.tail_strips)
 			var toys_after: Array = main.toys.world.balls.duplicate() + main.toys.world.cubes.duplicate()

@@ -836,8 +836,9 @@ class Row:
 
 ## A part of the throat's shape (main.set_shape; key: SHAPE_KEYS'): its cylinder's length, its
 ## radius, its fillet's radius, its centre's height over the floor. Held left or right it shrinks or
-## grows as it is held, within what WormholeSpace.fit takes (a throat grown wider than its height
-## allows rises: the height's row follows); A: the video's. The value is the one asked for, shown as
+## grows as it is held, within what WormholeSpace.fit takes, and the other rows follow where they
+## must: a throat grown wider than its height allows rises, one made narrow gets a sharper fillet,
+## a fillet made soft widens the throat; A: the video's. The value is the one asked for, shown as
 ## waiting until the space has it (a radius or a fillet: once its sweep table is built).
 class ShapeRow extends Row:
 	func part() -> int:
@@ -877,7 +878,7 @@ class ShapeRow extends Row:
 	func _take(m: float) -> void:
 		var w := menu.main.shape_want.duplicate()
 		w[part()] = m
-		menu.main.set_shape(w[0], w[1], w[2], w[3])
+		menu.main.set_shape(w[0], w[1], w[2], w[3], false, key == "fillet")
 
 
 ## The refresh rate (frame_rate.gd).
