@@ -49,9 +49,10 @@ def space_const(k):
 
 
 def lift_of(rho0, R):
-    """The centre of a throat of radius rho0 and fillet R above the floor as the app has it by
-    default: main.gd's LIFT, or WormholeSpace.lift_min where that is higher (WormholeSpace.fit)."""
-    return max(app_lift(), rho0 + R + space_const('FLOOR_CLEAR'))
+    """A height of the centre of a throat of radius rho0 and fillet R above the floor that keeps the
+    floor out of its curved zone, a metre under it at least (the checks of a ray's way out to the
+    flat floor): main.gd's LIFT, or higher for a wide throat."""
+    return max(app_lift(), rho0 + R + 1.0)
 
 
 class Space:
