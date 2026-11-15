@@ -67,7 +67,8 @@ const UNDER_A := Vector3(2.5, 0.0, 1.0)     # on A's floor under the mouth, the 
 const UNDER_A_IN := Vector3(0.5, 0.0, 1.0)  # right under the throat's centre: the head in the curved zone
 const UNDER_B := Vector3(-2.5, 0.0, -1.0)   # on B's floor under its mouth
 const LONG := 80.0              # m: a long throat's cylinder (the menu's longest)
-const PLACES := [   # the comparison's poses: [where, degrees to the right, degrees up, and the throat's cylinder's length if not the menu's]
+const VIDEO := Main.LENGTH      # m: the video's cylinder, the places' with the floor in the curved zone
+const PLACES := [   # the comparison's poses: [where, degrees to the right, degrees up, and the throat's cylinder's length if not the menu's, and its centre's height over the floor if not the video's]
 	[START, 0.0, 0.0],      # the mouth over the floor ahead
 	[UNDER_A, 0.0, 60.0],   # looking up into the mouth
 	[UNDER_A_IN, 0.0, 80.0],
@@ -87,6 +88,16 @@ const PLACES := [   # the comparison's poses: [where, degrees to the right, degr
 	[0.0, 0.0, 0.0, LONG],   # and along it
 	[START, 0.0, 0.0, LONG], # the start, the long throat's mouth ahead
 	[5.0, 0.0, 0.0, LONG],   # inside at its edge, facing the throat: the field lines through the mouth all round
+	# the floor through the curved zone (the floor's programs that look for it there: geo_floor): the
+	# throat's centre 1 m over the floor, the floor through the throat: at the start, the throat an
+	# arch on the floor ahead; flying 1 m over its floor at the zone's edge and in the throat, along
+	# it, sideways and down at its floor; the centre 2 m under the floor: the start, the pit ahead
+	[START, 0.0, -8.0, VIDEO, 1.0],
+	[5.0, 0.0, 0.0, VIDEO, 1.0],
+	[0.0, 0.0, 0.0, VIDEO, 1.0],
+	[0.0, 90.0, 0.0, VIDEO, 1.0],
+	[0.0, 0.0, -45.0, VIDEO, 1.0],
+	[START, 0.0, -8.0, VIDEO, -2.0],
 ]
 const RATE := 72.0
 const RATE_WAIT := 6.0          # s for the headset to follow a rate request
@@ -288,11 +299,13 @@ func _make_tour() -> Array[Step]:
 	return t
 
 
-## A place of PLACES: the throat its length (its own, or the one before the check), then the viewer.
+## A place of PLACES: the throat its length (its own, or the one before the check) and its height
+## over the floor (its own, or the video's), then the viewer.
 func _put_place(place: Array) -> void:
 	var cyl: float = place[3] if place.size() > 3 else saved_length
-	if not is_equal_approx(2.0 * main.space.Lc, cyl):
-		main.set_length(cyl, true)
+	var lift: float = place[4] if place.size() > 4 else Main.LIFT
+	if not is_equal_approx(2.0 * main.space.Lc, cyl) or not is_equal_approx(main.space.lift, lift):
+		main.set_shape(Main.THROAT_RADIUS, cyl, Main.FILLET, lift, true)
 	_put(place[0], place[1], place[2])
 
 
@@ -592,8 +605,10 @@ func _end_segment() -> void:
 			s += " (%.3f)" % (_mean(r[v]) / _mean(r[0]))
 		parts.append(s)
 		segs.append(_list(r[v]))
-	print("bench: %s, %.0f deg right, %.0f deg up, cylinder %.0f m: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
-			% [_name(place[0]), place[1], place[2], 2.0 * main.space.Lc, ", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
+	print("bench: %s, %.0f deg right, %.0f deg up, cylinder %.0f m%s: %s; %.0f Hz, gpu clock %d..%d MHz, segments %s"
+			% [_name(place[0]), place[1], place[2], 2.0 * main.space.Lc,
+			"" if main.space.lift == Main.LIFT else ", the throat's centre %.1f m over the floor" % main.space.lift,
+			", ".join(parts), main.rate.rate, clock_lo, clock_hi, " ".join(segs)])
 	# by part: each variant's mean over its segments of their medians, ms (FrameRate.PARTS)
 	var by := []
 	for v in variants.size():
@@ -884,8 +899,8 @@ func _restore() -> void:
 	main.renderer.tail_strips = true
 	if main.renderer.gravity_view != saved_gravity:
 		main.set_gravity_view(saved_gravity)
-	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
-		main.set_length(saved_length, true)
+	if not is_equal_approx(2.0 * main.space.Lc, saved_length) or not is_equal_approx(main.space.lift, Main.LIFT):
+		main.set_shape(Main.THROAT_RADIUS, saved_length, Main.FILLET, Main.LIFT, true)
 	main.foveation.set_level(menu.foveation)
 
 

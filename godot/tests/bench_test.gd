@@ -82,6 +82,10 @@ func _process(_d: float) -> bool:
 			if not is_equal_approx(2.0 * main.space.Lc, cyl):
 				check("the place's throat", false, "%.2f m, not %.2f" % [2.0 * main.space.Lc, cyl])
 				started = false
+			var lift: float = place[4] if place.size() > 4 else Main.LIFT
+			if not is_equal_approx(main.space.lift, lift):
+				check("the place's height over the floor", false, "%.2f m, not %.2f" % [main.space.lift, lift])
+				started = false
 			var v := b.variants[b.plan[b.step].y]
 			# the cube before the eyes, and the throat's (its own check, below) with it in all at once
 			if b.near != v.near or (b.near and _cubes() != main.toys.world.cubes.size() + 1 + (1 if b.throat else 0)):
