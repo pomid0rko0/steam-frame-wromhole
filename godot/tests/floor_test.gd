@@ -21,7 +21,9 @@ extends SceneTree
 ##    is the space's geodesic (WormholeSpace.geodesic); the head stays over the floor and moves
 ##    little for a step; the world's limit holds
 ## 4. flying: with the feet under a bent floor the body lands on it, upright; a head at the floor
-##    is pushed out of it
+##    is pushed out of it; off the floor, up and let go, the fall with gravity lands on the floor
+##    (in the throat too, under its roof; deep in the 80 m throat, where the field has faded, it
+##    hangs), the head never in it
 ## 5. a ball and a cube dropped onto the floor where it bends (on a flat one too, to compare):
 ##    neither goes into it, the ball is held its radius from it by the chord of R^4 to the floor's
 ##    nearest point, the cube rests with its lowest corner (where the space cuts the box's edges) on it
@@ -331,6 +333,40 @@ func _flying() -> void:
 	U.check(tag + "flying with the feet under the floor: lands on it, upright", worst < 1e-5 and away < 0.7,
 			"within %s, %.2f m from under the head at most (%d places)" % [_e(worst), away, count])
 	U.check(tag + "a head at the floor is pushed out of it", pushed >= Viewer.HEAD_CLEAR - 1e-4, "%.4f m over it" % pushed)
+	# as main._locomotion does it: off the floor 6, 8 m and (to the throat's middle, with the floor
+	# through it) 6 m + L on from chart A (10, 0.3), half a second up and aside, then let go
+	var landed := 0
+	var adrift := 0
+	var slow := 0.0
+	var low := INF
+	worst = 0.0
+	for far: float in [6.0, 8.0, 10.0 - sp.Rout + sp.L]:
+		v.stand_at(1.0, Vector2(10.0, 0.3), Vector3(0.0, -1.0, 0.0), Vector3(1.0, 0.0, 0.0))
+		v.move(far * -(v.frame[2] as Vector4))
+		if not v.take_off(HEAD):
+			continue
+		for i in 30:
+			v.push(Vector3(0.5, 4.0, -1.0), 1.0 / 60.0, HEAD)
+			v.keep_head_up(HEAD)
+		var t := 0.0
+		while t < 30.0 and not v.standing:
+			v.coast(1.0 / 60.0, HEAD)
+			v.right_up(1.0 / 60.0, HEAD)
+			v.keep_head_up(HEAD)
+			low = minf(low, _head_height(v))
+			v.touch_down()
+			t += 1.0 / 60.0
+		low = minf(low, _head_height(v))
+		if v.standing:
+			landed += 1
+			slow = maxf(slow, t)
+			worst = maxf(worst, _upright(v))
+		elif sp.Lc > 10.0 and absf(v.l) < sp.Lc:
+			adrift += 1                 # in a long throat the field has faded (docs/gravity.md): it drifts on
+	U.check(tag + "off the floor, half a second up and let go: the fall lands on the floor, upright, the head never in it",
+			landed + adrift == 3 and worst < 1e-5 and low >= Viewer.HEAD_CLEAR - 1e-4,
+			"%d of 3 landed, the last after %.2f s, within %s, %d still adrift in the long throat after 30 s; the head %.3f m over the floor at the least"
+			% [landed, slow, _e(worst), adrift, low])
 
 
 ## The chord of R^4 from (l, n) to the nearest floor of its own azimuth about the vertical axis (the
