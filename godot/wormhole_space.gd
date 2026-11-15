@@ -90,7 +90,7 @@ static func lift_min(throat_radius: float, fillet_radius: float) -> float:
 ## each part within its limits; the radius and the fillet together (WIDE): the radius as asked and
 ## the fillet as sharp as that throat needs (a throat made narrow gets a sharper fillet), or with
 ## fillet_leads the fillet as asked and the throat as wide as it needs (a fillet made soft widens
-## the throat); then the lift no lower than lift_min of both (a throat grown wide rises).
+## the throat); then the lift no lower than lift_min of both.
 static func fit(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float, fillet_leads := false) -> PackedFloat64Array:
 	var rad := clampf(throat_radius, RADIUS_MIN, RADIUS_MAX)
 	var fil := clampf(fillet_radius, FILLET_MIN, FILLET_MAX)
