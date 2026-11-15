@@ -997,7 +997,9 @@ def floor_reference(S, X, lift, d=0.0):
     z = -lift: (0, ...) nothing, (1, psi, l, way) the floor in the zone, (2, ...) the flat floor on its
     straight way to the zone; None if it never enters the zone. By DOP853 in the ray's plane with the
     floor as an event, up to where leave says it goes out, FLOOR_RAY at most: (-1, ...) for a ray
-    still over the floor in the zone that far (many turns round the throat, next to the photon sphere)."""
+    still over the floor in the zone that far (many turns round the throat, next to the photon sphere);
+    and FLOOR_PAST on from there: (0, psi, l, way) with way > 0 for the flat floor met that soon after
+    the zone (which side of the zone's edge the floor is met on is nothing seen: floor_checks)."""
     c, s = np.cos(d), np.sin(d)
     ca, sa = float(X.ca * c - X.sa * s), float(X.sa * c + X.ca * s)
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -1012,14 +1014,14 @@ def floor_reference(S, X, lift, d=0.0):
         return float(S.r(l)) * (zc * math.cos(y[2]) + zs * math.sin(y[2])) + lift
     under.terminal = True
     under.direction = -1
-    sol = shoot(S, X.el, math.atan2(sa, ca), FLOOR_RAY if far else float(res[2]) + 1e-6, events=[under])
+    sol = shoot(S, X.el, math.atan2(sa, ca), FLOOR_RAY if far else float(res[2]) + FLOOR_PAST, events=[under])
     if sol.t_events[0].size == 0:
         return (-1 if far else 0, 0.0, 0.0, 0.0)
     l, _, phi = sol.y_events[0][0]
     way = float(sol.t_events[0][0])
     if abs(l) >= S.L:
         # out in a flat universe: on the straight way to the zone (from an eye outside, sqrt(re^2 -
-        # b^2) - sqrt(Rout^2 - b^2) long), or (a hair before the ray's end) just out of the zone
+        # b^2) - sqrt(Rout^2 - b^2) long), or past the zone, within FLOOR_PAST of where it left it
         bb = X.re * sa
         before = abs(X.el) >= S.L and way <= np.sqrt(X.re ** 2 - bb ** 2) - np.sqrt(S.Rout ** 2 - bb ** 2)
         return (2 if before else 0, phi, l, way)
@@ -1027,13 +1029,15 @@ def floor_reference(S, X, lift, d=0.0):
 
 
 FLOOR_RAY = 400.0            # m: a ray still in the zone and over the floor this far is left out
+FLOOR_PAST = 2.0             # m: the reference's ray goes on this far out of the zone, for the floor met at its edge
 FLOOR_ILL = 2e-4             # m: a ray whose answer changes as the floor moves by this grazes it
 
 
 def floor_checks(name, S, gpu, rng):
     """The floor in the curved zone (geo_floor): rays from eyes over the floor, the floor at each of
     floor_lifts' heights: whether the ray meets it before it leaves the zone, and where (its point on
-    the floor within the floor's limit, its way). A ray that grazes the floor (the reference's answer
+    the floor within the floor's limit, its way); met at the zone's edge, the point alone is held to
+    (inside or just past the edge is the same floor's point). A ray that grazes the floor (the reference's answer
     changes as the floor is moved FLOOR_ILL up or down, or as the launch turns by ALPHA_TOL) must be
     one of those answers."""
     if crease_off(name, S, 'the floor in the zone'):
@@ -1072,10 +1076,15 @@ def floor_checks(name, S, gpu, rng):
 
             def off(r):
                 """The GPU's answer against the reference's r: None if another, else its error's share of the limit."""
-                if int(round(float(g[0][0]))) != r[0]:
+                code = int(round(float(g[0][0])))
+                lim = FLOOR_ABS + FLOOR_REL * r[3]
+                if code == 0 and r[0] == 1 and S.L - abs(r[2]) <= lim:
+                    return 0.0, 0.0     # the floor met at the zone's edge, a hair inside: the GPU's meets it past it
+                if not (code == r[0] or (code == 1 and r[0] == 0 and r[3] > 0)):
                     return None
-                if r[0] != 1:
+                if code != 1:
                     return 0.0, 0.0
+                # the floor's point in the zone, or the reference's a hair past the zone's edge
                 rr = float(S.r(r[2]))
                 dpsi = (float(g[0][1]) - r[1] + np.pi) % (2 * np.pi) - np.pi
                 dist = np.hypot(float(g[0][2]) - r[2], rr * dpsi)
