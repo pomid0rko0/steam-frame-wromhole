@@ -730,8 +730,8 @@ vec3 geo_xt_way(vec4 a, vec4 c, float x, float le, vec3 eye, float b, float sigm
 // looked for piece by piece along the ray, as geo_exit_way goes: straight to the zone from an eye
 // outside (a line and a plane), a fillet coming in, the cylinder (psi goes evenly: a closed form), a
 // fillet going out. On a fillet the ray goes by x = W / 2, half the weight's integral from its origin
-// (geo_fillet's w): x = ln((sqrt(u) + sqrt(u - sigma)) / Dw), so u's roots are (E +- sigma / E) / 2
-// with E = Dw exp(x), psi and the length grow by 2 F(u) a unit of x (bounded, smooth: next to the
+// (geo_fillet's w): x = ln((sqrt(u) + sqrt(u - sigma)) / Dw), so u's roots are (e +- sigma / e) / 2
+// with e = Dw exp(x), psi and the length grow by 2 F(u) a unit of x (bounded, smooth: next to the
 // photon sphere, where psi grows as ln of the distance from the origin, x is that ln), and the height
 // is smooth in x all along. It is taken with its rate at nodes GEO_FLOOR_DX of x or GEO_FLOOR_DPSI of
 // turn apart; between two nodes it is the cubic through both (values and rates): where the next node
@@ -774,11 +774,11 @@ float geo_leg_x(GeoLeg g, vec2 se) {
 
 // at x on a leg: (psi, len) from its origin, their rates a unit of x, and the roots of u and u - sigma
 // there. The root that starts from nought (u - sigma's at a turning point, u's at the cylinder's end)
-// is Dw sinh x: the difference of E and sigma / E keeps none of its digits next to the start.
+// is Dw sinh x: the difference of Dw exp(x) and sigma over it keeps none of its digits next to the start.
 void geo_leg_at(GeoLeg g, float x, out vec2 pl, out vec2 rate, out vec2 se) {
 	float ex = exp(x);
-	float E = g.Dw * ex, q = g.sigma / E;
-	se = 0.5 * vec2(E + q, E - q);
+	float ew = g.Dw * ex, q = g.sigma / ew;
+	se = 0.5 * vec2(ew + q, ew - q);
 	float x2 = x * x;
 	float sh = g.Dw * (x < 0.3 ? x * (1.0 + x2 * (0.166666667 + x2 * (0.00833333333 + x2 * 0.000198412698))) : 0.5 * (ex - 1.0 / ex));
 	bool turns = g.ul == g.sigma;

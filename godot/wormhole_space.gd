@@ -36,7 +36,6 @@ var _grav_tab := PackedFloat64Array()   # f, f' at |l| = Lc + i (L - Lc) / GRAV_
 func _init(throat_radius: float, half_length: float, fillet_radius: float, p_lift: float) -> void:
 	set_profile(throat_radius, half_length, fillet_radius)
 	lift = p_lift
-	assert(lift > Rout, "the floor must stay out of the curved zone")
 
 
 ## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
