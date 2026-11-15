@@ -58,7 +58,7 @@ func _initialize() -> void:
 		var probe := WormholeSpace.new(THROAT[0], THROAT[1], THROAT[2], 0.0)
 		for lift: float in lifts(probe):
 			sp = WormholeSpace.new(THROAT[0], THROAT[1], THROAT[2], lift)
-			sp.set_length(cyl)
+			sp.set_shape(THROAT[0], cyl, THROAT[2], lift)
 			tag = "lift %+.1f, cylinder %d m: " % [lift, roundi(cyl)]
 			_geometry()
 			_standing()
@@ -636,7 +636,7 @@ func _odd_lifts() -> void:
 		for base: float in [THROAT[0], -THROAT[0], THROAT[0] + THROAT[2], -THROAT[0] - THROAT[2], 0.0]:
 			for d: float in [0.0, 1e-3, -1e-3]:
 				sp = WormholeSpace.new(THROAT[0], THROAT[1], THROAT[2], base + d)
-				sp.set_length(cyl)
+				sp.set_shape(THROAT[0], cyl, THROAT[2], base + d)
 				var worst := 0.0
 				var head := INF
 				var under := INF
