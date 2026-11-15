@@ -1,6 +1,6 @@
 extends SceneTree
 ## On foot through the throat: the whole app with the throat's centre at the floor's level
-## (space.lift = 0, set before main._ready: the floor runs through the throat, WormholeSpace's top),
+## (main.shape_want's lift 0, set before main._ready: the floor runs through the throat, WormholeSpace's top),
 ## through the desktop keys (the code paths the sticks and triggers drive), run with --fixed-fps 60
 ## in a small window (nothing here looks at the picture); exit status 1 on any failure:
 ##   godot --path . --resolution 160x90 --fixed-fps 60 -s res://tests/floor_walk_test.gd
@@ -26,7 +26,7 @@ var took_off := Vector4.ZERO
 func _initialize() -> void:
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "none"
-	main.space.lift = 0.0
+	main.shape_want = WormholeSpace.fit(Main.THROAT_RADIUS, Main.LENGTH, Main.FILLET, 0.0)
 	root.add_child(main)
 
 

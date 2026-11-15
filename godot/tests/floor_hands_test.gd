@@ -1,5 +1,5 @@
 extends SceneTree
-## The hands with the floor running through the throat (space.lift = 0, set before main._ready:
+## The hands with the floor running through the throat (main.shape_want's lift 0, set before main._ready:
 ## WormholeSpace's top), through the code path the headset uses: the simulated headset
 ## (tests/fake_hmd.gd) and two controller trackers, as tests/pull_test.gd, which has the rest of the
 ## hands at the throat's usual height. Run with --fixed-fps 60 under a display; exit status 1 on any
@@ -33,7 +33,7 @@ func _initialize() -> void:
 	main = load("res://main.tscn").instantiate() as Main
 	main.xr_name = "FakeHMD"
 	main.toys.demo = false
-	main.space.lift = 0.0
+	main.shape_want = WormholeSpace.fit(Main.THROAT_RADIUS, Main.LENGTH, Main.FILLET, 0.0)
 	root.add_child(main)
 	_run()
 

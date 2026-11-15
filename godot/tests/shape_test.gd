@@ -13,8 +13,8 @@ extends SceneTree
 ## 2. Gravity after set_shape is the one solved for that throat from scratch.
 ## 3. What stands in the space goes with its part of it (WormholeSpace.carried): standing, the body
 ##    stays on its place of the floor; flying out in a flat universe, at its place of the chart (its
-##    height over the floor kept as the throat rises), or straight out of the throat's centre at the
-##    edge of a curved zone that grew over it; in the cylinder and on a fillet, with the throat; the
+##    height over the floor kept as the throat rises), also where a curved zone that grew covers it
+##    (on its fillet there); in the cylinder and on a fillet, with the throat; the
 ##    room's axes as they were there. The toys too, their velocities with them, and awake.
 ## 4. On every corner of the menu's shapes: the scene's objects, the toys at rest, the throw's and
 ##    the drop's starts and the stereo check's bodies are out of the curved zone; the field lines
@@ -71,8 +71,7 @@ func _settle(m: Main) -> void:
 ## The widest and softest throat the menu gives, on a cylinder of 20 m, 1.5 m over its lowest: every
 ## part another than the video's.
 static func _far() -> PackedFloat64Array:
-	var s := WormholeSpace.fit(WormholeSpace.RADIUS_MAX, 20.0, WormholeSpace.FILLET_MAX, 0.0)
-	return WormholeSpace.fit(s[0], s[1], s[2], s[3] + 1.5)
+	return WormholeSpace.fit(WormholeSpace.RADIUS_MAX, 20.0, WormholeSpace.FILLET_MAX, WormholeSpace.RADIUS_MAX + WormholeSpace.FILLET_MAX + 2.5)
 
 
 func _process(_delta: float) -> bool:
@@ -225,14 +224,17 @@ func _kept() -> void:
 
 
 ## The shapes at the corners of what the menu gives: the radius' and the fillet's limits (as fit
-## takes them together), no cylinder and the longest, the lowest and the highest.
+## takes them together), no cylinder and the longest, the lowest that keeps the floor out of the
+## curved zone and the highest (the floor in the zone: floor_test.gd).
 static func _corner_shapes() -> Array:
 	var out := []
 	for rad in [WormholeSpace.RADIUS_MIN, WormholeSpace.RADIUS_MAX]:
 		for fil in [WormholeSpace.FILLET_MIN, WormholeSpace.FILLET_MAX]:
 			for cyl in [0.0, WormholeSpace.LENGTH_MAX]:
 				for lift in [0.0, WormholeSpace.LIFT_MAX]:
+					# the lowest with the floor out of its curved zone, a metre under it
 					var s := WormholeSpace.fit(rad, cyl, fil, lift)
+					s = WormholeSpace.fit(s[0], s[1], s[2], maxf(lift, s[0] + s[2] + 1.0))
 					if not out.has(s):
 						out.append(s)
 	return out
@@ -300,20 +302,23 @@ func _carried() -> void:
 				if absf(ball.l - want) > 1e-9 or not ball.n.is_equal_approx(Vector3(0.0, 0.6, 0.8)) or not ball.U.is_equal_approx(bu0):
 					bad.append("%s: the toy at l %.5f -> %.5f (want %.5f), U %s -> %s" % [what, l0, ball.l, want, bu0, ball.U])
 			else:
-				# at its place of the chart, or straight out of the centre at the zone's edge
+				# at its place of the chart, also where the curved zone now covers it (on the fillet
+				# there: its vectors laid on the space, no longer the chart's own); nearer the centre
+				# than the throat, at the cylinder's end in its direction
 				var x := sp.chart_position(hp[0], hp[1])
 				var centre := Vector3(0.0, 0.0, b[3])
 				var off := x0 - centre
-				var want := x0 if off.length() >= b_Rout else centre + off.normalized() * b_Rout
+				var want := x0 if off.length() >= b[0] else centre + off.normalized() * b[0]
+				var out := off.length() >= b_Rout
 				var same := true
 				for k in 3:
 					same = same and WormholeSpace.vector_to_chart(signf(l0), hp[1], hp[2][k]).is_equal_approx(c0[k])
-				if x.distance_to(want) > 2e-5 or not same or signf(hp[0]) != signf(l0) or absf(hp[0]) < b_L - 1e-9:
+				if x.distance_to(want) > 2e-5 or (out and not same) or signf(hp[0]) != signf(l0) or (out and absf(hp[0]) < b_L - 1e-9):
 					bad.append("%s: the head at chart %s -> %s (want %s), the axes as the chart has them: %s" % [what, x0, x, want, same])
 				var bx := sp.chart_position(ball.l, ball.n)
 				var boff := bx0 - centre
-				var bwant := bx0 if boff.length() >= b_Rout else centre + boff.normalized() * b_Rout
-				if bx.distance_to(bwant) > 2e-5 or not WormholeSpace.vector_to_chart(signf(l0), ball.n, ball.U).is_equal_approx(bv0):
+				var bwant := bx0 if boff.length() >= b[0] else centre + boff.normalized() * b[0]
+				if bx.distance_to(bwant) > 2e-5 or (boff.length() >= b_Rout and not WormholeSpace.vector_to_chart(signf(l0), ball.n, ball.U).is_equal_approx(bv0)):
 					bad.append("%s: the toy at chart %s -> %s (want %s)" % [what, bx0, bx, bwant])
 			if main.viewer.standing or ball.still != 0.0:
 				bad.append("%s: flying %s, the toy awake %s" % [what, not main.viewer.standing, ball.still == 0.0])
