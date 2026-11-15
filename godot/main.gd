@@ -1,6 +1,7 @@
 class_name Main
 extends Node3D
-## Real-time wormhole for VR (README.md, docs/). The throat hangs LIFT over the floor; the renderer
+## Real-time wormhole for VR (README.md, docs/). The throat's centre is space.lift over the floor
+## (LIFT, unless a test set another before _ready; any, also under the floor: WormholeSpace's top); the renderer
 ## (renderer.gd) draws every image of each body along the geodesics of the wormhole space, the
 ## curved zone as a lens per pixel; this script builds the scene and moves the viewer through that
 ## curved space: walking in the room, with the sticks along the floor and flying off it as a ship
@@ -46,7 +47,7 @@ const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
 const LENGTH := 2.0 * (HALF_LENGTH - FILLET)   # m: the video's cylinder
-const LIFT := 5.0                   # m: the throat's centre above the floor (above the curved zone's radius, 4 m)
+const LIFT := 5.0                   # m: the throat's centre above the floor at the start (space.lift)
 const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
 const FLY_SPEED := 4.0              # flying: metres per second at full stick or trigger
@@ -64,6 +65,8 @@ const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
 const GAZE_HOLD := 0.5              # s the foveation's fovea stays where the eyes last looked while they are not tracked (a blink)
 
+# the space; a test that wants the throat at another height sets space.lift before _ready (before
+# the node enters the tree): all that is built in _ready and after reads it from there
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET, LIFT)
 var viewer := Viewer.new(space)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -338,7 +341,8 @@ func draw_toys() -> void:
 		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
 
 
-## Stand on the floor of universe side (+1 A, -1 B) at chart position pos (its z ignored), looking
+## Stand on the floor of universe side (+1 A, -1 B) at chart position pos (its z ignored; where the
+## floor is in the curved zone or the throat: Viewer.stand_at), looking
 ## along forward (its part along the floor), the view turned pitch degrees up and roll degrees about
 ## the line of sight (right side up) on top of the head's own (the speed check).
 func place(pos: Vector3, forward: Vector3, side := 1.0, pitch := 0.0, roll := 0.0) -> void:
@@ -351,7 +355,7 @@ func place(pos: Vector3, forward: Vector3, side := 1.0, pitch := 0.0, roll := 0.
 
 
 ## Fly, at rest, with the head at l on the axis through the throat's centre (n = +x: in chart A the
-## line (x, 0, LIFT), in chart B (-x, 0, LIFT)), the room upright in chart A's axes, looking yaw
+## line (x, 0, lift), in chart B (-x, 0, lift)), the room upright in chart A's axes, looking yaw
 ## degrees to the right of the direction of falling l (toward the throat at l > 0, away from it at
 ## l < 0; the head's own yaw is taken out); the view turned pitch degrees up and roll degrees about
 ## the line of sight (right side up) on top of the head's own: the speed check. Along the axis the
@@ -660,7 +664,8 @@ func _turns_and_reset(delta: float, height: float) -> bool:
 
 ## The body's motion this frame (viewer.gd): the head's step in the room (x, z), then the sticks
 ## and triggers (README.md, «Управление»): the left stick along the room's floor where the head
-## looks (walking or flying), the triggers along the room's up (the right one up takes off); nothing
+## looks (walking or flying), the triggers along the room's up (the right one up takes off, where
+## the floor leaves room over the feet: Viewer.take_off); nothing
 ## pushed, flying, the body coasts (falls or hovers); with gravity it turns upright unless the turns
 ## tilted it (tilting); the head is kept out of the floor and the feet land on it. height: the head's
 ## in the room. True if the sticks, a fall or a landing moved the world against the room.
@@ -676,8 +681,7 @@ func _locomotion(step: Vector2, dt: float, height: float) -> bool:
 	if absf(climb) > STICK_DEAD_ZONE:
 		v.y += climb * FLY_SPEED
 	var moved := not viewer.standing
-	if viewer.standing and v.y > 0.0:
-		viewer.take_off()
+	if viewer.standing and v.y > 0.0 and viewer.take_off(height):
 		print("flying: off the floor at l %.2f" % viewer.l)
 	if v != Vector3.ZERO:
 		viewer.push(v, dt, height)

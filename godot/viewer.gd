@@ -5,9 +5,21 @@ extends RefCounted
 ## with the room's axes there, frame = [x, up, z] (tangent vectors, orthonormal); the head is the
 ## head's room height along up from the feet (head). main.gd reads the buttons and moves it.
 ##
-## Standing, the feet are on the floor, the plane z = 0 of their flat universe's chart (WormholeSpace's
-## top: it keeps out of the curved zone), with up the chart's up, and every move is a straight line
-## of that chart along it, the axes as they are in it (stand_at). Flying, the body is the head: it
+## Standing, the feet are on the floor (WormholeSpace's top: height 0, wherever the throat hangs:
+## in a flat universe the chart's plane z = 0, in the curved zone a bent surface, through the throat
+## a way from one universe to the other), with up the floor's normal there (the height's unit
+## gradient). A move goes along the floor's own geodesic (_walk): where the floor is flat, a straight
+## line of the chart, the axes as they are in it (stand_at); where it bends, in pieces of PIECE, each
+## along the space's geodesic with the axes carried, then dropped back onto the floor along the
+## height's gradient, the axes turned the least way that makes up the floor's normal again, and the
+## way to go kept in those axes: to second order in the piece that is the floor's geodesic with its
+## own parallel transport. The head is the head's room height up the space's geodesic along up, or
+## as far up it as stays HEAD_CLEAR over the floor (head: where the floor comes round over the feet
+## nearer than the body is tall, as in a throat whose floor runs near its top), and from there there
+## is no taking off. Where the floor leaves the head no room at all (_fits: the throat's top a few
+## centimetres over the floor) nobody stands: a walk stops before it (it looks every FIT_EVERY and
+## where it ends), a landing there is none, and stand_at takes the nearest place out from the axis
+## that has room. Flying, the body is the head: it
 ## moves, falls and turns, and the feet follow it as the room hangs from it (_set_head). Every move
 ## is a geodesic of the head with the room's axes parallel-transported along it: a flight with the
 ## stick held and the head still is one geodesic, through the throat as light goes. The room pitches
@@ -34,16 +46,22 @@ extends RefCounted
 ## throat's middle, it would turn fast and every way).
 ##
 ## The head does not go into the floor: within HEAD_CLEAR of it (the eyes must stay above it: the
-## renderer draws from above it only), the body is pushed back out along the floor's normal at the
-## head (keep_head_up). Where the feet reach the floor, the body lands: the frame turns the least way
-## that stands it up and the feet go straight up onto the floor (touch_down; below the floor is only
-## ever in a flat universe). With gravity it has mostly turned upright by then; a landing still
-## tilted (without gravity, or falling too soon) moves the view at once, as a snap turn does
-## (main.gd: hands.forget_motion). The feet stay within LIMIT of the throat's centre.
+## renderer draws from above it only), the body is pushed back out along the height's gradient at the
+## head (keep_head_up). Where the feet reach the floor, the body lands: the feet go onto the floor
+## along the height's gradient (straight up where the floor is flat) and the frame turns the least
+## way that stands it up there (touch_down). With gravity it has mostly turned upright by then; a
+## landing still tilted (without gravity, or falling too soon) moves the view at once, as a snap
+## turn does (main.gd: hands.forget_motion). The feet stay within LIMIT of the throat's centre.
+## tests/floor_test.gd walks, lands and stands at every kind of lift.
 
 const GRAVITY := BallWorld.GRAVITY
 const HEAD_MIN := 0.05          # m: the head at least this far above the feet along up (the room's floor)
 const HEAD_CLEAR := 0.04        # m: the head this close to the floor (height, WormholeSpace.height) is pushed out
+const HEAD_PROBE := 0.1         # m: the steps up from the feet that look for the floor coming round (head)
+const FIT_HEIGHT := 1.0         # m: a place to stand has room for a head this high, or as high as it is (_fits)
+const FIT_STEP := 0.05          # m: stand_at's steps out from the axis to a place with room
+const FIT_EVERY := 0.1          # m: a walk over a bent floor looks for the head's room this often (_walk)
+const PIECE := 0.02             # m: a walk's longest piece where the floor bends (_walk)
 const FALL_DT := 1.0 / 120.0    # s: a free fall's longest RK4 step
 const LIMIT := BallWorld.WORLD_RADIUS   # m: the feet this far from the throat's centre at most (the toys' wall)
 const RIGHT_TIME := 0.35        # s: turning upright with gravity (right_up)
@@ -57,23 +75,41 @@ var frame: Array = []           # the room's axes at the feet [x, up, z]
 var V := Vector4.ZERO           # flying: the head's velocity (a tangent vector there), m/s
 var standing := true
 var gravity := true             # flying with nothing pushed: falls (else hovers), and turns upright
-var _head_of := []              # head's last [l, n, frame, height] and what it gave: the steps of a
-var _head_was := []             # frame ask for the same head
+var _head_of := []              # head's last [l, n, frame, height, standing] and what it gave: the
+var _head_was := []             # steps of a frame ask for the same head
+var _head_up := 0.0             # m: how far up from the feet that head is
+var _height := 1.6              # m: the head's height in the room head was last asked for
 
 
 func _init(p_space: WormholeSpace) -> void:
 	space = p_space
 
 
-## Stand on the floor of universe side (+1 A, -1 B) at chart point (xy, 0), the room's x and z
-## along the chart directions fx and fz made level (their parts along the floor), up the chart's up.
+## Stand on the floor of universe side (+1 A, -1 B) at chart point (xy, 0) (WormholeSpace.
+## floor_point: in the curved zone the bent floor's point there; inside the floor's hole, where the
+## throat is, its rim), up the floor's normal, the room's x and z along the chart directions fx and
+## fz made level with the floor there (their parts along it). Where the head has no room there
+## (_fits), at the nearest place straight out from the axis that has, in steps of FIT_STEP.
 func stand_at(side: float, xy: Vector2, fx: Vector3, fz: Vector3) -> void:
-	var p := space.point_from_chart(side, Vector3(xy.x, xy.y, 0.0))
+	_stand(side, xy, fx, fz)
+	var rho := maxf(xy.length(), space.floor_hole())
+	var out := xy.normalized() if xy.length() > 1e-6 else Vector2(1.0, 0.0)
+	for k in range(1, 81):
+		if _fits():
+			break
+		_stand(side, out * (rho + FIT_STEP * k), fx, fz)
+
+
+func _stand(side: float, xy: Vector2, fx: Vector3, fz: Vector3) -> void:
+	var p := space.floor_point(side, xy)
 	l = p[0]
 	n = p[1]
+	var up := space.height_grad(l, n)       # the chart's up where the floor is flat
+	if up.length() < 1e-6:
+		# on the cylinder's bottom or top line, where the floor only touches it: as at a pit's bottom
+		up = Vector4((1.0 if side >= 0.0 else -1.0) * signf(n.z), 0.0, 0.0, 0.0)
 	frame = WormholeSpace.orthonormalize([WormholeSpace.vector_from_chart(side, n, Vector3(fx.x, fx.y, 0.0)),
-			WormholeSpace.vector_from_chart(side, n, Vector3(0.0, 0.0, 1.0)),
-			WormholeSpace.vector_from_chart(side, n, Vector3(fz.x, fz.y, 0.0))])
+			up, WormholeSpace.vector_from_chart(side, n, Vector3(fz.x, fz.y, 0.0))])
 	V = Vector4.ZERO
 	standing = true
 
@@ -86,10 +122,19 @@ func fly_at(hl: float, hn: Vector3, fh: Array, height: float) -> void:
 	_set_head(hl, hn, fh, height)
 
 
-## Off the floor (standing: else nothing changes), at rest.
-func take_off() -> void:
+## Off the floor (standing: else nothing changes), at rest. With height (the head's in the room)
+## not where the floor over the feet leaves the body no room (head): flying, its feet would be under
+## the floor at once. True if it took off.
+func take_off(height := -1.0) -> bool:
+	if not standing:
+		return false
+	if height >= 0.0:
+		head(height)
+		if _head_up < maxf(height, HEAD_MIN) - 1e-6:
+			return false
 	standing = false
 	V = Vector4.ZERO
+	return true
 
 
 ## The head's step in the room (x, z; its height: height) taken along: standing, the feet's along
@@ -140,23 +185,114 @@ func coast(dt: float, height: float) -> bool:
 
 
 ## Move the feet by the tangent displacement T there along its geodesic, the frame carried along;
-## standing, along the floor (T's part across it dropped): a straight line of the chart.
+## standing, along the floor (T's part across it dropped), by the floor's geodesic (_walk).
 func move(T: Vector4) -> void:
 	var dist := T.length()
 	if dist < 1e-7:
 		return
 	if standing:
-		var side := signf(l)
-		var x := space.chart_position(l, n)
-		var d := WormholeSpace.vector_to_chart(side, n, T)
-		var xy := (Vector2(x.x, x.y) + Vector2(d.x, d.y)).limit_length(sqrt(LIMIT * LIMIT - space.lift * space.lift))
-		stand_at(side, xy, WormholeSpace.vector_to_chart(side, n, frame[0]), WormholeSpace.vector_to_chart(side, n, frame[2]))
+		_walk(T)
 		return
 	var res := space.geodesic(l, n, T / dist, dist, frame)
 	l = res[0]
 	n = res[1]
 	frame = WormholeSpace.orthonormalize(res[2])
 	_keep_in()
+
+
+## Standing: the feet moved along the floor by T's part along it (this file's top). Where the floor
+## is flat (a flat universe, out of the curved zone's ball) a straight line of the chart, up to the
+## zone's ball or LIMIT; where it bends, pieces of PIECE (_piece), back to the last place where the
+## head had room if it has none (_fits).
+func _walk(T: Vector4) -> void:
+	var c := Vector2(T.dot(frame[0]), T.dot(frame[2]))      # the way in the room's x and z: kept as the axes turn
+	var left := c.length()
+	if left < 1e-7:
+		return
+	c /= left
+	var first := true
+	var ok := []                    # the last place on a bent floor where the head had room, and how
+	var since := 0.0                # far the walk went since
+	for _i in 100000:               # each pass uses up length: a bound against a hang
+		if left <= 1e-9:
+			break
+		if absf(l) >= space.L:
+			var side := signf(l)
+			var x := space.chart_position(l, n)
+			var d := WormholeSpace.vector_to_chart(side, n, T if first else (c.x * frame[0] + c.y * frame[2]) * left)
+			var at := Vector2(x.x, x.y)
+			var d2 := Vector2(d.x, d.y)
+			var s_in := _to_zone(at, d2)
+			var fx := WormholeSpace.vector_to_chart(side, n, frame[0])
+			var fz := WormholeSpace.vector_to_chart(side, n, frame[2])
+			if s_in >= 1.0:
+				stand_at(side, (at + d2).limit_length(sqrt(maxf(LIMIT * LIMIT - space.lift * space.lift, 0.0))), fx, fz)
+				return
+			if s_in * left > 1e-6:
+				stand_at(side, at + d2 * s_in, fx, fz)
+				left -= s_in * left
+		first = false
+		if ok.is_empty():
+			ok = [l, n, frame]
+		var ds := minf(left, PIECE)
+		_piece(c, ds)
+		left -= ds
+		since += ds
+		if since >= FIT_EVERY or left <= 1e-9:
+			if not _fits():
+				l = ok[0]
+				n = ok[1]
+				frame = ok[2]
+				return
+			ok = [l, n, frame]
+			since = 0.0
+
+
+## The share of the chart step d2 from at (a flat floor's (x, y)) that reaches the circle inside
+## which the floor is in the curved zone (WormholeSpace.floor_edge); 1 or more: the whole step keeps
+## out of it.
+func _to_zone(at: Vector2, d2: Vector2) -> float:
+	var e := space.floor_edge()
+	var dd := d2.length_squared()
+	var b := at.dot(d2)
+	if e <= 0.0 or b >= 0.0 or dd < 1e-18:
+		return INF                  # no such circle, or going away from it
+	var cc := at.length_squared() - e * e
+	if cc <= 0.0:
+		return 0.0                  # on it, going in
+	var disc := b * b - dd * cc
+	return (-b - sqrt(disc)) / dd if disc > 0.0 else INF
+
+
+## A piece of a walk where the floor bends: ds along the space's geodesic the way c (in the room's x
+## and z), back onto the floor, the axes carried and stood up on it.
+func _piece(c: Vector2, ds: float) -> void:
+	var res := space.geodesic(l, n, c.x * frame[0] + c.y * frame[2], ds, frame)
+	res = space.to_floor(res[0], res[1], res[2])
+	l = res[0]
+	n = res[1]
+	frame = _stood(res[2])
+
+
+## Standing here, the head has room: where head puts it (the frame's next head asks for the same
+## one), or for a head lower than FIT_HEIGHT somewhere up to that, it is HEAD_CLEAR over the floor.
+func _fits() -> bool:
+	if not space.floor_in_zone():
+		return true
+	var hp := head(_height)
+	if space.height(hp[0], hp[1]) >= HEAD_CLEAR - 1e-6:
+		return true
+	return _height < FIT_HEIGHT and _up_height(_head_room(FIT_HEIGHT)) >= HEAD_CLEAR - 1e-6
+
+
+## The axes f at the feet turned the least way that makes up the floor's normal there.
+func _stood(f: Array) -> Array:
+	var N := space.floor_normal(l, n)
+	if N == Vector4.ZERO:
+		return WormholeSpace.orthonormalize(f)
+	var out := turn_up(f, N)
+	out[1] = N
+	return WormholeSpace.orthonormalize(out)
 
 
 ## The head (hp, as head gives it) moved by the tangent displacement T there, its axes and its
@@ -208,7 +344,8 @@ func right_up(dt: float, height: float) -> void:
 
 
 ## Flying with the head (at height in the room) within HEAD_CLEAR of the floor: the body pushed out
-## along the floor's normal there, the velocity's part into the floor taken away. True if it was.
+## along the height's gradient there (Newton's steps: one where the floor is flat), the velocity's
+## part into the floor taken away. True if it was.
 func keep_head_up(height: float) -> bool:
 	if standing:
 		return false
@@ -216,11 +353,20 @@ func keep_head_up(height: float) -> bool:
 	var H := space.height(hp[0], hp[1])
 	if H >= HEAD_CLEAR:
 		return false
-	var g := space.height_grad(hp[0], hp[1])
-	var gl := g.length()
-	# H grows by gl a metre along its gradient (1 on the floor)
-	_move_head(hp, g * ((HEAD_CLEAR - H) / (gl * gl)), height)
-	hp = head(height)
+	for _it in 8:
+		var g := space.height_grad(hp[0], hp[1])
+		var gl := g.length()
+		if gl < 1e-6:
+			break
+		# H grows by gl a metre along its gradient (1 where the space is flat)
+		var k := (HEAD_CLEAR - H) / (gl * gl)
+		if absf(hp[0]) < space.L:
+			k = minf(k, 0.5 * space.bend(hp[0]) / gl)
+		_move_head(hp, g * k, height)
+		hp = head(height)
+		H = space.height(hp[0], hp[1])
+		if H >= HEAD_CLEAR - 1e-6:
+			break
 	var N := space.height_grad(hp[0], hp[1]).normalized()
 	if V.dot(N) < 0.0:
 		V -= V.dot(N) * N
@@ -228,24 +374,68 @@ func keep_head_up(height: float) -> bool:
 
 
 ## The head at height (m, the head's in the room) above the feet along up: [l, n, frame] (not to be
-## changed: the same Array comes back while nothing moved).
+## changed: the same Array comes back while nothing moved). Standing where the floor comes round
+## over the feet (this file's top), only as far up as it is HEAD_CLEAR over the floor (_head_room).
 func head(height: float) -> Array:
-	var key := [l, n, frame, height]
+	_height = height
+	var key := [l, n, frame, height, standing]
 	if key != _head_of:
-		_head_of = [l, n, frame.duplicate(), height]
-		_head_was = space.geodesic(l, n, frame[1], maxf(height, HEAD_MIN), frame)
+		_head_of = [l, n, frame.duplicate(), height, standing]
+		_head_up = maxf(height, HEAD_MIN)
+		_head_was = space.geodesic(l, n, frame[1], _head_up, frame)
+		if standing and space.floor_in_zone() and space.height(_head_was[0], _head_was[1]) < HEAD_CLEAR:
+			_head_up = _head_room(_head_up)
+			_head_was = space.geodesic(l, n, frame[1], _head_up, frame)
 	return _head_was
+
+
+## How far up from the feet, at most most, the head goes: to where the geodesic along up, probed
+## every HEAD_PROBE, first comes back within HEAD_CLEAR of the floor; where it never gets that far
+## off it, to where it is highest.
+func _head_room(most: float) -> float:
+	var parts := maxi(ceili(most / HEAD_PROBE), 1)
+	var lo := 0.0                   # the last probe clear of the floor, and the first after it that is not
+	var hi := -1.0
+	var top := HEAD_MIN
+	var top_h := -INF
+	for k in range(1, parts + 1):
+		var t := most * k / parts
+		var H := _up_height(t)
+		if H > top_h:
+			top_h = H
+			top = t
+		if H >= HEAD_CLEAR:
+			lo = t
+		elif lo > 0.0:
+			hi = t
+			break
+	if hi < 0.0:
+		return maxf(top, HEAD_MIN)
+	for _it in 12:
+		var t := 0.5 * (lo + hi)
+		if _up_height(t) >= HEAD_CLEAR:
+			lo = t
+		else:
+			hi = t
+	return lo
+
+
+## The height over the floor t up from the feet.
+func _up_height(t: float) -> float:
+	var q := space.geodesic(l, n, frame[1], t, [])
+	return space.height(q[0], q[1])
 
 
 ## The head put at (hl, hn) with the room's axes fh there: the feet height (in the room) down along
 ## up from it, the axes carried back; the head kept for head.
 func _set_head(hl: float, hn: Vector3, fh: Array, height: float) -> void:
 	var fo := WormholeSpace.orthonormalize(fh)
-	var res := space.geodesic(hl, hn, -(fo[1] as Vector4), maxf(height, HEAD_MIN), fo)
+	_head_up = maxf(height, HEAD_MIN)
+	var res := space.geodesic(hl, hn, -(fo[1] as Vector4), _head_up, fo)
 	l = res[0]
 	n = res[1]
 	frame = WormholeSpace.orthonormalize(res[2])
-	_head_of = [l, n, frame.duplicate(), height]
+	_head_of = [l, n, frame.duplicate(), height, standing]
 	_head_was = [hl, hn, fo]
 	_keep_in()
 
@@ -259,11 +449,29 @@ func height() -> float:
 func touch_down() -> bool:
 	if standing or space.height(l, n) > 0.0:
 		return false
-	var side := signf(l)
-	var f := turn_up(frame, WormholeSpace.vector_from_chart(side, n, Vector3(0.0, 0.0, 1.0)))
-	var x := space.chart_position(l, n)
-	stand_at(side, Vector2(x.x, x.y), WormholeSpace.vector_to_chart(side, n, f[0]),
-			WormholeSpace.vector_to_chart(side, n, f[2]))
+	if absf(l) >= space.L:
+		var side := signf(l)
+		var x := space.chart_position(l, n)
+		if Vector2(x.x, x.y).length() >= space.floor_edge():
+			# under a flat floor: straight up onto it
+			var f := turn_up(frame, WormholeSpace.vector_from_chart(side, n, Vector3(0.0, 0.0, 1.0)))
+			stand_at(side, Vector2(x.x, x.y), WormholeSpace.vector_to_chart(side, n, f[0]),
+					WormholeSpace.vector_to_chart(side, n, f[2]))
+			return true
+	var was := [l, n, frame]
+	var res := space.to_floor(l, n, frame)
+	l = res[0]
+	n = res[1]
+	frame = _stood(res[2])
+	standing = true
+	if not _fits():
+		# no room to stand there: it flies on, the head kept out of the floor (keep_head_up)
+		l = was[0]
+		n = was[1]
+		frame = was[2]
+		standing = false
+		return false
+	V = Vector4.ZERO
 	return true
 
 
@@ -322,7 +530,7 @@ func set_state(p: Array) -> void:
 
 
 ## Flying, the feet within LIMIT of the throat's centre: back on that sphere, the velocity's part
-## outward taken away (standing: move keeps them in).
+## outward taken away (standing: _walk keeps them in, on the floor's circle that far from it).
 func _keep_in() -> void:
 	if absf(l) <= space.L or space.r(l) <= LIMIT:
 		return
