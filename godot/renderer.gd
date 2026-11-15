@@ -1,9 +1,10 @@
 class_name Renderer
 extends Node3D
-## How a frame is drawn (docs/geometry.md, «Как рисуется кадр»). The floor and everything else
-## stands out of the curved zone, where light goes straight, and the zone is a lens: a ray that
-## enters its ball comes out straight into universe A or B, turned in its plane through the centre
-## by what its impact parameter gives (however many times round the throat).
+## How a frame is drawn (docs/geometry.md, «Как рисуется кадр»). Out of the curved zone light goes
+## straight, and the zone is a lens: a ray that enters its ball comes out straight into universe A
+## or B, turned in its plane through the centre by what its impact parameter gives (however many
+## times round the throat), unless it meets the floor in there first: the floor is out of the zone
+## only while the throat's centre is its radius or more over it (floor_zone).
 ## - Bodies out in a flat universe seen straight: meshes Godot's rasterizer draws with an ordinary
 ##   camera from each eye out in that universe (shaders/body.gdshaderinc, DIRECT; the scene's static
 ##   objects, the toys and the hands' balls out there); a fragment whose line of sight goes through
@@ -17,7 +18,9 @@ extends Node3D
 ##   foveation per texel of its texture instead (foveation.gd, render_tail), behind the meshes.
 ## - Per pixel, behind them: the floor, the sky, and what each ray that came through the zone
 ##   meets out in a flat universe: the bodies out there again (the lens list, lens_body), every
-##   image of them (shaders/floor.gdshaderinc).
+##   image of them (shaders/floor.gdshaderinc). With the floor in the zone's ball a ray looks for it
+##   there too, and what it draws has its depth, the light's way to it: the floor hides the bodies
+##   and images behind it (the floor's programs for that: FLOOR_SHADERS' last two, foveation's).
 ## A body costs its vertices and one cheap shading per pixel it covers where it is seen straight or
 ## in the zone; through the lens a few dot products a pixel (a test of the ray's plane) and its
 ## intersection where that passes. Each view's own eye is worked out in the shaders from the head
@@ -32,12 +35,15 @@ extends Node3D
 ## A MeshInstance3D whose ShaderMaterial has no shader yet is drawn with Godot's default lit
 ## material, a huge program: a node is made only with its shader.
 
-# the floor's shaders: plain, coloured by gravity (both gravity views), each in a material of its own:
-# a ShaderMaterial keeps only the uniforms its shader has, so one material switched between them
-# would lose the gravity table
-const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader")]
-# under foveation the quad only samples its texture (either gravity view's: it works both out)
-const FLOOR_SAMPLE_SHADER := preload("res://shaders/floor_sample.gdshader")
+# the floor's shaders: plain, coloured by gravity (both gravity views), then the same two for a floor
+# that reaches into the curved zone's ball (floor_zone: they look for it there and write its depth,
+# floor.gdshaderinc's top), each in a material of its own: a ShaderMaterial keeps only the uniforms
+# its shader has, so one material switched between them would lose the gravity table
+const FLOOR_SHADERS := [preload("res://shaders/floor.gdshader"), preload("res://shaders/floor_gravity.gdshader"),
+		preload("res://shaders/floor_zone.gdshader"), preload("res://shaders/floor_gravity_zone.gdshader")]
+# under foveation the quad only samples its texture (either gravity view's: it works both out), and
+# with the floor in the zone's ball also writes its depth
+const FLOOR_SAMPLE_SHADERS := [preload("res://shaders/floor_sample.gdshader"), preload("res://shaders/floor_sample_zone.gdshader")]
 const BALL_SHADER := preload("res://shaders/toy_ball.gdshader")
 const CUBE_SHADER := preload("res://shaders/toy_cube.gdshader")
 const ZONE_BALL_SHADER := preload("res://shaders/zone_ball.gdshader")
@@ -119,8 +125,10 @@ var scene: Dictionary
 var xr: XRInterface             # null on the desktop
 var xr_view: SubViewport        # where XR renders; null on the desktop
 var floor_mats: Array[ShaderMaterial] = []   # FLOOR_SHADERS' materials
-var floor_mat: ShaderMaterial   # the one drawn (gravity_view) without our own foveation
-var floor_sample_mat := ShaderMaterial.new()   # the one drawn with it (FLOOR_SAMPLE_SHADER)
+var floor_mat: ShaderMaterial   # the one drawn (gravity_view, floor_zone) without our own foveation
+var floor_sample_mats: Array[ShaderMaterial] = []   # FLOOR_SAMPLE_SHADERS' materials
+var floor_sample_mat: ShaderMaterial   # the one drawn with it (floor_zone)
+var floor_zone := false         # the floor reaches into the curved zone's ball (lift < Rout: _profile)
 var ball_mat := ShaderMaterial.new()
 var cube_mat := ShaderMaterial.new()
 var zone_mats: Array[ShaderMaterial] = []   # ZONE_LODS' meshes'
@@ -169,10 +177,16 @@ func _init(p_space: WormholeSpace, p_scene: Dictionary, p_xr: XRInterface, p_xr_
 		m.shader = sh
 		m.render_priority = FLOOR_PRIORITY
 		floor_mats.append(m)
+		m.set_shader_parameter("lens_far", Main.FAR)
 	floor_mat = floor_mats[0]
-	floor_sample_mat.shader = FLOOR_SAMPLE_SHADER
-	floor_sample_mat.render_priority = FLOOR_PRIORITY
-	foveation.sample_mat = floor_sample_mat
+	for sh in FLOOR_SAMPLE_SHADERS:
+		var m := ShaderMaterial.new()
+		m.shader = sh
+		m.render_priority = FLOOR_PRIORITY
+		m.set_shader_parameter("lens_far", Main.FAR)
+		floor_sample_mats.append(m)
+	floor_sample_mat = floor_sample_mats[0]
+	foveation.sample_mats = floor_sample_mats
 	foveation.xr = xr
 	ball_mat.shader = BALL_SHADER
 	cube_mat.shader = CUBE_SHADER
@@ -335,13 +349,23 @@ func _zone_commands() -> void:
 		_zone_cmds = true
 
 
-## The floor's quad's material: foveation's while it is on (it samples its texture),
-## else the gravity view's per-pixel floor (the warm frames: the gravity floor's, to compile it).
+## The floor's quad's material: foveation's while it is on (it samples its texture), else the
+## gravity view's per-pixel floor, each for the floor out of the zone's ball or in it (floor_zone);
+## the warm frames: one after another those that are not drawn now, to compile them (WARM_FLOORS).
 func _floor_material() -> void:
-	floor_quad.material_override = floor_mats[1] if _warm > 0 else (floor_sample_mat if foveation.enabled else floor_mat)
+	floor_mat = floor_mats[mini(gravity_view, 1) + (2 if floor_zone else 0)]
+	floor_sample_mat = floor_sample_mats[1 if floor_zone else 0]
+	if floor_quad == null:
+		return
+	if _warm > 0:
+		var k: int = WARM_FLOORS[(_warm - 1) % WARM_FLOORS.size()]
+		floor_quad.material_override = floor_sample_mats[1] if k < 0 else floor_mats[k]
+	else:
+		floor_quad.material_override = floor_sample_mat if foveation.enabled else floor_mat
 
 
-var _warm := 3                  # frames left drawing the gravity views, the beams and the tail (_process)
+const WARM_FLOORS := [1, 2, 3, -1]   # FLOOR_SHADERS' but the plain one, then the zone's sample (-1)
+var _warm := 4                  # frames left drawing the gravity views, the beams and the tail (_process)
 var _tail_on := false           # a body in the zone, and a throat with a cylinder: the tail drawn
 # the tail's strips drawn (zone_tail.gdshader), else one band; the speed check compares (bench.gd)
 var tail_strips := true:
@@ -382,6 +406,13 @@ func _table(tab: Dictionary) -> void:
 
 ## The profile, the table's axes, the lift and gravity's numbers to every shader.
 func _profile() -> void:
+	# gravity on a fillet for the gravity view's floor in the zone (look.gdshaderinc, look_grav_at)
+	var gt := space.gravity_table()
+	var img := Image.create_from_data(gt.size() / 2, 1, false, Image.FORMAT_RGF, gt.to_byte_array())
+	if _grav_tex == null:
+		_grav_tex = ImageTexture.create_from_image(img)
+	else:
+		_grav_tex.update(img)
 	for m in materials():
 		_space_params(m)
 	var u0 := sin(0.5 * space.th0) * sin(0.5 * space.th0)
@@ -389,6 +420,10 @@ func _profile() -> void:
 		fx.set_space(Vector4(space.rho0, space.fillet, space.Lc, space.L),
 				Vector4(space.Rout, u0, space.rho0 + 2.0 * space.fillet * u0, space.th0), _sweep_axes, _sweep_tex,
 				Vector2(space.lift, space.grav_beta))
+	foveation.set_gravity(Vector2(space.grav_a, space.grav_k), _grav_tex)
+	floor_zone = space.lift < space.Rout
+	foveation.floor_zone = floor_zone
+	_floor_material()
 
 
 ## The space's shape changed (WormholeSpace.set_shape), a frame at a time while a row of the menu
@@ -483,6 +518,7 @@ func _arrows_shown(on: bool) -> void:
 
 var _sweep_tex: ImageTexture
 var _sweep_axes := Vector4.ZERO
+var _grav_tex: ImageTexture     # WormholeSpace.gravity_table (_profile)
 
 
 func _space_params(m: ShaderMaterial) -> void:
@@ -493,6 +529,8 @@ func _space_params(m: ShaderMaterial) -> void:
 	m.set_shader_parameter("g_tab", _sweep_tex)
 	m.set_shader_parameter("g_lift", space.lift)
 	m.set_shader_parameter("g_beta", space.grav_beta)
+	m.set_shader_parameter("g_grav", Vector2(space.grav_a, space.grav_k))
+	m.set_shader_parameter("g_gravtab", _grav_tex)
 
 
 ## Each frame: the head in the curved space (l, n), its frame [right, up, back] there (the play
@@ -755,7 +793,6 @@ func _tangent_pair(C: Vector4) -> Array:
 ## How gravity is shown: GRAVITY_VIEWS (docs/gravity.md, «Показ»).
 func set_gravity_view(view: int) -> void:
 	gravity_view = clampi(view, 0, GRAVITY_VIEWS.size() - 1)
-	floor_mat = floor_mats[mini(gravity_view, 1)]
 	_floor_material()
 	foveation.gravity = gravity_view > 0
 	_arrows_shown(gravity_view == 2 and _lines_task < 0)
@@ -945,7 +982,9 @@ static func line_chunks(sp: WormholeSpace) -> Dictionary:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
 			var rr := Vector2(y, top).length()
-			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
+			# out to past its start and past the floor under the lines' reach, whichever is farther
+			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y),
+					maxf(Vector2(rr, top).length(), Vector2(reach, sp.lift).length()) + 1.0)
 			if pts.size() >= 2:
 				lines.append([i, pts])
 	var every := 1
@@ -994,8 +1033,12 @@ static func _force(sp: WormholeSpace, l: float, beta: float) -> Vector2:
 
 
 ## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (where the
-## height goes through 0) or out past rmax from the throat's centre: its points [l, beta, g].
+## height goes through 0, in a flat universe or in the curved zone) or out past rmax from the
+## throat's centre: its points [l, beta, g]. None from a start that is not over the floor (the
+## throat hanging so low that the lines' top is under it).
 static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -> Array:
+	if sp.height(l, Vector3(0.0, cos(beta), sin(beta))) <= 0.0:
+		return []
 	var dir := func(ll: float, bb: float) -> Vector2:
 		var f := _force(sp, ll, bb)
 		var g := f.length()
@@ -1013,8 +1056,16 @@ static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -
 		var h0 := sp.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
 		var h1 := sp.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
 		if h1 <= 0.0:
-			# onto the floor: the step's part that gets there
-			q = p.lerp(q, h0 / (h0 - h1))
+			# onto the floor: the step's part that gets there (the floor may bend: by halving)
+			var a := 0.0
+			var z := 1.0
+			for _it in 16:
+				var m := p.lerp(q, 0.5 * (a + z))
+				if sp.height(m.x, Vector3(0.0, cos(m.y), sin(m.y))) > 0.0:
+					a = 0.5 * (a + z)
+				else:
+					z = 0.5 * (a + z)
+			q = p.lerp(q, a)
 			pts.append([q.x, q.y, _force(sp, q.x, q.y).length()])
 			break
 		if sp.r(q.x) > rmax:

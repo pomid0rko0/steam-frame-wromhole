@@ -16,7 +16,10 @@
 // table»): each eye's way out of the zone by a ray's sigma, outward and inward. A texel of the
 // picture then takes its ray's way out from there (geo_xt_way), not from geo_exit's closed forms.
 // The texture (neither): each texel's colour, and in its alpha the light's way to what it shows
-// (the sky's FOV_SKY), for TAIL.
+// (the sky's FOV_SKY), for TAIL and for the quad's depth where the floor can hide a body
+// (floor_sample.gdshaderinc, FLOOR_ZONE). Where the floor reaches into the zone's ball, in two passes:
+// FLOOR_MARK, every texel but those whose ray may meet the floor in the zone, their squares listed;
+// FLOOR_ZONE with FLOOR_LIST, those squares, with the search for the floor there (lens_seen).
 // The tail of the zone's bodies' images (zone_tail.gdshaderinc), per texel instead of per pixel, in
 // three passes after the texture and after ZoneSections' IMAGES pass, which works out where each
 // body's tail can be seen (its sectors round the eye's axis and its strips and band off it:
@@ -49,7 +52,7 @@ layout(set = 0, binding = 2, std140) uniform Params {
 	vec4 head_nl;       // head_n, head_l
 	vec4 head_p;        // head_pos
 	vec4 head_fr[3];    // head_f
-	vec4 floor_;        // (g_lift, g_beta)
+	vec4 floor_;        // (g_lift, g_beta, g_grav)
 	mat4 inv_view;      // INV_VIEW_MATRIX
 	mat4 ray[2];        // each eye's rays: ray * (clip, 1, 0) is geo_view_ray(PROJECTION_MATRIX, clip)
 	vec4 eye_off[2];    // each eye's EYE_OFFSET
@@ -67,6 +70,16 @@ layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2DArray ou
 #endif
 // the way out's rows: GEO_XN texels each, eye 0 outward and inward, then eye 1's (geo_xt_texel)
 layout(set = 0, binding = 5, rgba32f) uniform restrict image2D xt_img;
+layout(set = 0, binding = 6) uniform sampler2D g_gravtab;
+// the floor's second pass's squares (FLOOR_MARK lists them, FLOOR_LIST works them out): its indirect
+// dispatch (its workgroups, 1, 1, the squares listed: EYES resets it), then each square's texels'
+// x / 2 | y / 2 << 12 | eye << 24
+layout(set = 0, binding = 7, std430) restrict buffer FloorArgs {
+	uint args[4];
+} fa;
+layout(set = 0, binding = 8, std430) restrict buffer FloorList {
+	uint list[];
+} fl;
 
 #define g_prof fovp.prof
 #define g_prof2 fovp.prof2
@@ -77,6 +90,7 @@ layout(set = 0, binding = 5, rgba32f) uniform restrict image2D xt_img;
 #define head_pos fovp.head_p.xyz
 #define g_lift fovp.floor_.x
 #define g_beta fovp.floor_.y
+#define g_grav fovp.floor_.zw
 #define lens_body lensp.body
 #define lens_cull lensp.cull
 #define lens_n lensp.n.xy
@@ -113,6 +127,12 @@ layout(local_size_x = 2, local_size_y = 1, local_size_z = 1) in;
 void main() {
 	uint v = gl_GlobalInvocationID.x;
 	if (v >= 2u) return;
+	if (v == 0u) {
+		fa.args[0] = 0u;
+		fa.args[1] = 1u;
+		fa.args[2] = 1u;
+		fa.args[3] = 0u;
+	}
 	float el;
 	vec3 en;
 	vec4 ex, ey, ez;
@@ -584,63 +604,50 @@ void main() {
 // texel, so that the filter's mix of two neighbours' phases is the phase between them
 #define FOV_PROBE 256.0
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-shared vec4 s_a[64];
-void main() {
-	uvec3 id = gl_GlobalInvocationID;
+// texel id's ray and what it meets (lens_seen), as floor.gdshaderinc's quad has it at that point of
+// the picture: false for a texel the filter never takes; edge: a toy cube's dark edges' measure
+bool fov_floor_see(uvec3 id, out LensSeen sn, out float edge, out vec2 p, out float rho, out float s, out float k) {
 	uint v = id.z;
-	vec2 p;
-	float rho, s, k;
-	bool used = fov_texel(id, p, rho, s, k);
-	float r0 = fovp.warp1[v].x;
-	vec3 a = vec3(0.0);
-	float edge = -1.0;
-	LensSeen sn;
-	if (used) {
-		// the ray as floor.gdshaderinc's quad has it at that point of the picture
-		vec2 clip = p / fovp.pic.xy * 2.0 - 1.0;
-		vec3 d = normalize((fovp.ray[v] * vec4(clip, 1.0, 0.0)).xyz);
-		vec4 e = eyes[6u * v];
-		vec4 D = d.x * eyes[6u * v + 1u] + d.y * eyes[6u * v + 2u] + d.z * eyes[6u * v + 3u];
-		// the ray's way out of the zone as geo_exit finds it, its way across from the eye's rows
-		vec3 eye = eyes[6u * v + 4u].xyz;
-		float ca, sa, b, gap, sigma;
-		vec3 tr;
-		bool lensed = geo_exit_ray(e.x, eye, e.yzw, D, ca, sa, tr, b, gap, sigma);
-		vec3 pos = eye.x * e.yzw, dir = ca * e.yzw + sa * tr;
-		float sheet = e.x < 0.0 ? -1.0 : 1.0, way = 0.0;
-		if (lensed) {
-			float ale = abs(e.x);
-			bool outward = ca >= 0.0;
-			int xk;
-			float x = geo_xt_place(ale, b, gap, sigma, eyes[6u * v + 5u].xy, xk);
-			int xrow = 2 * int(v) + (outward ? 0 : 1);
-			vec3 w = geo_xt_way(imageLoad(xt_img, ivec2(xk, xrow)), imageLoad(xt_img, ivec2(xk + 1, xrow)), x, ale, eye, b, sigma, gap, outward);
-			if (w.z > 0.5) sheet = -sheet;
-			geo_exit_at(e.yzw, tr, b, w.x, pos, dir);
-			way = w.y;
-		}
-		// a ray that misses the zone: two texels' turn, as the quad filters between neighbouring
-		// texels (lens_near); one through it looks for the bodies anyway
-		bool bodies = lensed;
-		if (!lensed) {
-			float ang = length(normalize((fovp.ray[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 1.0, 0.0)).xyz) - d);
-			bodies = lens_near(e.x, eye.x, D, ang);
-		}
-		sn = lens_trace(pos, dir, sheet, way, bodies);
-		a = look_ground_at(lens_floor_xy(pos, dir, sheet));
-		edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;
+	edge = -1.0;
+	sn.kind = 0;
+	sn.a = vec4(0.0);
+	if (!fov_texel(id, p, rho, s, k)) return false;
+	vec2 clip = p / fovp.pic.xy * 2.0 - 1.0;
+	vec3 d = normalize((fovp.ray[v] * vec4(clip, 1.0, 0.0)).xyz);
+	vec4 e = eyes[6u * v];
+	vec4 D = d.x * eyes[6u * v + 1u] + d.y * eyes[6u * v + 2u] + d.z * eyes[6u * v + 3u];
+	// the ray's way out of the zone as geo_exit finds it, its way across from the eye's rows
+	vec3 eye = eyes[6u * v + 4u].xyz;
+	float ca, sa, b, gap, sigma;
+	vec3 tr;
+	bool lensed = geo_exit_ray(e.x, eye, e.yzw, D, ca, sa, tr, b, gap, sigma);
+	vec3 w = vec3(0.0);
+	if (lensed) {
+		float ale = abs(e.x);
+		bool outward = ca >= 0.0;
+		int xk;
+		float x = geo_xt_place(ale, b, gap, sigma, eyes[6u * v + 5u].xy, xk);
+		int xrow = 2 * int(v) + (outward ? 0 : 1);
+		w = geo_xt_way(imageLoad(xt_img, ivec2(xk, xrow)), imageLoad(xt_img, ivec2(xk + 1, xrow)), x, ale, eye, b, sigma, gap, outward);
 	}
-	// a fragment shader's dFdx and dFdy: the differences within each 2 x 2 square of texels
-	uvec2 lq = gl_LocalInvocationID.xy;
-	s_a[lq.y * 8u + lq.x] = vec4(a, edge);
-	barrier();
-	if (!used) return;
-	uint row = lq.y * 8u + (lq.x & ~1u), col = (lq.y & ~1u) * 8u + lq.x;
-	vec4 dx = s_a[row + 1u] - s_a[row];
-	vec4 dy = s_a[col + 8u] - s_a[col];
-	vec3 c = lens_colour(sn, a, dx.xyz, dy.xyz, vec2(edge, abs(dx.w) + abs(dy.w)), sqrt(s * k));
-	if (fovp.pic.z > 0.5 && rho > r0) c = mix(c, fov_tint(s), 0.35);
+	// a ray that misses the zone: two texels' turn, as the quad filters between neighbouring
+	// texels (lens_near); one through it looks for the bodies anyway
+	bool near = false;
+	if (!lensed) {
+		float ang = length(normalize((fovp.ray[v] * vec4(clip + vec2(4.0 * s / fovp.pic.x, 0.0), 1.0, 0.0)).xyz) - d);
+		near = lens_near(e.x, eye.x, D, ang);
+	}
+	sn = lens_seen(e.x, eye, e.yzw, tr, ca, sa, b, gap, sigma, lensed, w, near);
+	edge = dot(sn.box, sn.box) > 0.0 ? look_box_edge(sn.box) : -1.0;
+	return true;
+}
+
+// the texel's colour from what its ray met and its differences to its neighbours in its 2 x 2 square
+// (a fragment shader's dFdx and dFdy: the floor's pattern's dx, dy, the cube's edges' measure's de),
+// into the texture, its alpha the light's way
+void fov_floor_store(uvec3 id, LensSeen sn, vec4 dx, vec4 dy, float edge, float de, vec2 p, float rho, float s, float k) {
+	vec3 c = lens_colour(sn, dx, dy, vec2(edge, de), sqrt(s * k));
+	if (fovp.pic.z > 0.5 && rho > fovp.warp1[id.z].x) c = mix(c, fov_tint(s), 0.35);
 	vec4 o = vec4(c, sn.kind == 0 ? FOV_SKY : min(sn.way, FOV_SKY));
 	if (fovp.pic.w > 0.5) {
 		// probe: where this texel's pixel is, as a phase along x and along y (smooth: the filter
@@ -650,4 +657,77 @@ void main() {
 	}
 	imageStore(out_img, ivec3(id), o);
 }
+
+#ifdef FLOOR_LIST
+// The floor's second pass (with FLOOR_ZONE: the floor reaches into the zone's ball): the 2 x 2 squares
+// of texels the first pass listed (FLOOR_MARK), one of whose rays may meet the floor in the zone,
+// worked out whole with the search for it there (geo_floor); a workgroup 16 of them, an invocation a
+// texel, a square's four side by side, as a fragment shader's.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+shared vec4 s_a[64];
+shared float s_e[64];
+void main() {
+	uint lq = gl_LocalInvocationIndex;
+	uint qi = 16u * gl_WorkGroupID.x + (lq >> 2);
+	bool listed = qi < fa.args[3];
+	uint quad = listed ? fl.list[qi] : 0u;
+	uvec3 id = uvec3(2u * uvec2(quad & 0xfffu, (quad >> 12) & 0xfffu) + uvec2(lq & 1u, (lq >> 1) & 1u), quad >> 24);
+	LensSeen sn;
+	float edge = -1.0, rho = 0.0, s = 1.0, k = 1.0;
+	vec2 p = vec2(0.0);
+	sn.kind = 0;
+	sn.a = vec4(0.0);
+	bool used = listed && fov_floor_see(id, sn, edge, p, rho, s, k);
+	s_a[lq] = sn.a;
+	s_e[lq] = edge;
+	barrier();
+	if (!used) return;
+	// the square's texels: 0 (x, y), 1 (x + 1, y), 2 (x, y + 1), 3 (x + 1, y + 1)
+	uint qb = lq & ~3u, row = qb + (lq & 2u), col = qb + (lq & 1u);
+	fov_floor_store(id, sn, s_a[row + 1u] - s_a[row], s_a[col + 2u] - s_a[col], edge,
+			abs(s_e[row + 1u] - s_e[row]) + abs(s_e[col + 2u] - s_e[col]), p, rho, s, k);
+}
+#else
+// The floor's pass over every texel. With FLOOR_MARK (the floor reaches into the zone's ball) a texel
+// whose ray may meet the floor in the zone is not worked out here (lens_seen: kind -1): its 2 x 2
+// square is listed, once, for the second pass (FLOOR_LIST), which works the four out again, with the
+// search: the search makes a program hold so much per texel that the GPU keeps half as many going at
+// once (tools/adreno_stats.sh --fov), so every texel would pay for the few that need it.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+shared vec4 s_a[64];
+shared float s_e[64];
+void main() {
+	uvec3 id = gl_GlobalInvocationID;
+	LensSeen sn;
+	float edge, rho, s, k;
+	vec2 p;
+	bool used = fov_floor_see(id, sn, edge, p, rho, s, k);
+	uvec2 lq = gl_LocalInvocationID.xy;
+	uint me = lq.y * 8u + lq.x;
+	s_a[me] = sn.a;
+#ifdef FLOOR_MARK
+	bool marked = used && sn.kind < 0;
+	s_e[me] = marked ? 1e9 : edge;
+#else
+	s_e[me] = edge;
+#endif
+	barrier();
+	uint row = lq.y * 8u + (lq.x & ~1u), col = (lq.y & ~1u) * 8u + lq.x;
+#ifdef FLOOR_MARK
+	// the square listed by its first texel if any of its four is marked; none of it stored here
+	uint q0 = (lq.y & ~1u) * 8u + (lq.x & ~1u);
+	if (max(max(s_e[q0], s_e[q0 + 1u]), max(s_e[q0 + 8u], s_e[q0 + 9u])) > 1e8) {
+		if (me == q0) {
+			uint i = atomicAdd(fa.args[3], 1u);
+			fl.list[i] = (id.x >> 1) | ((id.y >> 1) << 12) | (id.z << 24);
+			atomicMax(fa.args[0], i / 16u + 1u);
+		}
+		return;
+	}
+#endif
+	if (!used) return;
+	fov_floor_store(id, sn, s_a[row + 1u] - s_a[row], s_a[col + 8u] - s_a[col], edge,
+			abs(s_e[row + 1u] - s_e[row]) + abs(s_e[col + 8u] - s_e[col]), p, rho, s, k);
+}
+#endif
 #endif

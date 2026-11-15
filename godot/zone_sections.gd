@@ -234,7 +234,7 @@ func set_lines(chunks: Dictionary, images: int, cmd: RID) -> void:
 		return
 	var n: int = chunks.n
 	var cv: int = Renderer.LINE_CV
-	var verts := maxi(n * cv, 1)
+	var verts := maxi(n, 1) * cv        # a chunk's at least: with no line (the throat far under the floor) the textures still are
 	var fin: PackedFloat32Array = chunks.in
 	fin.resize(4 * verts)
 	var fdata: PackedFloat32Array = chunks.data

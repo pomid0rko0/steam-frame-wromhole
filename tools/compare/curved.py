@@ -33,7 +33,7 @@ Checks per eye:
     axis, which the rays near the pixel's centre miss and the rasterizer draws where a triangle
     covers its centre; the ray is sought by Newton's steps on how near rays come to that kind);
   floor: sampled floor pixels: the checker cell the traced ray lands in (light or dark, after the
-    haze) against the picture's colour, away from the cells' edges and lines (by the pixel's
+    haze; in the curved zone too, where the floor runs through it) against the picture's colour, away from the cells' edges and lines (by the pixel's
     footprint on the floor, and under foveation by two of its texel's: the cell's edge filtered over
     the texel, then between neighbouring texels), where the texel's footprint leaves the checker its
     full contrast: AGREE of them at least (where FLOOR_MIN of them are usable).
@@ -284,13 +284,19 @@ def cyl_jump(l, n, vl, v, reach, left):
     point is (rho0 n, l) in R^4, and a ray's n turns round a fixed great circle at |v| / rho0 a
     metre: a point within chord c of C has |l - C_w| < c, and its angle round the circle from C's
     direction in the circle's plane (A: C's distance from the centre in that plane) has a cosine at
-    least (rho0^2 + |C_xyz|^2 - c^2) / (2 rho0 A)."""
+    least (rho0^2 + |C_xyz|^2 - c^2) / (2 rho0 A). Nor past the floor, where it runs through the
+    throat (|lift| < rho0): the height there is rho0 n_z + lift, n_z = A_z cos(angle - phi_z) round the
+    circle, and a ray over the floor goes under it at phi_z + acos(-lift / (rho0 A_z))."""
     m = len(l)
     out = np.minimum(left, np.where(vl > 0, (Lc - l) / np.where(vl > 0, vl, 1.0),
                                     np.where(vl < 0, (-Lc - l) / np.where(vl < 0, vl, 1.0), np.inf)))
     vt = np.linalg.norm(v, axis=-1)
     vh = v / np.maximum(vt, 1e-300)[:, None]
     om = vt / rho0
+    Az = np.hypot(n[:, 2], vh[:, 2])
+    cf = -lift / np.maximum(rho0 * Az, 1e-300)
+    to_floor = np.mod(np.arctan2(vh[:, 2], n[:, 2]) + np.arccos(np.clip(cf, -1.0, 1.0)), 2 * np.pi) / np.maximum(om, 1e-300)
+    out = np.minimum(out, np.where((np.abs(cf) < 1.0) & (om > 1e-12), to_floor, np.inf))
     for C, c in reach:
         cx = C[:3]
         dl = l - C[3]
@@ -400,23 +406,27 @@ def to_tangent(n0, d, axes):
 
 
 def look_floor(l, way):
-    """The floor's light and dark colours there after the haze (look.gdshaderinc), sRGB 0..255."""
+    """The floor's light and dark colours there after the haze (look.gdshaderinc: universe A's and
+    B's, between them through the throat as look_side has it), sRGB 0..255."""
     A = np.array([[0.7874, 0.6038, 0.4064], [0.6559, 0.4624, 0.2846]])
     B = np.array([[0.6383, 0.7106, 0.7874], [0.4624, 0.5542, 0.6739]])
     hA = np.array([1.0, 0.6739, 0.3931]); hB = np.array([0.5071, 0.7293, 1.0])
-    side = l >= 0
-    base = np.where(side[:, None, None], A[None], B[None])
-    hor = np.where(side[:, None], hA[None], hB[None])
+    wd = min(1.5, L)
+    ab = np.clip((l + wd) / (2 * wd), 0.0, 1.0)
+    ab = ab * ab * (3 - 2 * ab)
+    base = ab[:, None, None] * A[None] + (1 - ab)[:, None, None] * B[None]
+    hor = ab[:, None] * hA[None] + (1 - ab)[:, None] * hB[None]
     k = (1 - np.exp(-way / 70.0))[:, None, None]
     lin = base * (1 - k) + hor[:, None, :] * k
     srgb = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin ** (1 / 2.4) - 0.055)
     return srgb * 255
 
 
-def chart_xy(l, n):
-    """A floor point's chart x, y (chart B mirrored in x)."""
+def pattern(l, n):
+    """A floor point's place in the floor's pattern (look.gdshaderinc, look_floor): R^4's x, y, and
+    h - |w| + 1/2 (1/2 out in a flat universe)."""
     x = r_of(l)[:, None] * n
-    return np.c_[np.where(l < 0, -x[:, 0], x[:, 0]), x[:, 1]]
+    return np.c_[x[:, 0], x[:, 1], h - np.abs(w_of(l)) + 0.5]
 
 
 ok = True
@@ -584,19 +594,19 @@ for side_i, eye_name in enumerate(('left', 'right')):
     kind, hl, hn, way = trace(l0, n0, T, bodies=())
     m = len(fx)
     good = (kind[:m] == 3) & (kind[m:2 * m] == 3) & (kind[2 * m:] == 3)
-    q = chart_xy(hl, hn)
+    q = pattern(hl, hn)
     qq = q[:m]
     fw = np.maximum(np.abs(q[m:2 * m] - qq), np.abs(q[2 * m:] - qq))
     ft = fw * texel[fy, fx][:, None]                         # its texel's
     frac = np.abs(qq - np.round(qq))                         # cell units to the nearest edge or line
     good &= (np.all(frac > np.maximum(np.maximum(4 * fw, 2 * ft), 0.06), axis=1) & np.all(fw < 0.08, axis=1)
              & np.all(ft < 0.2, axis=1) & (way[:m] < 35))
-    parity = (np.floor(qq[:, 0]) + np.floor(qq[:, 1])).astype(int) % 2
+    parity = np.floor(qq).sum(-1).astype(int) % 2
     cols = look_floor(hl[:m], way[:m])
     pix = img[fy, fx].astype(float)
     dl = np.abs(pix - cols[:, 0]).sum(-1); dd = np.abs(pix - cols[:, 1]).sum(-1)
     seen_light = dl < dd
-    # look_checker gives 0 (the dark colour) where floor(x) + floor(y) is even
+    # look_checker gives 0 (the dark colour) where the cells' numbers (the floors of x, y and the third) add up even
     agree = (seen_light == (parity == 1))[good]
     line += f' | floor: {int(good.sum())} samples, {100 * agree.mean() if agree.size else 0:.2f}% in the right cell'
     ok &= agree.size < FLOOR_MIN or agree.mean() >= AGREE

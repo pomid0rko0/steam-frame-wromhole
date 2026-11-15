@@ -30,8 +30,12 @@ const U := preload("res://tests/util.gd")
 # throat looking along it; on the menu's narrowest throat (_shape: 2 m, its curved zone's radius 3 m),
 # in A's fillet looking in; on its widest with its softest fillet (6 m and 2 m, the zone's radius 8 m,
 # its centre 9 m over the floor: the floor lower under the lens), in A's fillet looking in and at the
-# start looking up at the mouth. The bodies of the space stand where changing the video's throat to
-# that one carries them
+# start looking up at the mouth. The bodies of the space stand where
+# changing the video's throat to that one carries them; then with the throat lower, the floor through the
+# curved zone (the last number: the throat's centre over the floor, m): through the throat itself, at
+# the start looking into it and flying in it over its floor (crf16 and crf17 also with foveation);
+# the throat's centre under the floor, at the pit left of it; and the floor through the fillets only,
+# under the throat
 const LONG := WormholeSpace.LENGTH_MAX
 const MID := 40.0
 const NARROW := "narrow"
@@ -51,7 +55,11 @@ const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -6.6)], 0.0, -5.0, NARROW],
 		[Vector2(13.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 7.4, 0.0), Vector3(0.0, 0.0, -6.2)], 0.0, -5.0, WIDE],
-		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 30.0, WIDE]]
+		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 30.0, WIDE],
+		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 0.0, Main.LENGTH, 1.0],
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 0.3, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, Main.LENGTH, 1.0],
+		[Vector2(8.0, 1.0), Vector2(-1.0, 0.0), [], 0.0, -5.0, Main.LENGTH, -2.0],
+		[Vector2(7.0, 0.5), Vector2(-1.0, 0.0), [], 0.0, 10.0, Main.LENGTH, 3.5]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
@@ -107,6 +115,8 @@ func _process(_delta: float) -> bool:
 			else:
 				main.set_length(place[5], true)
 			print("throat: ", main.shape_text())
+		if place.size() > 6:
+			main.set_lift(place[6], true)
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
 		var v: Viewer = main.viewer
 		var fwd := main._head_forward_xz()
@@ -205,12 +215,12 @@ func _bodies() -> void:
 var _objects := []
 
 
-## A place's throat: the menu's narrowest (NARROW) or its widest with its softest fillet, as low as
-## the floor lets it hang (WIDE), on the video's cylinder.
+## A place's throat: the menu's narrowest (NARROW) or its widest with its softest fillet, its curved
+## zone a metre over the floor (WIDE), on the video's cylinder.
 static func _shape(which: String) -> PackedFloat64Array:
 	if which == NARROW:
 		return WormholeSpace.fit(WormholeSpace.RADIUS_MIN, Main.LENGTH, WormholeSpace.FILLET_MIN, Main.LIFT)
-	return WormholeSpace.fit(WormholeSpace.RADIUS_MAX, Main.LENGTH, WormholeSpace.FILLET_MAX, 0.0)
+	return WormholeSpace.fit(WormholeSpace.RADIUS_MAX, Main.LENGTH, WormholeSpace.FILLET_MAX, WormholeSpace.RADIUS_MAX + WormholeSpace.FILLET_MAX + 1.0)
 
 
 static func _fov() -> bool:

@@ -1,7 +1,7 @@
 class_name Main
 extends Node3D
-## Real-time wormhole for VR (README.md, docs/). The throat hangs over the floor, its shape the
-## video's or the menu's (set_shape); the renderer
+## Real-time wormhole for VR (README.md, docs/). The throat's centre is space.lift over the floor
+## (the video's LIFT, or the menu's: set_shape; any, also under the floor: WormholeSpace's top); the renderer
 ## (renderer.gd) draws every image of each body along the geodesics of the wormhole space, the
 ## curved zone as a lens per pixel; this script builds the scene and moves the viewer through that
 ## curved space: walking in the room, with the sticks along the floor and flying off it as a ship
@@ -65,6 +65,8 @@ const MOUSE_SENS := 0.003
 const GAZE_DOT_DIST := 1.5          # m along the gaze: where the gaze dot is drawn
 const GAZE_HOLD := 0.5              # s the foveation's fovea stays where the eyes last looked while they are not tracked (a blink)
 
+# the space, of the shape kept (Menu.saved_shape) or else shape_want's as it is before _ready: a test
+# that wants another throat sets shape_want before the node enters the tree, or calls set_shape after
 var space := WormholeSpace.new(THROAT_RADIUS, HALF_LENGTH, FILLET, LIFT)
 var viewer := Viewer.new(space)
 var scene: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://scene.json"))
@@ -346,7 +348,8 @@ func draw_toys() -> void:
 		renderer.set_beam(i, b[i][0], b[i][1], b[i][2])
 
 
-## Stand on the floor of universe side (+1 A, -1 B) at chart position pos (its z ignored), looking
+## Stand on the floor of universe side (+1 A, -1 B) at chart position pos (its z ignored; where the
+## floor is in the curved zone or the throat: Viewer.stand_at), looking
 ## along forward (its part along the floor), the view turned pitch degrees up and roll degrees about
 ## the line of sight (right side up) on top of the head's own (the speed check).
 func place(pos: Vector3, forward: Vector3, side := 1.0, pitch := 0.0, roll := 0.0) -> void:
@@ -756,7 +759,8 @@ func _turns_and_reset(delta: float, height: float) -> bool:
 
 ## The body's motion this frame (viewer.gd): the head's step in the room (x, z), then the sticks
 ## and triggers (README.md, «Управление»): the left stick along the room's floor where the head
-## looks (walking or flying), the triggers along the room's up (the right one up takes off); nothing
+## looks (walking or flying), the triggers along the room's up (the right one up takes off, where
+## the floor leaves room over the feet: Viewer.take_off); nothing
 ## pushed, flying, the body coasts (falls or hovers); with gravity it turns upright unless the turns
 ## tilted it (tilting); the head is kept out of the floor and the feet land on it. height: the head's
 ## in the room. True if the sticks, a fall or a landing moved the world against the room.
@@ -772,8 +776,7 @@ func _locomotion(step: Vector2, dt: float, height: float) -> bool:
 	if absf(climb) > STICK_DEAD_ZONE:
 		v.y += climb * FLY_SPEED
 	var moved := not viewer.standing
-	if viewer.standing and v.y > 0.0:
-		viewer.take_off()
+	if viewer.standing and v.y > 0.0 and viewer.take_off(height):
 		print("flying: off the floor at l %.2f" % viewer.l)
 	if v != Vector3.ZERO:
 		viewer.push(v, dt, height)

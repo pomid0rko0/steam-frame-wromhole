@@ -722,6 +722,298 @@ vec3 geo_xt_way(vec4 a, vec4 c, float x, float le, vec3 eye, float b, float sigm
 			!outward && sigma < g_prof2.y ? 1.0 : 0.0);
 }
 
+// ---------------------------------------------------------------- the floor in the zone
+// The floor is the space cut by R^4's z = -lift: the points (l, n) with r(l) n_z + lift = 0, flat out
+// in the universes and, where |lift| < Rout, curved inside the zone (through the throat itself where
+// |lift| < rho0: docs/geometry.md, «Пол»). A ray's height over it there is r (z.x cos psi + z.y sin psi)
+// + lift at position angle psi of its plane (z = (en.z, t.z)): the first place it goes through 0 is
+// looked for piece by piece along the ray, as geo_exit_way goes: straight to the zone from an eye
+// outside (a line and a plane), a fillet coming in, the cylinder (psi goes evenly: a closed form), a
+// fillet going out. On a fillet the ray goes by x = W / 2, half the weight's integral from its origin
+// (geo_fillet's w): x = ln((sqrt(u) + sqrt(u - sigma)) / Dw), so u's roots are (e +- sigma / e) / 2
+// with e = Dw exp(x), psi and the length grow by 2 F(u) a unit of x (bounded, smooth: next to the
+// photon sphere, where psi grows as ln of the distance from the origin, x is that ln), and the height
+// is smooth in x all along. It is taken with its rate at nodes GEO_FLOOR_DX of x or GEO_FLOOR_DPSI of
+// turn apart; between two nodes it is the cubic through both (values and rates): where the next node
+// is under the floor, or the cubic dips under it between two nodes above (a ray grazing the floor:
+// its edge against what is behind it), the crossing is found by Newton's steps kept in their bracket.
+const float GEO_FLOOR_DX = 0.7;
+const float GEO_FLOOR_DPSI = 0.5;
+const int GEO_FLOOR_NODES = 40;         // a leg's nodes at most (next to the photon sphere x runs to 17)
+const int GEO_FLOOR_ITERS = 6;
+const float GEO_FLOOR_TOL = 1e-5;       // m: a height this near 0 is the floor
+const float GEO_FLOOR_DIP = 2e-3;       // m: the cubic this near the floor between two nodes: looked at
+
+// a ray's numbers on a fillet: its impact and sigma, u_lo and the span to u = 1/2, geo_F and geo_Fu
+// at u_lo, Dw = sqrt(u_lo) + sqrt(u_lo - sigma) and their product, x at the zone's edge
+struct GeoLeg {
+	float b, sigma, ul, span;
+	vec2 f0, f1;
+	float Dw, P0, xL;
+};
+
+GeoLeg geo_leg(float b, float sigma) {
+	GeoLeg g;
+	g.b = b;
+	g.sigma = sigma;
+	g.ul = max(sigma, g_prof2.y);
+	g.span = 0.5 - g.ul;
+	g.f0 = geo_F(b, g.ul);
+	g.f1 = geo_Fu(b, g.ul, g.f0);
+	float s0 = sqrt(g.ul), e0 = sqrt(g.ul - sigma);
+	g.Dw = s0 + e0;
+	g.P0 = s0 * e0;
+	g.xL = log((0.70710678 + sqrt(max(0.5 - sigma, 0.0))) / g.Dw);
+	return g;
+}
+
+// x of the point of a leg whose roots of u and of u - sigma are se
+float geo_leg_x(GeoLeg g, vec2 se) {
+	return max(log((se.x + se.y) / g.Dw), 0.0);
+}
+
+// at x on a leg: (psi, len) from its origin, their rates a unit of x, and the roots of u and u - sigma
+// there. The root that starts from nought (u - sigma's at a turning point, u's at the cylinder's end)
+// is Dw sinh x: the difference of Dw exp(x) and sigma over it keeps none of its digits next to the start.
+void geo_leg_at(GeoLeg g, float x, out vec2 pl, out vec2 rate, out vec2 se) {
+	float ex = exp(x);
+	float ew = g.Dw * ex, q = g.sigma / ew;
+	se = 0.5 * vec2(ew + q, ew - q);
+	float x2 = x * x;
+	float sh = g.Dw * (x < 0.3 ? x * (1.0 + x2 * (0.166666667 + x2 * (0.00833333333 + x2 * 0.000198412698))) : 0.5 * (ex - 1.0 / ex));
+	bool turns = g.ul == g.sigma;
+	if (turns) se.y = sh;
+	else if (g.ul == 0.0) se.x = sh;
+	float u = se.x * se.x;
+	float v = (turns ? se.y : sqrt(max(u - g.ul, 0.0))) * inversesqrt(g.span);
+	pl = g.f0 * (2.0 * x) + g.f1 * (se.x * se.y - g.P0 + (g.sigma - 2.0 * g.ul) * x) + geo_G(g.sigma, v);
+	rate = 2.0 * geo_F(g.b, u);
+}
+
+// On the throat's cylinder, a ray at position angle psi0 turning rate radians a metre of l for m
+// metres: the metres to where it first goes through the floor, or -1. There r = rho0: it is above the
+// floor within T = acos(-lift / (A rho0)) of the plane's highest direction (A = |z|, at psi_z), and
+// goes under at psi_z + T.
+float geo_cyl_floor(float psi0, float rate, float m, vec2 z) {
+	float A = length(z);
+	float c = -g_lift / max(A * g_prof.x, GEO_TINY);
+	if (abs(c) >= 1.0 || m <= 0.0) return -1.0;
+	float d = mod(geo_atan2(z.y, z.x) + geo_acos(c) - psi0, 2.0 * GEO_PI);
+	float mm = d / max(rate, GEO_TINY);
+	return mm < m ? mm : -1.0;
+}
+
+// where a ray meets the floor (geo_floor): its position angle there (n = cos psi en + sin psi t), l,
+// the way from the eye, r, and wd = h - |w|, how far the point is from its universe's sheet along
+// R^4's w (0 out in a flat universe)
+struct GeoFloor {
+	float psi, l, way, r, wd;
+};
+
+// a leg's point as GeoFloor: side its universe (+1 A, -1 B)
+GeoFloor geo_floor_on_leg(float side, float psi, float way, vec2 se) {
+	GeoFloor f;
+	float u = se.x * se.x;
+	f.psi = psi;
+	f.way = way;
+	f.l = side * (g_prof.z + g_prof.y * (2.0 * geo_asin(min(se.x, 1.0)) - g_prof2.w));
+	f.r = g_prof.x + 2.0 * g_prof.y * u;
+	// R (1 - sin theta), sin theta = 2 sqrt(u (1 - u)): next to the zone's edge by (1 - 2 u)^2
+	float st = 2.0 * sqrt(max(u * (1.0 - u), 0.0));
+	f.wd = g_prof.y * (1.0 - 2.0 * u) * (1.0 - 2.0 * u) / (1.0 + st);
+	return f;
+}
+
+// What costs little of geo_floor, for the ray it takes (turn: its whole turn up to where it leaves
+// the zone): 2 if it meets the flat floor on its straight way to the zone (an eye outside); 0 if it
+// meets no floor in the zone for sure: none in the ray's plane (the floor is 1 / A as far from the
+// centre there as lift, A = |z|: at Rout or further, as in every plane where |lift| >= Rout), or, the
+// throat's centre over the floor, the ray's angles in the zone short of those at which the floor is
+// in it: further than To = acos(-lift / (A Rout)) from the plane's highest direction (the centre
+// under the floor, it is in the zone within To of it, where the ray comes in); else 1: to be looked
+// for. base, way0: the ray's position angle and way where it enters the zone (0 from an eye in it).
+int geo_floor_may(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float turn, out float base, out float way0) {
+	float Rout = g_prof2.x, re = eye.x;
+	vec2 z = vec2(en.z, t.z);
+	base = 0.0;
+	way0 = 0.0;
+	if (abs(el) >= g_prof.w) {
+		// straight to the zone's edge: under the floor there, it met the flat floor on the way
+		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
+		float q2 = sqrt(max(gap * (re + b), 0.0));
+		float dq = (re - Rout) * (re + Rout) / max(qR + q2, GEO_TINY20);
+		if (re * en.z + dq * (ca * en.z + sa * t.z) + g_lift <= 0.0) return 2;
+		base = geo_atan2(b * dq, b * b + qR * q2);
+		way0 = dq;
+	}
+	float c = -g_lift / max(length(z) * Rout, GEO_TINY);
+	if (abs(c) >= 1.0) return 0;
+	float To = geo_acos(c);
+	float d = mod(geo_atan2(z.y, z.x) + To - base, 2.0 * GEO_PI);
+	return g_lift >= 0.0 && d > turn - base && d < 2.0 * To ? 0 : 1;
+}
+
+// The ray of the eye (as geo_exit_ray gives it: ca, sa, t, b, gap, sigma; eye as geo_exit has it) that
+// enters the zone, turn its whole turn up to where it leaves it (geo_exit_way's): 0 if it meets no
+// floor before it leaves the zone; 2 if it meets the floor on its straight way to the zone (an eye
+// outside: the flat floor, on the line from the eye); 1 if in the zone, at f. First what costs
+// little (geo_floor_may).
+int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float sigma, float turn, out GeoFloor f) {
+	f.psi = 0.0;
+	f.l = el;
+	f.way = 0.0;
+	f.r = eye.x;
+	f.wd = 0.0;
+	float base, way0;
+	int may = geo_floor_may(el, eye, en, t, ca, sa, b, gap, turn, base, way0);
+	if (may != 1) return may;
+	float L = g_prof.w, Lc = g_prof.z, R2 = 2.0 * g_prof.y;
+	float le = abs(el), side = el < 0.0 ? -1.0 : 1.0;
+	vec2 z = vec2(en.z, t.z);
+	bool outward = ca >= 0.0;
+	GeoLeg g = geo_leg(b, sigma);
+	if (g.span <= 0.0) return 0;
+	bool passes = sigma < g_prof2.y;
+	vec2 cyl = geo_exit_cyl(b, sigma);
+	// The ray's fillets, one after the other (two for a ray that comes in on one and goes out on
+	// another or the same; the cylinder between them, or before the only one from an eye on it): each
+	// from xa to xb, dir +1 going out and -1 coming in, its position angle and its way pb + dir psi(x)
+	// and wb + dir len(x) (from pb and wb at xa at first: the leg's first point takes its own psi and
+	// len out of them; a leg that comes in ends at x = 0, where both are nought: at pb, wb).
+	bool two = le > Lc && !outward;
+	float xa = 0.0, xb = g.xL, dir = 1.0;
+	float pb = base, wb = way0;
+	if (le > Lc) {
+		// from the fillet (an eye outside: from its edge)
+		if (le < L) xa = min(geo_leg_x(g, vec2(eye.y, sqrt(gap / R2))), g.xL);
+		else xa = g.xL;
+		if (!outward) {
+			xb = 0.0;
+			dir = -1.0;
+		}
+	} else {
+		// from the cylinder: to its end ahead, or back through l = 0 to its other end
+		float mc = outward ? Lc - le : Lc + le;
+		float m = geo_cyl_floor(0.0, cyl.x, mc, z);
+		if (m >= 0.0) {
+			float lh = outward ? le + m : le - m;
+			f.psi = cyl.x * m;
+			f.way = cyl.y * m;
+			f.l = side * lh;
+			f.r = g_prof.x;
+			f.wd = g_prof.y + Lc - abs(lh);
+			return 1;
+		}
+		pb = mc * cyl.x;
+		wb = mc * cyl.y;
+		if (!outward) side = -side;
+	}
+	for (int leg = 0; leg < 2; leg++) {
+		if (leg == 1) {
+			if (!two) break;
+			if (passes) {
+				float m = geo_cyl_floor(pb, cyl.x, 2.0 * Lc, z);
+				if (m >= 0.0) {
+					f.psi = pb + cyl.x * m;
+					f.way = wb + cyl.y * m;
+					f.l = side * (Lc - m);
+					f.r = g_prof.x;
+					f.wd = g_prof.y + min(m, 2.0 * Lc - m);
+					return 1;
+				}
+				pb += 2.0 * Lc * cyl.x;
+				wb += 2.0 * Lc * cyl.y;
+				side = -side;
+			}
+			xa = 0.0;
+			xb = g.xL;
+			dir = 1.0;
+		}
+		// The leg, the ray above the floor at xa: its nodes one after another, the cubic's lowest
+		// point between the last point above and the next node (mode 1: if it is above too, it is the
+		// last point above, and the node is worked out again from it), Newton's steps once a point
+		// under the floor is known (mode 2), all through one working out of the leg's point (the
+		// program holds it once, and few numbers through it: the fewer, the more pixels the GPU keeps
+		// going at once, tools/adreno_stats.sh).
+		int n = clamp(int(ceil(abs(xb - xa) * max(1.0 / GEO_FLOOR_DX, 2.0 * g.f0.x / GEO_FLOOR_DPSI))), 1, GEO_FLOOR_NODES);
+		float hx = (xb - xa) / float(n);
+		int i = 0, mode = 0;        // i: the node being worked out; in mode 2 Newton's steps left
+		float x = xa, x0 = xa, x1 = xa;   // x0: the last point above (its height and rate h0); x1: in mode 2 the bracket's other end
+		vec2 h0 = vec2(0.0), se = vec2(0.0);
+		float psi = pb, way = wb;
+		bool met = false;
+		for (int it = 0; it < 2 * GEO_FLOOR_NODES + GEO_FLOOR_ITERS + 2; it++) {
+			vec2 pl, rate;
+			geo_leg_at(g, x, pl, rate, se);
+			if (i == 0 && mode == 0) {
+				pb -= dir * pl.x;
+				wb -= dir * pl.y;
+			}
+			psi = pb + dir * pl.x;
+			way = wb + dir * pl.y;
+			vec2 sc = geo_sincos(psi);
+			float r = g_prof.x + R2 * se.x * se.x;
+			float nz = z.x * sc.y + z.y * sc.x;
+			// the height over the floor there and its rate a unit of x
+			vec2 hk = vec2(r * nz + g_lift, 2.0 * R2 * se.x * se.y * nz + r * (z.y * sc.y - z.x * sc.x) * dir * rate.x);
+			if (mode == 2) {
+				if (abs(hk.x) <= GEO_FLOOR_TOL || i <= 1) {
+					met = true;
+					break;
+				}
+				i--;
+				if (hk.x > 0.0) x0 = x; else x1 = x;
+				float xn = x - hk.x / hk.y;
+				x = geo_finite(xn) && (xn - x0) * (xn - x1) < 0.0 ? xn : 0.5 * (x0 + x1);
+				continue;
+			}
+			bool under = hk.x <= 0.0;
+			bool node = mode == 0;
+			mode = 0;
+			if (i > 0 && (under || node)) {
+				// from x0 (above) to x: the cubic through both
+				float d0 = h0.y * (x - x0), d1 = hk.y * (x - x0);
+				float c2 = 3.0 * (hk.x - h0.x) - 2.0 * d0 - d1, c3 = 2.0 * (h0.x - hk.x) + d0 + d1;
+				if (under) {
+					// from the cubic's first way down, Newton's steps on the height itself, halving
+					// where one would leave the bracket
+					x1 = x;
+					float ta = 0.0, tb = 1.0;
+					for (int k = 0; k < 4; k++) {
+						float tm = 0.5 * (ta + tb);
+						if (h0.x + tm * (d0 + tm * (c2 + tm * c3)) > 0.0) ta = tm; else tb = tm;
+					}
+					x = x0 + 0.5 * (ta + tb) * (x1 - x0);
+					mode = 2;
+					i = GEO_FLOOR_ITERS;
+					continue;
+				}
+				if (d0 < 0.0 && d1 > 0.0) {
+					// both above and the cubic turns up between them: its lowest point
+					float den = c2 + sqrt(max(c2 * c2 - 3.0 * c3 * d0, 0.0));
+					float tm = den > 0.0 ? -d0 / den : 2.0;
+					if (tm > 0.0 && tm < 1.0 && h0.x + tm * (d0 + tm * (c2 + tm * c3)) < GEO_FLOOR_DIP) {
+						x = x0 + tm * (x - x0);
+						mode = 1;
+						continue;
+					}
+				}
+			}
+			// above the floor here: on to the next node (from the cubic's lowest point: to the same one)
+			x0 = x;
+			h0 = hk;
+			if (node) i++;
+			if (i > n) break;
+			x = i == n ? xb : xa + hx * float(i);
+		}
+		if (met) {
+			f = geo_floor_on_leg(side, psi, way, se);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // ---------------------------------------------------------------- points of R^4
 // The space as the hypersurface (r(l) n, w(l)) of R^4 (docs/geometry.md): its profile curve in the
 // quarter plane (rho = |xyz|, a = |w|) is the tube rho = rho0, the fillet's arc round

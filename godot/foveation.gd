@@ -39,7 +39,9 @@ extends CompositorEffect
 ##
 ## Three passes: the eyes, their rows of the way out of the zone (a ray's sigma to where it leaves:
 ## geo.gdshaderinc, «the way out by a table»), the texture; and the tail's, later, while a body is in
-## the zone. GPU timestamps before, between and after them (TS_*; the tail's is ZoneSections') give
+## the zone. While the floor reaches into the zone's ball (floor_zone) the texture is two passes:
+## every texel but those whose ray may meet the floor in the zone, their 2 x 2 squares listed; then
+## those squares, with the search for the floor there (foveation.gdshaderinc: FLOOR_MARK, FLOOR_LIST). GPU timestamps before, between and after them (TS_*; the tail's is ZoneSections') give
 ## frame_rate.gd the GPU time of each part of the frame.
 ##
 ## On the XR camera's compositor, before the opaque pass (the 3D scene's render pass stays one).
@@ -67,7 +69,8 @@ var level := 0                      # 0: off, else LEVELS' index + 1
 var show := false                   # the coarse texels tinted by their size
 var probe := false                  # tests: where each texel's pixel is instead of its colour (the top)
 var gravity := false                # the gravity view's floor (floor_gravity.gdshader)
-var sample_mat: ShaderMaterial      # the floor's quad's while on (floor_sample.gdshader): it samples the texture
+var floor_zone := false             # the floor reaches into the zone's ball: the texture's two passes that look for it there (Renderer.floor_zone)
+var sample_mats: Array[ShaderMaterial] = []   # the floor's quad's while on (floor_sample.gdshaderinc's): they sample the texture
 var xr: XRInterface                 # the picture's size; on the desktop (none) target's
 var target: Viewport
 var gaze_on := false                # the eyes tracked (set_gaze)
@@ -84,6 +87,8 @@ var _eyes: RID
 var _tex: RID                       # the colours, rgba16f, a layer per eye
 var _xt: RID                        # the way out's rows (foveation.gdshaderinc, xt_img): _xt_n x 4, rgba32f
 var _xt_n := 0                      # texels a row: geo.gdshaderinc's GEO_XN
+var _floor_args: RID                # the floor's second pass's indirect dispatch (foveation.gdshaderinc's FloorArgs)
+var _floor_list: RID                # and its squares (FloorList): a place for every square of both eyes
 var _warp: RID                      # a row per eye: (g, c), (r0, m, the texels across, down), (the picture's pixels across, down)
 var _sampler: RID
 var _tab: RID                       # the sweep table's RD texture
@@ -94,6 +99,8 @@ var _r0 := 0.0                      # pixels
 var _m := 1.0                       # per pixel
 var _space := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # prof, prof2, tabx
 var _floor := Vector2.ZERO          # (lift, beta)
+var _grav := Vector2.ZERO           # gravity on the cylinder (a, k), and on a fillet its table's RD texture (set_gravity)
+var _gravtab: RID
 var _lens_bytes := PackedByteArray()   # the lens list as the buffer takes it; empty: sent
 var _lens_size := (160 + 40) * 16 + 16
 var _head := PackedFloat32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # head_nl, head_p, head_fr[3]
@@ -126,6 +133,18 @@ func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, flo
 		_tab = t
 		_sets.clear()
 	_floor = floor_
+	_mutex.unlock()
+
+
+## Gravity in the zone, for the gravity view's floor there (look.gdshaderinc, look_grav_at): g_grav and
+## g_gravtab.
+func set_gravity(grav: Vector2, tab: Texture2D) -> void:
+	_mutex.lock()
+	_grav = grav
+	var t := RenderingServer.texture_get_rd_texture(tab.get_rid())
+	if t != _gravtab:
+		_gravtab = t
+		_sets.clear()
 	_mutex.unlock()
 
 
@@ -209,6 +228,9 @@ func _make(n: Vector2i) -> void:
 	for r in [_tex, _warp]:
 		if r.is_valid() and _rd.texture_is_valid(r):
 			_rd.free_rid(r)
+	if _floor_list.is_valid():
+		_rd.free_rid(_floor_list)
+	_floor_list = _rd.storage_buffer_create(4 * 2 * ceili(n.x / 2.0) * ceili(n.y / 2.0))
 	_n = n
 	var f := RDTextureFormat.new()
 	f.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
@@ -229,11 +251,14 @@ func _make(n: Vector2i) -> void:
 	_mutex.unlock()
 	fov_tex.texture_rd_rid = _tex
 	warp_tex.texture_rd_rid = _warp
-	sample_mat.set_shader_parameter("fov_tex", fov_tex)
-	sample_mat.set_shader_parameter("fov_warp", warp_tex)
+	for sm in sample_mats:
+		sm.set_shader_parameter("fov_tex", fov_tex)
+		sm.set_shader_parameter("fov_warp", warp_tex)
 
 
-## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity.
+## The compute pipelines: the eyes, the way out's rows, then the floor, plain or coloured by gravity,
+## each also in two for a floor that reaches into the zone's ball (FLOOR_MARK; FLOOR_ZONE and
+## FLOOR_LIST), then the tail's.
 func _build() -> void:
 	var geo: String = (load("res://shaders/geo.gdshaderinc") as ShaderInclude).code
 	var look: String = (load("res://shaders/look.gdshaderinc") as ShaderInclude).code
@@ -245,9 +270,13 @@ func _build() -> void:
 	_xt_n = int(n.get_string(1))
 	# the tail's TAIL in two programs, the balls' and the cubes': each carries one kind's search only
 	# (registers: tools/adreno_stats.sh --fov)
-	for kind in ["eyes", "table", "floor", "gravity", "tail_view", "tail_tiles", "tail_quads", "tail", "tail_cubes"]:
+	for kind in ["eyes", "table", "floor", "gravity", "floor_mark", "gravity_mark", "floor_zone", "gravity_zone",
+			"tail_view", "tail_tiles", "tail_quads", "tail", "tail_cubes"]:
 		var src := RDShaderSource.new()
 		var defs := {"eyes": "#define EYES\n", "table": "#define TABLE\n", "floor": "", "gravity": "#define GRAVITY\n",
+				"floor_mark": "#define FLOOR_MARK\n", "gravity_mark": "#define GRAVITY\n#define FLOOR_MARK\n",
+				"floor_zone": "#define FLOOR_ZONE\n#define FLOOR_LIST\n",
+				"gravity_zone": "#define GRAVITY\n#define FLOOR_ZONE\n#define FLOOR_LIST\n",
 				"tail_view": "#define TAIL_VIEW\n", "tail_tiles": "#define TAIL_TILES\n", "tail_quads": "#define TAIL_QUADS\n",
 				"tail": "#define TAIL\n#define TAIL_CUBES 0\n", "tail_cubes": "#define TAIL\n#define TAIL_CUBES 1\n"}
 		var inc := geo + "\n" + look + "\n" + lens + ("\n" + zone + "\n" + tail if kind.begins_with("tail") else "")
@@ -273,16 +302,27 @@ func _build() -> void:
 	x.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
 	_xt = _rd.texture_create(x, RDTextureView.new())
 	_lens = _rd.uniform_buffer_create(_lens_size)
+	_floor_args = _rd.storage_buffer_create(16, PackedByteArray(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
 
 
 func _uniform_set(kind: String) -> RID:
 	if _sets.has(kind) and _rd.uniform_set_is_valid(_sets[kind]):
 		return _sets[kind]
 	var us: Array[RDUniform] = []
-	for b in 6:
+	for b in 9:
 		var u := RDUniform.new()
 		u.binding = b
 		match b:
+			7:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+				u.add_id(_floor_args)
+			8:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+				u.add_id(_floor_list)
+			6:
+				u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+				u.add_id(_sampler)
+				u.add_id(_gravtab)
 			0:
 				u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
 				u.add_id(_sampler)
@@ -308,9 +348,9 @@ func _uniform_set(kind: String) -> RID:
 
 
 func _render_callback(type: int, render_data: RenderData) -> void:
-	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or not _tex.is_valid() or not _tab.is_valid():
+	if type != EFFECT_CALLBACK_TYPE_PRE_OPAQUE or level == 0 or not _tex.is_valid() or not _tab.is_valid() or not _gravtab.is_valid():
 		return
-	if not _pipes.has("floor"):
+	if not _pipes.has("tail_cubes"):
 		return
 	var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 	var data := render_data.get_render_scene_data()
@@ -336,7 +376,7 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_mutex.unlock()
 	if not lens.is_empty():
 		_rd.buffer_update(_lens, 0, lens.size(), lens)
-	p.append_array([_floor.x, _floor.y, 0.0, 0.0])
+	p.append_array([_floor.x, _floor.y, _grav.x, _grav.y])
 	for c in [cam.basis.x, cam.basis.y, cam.basis.z]:
 		p.append_array([c.x, c.y, c.z, 0.0])
 	p.append_array([cam.origin.x, cam.origin.y, cam.origin.z, 1.0])
@@ -398,11 +438,19 @@ func _render_callback(type: int, render_data: RenderData) -> void:
 	_rd.compute_list_end()
 	_rd.capture_timestamp(TS_TABLE)
 	cl = _rd.compute_list_begin()
-	var kind := "gravity" if gravity else "floor"
+	var base := "gravity" if gravity else "floor"
+	var kind := base + ("_mark" if floor_zone else "")
 	_rd.compute_list_bind_compute_pipeline(cl, _pipes[kind])
 	_rd.compute_list_bind_uniform_set(cl, _uniform_set(kind), 0)
 	_rd.compute_list_dispatch(cl, ceili(_n.x / 8.0), ceili(_n.y / 8.0), views)
 	_rd.compute_list_end()
+	if floor_zone:
+		# the squares it listed, with the search for the floor in the zone
+		cl = _rd.compute_list_begin()
+		_rd.compute_list_bind_compute_pipeline(cl, _pipes[base + "_zone"])
+		_rd.compute_list_bind_uniform_set(cl, _uniform_set(base + "_zone"), 0)
+		_rd.compute_list_dispatch_indirect(cl, _floor_args, 0)
+		_rd.compute_list_end()
 	_rd.capture_timestamp(TS_END)
 
 

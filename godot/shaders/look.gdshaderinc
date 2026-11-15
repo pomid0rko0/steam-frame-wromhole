@@ -1,4 +1,5 @@
-// What the worlds look like: the floor, the sky and the light on bodies. Colours are linear (Godot
+// What the worlds look like: the floor, the sky and the light on bodies (after geo.gdshaderinc's
+// uniforms: g_prof, g_lift, g_beta, and with GRAVITY g_grav, g_gravtab). Colours are linear (Godot
 // shows them through its sRGB output). Universe A is warm, B cool; the light of the throat is
 // blended between the two along l, so a ball in the middle is lit half by each sky.
 
@@ -17,29 +18,35 @@ const float LOOK_HAZE = 70.0;            // m: the floor fades to the horizon's 
 const float LOOK_LINE = 0.6;             // px: half the width of the floor's white lines
 
 // a box-filtered checker of unit cells at p, iw the inverse of its footprint (1 / fwidth)
-float look_checker(vec2 p, vec2 w, vec2 iw) {
-	vec2 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) * iw;
-	return 0.5 - 0.5 * i.x * i.y;
+float look_checker(vec3 p, vec3 w, vec3 iw) {
+	vec3 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) * iw;
+	return 0.5 - 0.5 * i.x * i.y * i.z;
 }
 
-// the floor's colour from its pattern coordinates q (a chart's x, y: a checker of metre cells with
-// white lines) and their footprints fw (per pixel), the pixel px of the picture's pixels across (1
-// but in foveation's coarser texels); base: the checker's two colours
-vec3 look_floor(vec2 q, vec2 fw, float px, vec3 lightc, vec3 darkc) {
-	fw = max(fw, vec2(1e-4));
-	vec2 iw = 1.0 / fw;
+// The floor's pattern: the cells of a block of R^4's (x, y, w) that the floor cuts through (docs/
+// geometry.md, «Пол»): q = (x, y, h - |w| + 1/2). Out in a flat universe w = +-h, the third is 1/2,
+// the middle of its cell, and the pattern is the chart's: a checker of metre cells with white lines
+// (the same lines in chart B, its x mirrored). In the curved zone the floor leaves the sheet along
+// w, and the third coordinate's cells and lines come in: rings across the floor of the throat every
+// metre along it, where x and y stand still.
+// The floor's colour from q and its footprints fw (per pixel), the pixel px of the picture's pixels
+// across (1 but in foveation's coarser texels); base: the checker's two colours
+vec3 look_floor(vec3 q, vec3 fw, float px, vec3 lightc, vec3 darkc) {
+	fw = max(fw, vec3(1e-4));
+	vec3 iw = 1.0 / fw;
+	float wide = max(fw.x, max(fw.y, fw.z));
 	// in a coarser pixel the cells' edges filtered wider: a pixel's box alone leaves steps once the
 	// coarse pixels are spread over the picture's
-	vec2 fc = fw * (1.0 + 0.5 * smoothstep(1.0, 2.0, px));
+	vec3 fc = fw * (1.0 + 0.5 * smoothstep(1.0, 2.0, px));
 	float chk = look_checker(q, fc, 1.0 / fc);
-	vec3 col = mix(darkc, lightc, mix(0.5, chk, 1.0 - smoothstep(0.35, 0.8, max(fw.x, fw.y))));
+	vec3 col = mix(darkc, lightc, mix(0.5, chk, 1.0 - smoothstep(0.35, 0.8, wide)));
 	// white lines a picture's pixel wide (in a coarser pixel thinner than it: then they cover their
-	// share of it), both kinds fading where either crowds: far off and at a grazing angle the rings
+	// share of it), every kind fading where any crowds: far off and at a grazing angle the rings
 	// crowd first, and the radial lines left alone there stood out (check_grid.gdshader stops where
 	// either crowds too)
 	float h = LOOK_LINE / px;
-	vec2 cov = clamp(min(h + 0.5 - abs(fract(q + 0.5) - 0.5) * iw, 2.0 * h), 0.0, 1.0);
-	float line = max(cov.x, cov.y) * (1.0 - smoothstep(0.15, 0.35, max(fw.x, fw.y)));
+	vec3 cov = clamp(min(h + 0.5 - abs(fract(q + 0.5) - 0.5) * iw, 2.0 * h), 0.0, 1.0);
+	float line = max(cov.x, max(cov.y, cov.z)) * (1.0 - smoothstep(0.15, 0.35, wide));
 	return mix(col, vec3(1.0), 0.75 * line);
 }
 
@@ -90,16 +97,24 @@ vec3 look_grav_contours(vec3 col, float t, float fw, float px) {
 	return col * (1.0 - 0.4 * thin) * (1.0 - 0.85 * one);
 }
 
+// how much of universe A's light and colours a point at l has: 1 out in A, 0 out in B, between
+// them within 1.5 m of the throat's middle (within the curved zone, if that is shorter): the floor's
+// colours (look_ground) and the light on a body (look_sun4, look_ambient)
+float look_side(float l) {
+	float w = min(1.5, g_prof.w);
+	return smoothstep(-w, w, l);
+}
+
 // light on a body at l: the sun's direction there as a vector of R^4 (each universe's sun, A's in
 // its chart = R^4's xyz, B's mirrored), blended across the throat, and the ambient colour
 vec4 look_sun4(float l) {
 	vec4 a = vec4(LOOK_SUN_A, 0.0);
 	vec4 b = vec4(-LOOK_SUN_B.x, LOOK_SUN_B.yz, 0.0);
-	return mix(b, a, smoothstep(-1.5, 1.5, l));
+	return mix(b, a, look_side(l));
 }
 
 vec3 look_ambient(float l, float up) {
-	float k = smoothstep(-1.5, 1.5, l);
+	float k = look_side(l);
 	vec3 zen = mix(LOOK_ZENITH_B, LOOK_ZENITH_A, k);
 	vec3 hor = mix(LOOK_HORIZON_B, LOOK_HORIZON_A, k);
 	return mix(hor, zen, 0.5 + 0.5 * up) * 0.45;
@@ -124,28 +139,52 @@ float look_grav_floor(float rho) {
 	return length(vec2(along, up));
 }
 
-// The floor at chart point xy (the throat's centre over (0, 0)): (x, y, and with GRAVITY the
-// gravity's level there, look_grav_level).
-vec3 look_ground_at(vec2 xy) {
 #ifdef GRAVITY
-	return vec3(xy, look_grav_level(look_grav_floor(length(xy))));
+// Gravity's strength (in g) at the space's point (l, n), r = r(l), nz = n.z: the length of the
+// potential's gradient (f' n_z, (f / r) (e_z - n_z n)), f docs/gravity.md's (WormholeSpace.gravity_f):
+// out in a flat universe r + beta / r^2, on the throat's cylinder a cosh(k l) (g_grav = (a, k)), on a
+// fillet from g_gravtab (f, f' at its nodes from the fillet's start to its end: Renderer's). On the
+// flat floor it is look_grav_floor.
+float look_grav_at(float l, float r, float nz) {
+	float al = abs(l);
+	vec2 f;
+	if (al >= g_prof.w) {
+		f = vec2(r + g_beta / (r * r), 1.0 - 2.0 * g_beta / (r * r * r));
+	} else if (al <= g_prof.z) {
+		float e = exp(g_grav.y * al);
+		f = 0.5 * g_grav.x * vec2(e + 1.0 / e, g_grav.y * (e - 1.0 / e));
+	} else {
+		float n = float(textureSize(g_gravtab, 0).x);
+		float x = (al - g_prof.z) / (g_prof.w - g_prof.z);
+		f = textureLod(g_gravtab, vec2((x * (n - 1.0) + 0.5) / n, 0.5), 0.0).rg;
+	}
+	return length(vec2(f.y * nz, f.x / r * sqrt(max(1.0 - nz * nz, 0.0))));
+}
+#endif
+
+// The flat floor at R^4's point xy of a universe (the throat's centre over (0, 0)): its pattern's
+// point (look_floor's q), and with GRAVITY the gravity's level there (look_grav_level).
+vec4 look_ground_at(vec2 xy) {
+#ifdef GRAVITY
+	return vec4(xy, 0.5, look_grav_level(look_grav_floor(length(xy))));
 #else
-	return vec3(xy, 0.0);
+	return vec4(xy, 0.5, 0.0);
 #endif
 }
 
-// The floor's colour at a = look_ground_at(...) in universe sheet (+1 A, -1 B), way metres away,
-// from its differences to the next pixel along x and along y (dx, dy: what dFdx and dFdy give); the
-// pixel px of the picture's pixels across (look_floor)
-vec3 look_ground(vec3 a, vec3 dx, vec3 dy, float px, float sheet, float way) {
-	vec3 fw = abs(dx) + abs(dy);
+// The floor's colour at a (look_ground_at's, or the floor's in the curved zone: lens.gdshaderinc),
+// ab of it universe A's (look_side), way metres away, from its differences to the next pixel
+// along x and along y (dx, dy: what dFdx and dFdy give); the pixel px of the picture's pixels
+// across (look_floor)
+vec3 look_ground(vec4 a, vec4 dx, vec4 dy, float px, float ab, float way) {
+	vec4 fw = abs(dx) + abs(dy);
 #ifdef GRAVITY
-	vec3 base = look_grav_colour(a.z);
-	vec3 col = look_grav_contours(look_floor(a.xy, fw.xy, px, base, base * 0.85), a.z, fw.z, px);   // the checker as brightness
+	vec3 base = look_grav_colour(a.w);
+	vec3 col = look_grav_contours(look_floor(a.xyz, fw.xyz, px, base, base * 0.85), a.w, fw.w, px);   // the checker as brightness
 #else
-	vec3 col = look_floor(a.xy, fw.xy, px, sheet > 0.0 ? LOOK_FLOOR_A[0] : LOOK_FLOOR_B[0], sheet > 0.0 ? LOOK_FLOOR_A[1] : LOOK_FLOOR_B[1]);
+	vec3 col = look_floor(a.xyz, fw.xyz, px, mix(LOOK_FLOOR_B[0], LOOK_FLOOR_A[0], ab), mix(LOOK_FLOOR_B[1], LOOK_FLOOR_A[1], ab));
 #endif
-	return mix(col, sheet > 0.0 ? LOOK_HORIZON_A : LOOK_HORIZON_B, 1.0 - exp(-way / LOOK_HAZE));
+	return mix(col, mix(LOOK_HORIZON_B, LOOK_HORIZON_A, ab), 1.0 - exp(-way / LOOK_HAZE));
 }
 
 // a toy cube's point in its own [-1, 1]^3 to 1 - its distance to the face's nearest edge (the

@@ -84,9 +84,10 @@ func _process(_d: float) -> bool:
 				started = false
 			var cyl: float = place[3] if place.size() > 3 else b.saved_length
 			var sp := main.space
-			if not is_equal_approx(2.0 * sp.Lc, cyl) or sp.rho0 != Main.THROAT_RADIUS or sp.fillet != Main.FILLET or sp.lift != Main.LIFT:
-				check("the place's throat: its cylinder, the video's radius, fillet and height", false,
-						"%s, not a cylinder of %.2f m" % [sp.shape(), cyl])
+			var lift: float = place[4] if place.size() > 4 else Main.LIFT
+			if not is_equal_approx(2.0 * sp.Lc, cyl) or sp.rho0 != Main.THROAT_RADIUS or sp.fillet != Main.FILLET or not is_equal_approx(sp.lift, lift):
+				check("the place's throat: its cylinder and height, the video's radius and fillet", false,
+						"%s, not a cylinder of %.2f m %.2f m over the floor" % [sp.shape(), cyl, lift])
 				started = false
 			var v := b.variants[b.plan[b.step].y]
 			# the cube before the eyes, and the throat's (its own check, below) with it in all at once
