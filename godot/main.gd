@@ -1,6 +1,7 @@
 class_name Main
 extends Node3D
-## Real-time wormhole for VR (README.md, docs/). The throat hangs LIFT over the floor; the renderer
+## Real-time wormhole for VR (README.md, docs/). The throat hangs over the floor, its shape the
+## video's or the menu's (set_shape); the renderer
 ## (renderer.gd) draws every image of each body along the geodesics of the wormhole space, the
 ## curved zone as a lens per pixel; this script builds the scene and moves the viewer through that
 ## curved space: walking in the room, with the sticks along the floor and flying off it as a ship
@@ -358,7 +359,7 @@ func place(pos: Vector3, forward: Vector3, side := 1.0, pitch := 0.0, roll := 0.
 
 
 ## Fly, at rest, with the head at l on the axis through the throat's centre (n = +x: in chart A the
-## line (x, 0, LIFT), in chart B (-x, 0, LIFT)), the room upright in chart A's axes, looking yaw
+## line (x, 0, lift), in chart B (-x, 0, lift)), the room upright in chart A's axes, looking yaw
 ## degrees to the right of the direction of falling l (toward the throat at l > 0, away from it at
 ## l < 0; the head's own yaw is taken out); the view turned pitch degrees up and roll degrees about
 ## the line of sight (right side up) on top of the head's own: the speed check. Along the axis the
