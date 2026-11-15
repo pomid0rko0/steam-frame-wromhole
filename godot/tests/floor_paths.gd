@@ -78,5 +78,5 @@ func _process(delta: float) -> bool:
 		return true
 	print("variant ", names[vi])
 	main.renderer.floor_mats[0].shader = shaders[vi]
-	main.renderer.upload_space()        # a material keeps only its shader's uniforms
+	main.renderer._profile()        # a material keeps only its shader's uniforms
 	return false

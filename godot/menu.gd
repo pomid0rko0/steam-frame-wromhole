@@ -10,7 +10,7 @@ extends Node3D
 ## next start also in SETTINGS: loaded in _ready, written by _save. A value stepped to takes effect
 ## only after SETTLE (or with A, another row, closing): stepping through the rates must not switch
 ## the headset at every step, nor the foveations make their textures again. A row that slides (the
-## throat's length) changes instead every frame its direction is held, by its rate, at once.
+## throat's shape: ShapeRow) changes instead every frame its direction is held, by its rate, at once.
 
 # shares of the full size (full_eye) each eye's picture can be, left to right in the menu
 const SCALES := [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
@@ -29,6 +29,10 @@ const HINT := "крестовина или левый стик: выбрать, 
 const SETTLE := 0.5             # s a value stepped to waits before it takes effect
 const LENGTH_RATE := 0.5        # the throat's length held: its (length + LENGTH_PAD) grows or shrinks so much a second
 const LENGTH_PAD := 2.0         # m (so 0 to 80 m in about 7 s, the video's 8 m from 0 in 3)
+# the throat's shape's rows (ShapeRow), in WormholeSpace.shape's order: the settings' keys, and m a
+# second the radius, the fillet and the lift change while held (the length: LENGTH_RATE)
+const SHAPE_KEYS := ["radius", "length", "fillet", "lift"]
+const SHAPE_RATES := [1.0, 0.0, 0.5, 2.0]
 const NOTICE_TIME := 2.0        # s a notice stays on the line below (notice)
 const REPEAT_AFTER := 0.4       # s a direction is held before it repeats
 const REPEAT := 0.12            # s between repeats
@@ -554,15 +558,22 @@ func choose_scale(v: float) -> void:
 	_set_text(_compose())
 
 
-## The throat's length let go of (its row slid to it): kept for the next start, and in the log.
+## The throat's shape let go of (a row of it slid to it): kept for the next start, and in the log
+## (the one asked for; the space's, the log's «throat:» line, follows it: main.set_shape).
 func _slid() -> void:
 	_save()
-	print("menu: throat ", main.length_text())
+	var w := main.shape_want
+	print("menu: throat radius %.2f m, cylinder %.2f m, fillet %.2f m, centre %.2f m over the floor" % [w[0], w[1], w[2], w[3]])
 
 
-## The throat's length kept (main.set_length), or by default (main.LENGTH).
-static func saved_length(default: float) -> float:
-	return float(_load().get_value("throat", "length", default))
+## The throat's shape kept (main.set_shape's, as WormholeSpace.shape gives one), each part of it
+## kept or else default's; the nearest the app takes now (WormholeSpace.fit).
+static func saved_shape(default: PackedFloat64Array) -> PackedFloat64Array:
+	var cfg := _load()
+	var s := default.duplicate()
+	for k in SHAPE_KEYS.size():
+		s[k] = float(cfg.get_value("throat", SHAPE_KEYS[k], s[k]))
+	return WormholeSpace.fit(s[0], s[1], s[2], s[3])
 
 
 ## A foveation choice; kept for the next start.
@@ -606,7 +617,8 @@ func _save() -> void:
 	var cfg := _load()
 	cfg.set_value("ui", "strip", strip_on)
 	cfg.set_value("ui", "beam", main.hands.beam)
-	cfg.set_value("throat", "length", 2.0 * main.space.Lc)
+	for k in SHAPE_KEYS.size():
+		cfg.set_value("throat", SHAPE_KEYS[k], main.shape_want[k])
 	if xr:
 		_keep(cfg, "eye", render_scale, scale_chosen)
 		_keep(cfg, "foveation_level", foveation, foveation_chosen)
@@ -755,7 +767,8 @@ func _make_rows() -> Array[Row]:
 	return [RateRow.new(self, "rate", "частота"), ScaleRow.new(self, "scale", "разрешение"),
 			FovRow.new(self, "fov", "фовеация"), ZonesRow.new(self, "zones", "зоны фовеации"),
 			GazeRow.new(self, "gaze", "точка взгляда"), BeamRow.new(self, "beam", "луч прицела"),
-			LengthRow.new(self, "length", "длина горла"),
+			ShapeRow.new(self, "length", "длина горла"), ShapeRow.new(self, "radius", "радиус горла"),
+			ShapeRow.new(self, "fillet", "скругление"), ShapeRow.new(self, "lift", "высота горла"),
 			GravRow.new(self, "grav", "гравитация"), FlyRow.new(self, "fly", "полёт"),
 			TurnRow.new(self, "turn", "поворот"),
 			StripRow.new(self, "strip", "строка частоты"),
@@ -821,32 +834,51 @@ class Row:
 		pass
 
 
-## The throat's cylinder's length (main.set_length): held left or right it shortens or stretches as
-## it is held, from nought to WormholeSpace.LENGTH_MAX; A: the video's.
-class LengthRow extends Row:
+## A part of the throat's shape (main.set_shape; key: SHAPE_KEYS'): its cylinder's length, its
+## radius, its fillet's radius, its centre's height over the floor. Held left or right it shrinks or
+## grows as it is held, within what WormholeSpace.fit takes, and the other rows follow where they
+## must: a throat grown wider than its height allows rises, one made narrow gets a sharper fillet,
+## a fillet made soft widens the throat; A: the video's. The value is the one asked for, shown as
+## waiting until the space has it (a radius or a fillet: once its sweep table is built).
+class ShapeRow extends Row:
+	func part() -> int:
+		return SHAPE_KEYS.find(key)
+
 	func count() -> int:
 		return 1
 
 	func text(_i: int) -> String:
-		var m := 2.0 * menu.main.space.Lc
+		var m := menu.main.shape_want[part()]
 		return ("%.1f м" % m).replace(".", ",") if m < 9.95 else "%d м" % roundi(m)
 
 	func enabled() -> bool:
 		return not menu.main.hold
 
+	func waiting() -> bool:
+		return absf(menu.main.shape_want[part()] - menu.main.space.shape()[part()]) > 1e-9
+
 	func slides() -> bool:
 		return true
 
 	func slide(dir: int, dt: float) -> void:
-		var m := 2.0 * menu.main.space.Lc + LENGTH_PAD
-		m *= exp(dir * LENGTH_RATE * dt)
-		menu.main.set_length(clampf(m - LENGTH_PAD, 0.0, WormholeSpace.LENGTH_MAX))
+		var k := part()
+		var m := menu.main.shape_want[k]
+		if key == "length":
+			m = (m + LENGTH_PAD) * exp(dir * LENGTH_RATE * dt) - LENGTH_PAD
+		else:
+			m += dir * SHAPE_RATES[k] * dt
+		_take(m)
 
 	func act() -> bool:
-		menu.main.set_length(menu.main.LENGTH)
+		_take(WormholeSpace.fit(Main.THROAT_RADIUS, Main.LENGTH, Main.FILLET, Main.LIFT)[part()])
 		menu._slid()
 		menu.refresh()
 		return true
+
+	func _take(m: float) -> void:
+		var w := menu.main.shape_want.duplicate()
+		w[part()] = m
+		menu.main.set_shape(w[0], w[1], w[2], w[3], false, key == "fillet")
 
 
 ## The refresh rate (frame_rate.gd).

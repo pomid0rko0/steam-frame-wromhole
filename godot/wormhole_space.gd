@@ -9,7 +9,7 @@ extends RefCounted
 ## tangential part (u . n = 0). In this representation the metric is Vector4.dot.
 ##
 ## The floor is the plane lift below the throat's centre in each flat universe (R^4's z = -lift
-## in either sheet); lift > Rout, so it stays out of the curved zone. The charts (chart_position)
+## in either sheet), out of the curved zone (lift_min). The charts (chart_position)
 ## put it at z = 0: chart A is R^4's xyz in sheet A raised by lift, chart B the same in sheet B,
 ## mirrored in x.
 
@@ -39,11 +39,8 @@ func _init(throat_radius: float, half_length: float, fillet_radius: float, p_lif
 	assert(lift > Rout, "the floor must stay out of the curved zone")
 
 
-## The throat's shape. Only _init calls it: a change at run time must also rebuild what is built for
-## the shape (Renderer.upload_space: the profile, the sweep table, the gravity's numbers; the field
-## lines), and keep lift above Rout and what stands in chart coordinates (godot/scene.json's objects,
-## the toys' places, CheckScene's, main.START_POS, bench.gd's places) out of the curved zone. The
-## throat's length alone changes at run time: set_length.
+## The throat's shape as _init takes it, a crease (h < fillet) too. At run time the shape changes by
+## set_shape.
 func set_profile(throat_radius: float, half_length: float, fillet_radius: float) -> void:
 	rho0 = throat_radius
 	h = half_length
@@ -55,31 +52,125 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	_build_gravity()
 
 
-# the throat's cylinder's longest length set_length takes, m: ref/test_gpu.py checks the method on
-# a throat this long (its PROFILES' «long»)
+# The shapes set_shape takes (fit: the menu's rows offer these), m: the throat's radius, its
+# fillet's (the throat at least WIDE of them across its radius: no softer against the throat than
+# the video's, but for the throats narrower than the video's with the sharpest fillet; so the
+# softest fillet, FILLET_MAX, is the widest throat's), its cylinder's length and its centre over the
+# floor. ref/test_gpu.py checks the method on the far corners of the radius and the fillet, without
+# a cylinder and with the longest (its MENU). No wider: a fillet softer against the throat puts rays
+# off (issue #135: at half the throat's radius, 1.5 m and more, the sweep table misses its limit on
+# some rays, and so does the search for a point's image), a sharper one breaks the bodies in the
+# curved zone (#136). RADIUS_MAX and LIFT_MAX only keep the throat within the scene and in sight.
+const RADIUS_MIN := 2.0
+const RADIUS_MAX := 6.0
+const FILLET_MIN := 1.0
+const FILLET_MAX := 2.0
+const WIDE := 3.0
 const LENGTH_MAX := 80.0
+const LIFT_MAX := 15.0
+const FLOOR_CLEAR := 1.0        # m: the curved zone's bottom over the floor, at least (lift_min)
 
 
-## The cylinder's length 2 Lc, from 0 (the fillets meet smoothly, h = R) to LENGTH_MAX, the radius
-## and the fillet the same: the sweep table is the same (it hangs on those alone), the gravity's
-## table is the fillet's two solutions summed afresh (_grav_sum), so a frame can take it. The
-## renderer takes it by Renderer.set_length, and what stands in the space is carried by carried_l.
-func set_length(cylinder: float) -> void:
-	assert(h >= fillet, "a length is a throat's without a crease")
-	Lc = clampf(cylinder, 0.0, LENGTH_MAX) * 0.5
+## The lowest the centre of a throat of this radius and fillet hangs over the floor: the floor stays
+## out of the curved zone (its ball, of radius Rout), FLOOR_CLEAR under it. The one place that says
+## so: all else takes the floor at any lift (height, chart_position, the shaders' g_lift).
+static func lift_min(throat_radius: float, fillet_radius: float) -> float:
+	return throat_radius + fillet_radius + FLOOR_CLEAR
+
+
+## The shape nearest to (radius, cylinder, fillet, lift) that set_shape takes, as shape() gives one:
+## each part within its limits; the radius and the fillet together (WIDE): the radius as asked and
+## the fillet as sharp as that throat needs (a throat made narrow gets a sharper fillet), or with
+## fillet_leads the fillet as asked and the throat as wide as it needs (a fillet made soft widens
+## the throat); then the lift no lower than lift_min of both (a throat grown wide rises).
+static func fit(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float, fillet_leads := false) -> PackedFloat64Array:
+	var rad := clampf(throat_radius, RADIUS_MIN, RADIUS_MAX)
+	var fil := clampf(fillet_radius, FILLET_MIN, FILLET_MAX)
+	if fillet_leads:
+		if fil > FILLET_MIN:
+			rad = clampf(maxf(rad, WIDE * fil), RADIUS_MIN, RADIUS_MAX)
+	fil = clampf(fil, FILLET_MIN, maxf(FILLET_MIN, rad / WIDE))
+	return PackedFloat64Array([rad, clampf(cylinder, 0.0, LENGTH_MAX), fil,
+			clampf(p_lift, lift_min(rad, fil), maxf(LIFT_MAX, lift_min(rad, fil)))])
+
+
+## The shape: [the throat's radius, its cylinder's length 2 Lc, its fillet's radius, the lift], m.
+func shape() -> PackedFloat64Array:
+	return PackedFloat64Array([rho0, 2.0 * Lc, fillet, lift])
+
+
+## A space of the shape s (shape()'s).
+static func of(s: PackedFloat64Array) -> WormholeSpace:
+	var sp := WormholeSpace.new(s[0], 0.5 * s[1] + s[2], s[2], s[3])
+	sp.set_shape(s[0], s[1], s[2], s[3])        # Lc to the last digit
+	return sp
+
+
+## The shape changed at run time, to one fit gives: a throat without a crease (h = Lc + fillet, the
+## fillets meet the cylinder, or each other at cylinder 0, smoothly). What is built for the shape
+## must follow: the renderer (Renderer.set_space: the profile and gravity's numbers to every shader,
+## the sweep table, which hangs on the radius and the fillet alone, the field lines) and what stands
+## in the space (carried); main.set_shape does it all. Gravity: with the radius and the fillet as
+## they were the fillet's two solutions are summed afresh (_grav_sum, cheap: a frame can take it),
+## else taken from solved, a space of that radius and fillet (made off the main thread), or without
+## one solved here (milliseconds: too long for a frame in the headset); the lift is not in it.
+func set_shape(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float, solved: WormholeSpace = null) -> void:
+	var same := throat_radius == rho0 and fillet_radius == fillet and not _grav_one.is_empty() and th0 == 0.0
+	var Lc0 := Lc
+	rho0 = throat_radius
+	fillet = fillet_radius
+	Lc = 0.5 * cylinder
 	h = Lc + fillet
+	th0 = 0.0
 	L = Lc + fillet * PI / 2.0
-	_grav_sum()
+	Rout = rho0 + fillet
+	lift = p_lift
+	assert(lift > Rout, "the floor must stay out of the curved zone")
+	if same:
+		if Lc != Lc0:
+			_grav_sum()
+	elif solved != null and solved.rho0 == rho0 and solved.fillet == fillet and solved.th0 == 0.0:
+		grav_k = solved.grav_k
+		_grav_one = solved._grav_one
+		_grav_sum()
+	else:
+		_build_gravity()
 
 
-## Where a point at l before a change of the cylinder's length (it was 2 Lc0) is now, n the same: in
-## a universe or its fillet it goes with its mouth, in the cylinder with its length (at the same
-## share of the way from its middle): the floor's places stay, and so do a vector's parts (U_l, u).
-func carried_l(l: float, Lc0: float) -> float:
+## Where the point (l, n) of the space before a change of its shape (from: shape() then; no crease
+## then or now), with the tangent vectors vecs there, is in it now: [l, n, vecs].
+## - In the cylinder: at the same share of its length; on a fillet: at the same angle along it; n
+##   and the vectors' parts (U_l, u) as they were. It goes with the throat.
+## - In a flat universe: at the same place of its chart, the vectors as the chart has them: what
+##   stands on the floor stays there, what hangs over it keeps its height. A place the curved zone's
+##   ball now covers goes straight out from the throat's centre to the ball's edge. With the lift
+##   as it was n stays exactly.
+func carried(l: float, n: Vector3, vecs: Array, from: PackedFloat64Array) -> Array:
+	var Lc0 := 0.5 * from[1]
+	var L0 := Lc0 + from[2] * PI / 2.0
 	var al := absf(l)
-	if al >= Lc0:
-		return signf(l) * (al - Lc0 + Lc)
-	return l * Lc / Lc0
+	if al < Lc0:
+		return [l * Lc / Lc0, n, vecs.duplicate()]
+	if al < L0:
+		return [signf(l) * (Lc + (al - Lc0) * fillet / from[2]), n, vecs.duplicate()]
+	var sg := -1.0 if l < 0.0 else 1.0
+	var rr := al - L0 + from[0] + from[2]
+	if lift == from[3]:
+		return [sg * (maxf(rr, Rout) - Rout + L), n, vecs.duplicate()]
+	# from the centre where it is now, in float64 (n's own digits are single)
+	var cx := rr * n.x
+	var cy := rr * n.y
+	var cz := rr * n.z + from[3] - lift
+	var rn := sqrt(cx * cx + cy * cy + cz * cz)
+	var nn := Vector3(cx / rn, cy / rn, cz / rn)
+	var out := []
+	for U: Vector4 in vecs:
+		# as R^4's xyz has it in that sheet (a chart's mirror in x undone both ways)
+		var d := sg * U.x * n + Vector3(U.y, U.z, U.w)
+		var rad := d.dot(nn)
+		var u := d - rad * nn
+		out.append(Vector4(sg * rad, u.x, u.y, u.z))
+	return [sg * (maxf(rn, Rout) - Rout + L), nn, out]
 
 
 func _theta(al: float) -> float:

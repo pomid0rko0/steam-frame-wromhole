@@ -1,5 +1,6 @@
 extends SceneTree
-## The throat's length changed at run time (main.set_length, the menu's row «длина горла»), exit
+## The throat's length changed at run time (main.set_length, the menu's row «длина горла»; its
+## radius, fillet and height: shape_test.gd), exit
 ## status 1 on any failure:
 ##   godot --path . --resolution 480x270 -s res://tests/length_test.gd
 ## 1. Holding right on the row stretches the throat frame by frame, no frame's scripts taking BUSY ms;
@@ -13,7 +14,7 @@ extends SceneTree
 ##    the floor, the sky, the scene's objects, the gravity view's floor and field lines (built again
 ##    off the main thread for the length), and a ball and a cube in the throat's cylinder (_bodies:
 ##    there from before the throat stretches; their meshes and their images' tail), from the start.
-##    The app is started again with the length kept in the settings (Menu.saved_length) for the
+##    The app is started again with the length kept in the settings (Menu.saved_shape) for the
 ##    second picture.
 
 const U := preload("res://tests/util.gd")
@@ -98,8 +99,7 @@ func _process(_delta: float) -> bool:
 					is_equal_approx(2.0 * main.space.Lc, WormholeSpace.LENGTH_MAX),
 					"%.3f m after %d frames" % [2.0 * main.space.Lc, slid_frames])
 			U.check("while it stretches, no frame's scripts take %.0f ms" % BUSY, busy < BUSY, "%.1f ms at most" % busy)
-			U.check("the length is kept", is_equal_approx(Menu.saved_length(0.0), WormholeSpace.LENGTH_MAX),
-					"%.3f m" % Menu.saved_length(0.0))
+			U.check("the length is kept", is_equal_approx(_saved(), WormholeSpace.LENGTH_MAX), "%.3f m" % _saved())
 			var x1 := main.space.chart_position(main.viewer.l, main.viewer.n)
 			var x0: Vector3 = before[0]
 			U.check("standing, the body stays on the same place of the floor", x0.distance_to(x1) < 1e-9 and main.viewer.standing,
@@ -161,11 +161,16 @@ func _process(_delta: float) -> bool:
 	return false
 
 
+## The cylinder's length the settings keep.
+func _saved() -> float:
+	return Menu.saved_shape(main.shape_want)[1]
+
+
 ## 2: summed against solved, at lengths along the row's span.
 func _gravity() -> void:
 	var worst := 0.0
 	for cyl in [0.0, 0.5, 8.0, 23.0, LONG, WormholeSpace.LENGTH_MAX]:
-		main.space.set_length(cyl)
+		main.space.set_shape(main.space.rho0, cyl, main.space.fillet, main.space.lift)
 		var fresh := WormholeSpace.new(main.space.rho0, 0.5 * cyl + main.space.fillet, main.space.fillet, main.space.lift)
 		worst = maxf(worst, absf(main.space.grav_beta - fresh.grav_beta) / absf(fresh.grav_beta))
 		for i in 200:

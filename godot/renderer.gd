@@ -100,7 +100,13 @@ const LINE_WIDTH := 0.03        # half a line's width, m
 const LINE_STEPS := 5           # a chunk of a line (line_chunks): its steps, its arrows at most, its vertices
 const LINE_ARROWS := 2
 const LINE_CV := 2 * (LINE_STEPS + 1) + 3 * LINE_ARROWS
-const LINE_CHUNKS := 1024       # chunks at most (the 80 m throat's lines: about half)
+# chunks at most: ZoneSections' texture of their vertices has LINE_CV texels a chunk in one row, and
+# LINE_TEXELS is as wide as a texture is taken to get (wider, its creation fails and no line is
+# drawn; tests/shape_test.gd checks it against the device's limit). The video's throat's lines at
+# 80 m are about half of these; a wide throat hung high has more, and then every second, third... of
+# them is drawn (line_chunks)
+const LINE_TEXELS := 16384
+const LINE_CHUNKS := LINE_TEXELS / LINE_CV
 const ARROW_GAP := 1.0          # m along a line between its arrows
 const ARROW_LENGTH := 0.24      # m
 const ARROW_HALF := 0.12        # half an arrow's width, m
@@ -220,7 +226,8 @@ func _ready() -> void:
 		m.shader = SCENE_SHADER
 		m.set_shader_parameter("sheet", side)
 		scene_mats.append(m)
-	upload_space()
+	_table(space.sweep_table())
+	_profile()
 	floor_quad = MeshInstance3D.new()
 	var q := QuadMesh.new()
 	q.size = Vector2(2.0, 2.0)
@@ -362,15 +369,18 @@ func materials() -> Array[ShaderMaterial]:
 	return out
 
 
-## The throat's shape and what is built for it (WormholeSpace.set_profile's list): the profile,
-## the sweep table, the floor's lift and gravity there. Slow in GDScript: not per frame.
-func upload_space() -> void:
-	var tab := space.sweep_table()
-	_sweep_tex = ImageTexture.create_from_image(tab.image)
+## The sweep table (WormholeSpace.sweep_table's, slow in GDScript: built off the main thread when
+## the shape changes, main.set_shape) into the texture every shader has, in place: the compositor's
+## passes hold that texture.
+func _table(tab: Dictionary) -> void:
+	if _sweep_tex == null:
+		_sweep_tex = ImageTexture.create_from_image(tab.image)
+	else:
+		_sweep_tex.update(tab.image)
 	_sweep_axes = tab.axes
-	_profile()
 
 
+## The profile, the table's axes, the lift and gravity's numbers to every shader.
 func _profile() -> void:
 	for m in materials():
 		_space_params(m)
@@ -381,12 +391,19 @@ func _profile() -> void:
 				Vector2(space.lift, space.grav_beta))
 
 
-## The throat's length changed (WormholeSpace.set_length), a frame at a time while it is being
-## changed: the profile and gravity's numbers to every shader (the sweep table is the same), the
-## tail on or off, and the field lines built anew off the main thread (a WormholeSpace of their own:
-## a few tenths of a second), shown again when they are (_lines_ready).
-func set_length() -> void:
+## The space's shape changed (WormholeSpace.set_shape), a frame at a time while a row of the menu
+## changes it: all that is built for it, this frame. table: the new radius' and fillet's sweep table
+## (WormholeSpace.sweep_table's; none: they are the same, and so is it); the profile, the lift and
+## gravity's numbers to every shader, the scene's objects in the lens list (they stand in the charts,
+## the throat's centre lift over their floor), the tail on or off, and the field lines built anew off
+## the main thread (a WormholeSpace of their own: a few tenths of a second), shown again when they
+## are (_lines_ready).
+func set_space(table := {}) -> void:
+	if not table.is_empty():
+		_table(table)
 	_profile()
+	_lens_statics()
+	_upload_lens(_lens_toys[0], _lens_toys[1])
 	_tail_on = zone_count != Vector2i.ZERO and space.Lc > 0.0
 	_tail_visible()
 	_lines_want = true
@@ -402,14 +419,13 @@ var _lines_built := []          # what it built: [line_chunks']
 
 func _lines_start() -> void:
 	_lines_want = false
-	var shape := Vector4(space.rho0, space.h, space.fillet, space.lift)
 	_lines_built = []
-	_lines_task = WorkerThreadPool.add_task(_lines_build.bind(shape), false, "field lines")
+	_lines_task = WorkerThreadPool.add_task(_lines_build.bind(space.shape()), false, "field lines")
 
 
 ## On a worker thread: reads nothing of the app's, only makes new things.
-func _lines_build(shape: Vector4) -> void:
-	_lines_built = [line_chunks(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
+func _lines_build(shape: PackedFloat64Array) -> void:
+	_lines_built = [line_chunks(WormholeSpace.of(shape))]
 
 
 func _exit_tree() -> void:
@@ -911,26 +927,40 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
 ## LINE_* and ARROW_*) of the space sp, in chunks (nothing but sp is read, so they are built off the
-## main thread when the throat's length changes: main.set_length): LINE_STEPS steps of a line, LINE_CV
+## main thread when the throat's shape changes: set_space): LINE_STEPS steps of a line, LINE_CV
 ## vertices each (line_mesh: its strip, then up to LINE_ARROWS arrows; a chunk's last ones repeated
 ## where it has fewer). Each with its outline (_line_chunks). Returns n: the chunks; in: a vertex's
 ## point (l, n.y, n.z) and 1 for an arrow's, 0 for the line's (ZoneSections' LINES works out where it
 ## is in the view); data: three texels a vertex for the vertex shader (body.gdshaderinc, ARROWS):
 ## (its colour, 1 for an arrow's), (how far inside the coloured part), (how far inside its line's).
-## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
+## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta). Where every line's
+## chunks would be over LINE_CHUNKS, the lines every second, third... LINE_STEP across from the
+## middle one, as many as fit.
 static func line_chunks(sp: WormholeSpace) -> Dictionary:
-	var out := {"n": 0, "in": PackedFloat32Array(), "data": PackedFloat32Array()}
 	var top := sp.Rout + LINE_TOP
 	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
+	var lines := []                 # [i, its points]
 	for side in [1.0, -1.0]:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
 			var rr := Vector2(y, top).length()
 			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
-			if pts.size() < 2:
-				continue
-			_line_chunks(sp, pts, out)
+			if pts.size() >= 2:
+				lines.append([i, pts])
+	var every := 1
+	while true:
+		var n := 0
+		for line: Array in lines:
+			if line[0] % every == 0:
+				n += ceili(float((line[1] as Array).size() - 1) / LINE_STEPS)
+		if n <= LINE_CHUNKS:
+			break
+		every += 1
+	var out := {"n": 0, "in": PackedFloat32Array(), "data": PackedFloat32Array()}
+	for line: Array in lines:
+		if line[0] % every == 0:
+			_line_chunks(sp, line[1], out)
 	return out
 
 

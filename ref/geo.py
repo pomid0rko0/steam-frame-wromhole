@@ -42,6 +42,30 @@ def app_lift():
     return _main_const('LIFT')
 
 
+def space_const(k):
+    """godot/wormhole_space.gd's constant k (a number)."""
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'godot', 'wormhole_space.gd')).read()
+    return float(re.search(r'^const %s := ([\d.]+)' % k, src, re.M).group(1))
+
+
+def menu_profiles():
+    """The throats at the far corners of the shapes the menu gives (WormholeSpace.fit), {name: (rho0,
+    h, R)}: the narrowest, and the widest with the softest fillet, each without a cylinder (h = R)
+    and with the longest."""
+    c = {k: space_const(k) for k in ('RADIUS_MIN', 'RADIUS_MAX', 'FILLET_MIN', 'FILLET_MAX', 'WIDE', 'LENGTH_MAX')}
+    def soft(r):
+        return max(c['FILLET_MIN'], min(c['FILLET_MAX'], r / c['WIDE']))
+    lo, hi, long = c['RADIUS_MIN'], c['RADIUS_MAX'], 0.5 * c['LENGTH_MAX']
+    return {'narrow, h = R': (lo, soft(lo), soft(lo)), 'narrow, long': (lo, soft(lo) + long, soft(lo)),
+            'wide and soft, long': (hi, soft(hi) + long, soft(hi)), 'wide and soft, h = R': (hi, soft(hi), soft(hi))}
+
+
+def lift_of(rho0, R):
+    """The centre of a throat of radius rho0 and fillet R above the floor as the app has it by
+    default: main.gd's LIFT, or WormholeSpace.lift_min where that is higher (WormholeSpace.fit)."""
+    return max(app_lift(), rho0 + R + space_const('FLOOR_CLEAR'))
+
+
 class Space:
     def __init__(self, rho0=3.0, h=5.0, R=1.0):
         self.rho0, self.h, self.R = rho0, h, R

@@ -321,6 +321,31 @@ func set_state(p: Array) -> void:
 	V = p[4]
 
 
+## Before the space's shape changes (main.set_shape): what after_shape puts the body back by.
+## Standing: the feet's place in their chart and the room's x and z there; flying: the head (at
+## height in the room), the room's axes and the velocity there.
+func before_shape(height: float) -> Array:
+	if standing:
+		var side := signf(l)
+		var x := space.chart_position(l, n)
+		return [side, Vector2(x.x, x.y), WormholeSpace.vector_to_chart(side, n, frame[0]), WormholeSpace.vector_to_chart(side, n, frame[2])]
+	var hp := head(height)
+	return [hp[0], hp[1], (hp[2] as Array) + [V]]
+
+
+## The space's shape changed (from: its shape() before; kept: before_shape's): standing, the feet
+## are on the same place of the floor, the room's axes as the chart has them; flying, the head goes
+## with its part of the space (WormholeSpace.carried), the room's axes and the velocity with it.
+func after_shape(kept: Array, from: PackedFloat64Array, height: float) -> void:
+	_head_of = []                   # the head was worked out in the space as it was
+	if standing:
+		stand_at(kept[0], kept[1], kept[2], kept[3])
+		return
+	var c := space.carried(kept[0], kept[1], kept[2], from)
+	V = c[2][3]
+	_set_head(c[0], c[1], (c[2] as Array).slice(0, 3), height)
+
+
 ## Flying, the feet within LIMIT of the throat's centre: back on that sphere, the velocity's part
 ## outward taken away (standing: move keeps them in).
 func _keep_in() -> void:
