@@ -9,10 +9,11 @@ extends SceneTree
 ##    curved zone): it ends on the floor there, pale
 ## 2. a ball lying on the bent floor there is aimed at (the beam orange, up to it), pulled by a
 ##    flick of the wrist and caught
-## 3. a ball on universe B's floor, seen through the throat along the floor: aimed at, the beam
-##    through the throat to it. Its pull is tried and only printed: with the floor through the
-##    throat a toy on B's floor is seen from A's nearly along the throat's axis, where no throw is
-##    steady (hands.gd's top), and the hands find none that reaches the hand
+## 3. a ball on universe B's floor, seen through the throat along the floor, 32 degrees off the
+##    line through the throat's centre: aimed at, the beam through the throat to it; pulled through
+##    the throat and caught, its throw missing the hand by less than 10 cm. (Nearer that line, and
+##    past the throat's rim, the hands find no steady throw: hands.gd's top; with the floor through
+##    the throat that is most of B's floor as seen from A's.)
 ## 4. standing in the throat's middle (walked there), a ball set down beside the feet rests on the
 ##    floor, and the hand takes it
 
@@ -182,7 +183,7 @@ func _run() -> void:
 	_clear()
 	_pose(right, p, Basis.IDENTITY)
 	await _step(2)
-	ball = main.toys.ball_on_floor(-1.0, Vector2(-6.0, 6.5), 0.3, Color(0.75, 0.35, 0.9))    # clear of scene.json's boxes
+	ball = main.toys.ball_on_floor(-1.0, Vector2(-7.2, 4.5), 0.3, Color(0.75, 0.35, 0.9))    # beside scene.json's box
 	way = _toward_geodesic(h, sp.embed(ball.l, ball.n))
 	_pose(right, p, _toward(way[0]))
 	await _step(AIM)
@@ -198,9 +199,10 @@ func _run() -> void:
 			% [h.aimed == ball, h.aim_s, ball.l, (end - sp.embed(ball.l, ball.n)).length()])
 	res = await _pull(p, _toward(way[0]), ball)
 	pull = res[0]
-	print("its pull through the throat (no check: this file's top): caught %s; %d tries, missing by %.3f m, %.2f m/s, %.2f s to fly, its miss moving %.2f m per m/s"
-			% [res[2] > 0, pull.tries if pull else 0, pull.miss if pull else 0.0, pull.best.length() if pull else 0.0,
-			pull.T if pull else 0.0, pull.sens if pull else 0.0])
+	U.check("... pulled through the throat along the floor and caught", pull != null and res[2] > 0 and res[3] < -sp.L and res[4] > sp.L
+			and pull.miss < 0.1, "%d tries, missing by %.4f m, %.2f m/s, %.2f s to fly, its miss moving %.2f m per m/s; caught %.2f s after it flew; l from %.2f to %.2f"
+			% [pull.tries if pull else 0, pull.miss if pull else 0.0, pull.best.length() if pull else 0.0,
+			pull.T if pull else 0.0, pull.sens if pull else 0.0, (res[2] - res[1]) / 60.0, res[3], res[4]])
 	right.set_input(&"grip", 0.0)
 	main.menu.show_beam(false)
 	await _step(2)
