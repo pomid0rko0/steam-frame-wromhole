@@ -1028,6 +1028,38 @@ def floor_reference(S, X, lift, d=0.0):
     return (1, phi, l, way)
 
 
+def floor_backward(S, X, lift, off):
+    """Whether the GPU's answer (off: its error against a reference's answer, floor_checks') is the
+    reference's for the ray X's launch turned by some d within ALPHA_TOL: launches across that range,
+    then, between two next to each other whose answers are of different kinds, halving toward where
+    the kind changes (there the floor is met at the zone's edge, or first grazed)."""
+    def good(r):
+        if r is None or r[0] < 0:
+            return False
+        e = off(r)
+        return e is not None and e[0] <= 1 and e[1] <= 1
+    grid = np.linspace(-ALPHA_TOL, ALPHA_TOL, 33)
+    refs = [floor_reference(S, X, lift, d) for d in grid]
+    if any(good(r) for r in refs):
+        return True
+    for k in range(len(grid) - 1):
+        a, b, ra, rb = grid[k], grid[k + 1], refs[k], refs[k + 1]
+        if ra is None or rb is None or ra[0] == rb[0]:
+            continue
+        for _ in range(40):
+            m = 0.5 * (a + b)
+            rm = floor_reference(S, X, lift, m)
+            if good(rm):
+                return True
+            if rm is None:
+                break
+            if rm[0] == ra[0]:
+                a, ra = m, rm
+            else:
+                b, rb = m, rm
+    return False
+
+
 FLOOR_RAY = 400.0            # m: a ray still in the zone and over the floor this far is left out
 FLOOR_PAST = 2.0             # m: the reference's ray goes on this far out of the zone, for the floor met at its edge
 FLOOR_ILL = 2e-4             # m: a ray whose answer changes as the floor moves by this grazes it
@@ -1037,7 +1069,9 @@ def floor_checks(name, S, gpu, rng):
     """The floor in the curved zone (geo_floor): rays from eyes over the floor, the floor at each of
     floor_lifts' heights: whether the ray meets it before it leaves the zone, and where (its point on
     the floor within the floor's limit, its way); met at the zone's edge, the point alone is held to
-    (inside or just past the edge is the same floor's point). A ray that grazes the floor (the reference's answer
+    (inside or just past the edge is the same floor's point). A ray whose way across the zone is
+    ill-posed (next to the photon sphere) must have the reference's answer for a launch within
+    ALPHA_TOL (floor_backward). A ray that grazes the floor (the reference's answer
     changes as the floor is moved FLOOR_ILL up or down, or as the launch turns by ALPHA_TOL) must be
     one of those answers."""
     if crease_off(name, S, 'the floor in the zone'):
@@ -1063,7 +1097,7 @@ def floor_checks(name, S, gpu, rng):
         o = gpu.run(17, rows, out_per=2)
         gpu.prog['g_lift'] = LIFT
         counts = {0: 0, 1: 0, 2: 0}
-        wrong, ill, left, worst, worst_way = [], 0, 0, 0.0, 0.0
+        wrong, ill, turned, left, worst, worst_way = [], 0, 0, 0, 0.0, 0.0
         for k, row in enumerate(rows):
             g = o[2 * k:2 * k + 2]
             X = Exit(S, row)
@@ -1102,11 +1136,17 @@ def floor_checks(name, S, gpu, rng):
                 if any(x is not None and x[0] <= 30 and x[1] <= 30 for x in es):
                     ill += 1
                     continue
+            # next to the photon sphere a ray's way across the zone moves with a hair of its launch (as
+            # its way out: exit_checks): the GPU's answer must be the reference's for a launch within
+            # ALPHA_TOL
+            if floor_backward(S, X, lift, off):
+                turned += 1
+                continue
             wrong.append((k, row, g, ref, e))
         fails += not check(f'{name}: the floor in the zone at lift {lift:.2f} (geo_floor)', not wrong,
                            f'its point off by {worst:.2f} of the limit, the way by {worst_way:.2f} at most; {len(wrong)} wrong '
                            f'({len(rows)} rays: {counts[1]} meet it in the zone, {counts[2]} before the zone, {counts[0]} leave the zone; '
-                           f'{ill} grazing it, {left} still over it in the zone {FLOOR_RAY:.0f} m on left out)')
+                           f'{ill} grazing it, {turned} the reference\'s for a launch within {ALPHA_TOL:.0e} rad, {left} still over it in the zone {FLOOR_RAY:.0f} m on left out)')
         for k, row, g, ref, e in wrong[:8]:
             print(f'    ray {k}: eye l {row[0]!r}, n {tuple(row[1:4])}, D {tuple(row[4:8])}: GPU (code, psi, l, way) {tuple(g[0])}, (r, wd, enters, turn) {tuple(g[1])}; '
                   f'reference {ref}; {e}')
