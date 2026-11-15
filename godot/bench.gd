@@ -47,8 +47,10 @@ extends Node
 ## draw) and the app quits after it (quit_after), the file gone so that the next start is a plain one.
 ##
 ## Throughout, the toys are at their start (Toys.spawn, without the throw and the drop: the toys
-## in the curved zone, their images and tail, cost as much as the bodies timed), so that a check
-## times what another session's does. Afterwards what it changed comes back (_restore, _finish).
+## in the curved zone, their images and tail, cost as much as the bodies timed) and the throat has
+## the video's radius, fillet and height over the floor (start: its places are chosen against that
+## throat, and the menu's would cost otherwise), so that a check times what another session's does.
+## Afterwards what it changed comes back (_restore, _finish).
 
 const RateMeter := preload("res://rate_meter.gd")
 const ASKED := "user://bench_at_start"   # tools/frame.sh's: run the check at the start, then quit
@@ -57,9 +59,8 @@ const ASKED := "user://bench_at_start"   # tools/frame.sh's: run the check at th
 # a float, the head at that l on the axis through the throat's centre (main.place_on_axis: flying,
 # main.LIFT over the floor, facing the throat at l > 0 and away from it at l < 0). Degrees to the
 # right and up are from there. The values are metres chosen against the video's throat's curved zone
-# (edge MOUTH, radius Rout) and main.LIFT, which WormholeSpace.set_profile's list names; on a throat
-# of another length (the menu's) a place on the axis off l = 0 is as far from its mouth as there
-# (_axis_l).
+# (edge MOUTH, radius Rout) and main.LIFT, which the check runs on (start); on a throat of another
+# length (the menu's) a place on the axis off l = 0 is as far from its mouth as there (_axis_l).
 const MOUTH := 4.0 + PI / 2.0
 const START := INF
 const UNDER_A := Vector3(2.5, 0.0, 1.0)     # on A's floor under the mouth, the head just below the curved zone
@@ -172,6 +173,7 @@ var throat_fixed := false:
 		if main and main.toys.enabled:
 			main.draw_toys()
 var saved_length := 0.0         # the throat's cylinder's length before (a place sets its own)
+var saved_shape := PackedFloat64Array()   # and its whole shape (main.shape_want): the check runs on the video's but for the length
 var saved_gravity := 0          # the gravity view before (the field lines' variant sets its own)
 var plan: Array[Vector2i] = []  # segments: (place index, variant index)
 var step := -1                  # the segment or tour step running
@@ -290,7 +292,7 @@ func _make_tour() -> Array[Step]:
 func _put_place(place: Array) -> void:
 	var cyl: float = place[3] if place.size() > 3 else saved_length
 	if not is_equal_approx(2.0 * main.space.Lc, cyl):
-		main.set_length(cyl)
+		main.set_length(cyl, true)
 	_put(place[0], place[1], place[2])
 
 
@@ -366,14 +368,22 @@ func start() -> void:
 	variants.clear()
 	for f in VARIANTS:
 		variants.append(Setup.new(f))
+	var w := main.shape_want
+	main.set_shape(w[0], w[1], w[2], w[3], true)    # the shape asked for in effect: the pose is kept on it
 	saved_pose = main.get_pose()
 	var toys: Toys = main.toys
 	saved_toys = [toys.world.balls.duplicate(), toys.world.cubes.duplicate(), toys.launch_in, toys.drop_in]
+	saved_shape = main.shape_want.duplicate()
+	saved_length = saved_shape[1]
+	if toys.enabled:
+		# those kept stay as they are, where the shape before has them: out of the space while it changes
+		toys.world.balls.clear()
+		toys.world.cubes.clear()
+	main.set_shape(Main.THROAT_RADIUS, saved_length, Main.FILLET, Main.LIFT, true)
 	if toys.enabled:
 		toys.spawn()
 		toys.launch_in = -1.0
 		toys.drop_in = -1.0
-	saved_length = 2.0 * main.space.Lc
 	saved_gravity = main.renderer.gravity_view
 	main.hold = true
 	menu.set_eye(1.0)       # the menu keeps the size chosen (menu.render_scale)
@@ -810,7 +820,9 @@ func _finish(tour_line: String) -> void:
 	counting = false
 	phase = ""
 	_restore()
-	# the toys as they were: at the length they were at (_restore)
+	if not saved_shape.is_empty():
+		main.set_shape(saved_shape[0], saved_shape[1], saved_shape[2], saved_shape[3], true)
+	# the toys as they were: on the shape they were on
 	var toys: Toys = main.toys
 	if toys.enabled and not saved_toys.is_empty():
 		toys.world.balls.assign(saved_toys[0])
@@ -873,7 +885,7 @@ func _restore() -> void:
 	if main.renderer.gravity_view != saved_gravity:
 		main.set_gravity_view(saved_gravity)
 	if not is_equal_approx(2.0 * main.space.Lc, saved_length):
-		main.set_length(saved_length)
+		main.set_length(saved_length, true)
 	main.foveation.set_level(menu.foveation)
 
 
