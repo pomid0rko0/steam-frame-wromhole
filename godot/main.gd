@@ -121,7 +121,7 @@ var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n,
 # radius or a fillet whose sweep table is still being built
 var shape_want := WormholeSpace.fit(THROAT_RADIUS, LENGTH, FILLET, LIFT)
 var _shape_task := -1           # WorkerThreadPool's task building a sweep table (_shape_build), -1 none
-var _shape_built := []          # what it built: [radius, fillet, WormholeSpace.sweep_table's]
+var _shape_built := []          # what it built: [a space of the shape, its WormholeSpace.sweep_table]
 
 
 func _ready() -> void:
@@ -470,20 +470,22 @@ func set_fall(on: bool, say := false) -> void:
 ## The throat's shape (WormholeSpace.fit's nearest to it), m: its radius, its cylinder's length,
 ## its fillet's radius, its centre over the floor; each frame a row of the menu changes it. With the
 ## radius and the fillet as they are it takes effect at once. Another radius or fillet needs its
-## sweep table, built off the main thread (_shape_build: a WormholeSpace of its own, tenths of a
-## second on the headset) while the frames go on with the shape as it was; when it is ready the
+## sweep table, built off the main thread (_shape_build: a WormholeSpace of its own, too slow in
+## GDScript for a frame) while the frames go on with the shape as it was; when it is ready the
 ## whole shape takes effect in one frame (_shape_ready, _take_shape) with the length and the lift
 ## asked for by then, and the next table is started if the shape asked for has moved on. now: built
-## here and in effect at return (the speed check, the tests).
-func set_shape(radius: float, cylinder: float, fillet: float, lift: float, now := false) -> void:
-	shape_want = WormholeSpace.fit(radius, cylinder, fillet, lift)
+## here and in effect at return (the speed check, the tests). fillet_leads: WormholeSpace.fit's (the
+## fillet's row).
+func set_shape(radius: float, cylinder: float, fillet: float, lift: float, now := false, fillet_leads := false) -> void:
+	shape_want = WormholeSpace.fit(radius, cylinder, fillet, lift, fillet_leads)
 	var w := shape_want
 	var same := w[0] == space.rho0 and w[2] == space.fillet
 	if now:
 		if _shape_task >= 0:
 			WorkerThreadPool.wait_for_task_completion(_shape_task)
 			_shape_task = -1
-		_take_shape(w[0], w[1], w[2], w[3], {} if same else WormholeSpace.of(w).sweep_table())
+		var built := WormholeSpace.of(w) if not same else null
+		_take_shape(w[0], w[1], w[2], w[3], built.sweep_table() if built else {}, built)
 	elif _shape_task >= 0:
 		pass                            # _shape_ready goes on from there
 	elif same:
@@ -492,6 +494,8 @@ func set_shape(radius: float, cylinder: float, fillet: float, lift: float, now :
 		_shape_start()
 
 
+## One part of the shape, the rest as asked for (set_shape): the cylinder's length, the throat's
+## radius, its fillet's, its centre's height over the floor.
 func set_length(cylinder: float, now := false) -> void:
 	set_shape(shape_want[0], cylinder, shape_want[2], shape_want[3], now)
 
@@ -501,7 +505,7 @@ func set_radius(radius: float, now := false) -> void:
 
 
 func set_fillet(fillet: float, now := false) -> void:
-	set_shape(shape_want[0], shape_want[1], fillet, shape_want[3], now)
+	set_shape(shape_want[0], shape_want[1], fillet, shape_want[3], now, true)
 
 
 func set_lift(lift: float, now := false) -> void:
@@ -520,7 +524,8 @@ func _shape_start() -> void:
 
 ## On a worker thread: reads nothing of the app's, only makes new things.
 func _shape_build(s: PackedFloat64Array) -> void:
-	_shape_built = [s[0], s[2], WormholeSpace.of(s).sweep_table()]
+	var sp := WormholeSpace.of(s)
+	_shape_built = [sp, sp.sweep_table()]
 
 
 ## Each frame: a sweep table built (_shape_build) puts its radius and fillet into effect, unless the
@@ -536,23 +541,25 @@ func _shape_ready() -> void:
 		_take_shape(w[0], w[1], w[2], w[3], {})
 		return
 	# the lift asked for is over the floor's limit for the radius and fillet asked for; these may be wider
-	var s := WormholeSpace.fit(_shape_built[0], w[1], _shape_built[1], w[3])
-	_take_shape(s[0], s[1], s[2], s[3], _shape_built[2])
+	var built: WormholeSpace = _shape_built[0]
+	var s := WormholeSpace.fit(built.rho0, w[1], built.fillet, w[3])
+	_take_shape(s[0], s[1], s[2], s[3], _shape_built[1], built)
 	if w[0] != s[0] or w[2] != s[2]:
 		_shape_start()
 
 
 ## A shape in effect, this frame (table: its sweep table if the radius or the fillet is another,
-## WormholeSpace.sweep_table's): the space takes it, and what stands in the space goes with its part of
+## WormholeSpace.sweep_table's, and built: the space it is of, its gravity solved): the space takes
+## it, and what stands in the space goes with its part of
 ## it (WormholeSpace.carried): the body (Viewer.after_shape), the toys with their velocities and axes
 ## (BallWorld.reshaped); a toy being pulled is let be, the hands' motion forgotten; the renderer takes
 ## all that is built for the shape (Renderer.set_space); the stereo check's scene, built of points of
 ## R^4, is built again.
-func _take_shape(radius: float, cylinder: float, fillet: float, lift: float, table: Dictionary) -> void:
+func _take_shape(radius: float, cylinder: float, fillet: float, lift: float, table: Dictionary, built: WormholeSpace = null) -> void:
 	var from := space.shape()
 	var height := camera.transform.origin.y
 	var kept := viewer.before_shape(height)
-	space.set_shape(radius, cylinder, fillet, lift)
+	space.set_shape(radius, cylinder, fillet, lift, built)
 	if space.shape() == from and table.is_empty():
 		return
 	viewer.after_shape(kept, from, height)

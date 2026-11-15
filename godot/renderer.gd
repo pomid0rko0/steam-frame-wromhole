@@ -100,7 +100,10 @@ const LINE_WIDTH := 0.03        # half a line's width, m
 const LINE_STEPS := 5           # a chunk of a line (line_chunks): its steps, its arrows at most, its vertices
 const LINE_ARROWS := 2
 const LINE_CV := 2 * (LINE_STEPS + 1) + 3 * LINE_ARROWS
-const LINE_CHUNKS := 1024       # chunks at most (the 80 m throat's lines: about half)
+# chunks at most (ZoneSections' texture of their vertices: LINE_CV texels a chunk in one row, 16384
+# wide at this many). The video's throat's lines at 80 m are about half; a wide throat hung high
+# has more, and then every second, third... of them is drawn (line_chunks)
+const LINE_CHUNKS := 1024
 const ARROW_GAP := 1.0          # m along a line between its arrows
 const ARROW_LENGTH := 0.24      # m
 const ARROW_HALF := 0.12        # half an arrow's width, m
@@ -927,20 +930,34 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 ## point (l, n.y, n.z) and 1 for an arrow's, 0 for the line's (ZoneSections' LINES works out where it
 ## is in the view); data: three texels a vertex for the vertex shader (body.gdshaderinc, ARROWS):
 ## (its colour, 1 for an arrow's), (how far inside the coloured part), (how far inside its line's).
-## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta).
+## Points of the surface n.x = 0 are (l, beta), n = (0, cos beta, sin beta). Where every line's
+## chunks would be over LINE_CHUNKS, the lines every second, third... LINE_STEP across from the
+## middle one, as many as fit.
 static func line_chunks(sp: WormholeSpace) -> Dictionary:
-	var out := {"n": 0, "in": PackedFloat32Array(), "data": PackedFloat32Array()}
 	var top := sp.Rout + LINE_TOP
 	var reach := sp.Rout + LINE_REACH
 	var k := int(reach / LINE_STEP)
+	var lines := []                 # [i, its points]
 	for side in [1.0, -1.0]:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
 			var rr := Vector2(y, top).length()
 			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
-			if pts.size() < 2:
-				continue
-			_line_chunks(sp, pts, out)
+			if pts.size() >= 2:
+				lines.append([i, pts])
+	var every := 1
+	while true:
+		var n := 0
+		for line: Array in lines:
+			if line[0] % every == 0:
+				n += ceili(float((line[1] as Array).size() - 1) / LINE_STEPS)
+		if n <= LINE_CHUNKS:
+			break
+		every += 1
+	var out := {"n": 0, "in": PackedFloat32Array(), "data": PackedFloat32Array()}
+	for line: Array in lines:
+		if line[0] % every == 0:
+			_line_chunks(sp, line[1], out)
 	return out
 
 

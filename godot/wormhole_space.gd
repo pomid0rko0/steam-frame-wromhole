@@ -52,14 +52,20 @@ func set_profile(throat_radius: float, half_length: float, fillet_radius: float)
 	_build_gravity()
 
 
-# The shapes set_shape takes (fit: the menu's rows offer these), m: the throat's radius, its fillet's,
-# its cylinder's length and its centre over the floor. ref/test_gpu.py checks the method on the
-# corners of the radius and the fillet (its PROFILES; why no wider: issues #135, #136) and on the
-# longest cylinder; LIFT_MAX only keeps the throat in sight.
-const RADIUS_MIN := 3.0
-const RADIUS_MAX := 3.0
+# The shapes set_shape takes (fit: the menu's rows offer these), m: the throat's radius, its
+# fillet's (the throat at least WIDE of them across its radius: no softer against the throat than
+# the video's, but for the throats narrower than the video's with the sharpest fillet; so the
+# softest fillet, FILLET_MAX, is the widest throat's), its cylinder's length and its centre over the
+# floor. ref/test_gpu.py checks the method on the far corners of the radius and the fillet, without
+# a cylinder and with the longest (its MENU). No wider: a fillet softer against the throat puts rays
+# off (issue #135: at half the throat's radius, 1.5 m and more, the sweep table misses its limit on
+# some rays, and so does the search for a point's image), a sharper one breaks the bodies in the
+# curved zone (#136). RADIUS_MAX and LIFT_MAX only keep the throat within the scene and in sight.
+const RADIUS_MIN := 2.0
+const RADIUS_MAX := 6.0
 const FILLET_MIN := 1.0
-const FILLET_MAX := 1.0
+const FILLET_MAX := 2.0
+const WIDE := 3.0
 const LENGTH_MAX := 80.0
 const LIFT_MAX := 15.0
 const FLOOR_CLEAR := 1.0        # m: the curved zone's bottom over the floor, at least (lift_min)
@@ -72,12 +78,18 @@ static func lift_min(throat_radius: float, fillet_radius: float) -> float:
 	return throat_radius + fillet_radius + FLOOR_CLEAR
 
 
-## The shape nearest to (radius, cylinder, fillet, lift) that set_shape takes: each within its
-## limits, and the lift no lower than lift_min of that radius and fillet (a throat grown wide rises).
-## As shape() gives one.
-static func fit(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float) -> PackedFloat64Array:
+## The shape nearest to (radius, cylinder, fillet, lift) that set_shape takes, as shape() gives one:
+## each part within its limits; the radius and the fillet together (WIDE): the radius as asked and
+## the fillet as sharp as that throat needs (a throat made narrow gets a sharper fillet), or with
+## fillet_leads the fillet as asked and the throat as wide as it needs (a fillet made soft widens
+## the throat); then the lift no lower than lift_min of both (a throat grown wide rises).
+static func fit(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float, fillet_leads := false) -> PackedFloat64Array:
 	var rad := clampf(throat_radius, RADIUS_MIN, RADIUS_MAX)
 	var fil := clampf(fillet_radius, FILLET_MIN, FILLET_MAX)
+	if fillet_leads:
+		if fil > FILLET_MIN:
+			rad = clampf(maxf(rad, WIDE * fil), RADIUS_MIN, RADIUS_MAX)
+	fil = clampf(fil, FILLET_MIN, maxf(FILLET_MIN, rad / WIDE))
 	return PackedFloat64Array([rad, clampf(cylinder, 0.0, LENGTH_MAX), fil,
 			clampf(p_lift, lift_min(rad, fil), maxf(LIFT_MAX, lift_min(rad, fil)))])
 
@@ -100,8 +112,9 @@ static func of(s: PackedFloat64Array) -> WormholeSpace:
 ## the sweep table, which hangs on the radius and the fillet alone, the field lines) and what stands
 ## in the space (carried); main.set_shape does it all. Gravity: with the radius and the fillet as
 ## they were the fillet's two solutions are summed afresh (_grav_sum, cheap: a frame can take it),
-## else solved again; the lift is not in it.
-func set_shape(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float) -> void:
+## else taken from solved, a space of that radius and fillet (made off the main thread), or without
+## one solved here (milliseconds: too long for a frame in the headset); the lift is not in it.
+func set_shape(throat_radius: float, cylinder: float, fillet_radius: float, p_lift: float, solved: WormholeSpace = null) -> void:
 	var same := throat_radius == rho0 and fillet_radius == fillet and not _grav_one.is_empty() and th0 == 0.0
 	var Lc0 := Lc
 	rho0 = throat_radius
@@ -113,10 +126,15 @@ func set_shape(throat_radius: float, cylinder: float, fillet_radius: float, p_li
 	Rout = rho0 + fillet
 	lift = p_lift
 	assert(lift > Rout, "the floor must stay out of the curved zone")
-	if not same:
-		_build_gravity()
-	elif Lc != Lc0:
+	if same:
+		if Lc != Lc0:
+			_grav_sum()
+	elif solved != null and solved.rho0 == rho0 and solved.fillet == fillet and solved.th0 == 0.0:
+		grav_k = solved.grav_k
+		_grav_one = solved._grav_one
 		_grav_sum()
+	else:
+		_build_gravity()
 
 
 ## Where the point (l, n) of the space before a change of its shape (from: shape() then; no crease

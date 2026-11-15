@@ -19,7 +19,7 @@ const U := preload("res://tests/util.gd")
 # flights from there (main.viewer: off the floor, then each a geodesic along the head's x right, y
 # up, -z ahead, the room's axes carried along), a turn of the room to the right after, in degrees,
 # the head's pitch in degrees (util.gd's headset), and the throat's cylinder's length if not the
-# video's (main.set_length)]: standing at the start looking up at the mouth; level with the throat's
+# video's (main.set_length), or its whole shape (NARROW, WIDE: main.set_shape)]: standing at the start looking up at the mouth; level with the throat's
 # centre 9 m out; at the curved zone's edge; in A's fillet; in the throat looking along it and
 # sideways; out in universe B looking back at the mouth; far off, a control; under the mouth looking
 # up into it; on the menu's longest throat (the bodies of the space carried with it, as stretching
@@ -27,9 +27,15 @@ const U := preload("res://tests/util.gd")
 # zone_tail.gdshader) are many pixels wide: in it sideways, at the start (crf9 and crf10 also with
 # foveation, as the headset draws its floor and the tail: crf10's seen through the throat); on one of MID, in A's
 # fillet looking in; and on one with no cylinder (h = R, the menu's shortest: no tail), in the
-# throat looking along it
+# throat looking along it; on the menu's narrowest throat (_shape: 2 m, its curved zone's radius 3 m),
+# in A's fillet looking in; on its widest with its softest fillet (6 m and 2 m, the zone's radius 8 m,
+# its centre 9 m over the floor: the floor lower under the lens), in A's fillet looking in and at the
+# start looking up at the mouth (crf15 also with foveation). The bodies of the space stand where
+# changing the video's throat to that one carries them
 const LONG := WormholeSpace.LENGTH_MAX
 const MID := 40.0
+const NARROW := "narrow"
+const WIDE := "wide"
 const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0)], 0.0, 0.0],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -4.6)], 0.0, -5.0],
@@ -42,7 +48,10 @@ const PLACES := [[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0],
 		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -21.0)], 90.0, -10.0, LONG],
 		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 15.0, LONG],
 		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -5.6)], 0.0, -5.0, MID],
-		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0]]
+		[Vector2(9.0, 0.0), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -9.0)], 0.0, -10.0, 0.0],
+		[Vector2(9.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 3.4, 0.0), Vector3(0.0, 0.0, -6.6)], 0.0, -5.0, NARROW],
+		[Vector2(13.0, 0.3), Vector2(-1.0, 0.0), [Vector3(0.0, 7.4, 0.0), Vector3(0.0, 0.0, -6.2)], 0.0, -5.0, WIDE],
+		[Vector2(10.0, 0.0), Vector2(-1.0, 0.0), [], 0.0, 30.0, WIDE]]
 # bodies in the head's coordinates (x right, y up, -z forward): balls [place, radius], cubes
 # [place, half size, turn (euler)]; one ball and one cube near the eyes
 const BALLS := [[Vector3(0.0, -0.1, -0.45), 0.12], [Vector3(-0.7, 0.2, -1.6), 0.25], [Vector3(0.9, -0.6, -2.2), 0.3]]
@@ -92,7 +101,12 @@ func _process(_delta: float) -> bool:
 		main.menu.visible = false
 		main.renderer.show_scene(false)
 		if place.size() > 5:
-			main.set_length(place[5])
+			if place[5] is String:
+				var s := _shape(place[5])
+				main.set_shape(s[0], s[1], s[2], s[3], true)
+			else:
+				main.set_length(place[5], true)
+			print("throat: ", main.shape_text())
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
 		var v: Viewer = main.viewer
 		var fwd := main._head_forward_xz()
@@ -189,6 +203,14 @@ func _bodies() -> void:
 
 
 var _objects := []
+
+
+## A place's throat: the menu's narrowest (NARROW) or its widest with its softest fillet, as low as
+## the floor lets it hang (WIDE), on the video's cylinder.
+static func _shape(which: String) -> PackedFloat64Array:
+	if which == NARROW:
+		return WormholeSpace.fit(WormholeSpace.RADIUS_MIN, Main.LENGTH, WormholeSpace.FILLET_MIN, Main.LIFT)
+	return WormholeSpace.fit(WormholeSpace.RADIUS_MAX, Main.LENGTH, WormholeSpace.FILLET_MAX, 0.0)
 
 
 static func _fov() -> bool:
