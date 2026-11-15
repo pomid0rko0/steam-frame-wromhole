@@ -927,7 +927,9 @@ static func line_chunks(sp: WormholeSpace) -> Dictionary:
 		for i in range(-k, k + 1):
 			var y := i * LINE_STEP
 			var rr := Vector2(y, top).length()
-			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y), Vector2(rr, top).length() + 1.0)
+			# out to past its start and past the floor under the lines' reach, whichever is farther
+			var pts := _field_line(sp, side * (rr - sp.Rout + sp.L), atan2(top, y),
+					maxf(Vector2(rr, top).length(), Vector2(reach, sp.lift).length()) + 1.0)
 			if pts.size() < 2:
 				continue
 			_line_chunks(sp, pts, out)
@@ -964,8 +966,12 @@ static func _force(sp: WormholeSpace, l: float, beta: float) -> Vector2:
 
 
 ## A field line from (l, beta) along the force (RK4 in steps of LINE_DS), to the floor (where the
-## height goes through 0) or out past rmax from the throat's centre: its points [l, beta, g].
+## height goes through 0, in a flat universe or in the curved zone) or out past rmax from the
+## throat's centre: its points [l, beta, g]. None from a start that is not over the floor (the
+## throat hanging so low that the lines' top is under it).
 static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -> Array:
+	if sp.height(l, Vector3(0.0, cos(beta), sin(beta))) <= 0.0:
+		return []
 	var dir := func(ll: float, bb: float) -> Vector2:
 		var f := _force(sp, ll, bb)
 		var g := f.length()
@@ -983,8 +989,16 @@ static func _field_line(sp: WormholeSpace, l: float, beta: float, rmax: float) -
 		var h0 := sp.height(p.x, Vector3(0.0, cos(p.y), sin(p.y)))
 		var h1 := sp.height(q.x, Vector3(0.0, cos(q.y), sin(q.y)))
 		if h1 <= 0.0:
-			# onto the floor: the step's part that gets there
-			q = p.lerp(q, h0 / (h0 - h1))
+			# onto the floor: the step's part that gets there (the floor may bend: by halving)
+			var a := 0.0
+			var z := 1.0
+			for _it in 16:
+				var m := p.lerp(q, 0.5 * (a + z))
+				if sp.height(m.x, Vector3(0.0, cos(m.y), sin(m.y))) > 0.0:
+					a = 0.5 * (a + z)
+				else:
+					z = 0.5 * (a + z)
+			q = p.lerp(q, a)
 			pts.append([q.x, q.y, _force(sp, q.x, q.y).length()])
 			break
 		if sp.r(q.x) > rmax:

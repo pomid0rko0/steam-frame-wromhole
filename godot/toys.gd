@@ -9,9 +9,21 @@ extends RefCounted
 ## anywhere. A moment after the start a cube and a ball are thrown from chest height: the cube lands
 ## in front of the mouth and slides to a stop, the ball flies up into the mouth, through the throat,
 ## and comes out in universe B, where it lands on the floor. Then a ball is dropped into the throat's
-## top (DROP_AT). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
-## charts (WormholeSpace's top: the floor at z = 0) and keep out of the curved zone and scene.json's
-## objects.
+## top (drop_at). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
+## charts (WormholeSpace's top: the floor at z = 0) and keep out of scene.json's objects.
+##
+## Wherever the throat hangs (WormholeSpace's top: any lift). A place at rest whose floor the curved
+## zone takes (the floor bends there, or is the throat's hole) goes straight out from the axis under
+## the throat's centre to the flat floor, the toy's size and REST_CLEAR past the bend's edge
+## (rest_place; from the axis itself toward +x, where the start is): a toy at rest stands on flat
+## floor, a ball where it stood right under the throat's centre then rolls away from it. The line of
+## sight through the throat's centre comes down to B's floor only while the centre is over the head:
+## ring_point keeps within RING_FAR of the centre, and with the throat lower the ball lies on the
+## floor under that line's point there, seen through the throat below its centre. The drop starts
+## DROP_OVER over the zone's top or over the floor, whichever is higher: with the zone wholly under
+## the floor it only falls onto the floor. The throws start 9 m out at chest height, as aimed for
+## the throat at main.LIFT: past another they fly where they fly. tests/floor_test.gd checks that
+## nothing starts under the floor or in another body, at every kind of lift.
 ##
 ## The line of sight from the head at the start (HEAD_HEIGHT over START_POS) through the throat's
 ## centre is a radial geodesic: it goes on in universe B at the same direction n from the centre,
@@ -23,7 +35,7 @@ extends RefCounted
 ## The drop: along the axis over the throat's centre the potential is even in l (docs/gravity.md,
 ## «Сквозь горло»): dropped straight there, a ball falls through the throat into universe B, rises over
 ## B's mouth as high as it fell from, falls back and so on, A and B by turns. That way is unstable
-## across: DROP_AT is 20 cm off it, and the ball, through to B and rising there, tips off the throat's
+## across: the drop is 20 cm off it (DROP_OFF), and the ball, through to B and rising there, tips off the throat's
 ## top and falls past B's mouth onto B's floor, and the floor's push rolls it away from under the
 ## mouth (tests/physics_test.gd, 7).
 
@@ -35,7 +47,8 @@ const GLOW := Color(1.0, 0.55, 0.1)     # a toy a hand aims at or pulls is drawn
 const GLOW_NEAR := Color(0.2, 0.85, 1.0)  # or toward this, if its own colour is near GLOW
 const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
 const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
-const DROP_AT := Vector3(0.0, -0.2, 10.5)   # chart A: 1.5 m over the curved zone, 20 cm off the throat's axis
+const DROP_OFF := Vector2(0.0, -0.2)    # chart A's (x, y): 20 cm off the throat's axis
+const DROP_OVER := 1.5          # m over the curved zone's top (over the floor, with the zone under it)
 const DROP_RADIUS := 0.35       # m
 const DROP_COLOR := Color(0.95, 0.95, 0.97)
 # at rest, chart A: balls [x, y, radius] (in front, 8.5 m off the point under the throat's centre,
@@ -46,6 +59,8 @@ const HEAD_HEIGHT := 1.6        # m: the head at the start, for the line of sigh
 const RING_RADIUS := 0.4        # m: the ball on that line in universe B
 const RING_CUBE_Y := 1.3        # m: the cube beside it, along chart B's y,
 const RING_CUBE_HALF := 0.3     # and its half size
+const RING_FAR := 20.0          # m from the throat's centre: ring_point no farther (this file's top)
+const REST_CLEAR := 0.1         # m: a toy at rest keeps this, and its size, off where the floor bends (rest_place)
 
 var space: WormholeSpace
 var world: BallWorld
@@ -67,25 +82,41 @@ func spawn() -> void:
 	world.cubes.clear()
 	for i in BALLS_A.size():
 		var b: Array = BALLS_A[i]
-		ball_on_floor(1.0, Vector2(b[0], b[1]), b[2], BALL_COLORS[i % BALL_COLORS.size()])
+		ball_on_floor(1.0, rest_place(Vector2(b[0], b[1]), b[2]), b[2], BALL_COLORS[i % BALL_COLORS.size()])
 	for i in CUBES_A.size():
 		var c: Array = CUBES_A[i]
-		cube_on_floor(1.0, Vector2(c[0], c[1]), c[2], c[3], CUBE_COLORS[[0, 2, 5][i]])
+		cube_on_floor(1.0, rest_place(Vector2(c[0], c[1]), sqrt(2.0) * c[2]), c[2], c[3], CUBE_COLORS[[0, 2, 5][i]])
 	var ring := ring_point()
-	ball_on_floor(-1.0, Vector2(ring.x, ring.y), RING_RADIUS, BALL_COLORS[3])
-	cube_on_floor(-1.0, Vector2(ring.x, RING_CUBE_Y), RING_CUBE_HALF, 0.3, CUBE_COLORS[3])
+	ball_on_floor(-1.0, rest_place(Vector2(ring.x, ring.y), RING_RADIUS), RING_RADIUS, BALL_COLORS[3])
+	cube_on_floor(-1.0, rest_place(Vector2(ring.x, RING_CUBE_Y), sqrt(2.0) * RING_CUBE_HALF), RING_CUBE_HALF, 0.3, CUBE_COLORS[3])
 	launch_in = LAUNCH_DELAY if demo else -1.0
 	drop_in = DROP_DELAY if demo else -1.0
 
 
+## Where a toy of size (its footprint's radius) rests for the place at of a chart's floor: at, or
+## where this file's top moves it out of the bent floor.
+func rest_place(at: Vector2, size: float) -> Vector2:
+	var e := space.floor_edge()
+	if e <= 0.0:
+		return at
+	var keep := e + size + REST_CLEAR
+	var rho := at.length()
+	if rho >= keep:
+		return at
+	return (at / rho if rho > 1e-6 else Vector2(1.0, 0.0)) * keep
+
+
 ## Where the line of sight from the head at the start through the throat's centre is RING_RADIUS
-## over universe B's floor (this file's top): chart B.
+## over universe B's floor (this file's top), or RING_FAR from the centre if it is not by then:
+## chart B.
 func ring_point() -> Vector3:
 	var eye := Main.START_POS + Vector3(0.0, 0.0, HEAD_HEIGHT)
 	var n: Vector3 = space.point_from_chart(1.0, eye)[1]
 	# on from the centre along n in universe B: chart B height lift + r n.z
-	var r := (RING_RADIUS - space.lift) / n.z
-	return space.chart_position(-(r - space.Rout + space.L), n)
+	var r := RING_FAR
+	if n.z < -1e-6:
+		r = minf((RING_RADIUS - space.lift) / n.z, RING_FAR)
+	return space.chart_position(-(maxf(r, space.Rout) - space.Rout + space.L), n)
 
 
 ## The throw and the drop when due, then the physics (hands: the hands' balls, which push).
@@ -119,26 +150,51 @@ func throw() -> Array[BallWorld.Body]:
 	return out
 
 
+## Where the drop starts, chart A (this file's top).
+func drop_at() -> Vector3:
+	return Vector3(DROP_OFF.x, DROP_OFF.y, maxf(space.lift + space.Rout, 0.0) + DROP_OVER)
+
+
 ## A white ball let go over the throat's top (this file's top).
 func drop() -> BallWorld.Ball:
-	var p := space.point_from_chart(1.0, DROP_AT)
+	var p := space.point_from_chart(1.0, drop_at())
 	print("toys: a ball dropped into the throat's top")
 	return world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
 
 
-## A ball at rest on the floor of universe side at chart position pos.
+## A ball at rest on the floor of universe side at chart position pos (WormholeSpace.floor_point:
+## on a bent floor too): its centre its radius up the floor's normal.
 func ball_on_floor(side: float, pos: Vector2, radius: float, color: Color) -> BallWorld.Ball:
-	var p := space.point_from_chart(side, Vector3(pos.x, pos.y, radius))
+	var p := _over_floor(side, pos, radius, [])
 	return world.add(p[0], p[1], Vector4.ZERO, radius, color)
 
 
 ## A cube resting on the floor of universe side at chart position pos, turned by yaw.
 func cube_on_floor(side: float, pos: Vector2, half: float, yaw: float, color: Color) -> BallWorld.Cube:
-	var p := space.point_from_chart(side, Vector3(pos.x, pos.y, half))
+	var p := _over_floor(side, pos, half, [Vector3(cos(yaw), sin(yaw), 0.0), Vector3(-sin(yaw), cos(yaw), 0.0)])
+	return world.add_cube(p[0], p[1], Vector4.ZERO, p[2], Vector3.ZERO, half, color)
+
+
+## The point up over the floor's point at chart position pos of universe side, along the floor's
+## normal: [l, n, the chart directions axes made level there and the normal, carried up]. With the
+## floor out of the curved zone, the chart's point and directions themselves.
+func _over_floor(side: float, pos: Vector2, up: float, axes: Array) -> Array:
+	if not space.floor_in_zone():
+		var p := space.point_from_chart(side, Vector3(pos.x, pos.y, up))
+		var F := []
+		for ax: Vector3 in axes + [Vector3(0.0, 0.0, 1.0)]:
+			F.append(WormholeSpace.vector_from_chart(side, p[1], ax))
+		return [p[0], p[1], F]
+	var foot := space.floor_point(side, pos)
+	var N := space.height_grad(foot[0], foot[1])
+	if N.length() < 1e-6:
+		N = Vector4(side * signf(foot[1].z), 0.0, 0.0, 0.0)     # as Viewer.stand_at
+	N = N.normalized()
 	var F := []
-	for ax in [Vector3(cos(yaw), sin(yaw), 0.0), Vector3(-sin(yaw), cos(yaw), 0.0), Vector3(0.0, 0.0, 1.0)]:
-		F.append(WormholeSpace.vector_from_chart(side, p[1], ax))
-	return world.add_cube(p[0], p[1], Vector4.ZERO, F, Vector3.ZERO, half, color)
+	for ax: Vector3 in axes:
+		var A := WormholeSpace.vector_from_chart(side, foot[1], ax)
+		F.append((A - A.dot(N) * N).normalized())
+	return space.geodesic(foot[0], foot[1], N, up, F + [N])
 
 
 ## The balls and cubes (those in lit, Hands.lit, glowing), the hands' balls (hands: [centre, colour

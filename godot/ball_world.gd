@@ -15,6 +15,13 @@ extends RefCounted
 ## angular velocity w (body coordinates). Contacts are solved in the tangent space at the
 ## cube's centre: corners against the floor, with sliding friction, so a cube slides and stops
 ## instead of rolling; boxes against balls, other cubes and the static objects.
+##
+## The floor (WormholeSpace's top: the points of height 0, bent where it runs through the curved
+## zone) holds a ball where its centre is its radius from it (WormholeSpace.floor_distance: the
+## height itself where the space is flat, to second order in the curved zone, where the height's
+## gradient is shorter than 1), and pushes it along the height's gradient there. A cube's corners
+## are held at their own heights, where the space cuts the box's edges (_floor_contacts), each
+## pushed along the gradient at the corner. tests/floor_test.gd drops both on every kind of floor.
 
 const GRAVITY := 9.81
 const DT := 1.0 / 180.0
@@ -223,8 +230,9 @@ func drag(b: Body) -> float:
 ## are) and gravity is r + beta / r^2 times n_z's (docs/gravity.md, r from the throat's centre); others,
 ## RK4 of dynamics_step.
 ## The last element: the lowest b's centre went against its size over the floor (its radius, a
-## cube's half size; at the steps' ends): below 0, the flight went into the floor, which flight
-## lets through and step does not. tests/pull_test.gd compares it with step's flight.
+## cube's half size; at the steps' ends; by its height, which in the curved zone is no more than
+## its way to the floor): below 0, the flight went into the floor, which flight lets through and
+## step does not. tests/pull_test.gd compares it with step's flight.
 func flight(b: Body, l: float, n: Vector3, U: Vector4, T: float, vecs: Array) -> Array:
 	var k := drag(b)
 	var t := 0.0
@@ -300,9 +308,20 @@ func _floor(b: Ball, before: Array) -> void:
 	var rad: float = b.radius
 	b.still = 0.0
 	if H >= rad:
-		return
+		return                               # the floor is no nearer than H
 	var g := space.height_grad(b.l, b.n)
 	var gl := g.length()
+	# how far out the floor pushes it: in a flat universe (gl = 1) up to the height rad
+	var out := (rad - H) / gl
+	if absf(b.l) < space.L:
+		out = rad - space.floor_distance(b.l, b.n)
+		if out <= 0.0:
+			return
+		if gl < 1e-6:
+			# on the cylinder's top or bottom line, under the floor: no gradient, any way round
+			var t := WormholeSpace._normal_to(b.n)
+			g = Vector4(0.0, t.x, t.y, t.z)
+			gl = 1.0
 	var N := g / gl
 	var U: Vector4 = b.U
 	var vn := U.dot(N)
@@ -326,7 +345,7 @@ func _floor(b: Ball, before: Array) -> void:
 			return
 		U -= Ut * (minf(stop, speed) / speed)
 	b.U = U
-	_move(b, N, (rad - H) / gl)
+	_move(b, N, out)
 
 
 func _statics(b: Ball) -> void:
@@ -638,7 +657,7 @@ func _solve_cubes(hands: Array[Ball]) -> void:
 		var c := cubes[i]
 		var free: bool = c.held == &""
 		if free and c.still <= SLEEP_TIME:
-			_floor_contacts(c, "f%d" % i, contacts)
+			_floor_contacts(c, boxes[i], "f%d" % i, contacts)
 			_static_contacts(c, "s%d" % i, contacts)
 		for j in balls.size():
 			if (free or balls[j].held == &"") and not (asleep(c) and asleep(balls[j])):
@@ -711,14 +730,36 @@ func _wake(c: Cube, b: Body) -> void:
 		c.still = 0.0
 
 
-## Corners below the floor. Heights to first order at the centre: H + grad H . r, which is the
-## chart z of the box corner (exact in the flat universes, where the floor is).
-func _floor_contacts(c: Cube, group: String, contacts: Array[Contact]) -> void:
+## Corners below the floor (box: box4's). With the cube out in a flat universe over a flat floor,
+## their heights are the centre's and the gradient's part along each, H + grad H . r: the chart z
+## of the box's corner, exact. Where the floor bends under it (the cube in or at the curved zone,
+## with the floor running through the zone), a corner is where the space cuts the box's edge along
+## E4, the space's normal at the centre: from the box's corner in the tangent hyperplane, C + r,
+## along E4 to the space (off_surface, three steps), its height R^4's z there; it is pushed along
+## the height's gradient there, to first order from the centre's (WormholeSpace.height_hess).
+func _floor_contacts(c: Cube, box: Array, group: String, contacts: Array[Contact]) -> void:
 	var H := space.height(c.l, c.n)
 	var a: float = c.half
-	if H > 1.8 * a:
+	var bent := space.floor_in_zone() and absf(c.l) < space.L + 1.8 * a
+	if H > 1.8 * a + (1.5 * a * a / minf(space.fillet, space.rho0) if bent else 0.0):
 		return
 	var g4 := space.height_grad(c.l, c.n)
+	if bent:
+		var E4: Vector4 = box[4]
+		for s: Vector3 in CORNERS:
+			var P: Vector4 = box[0] + a * (s.x * box[1] + s.y * box[2] + s.z * box[3])
+			var t := 0.0
+			for _it in 3:
+				t -= space.off_surface(P + t * E4)
+			var gc := g4 + space.height_hess(c.l, c.n, from_body(c.F, a * s))
+			var gl := gc.length()
+			if gl < 1e-6:
+				continue
+			var pen := -(P.z + t * E4.z + space.lift) / gl
+			if pen > 0.0:
+				contacts.append(_contact(c, a * s, gc / gl, null, Vector3.ZERO, Vector4.ZERO, pen,
+						FRICTION_CUBE, RESTITUTION_CUBE, group))
+		return
 	var gl := g4.length()
 	var gb := to_body(c.F, g4)
 	var dirs := []
