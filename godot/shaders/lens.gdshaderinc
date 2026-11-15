@@ -243,7 +243,18 @@ LensSeen lens_seen(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, floa
 		geo_exit_at(en, t, b, w.x, pos, dir);
 		way = w.y;
 	}
-	return lens_trace(pos, dir, sheet, way, lensed || near);
+	LensSeen s = lens_trace(pos, dir, sheet, way, lensed || near);
+#ifdef FLOOR_ZONE
+	// a ray that leaves the zone under the floor went through it a hair before (within geo_floor's
+	// tolerance of the zone's edge): the floor there
+	if (lensed && pos.z + g_lift < 0.0) {
+		s.kind = 1;
+		s.way = way;
+		s.p = pos;
+		s.a = look_ground_at(pos.xy);
+	}
+#endif
+	return s;
 }
 
 // The colour of what lens_seen met: the sky, the floor (dx, dy: its pattern's differences to the
