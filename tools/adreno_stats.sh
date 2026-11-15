@@ -18,8 +18,8 @@
 # floor_paths.gd forces them one way at a time), the program Godot specialises and runs for it: what
 # a pixel on that way costs; the last ones with the floor looked for in the curved zone too (FLOOR_ZONE).
 # --fov: instead, foveation's compute programs (foveation.gd: the eyes, the way out's table, the
-# floor plain and coloured by gravity, both again for a floor that reaches into the curved zone's
-# ball, the tail of the zone's bodies' images in five: its last, the
+# floor plain and coloured by gravity, both again in two for a floor that reaches into the curved
+# zone's ball (all texels but those that may see it there, then those), the tail of the zone's bodies' images in five: its last, the
 # search, one for the balls and one for the cubes; tests/multiview_check.gd
 # with fov), which work out the floor and the tail in the headset by default: the floor's quad then
 # only samples their texture.
@@ -85,17 +85,18 @@ if sys.argv[3].endswith('floor_paths.gd'):
               f'{cat4} cat4, {cat5} cat5')
     sys.exit(0)
 if sys.argv[3].endswith('multiview_check.gd'):
-    # foveation.gd compiles its eleven last, after Godot's own (their order: Foveation._build)
+    # foveation.gd compiles its thirteen last, after Godot's own (their order: Foveation._build)
     progs = [(m.group(1), [int(v) for v in m.groups()[1:]]) for m in re.finditer(
         r'; CL prog (\d+/\d+): (\d+) instr, (\d+) nops.*\n.*?(\d+) half, (\d+) full, (\d+) constlen.*\n'
         r'.*?(\d+) cat0.*?(\d+) cat4, (\d+) cat5.*\n.*?(\d+) loops\n.*?(\d+) max_waves, (\d+) double', text)]
-    if len(progs) < 11:
+    if len(progs) < 13:
         sys.exit('no compute program statistics in the log')
     print('foveation\'s compute programs (foveation.gd):')
     for name, (p, (n, nops, half, full, constlen, cat0, cat4, cat5, loops, waves, dbl)) in zip(
-            ('the eyes', 'the way out\'s table', 'the floor', 'the floor by gravity', 'the floor, in the zone too',
-             'the floor by gravity, in the zone too', 'the tail\'s view of the bodies',
-             'the tail\'s tiles', 'the tail\'s quads', 'the tail: balls', 'the tail: cubes'), progs[-11:]):
+            ('the eyes', 'the way out\'s table', 'the floor', 'the floor by gravity',
+             'the floor but where it may be in the zone', 'the floor by gravity but where it may be in the zone',
+             'the floor, in the zone too', 'the floor by gravity, in the zone too', 'the tail\'s view of the bodies',
+             'the tail\'s tiles', 'the tail\'s quads', 'the tail: balls', 'the tail: cubes'), progs[-13:]):
         print(f"  {name} (prog {p}): {n} instr ({nops} nops), {full} full regs, {waves} waves of {128 if dbl else 64}, "
               f"{cat4} cat4, {cat5} cat5, {loops} loops")
     sys.exit(0)

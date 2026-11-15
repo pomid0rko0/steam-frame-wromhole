@@ -824,28 +824,20 @@ GeoFloor geo_floor_on_leg(float side, float psi, float way, vec2 se) {
 	return f;
 }
 
-// The ray of the eye (as geo_exit_ray gives it: ca, sa, t, b, gap, sigma; eye as geo_exit has it) that
-// enters the zone, turn its whole turn up to where it leaves it (geo_exit_way's): 0 if it meets no
-// floor before it leaves the zone; 2 if it meets the floor on its straight way to the zone (an eye
-// outside: the flat floor, on the line from the eye); 1 if in the zone, at f.
-// First what costs little: no floor in the zone in the ray's plane (the floor is 1 / A as far from the
-// centre there as lift, A = |z|: at Rout or further, as in every plane where |lift| >= Rout; the zone
-// wholly under the floor, every ray to it meets the floor first), and, the throat's centre over the floor, the
-// ray's angles in the zone short of those at which the floor is in it: further than To = acos(-lift /
-// (A Rout)) from the plane's highest direction (the centre under the floor, it is in the zone within
-// To of it, where the ray comes in).
-int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float sigma, float turn, out GeoFloor f) {
-	f.psi = 0.0;
-	f.l = el;
-	f.way = 0.0;
-	f.r = eye.x;
-	f.wd = 0.0;
-	float Rout = g_prof2.x, L = g_prof.w, Lc = g_prof.z, R2 = 2.0 * g_prof.y;
-	float le = abs(el), side = el < 0.0 ? -1.0 : 1.0, re = eye.x;
+// What costs little of geo_floor, for the ray it takes (turn: its whole turn up to where it leaves
+// the zone): 2 if it meets the flat floor on its straight way to the zone (an eye outside); 0 if it
+// meets no floor in the zone for sure: none in the ray's plane (the floor is 1 / A as far from the
+// centre there as lift, A = |z|: at Rout or further, as in every plane where |lift| >= Rout), or, the
+// throat's centre over the floor, the ray's angles in the zone short of those at which the floor is
+// in it: further than To = acos(-lift / (A Rout)) from the plane's highest direction (the centre
+// under the floor, it is in the zone within To of it, where the ray comes in); else 1: to be looked
+// for. base, way0: the ray's position angle and way where it enters the zone (0 from an eye in it).
+int geo_floor_may(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float turn, out float base, out float way0) {
+	float Rout = g_prof2.x, re = eye.x;
 	vec2 z = vec2(en.z, t.z);
-	bool outward = ca >= 0.0;
-	float base = 0.0, way0 = 0.0;
-	if (le >= g_prof.w) {
+	base = 0.0;
+	way0 = 0.0;
+	if (abs(el) >= g_prof.w) {
 		// straight to the zone's edge: under the floor there, it met the flat floor on the way
 		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
 		float q2 = sqrt(max(gap * (re + b), 0.0));
@@ -854,12 +846,31 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 		base = geo_atan2(b * dq, b * b + qR * q2);
 		way0 = dq;
 	}
-	float A = length(z);
-	float c = -g_lift / max(A * Rout, GEO_TINY);
+	float c = -g_lift / max(length(z) * Rout, GEO_TINY);
 	if (abs(c) >= 1.0) return 0;
 	float To = geo_acos(c);
 	float d = mod(geo_atan2(z.y, z.x) + To - base, 2.0 * GEO_PI);
-	if (g_lift >= 0.0 && d > turn - base && d < 2.0 * To) return 0;
+	return g_lift >= 0.0 && d > turn - base && d < 2.0 * To ? 0 : 1;
+}
+
+// The ray of the eye (as geo_exit_ray gives it: ca, sa, t, b, gap, sigma; eye as geo_exit has it) that
+// enters the zone, turn its whole turn up to where it leaves it (geo_exit_way's): 0 if it meets no
+// floor before it leaves the zone; 2 if it meets the floor on its straight way to the zone (an eye
+// outside: the flat floor, on the line from the eye); 1 if in the zone, at f. First what costs
+// little (geo_floor_may).
+int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float sigma, float turn, out GeoFloor f) {
+	f.psi = 0.0;
+	f.l = el;
+	f.way = 0.0;
+	f.r = eye.x;
+	f.wd = 0.0;
+	float base, way0;
+	int may = geo_floor_may(el, eye, en, t, ca, sa, b, gap, turn, base, way0);
+	if (may != 1) return may;
+	float L = g_prof.w, Lc = g_prof.z, R2 = 2.0 * g_prof.y;
+	float le = abs(el), side = el < 0.0 ? -1.0 : 1.0;
+	vec2 z = vec2(en.z, t.z);
+	bool outward = ca >= 0.0;
 	GeoLeg g = geo_leg(b, sigma);
 	if (g.span <= 0.0) return 0;
 	bool passes = sigma < g_prof2.y;

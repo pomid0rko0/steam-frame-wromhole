@@ -6,7 +6,10 @@
 // seen straight from an eye outside are drawn as meshes, in front of this, and those in the zone are
 // meshes too). With FLOOR_ZONE defined (the floor reaches into the zone's ball, lift < Rout:
 // Renderer picks the programs) the floor is looked for before that too: on the ray's straight way to
-// the zone and inside it (geo_floor), lens_seen. The includer declares (lens_uniforms.gdshaderinc, or
+// the zone and inside it (geo_floor), lens_seen. With FLOOR_MARK instead, only what costs little of
+// that (geo_floor_may): a ray that may meet the floor in the zone is marked (kind -1) for a program
+// with FLOOR_ZONE to work out (foveation.gdshaderinc's two passes of the floor: the search makes a
+// program heavy for every texel it holds). The includer declares (lens_uniforms.gdshaderinc, or
 // the compute shader's buffer):
 //   lens_body[4 LENS_MAX]: per body, A's first then B's, in R^4's xyz of its universe:
 //     (centre, kind: 0 a sphere, 1 a box, 2 a box with dark edges (a toy cube), 3 an upright
@@ -20,7 +23,7 @@
 
 #define LENS_MAX 40
 
-// what a ray meets: kind 0 the sky, 1 the floor, 2 a body
+// what a ray meets: kind 0 the sky, 1 the floor, 2 a body (-1: not worked out, FLOOR_MARK)
 struct LensSeen {
 	int kind;
 	float sheet;     // the universe: +1 A, -1 B
@@ -237,6 +240,27 @@ LensSeen lens_seen(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, floa
 		if (met == 2) lensed = false;
 	}
 #endif
+#ifdef FLOOR_MARK
+	if (lensed) {
+		float base, way0;
+		int may = geo_floor_may(el, eye, en, t, ca, sa, b, gap, w.x, base, way0);
+		if (may == 1) {
+			LensSeen s;
+			s.kind = -1;
+			s.sheet = sheet;
+			s.ab = 0.0;
+			s.a = vec4(0.0);
+			s.way = 0.0;
+			s.d = dir;
+			s.p = pos;
+			s.n = vec3(0.0, 0.0, 1.0);
+			s.albedo = vec3(0.0);
+			s.box = vec3(0.0);
+			return s;
+		}
+		if (may == 2) lensed = false;
+	}
+#endif
 	float way = 0.0;
 	if (lensed) {
 		if (w.z > 0.5) sheet = -sheet;
@@ -244,7 +268,7 @@ LensSeen lens_seen(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, floa
 		way = w.y;
 	}
 	LensSeen s = lens_trace(pos, dir, sheet, way, lensed || near);
-#ifdef FLOOR_ZONE
+#if defined(FLOOR_ZONE) || defined(FLOOR_MARK)
 	// a ray that leaves the zone under the floor went through it a hair before (within geo_floor's
 	// tolerance of the zone's edge): the floor there
 	if (lensed && pos.z + g_lift < 0.0) {
