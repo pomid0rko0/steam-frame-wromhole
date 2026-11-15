@@ -1028,36 +1028,34 @@ def floor_reference(S, X, lift, d=0.0):
     return (1, phi, l, way)
 
 
-def floor_backward(S, X, lift, off):
+def floor_backward(S, X, lift, off, turn):
     """Whether the GPU's answer (off: its error against a reference's answer, floor_checks') is the
-    reference's for the ray X's launch turned by some d within ALPHA_TOL: launches across that range,
-    then, between two next to each other whose answers are of different kinds, halving toward where
-    the kind changes (there the floor is met at the zone's edge, or first grazed)."""
-    def good(r):
+    reference's for the ray X's launch turned by some d within ALPHA_TOL: the launches whose whole
+    turn across the zone is the GPU's own (turn: next to the photon sphere the turn runs through
+    radians within that hair of launch, and the GPU's ray is one of them; found on each stretch of
+    launches between two of a grid where the reference's turn passes the GPU's), and the grid's own."""
+    def good(d):
+        r = floor_reference(S, X, lift, d)
         if r is None or r[0] < 0:
             return False
         e = off(r)
         return e is not None and e[0] <= 1 and e[1] <= 1
-    grid = np.linspace(-ALPHA_TOL, ALPHA_TOL, 33)
-    refs = [floor_reference(S, X, lift, d) for d in grid]
-    if any(good(r) for r in refs):
-        return True
+
+    def psi(d):
+        c, s = np.cos(np.longdouble(d)), np.sin(np.longdouble(d))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            res = leave(S, X.el, X.ca * c - X.sa * s, X.sa * c + X.ca * s)
+        return (np.nan, 0.0) if res is None else (float(res[1]), float(res[0]))
+    grid = np.linspace(-ALPHA_TOL, ALPHA_TOL, 65)
+    ps = [psi(d) for d in grid]
     for k in range(len(grid) - 1):
-        a, b, ra, rb = grid[k], grid[k + 1], refs[k], refs[k + 1]
-        if ra is None or rb is None or ra[0] == rb[0]:
+        (p0, s0), (p1, s1) = ps[k], ps[k + 1]
+        if not (np.isfinite(p0) and np.isfinite(p1)) or s0 != s1 or (p0 - turn) * (p1 - turn) > 0:
             continue
-        for _ in range(40):
-            m = 0.5 * (a + b)
-            rm = floor_reference(S, X, lift, m)
-            if good(rm):
-                return True
-            if rm is None:
-                break
-            if rm[0] == ra[0]:
-                a, ra = m, rm
-            else:
-                b, rb = m, rm
-    return False
+        d = optimize.brentq(lambda x: psi(x)[0] - turn, grid[k], grid[k + 1], xtol=1e-20, rtol=1e-15)
+        if good(d):
+            return True
+    return any(good(d) for d in grid[::8])
 
 
 FLOOR_RAY = 400.0            # m: a ray still in the zone and over the floor this far is left out
@@ -1139,7 +1137,7 @@ def floor_checks(name, S, gpu, rng):
             # next to the photon sphere a ray's way across the zone moves with a hair of its launch (as
             # its way out: exit_checks): the GPU's answer must be the reference's for a launch within
             # ALPHA_TOL
-            if floor_backward(S, X, lift, off):
+            if floor_backward(S, X, lift, off, float(g[1][3])):
                 turned += 1
                 continue
             wrong.append((k, row, g, ref, e))
