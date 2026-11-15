@@ -417,19 +417,6 @@ func _profile() -> void:
 	_floor_material()
 
 
-## The throat's height over the floor changed (WormholeSpace.lift): the floor's numbers to every
-## shader, the scene's static objects in the lens list (their R^4 places hang on it; their meshes take
-## it in their shader), the field lines built anew (as set_length).
-func set_lift() -> void:
-	_profile()
-	_lens_statics()
-	_upload_lens(_lens_toys[0], _lens_toys[1])
-	_lines_want = true
-	_arrows_shown(false)
-	if _lines_task < 0:
-		_lines_start()
-
-
 ## The space's shape changed (WormholeSpace.set_shape), a frame at a time while a row of the menu
 ## changes it: all that is built for it, this frame. table: the new radius' and fillet's sweep table
 ## (WormholeSpace.sweep_table's; none: they are the same, and so is it); the profile, the lift and

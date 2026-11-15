@@ -61,14 +61,15 @@ const FILLET_MIN := 1.0
 const FILLET_MAX := 1.0
 const LENGTH_MAX := 80.0
 const LIFT_MAX := 15.0
-const FLOOR_CLEAR := 1.0        # m: the curved zone's bottom over the floor, at least (lift_min)
 
 
-## The lowest the centre of a throat of this radius and fillet hangs over the floor: the floor stays
-## out of the curved zone (its ball, of radius Rout), FLOOR_CLEAR under it. The one place that says
-## so: all else takes the floor at any lift (height, chart_position, the shaders' g_lift).
+## The lowest the centre of a throat of this radius and fillet goes against the floor: under it by
+## the curved zone's radius Rout, where the zone's ball is wholly under the floor and both universes
+## are flat. Above that the floor cuts the zone (through the fillets over the throat, lower through
+## the throat itself, then through the fillets under it: docs/geometry.md, «Пол»), and from Rout up it
+## is out of the zone again.
 static func lift_min(throat_radius: float, fillet_radius: float) -> float:
-	return throat_radius + fillet_radius + FLOOR_CLEAR
+	return -(throat_radius + fillet_radius)
 
 
 ## The shape nearest to (radius, cylinder, fillet, lift) that set_shape takes: each within its
@@ -111,7 +112,6 @@ func set_shape(throat_radius: float, cylinder: float, fillet_radius: float, p_li
 	L = Lc + fillet * PI / 2.0
 	Rout = rho0 + fillet
 	lift = p_lift
-	assert(lift > Rout, "the floor must stay out of the curved zone")
 	if not same:
 		_build_gravity()
 	elif Lc != Lc0:

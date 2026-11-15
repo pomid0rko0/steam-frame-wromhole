@@ -101,8 +101,7 @@ func _process(_delta: float) -> bool:
 		if place.size() > 5:
 			main.set_length(place[5])
 		if place.size() > 6:
-			main.space.lift = place[6]
-			main.renderer.set_lift()
+			main.set_lift(place[6], true)
 		main.place(Vector3(place[0].x, place[0].y, 0.0), Vector3(place[1].x, place[1].y, 0.0))
 		var v: Viewer = main.viewer
 		var fwd := main._head_forward_xz()
