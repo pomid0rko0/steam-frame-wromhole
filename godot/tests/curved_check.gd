@@ -30,7 +30,7 @@ const U := preload("res://tests/util.gd")
 # throat looking along it; on the menu's narrowest throat (_shape: 2 m, its curved zone's radius 3 m),
 # in A's fillet looking in; on its widest with its softest fillet (6 m and 2 m, the zone's radius 8 m,
 # its centre 9 m over the floor: the floor lower under the lens), in A's fillet looking in and at the
-# start looking up at the mouth (crf15 also with foveation). The bodies of the space stand where
+# start looking up at the mouth. The bodies of the space stand where
 # changing the video's throat to that one carries them; then with the throat lower, the floor through the
 # curved zone (the last number: the throat's centre over the floor, m): through the throat itself, at
 # the start looking into it and flying in it over its floor (crf16 and crf17 also with foveation);

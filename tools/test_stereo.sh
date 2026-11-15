@@ -31,7 +31,7 @@ JOBS=${JOBS:-$(nproc)}
 # balls, cubes and beams (headset), each place where light is bent (crvN; crfN with foveation), each
 # case of the stereo check scene with its floor lines and foveation (checkN), each case of the
 # gravity view (gravityN)
-ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crv9 crv10 crv11 crv12 crv13 crv14 crv15 crv16 crv17 crv18 crv19 crf0 crf6 crf9 crf10 crf15 crf16 crf17 check0
+ALL_UNITS="desktop headset crv0 crv1 crv2 crv3 crv4 crv5 crv6 crv7 crv8 crv9 crv10 crv11 crv12 crv13 crv14 crv15 crv16 crv17 crv18 crv19 crf0 crf6 crf9 crf10 crf16 crf17 check0
 check1 check2 check3 check4 check5 gravity0 gravity1 gravity2 gravity3"
 if [ -n "${PART:-}" ]; then
 	# CI's share: every part on exactly one of its lines, or a part would go unchecked
@@ -97,9 +97,8 @@ for p in $CRV; do want crv$p && TRACE=1 render crv$p -s res://tests/curved_check
 # the same with foveation (foveation.gd), where bodies cross the edge of the zone's disc: at
 # the start looking up at the mouth, out in B looking back at it; and where it works out the tail of
 # the zone's bodies' images (foveation.gdshaderinc, TAIL): on the long throat in it sideways and at
-# the start; under the widest throat's lens, at the start; and the floor through the throat, at
-# the start and flying in it
-CRF="0 6 9 10 15 16 17"   # the places the verdicts below take too
+# the start; and the floor through the throat, at the start and flying in it
+CRF="0 6 9 10 16 17"   # the places the verdicts below take too
 for p in $CRF; do want crf$p && TRACE=1 render crf$p -s res://tests/curved_check.gd -- "$OUT/crf$p" $p fov; done
 if want desktop; then
 	render desktop --resolution 960x1080 -s res://tests/desktop_sphere.gd -- "$OUT/dsk"

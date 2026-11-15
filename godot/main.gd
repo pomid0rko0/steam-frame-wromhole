@@ -1,7 +1,7 @@
 class_name Main
 extends Node3D
 ## Real-time wormhole for VR (README.md, docs/). The throat's centre is space.lift over the floor
-## (LIFT, unless a test set another before _ready; any, also under the floor: WormholeSpace's top); the renderer
+## (the video's LIFT, or the menu's: set_shape; any, also under the floor: WormholeSpace's top); the renderer
 ## (renderer.gd) draws every image of each body along the geodesics of the wormhole space, the
 ## curved zone as a lens per pixel; this script builds the scene and moves the viewer through that
 ## curved space: walking in the room, with the sticks along the floor and flying off it as a ship

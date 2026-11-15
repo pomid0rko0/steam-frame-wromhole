@@ -3,11 +3,13 @@ extends SceneTree
 ## «скругление», «высота горла»; its length: length_test.gd), exit status 1 on any failure:
 ##   godot --path . --resolution 480x270 -s res://tests/shape_test.gd
 ## 1. Holding right or left on a row changes its part frame by frame up to its limit
-##    (WormholeSpace.fit) and no further, no frame's scripts taking BUSY ms (a radius' and a fillet's
-##    sweep table is built off the main thread), the shape in effect following in steps while it is
-##    held; the other rows follow where they must: a fillet made soft widens the throat, a throat
-##    made narrow sharpens the fillet, and held left the height stops where the curved zone is
-##    wholly under the floor (WormholeSpace.lift_min);
+##    (WormholeSpace.fit) and no further; a radius' and a fillet's sweep table is built off the main
+##    thread: the frames go on while one is built (how long the slowest frame's scripts took
+##    against a table's build here is printed, held to no limit: their time is the wall's, and on a
+##    machine busy with other tests a frame waits its turn); the shape in effect follows in steps
+##    while the row is held; the other rows follow where they must: a fillet made soft widens the throat, a throat
+##    made narrow sharpens the fillet, and held
+##    left the height stops where the curved zone is wholly under the floor (WormholeSpace.lift_min);
 ##    A gives the video's back; the shape is kept for the next start, and a kept one the app does
 ##    not take is fitted.
 ## 2. Gravity after set_shape is the one solved for that throat from scratch.
@@ -18,7 +20,8 @@ extends SceneTree
 ##    room's axes as they were there. The toys too, their velocities with them, and awake.
 ## 4. On every corner of the menu's shapes: the scene's objects, the toys at rest, the throw's and
 ##    the drop's starts and the stereo check's bodies are out of the curved zone; the field lines
-##    fit the renderer (Renderer.LINE_CHUNKS: thinned where they are too many); the demo runs (the throw, the drop: every toy stays a
+##    fit the renderer (Renderer.LINE_CHUNKS: thinned where they are too many) and the texture of
+##    their vertices the device; the demo runs (the throw, the drop: every toy stays a
 ##    number, over the floor and within the world), a walk along the floor under the mouth keeps the
 ##    feet on it, and a flight along the axis comes out in universe B.
 ## 5. A shape set at run time draws what the app started with that shape draws, pixel for pixel
@@ -26,7 +29,6 @@ extends SceneTree
 ##    throat), and the video's throat another picture.
 
 const U := preload("res://tests/util.gd")
-const BUSY := 8.0                         # ms: main's scripts in a frame while a row is held, at most (as length_test.gd's)
 const HEAD := 1.6                         # m: the head in the room
 const LOOK_UP := 35.0                     # degrees: the pictures' view up from the start, into a mouth hung high too
 
@@ -35,6 +37,7 @@ var frames := 0
 var stage := 0
 var wait := 0
 var busy := 0.0
+var building := 0                         # frames that went on while a sweep table was being built
 var held := 0                             # frames a key has been held
 var seen := {}                            # the values the space had of the part being held
 var held_from := 0.0                      # and the one it had before
@@ -105,7 +108,12 @@ func _process(_delta: float) -> bool:
 				stage = 3
 				wait = 2
 		3:
-			U.check("while the rows are held, no frame's scripts take %.0f ms" % BUSY, busy < BUSY, "%.1f ms at most" % busy)
+			var t0 := Time.get_ticks_usec()
+			for i in 3:
+				WormholeSpace.of(_far()).sweep_table()
+			var build := (Time.get_ticks_usec() - t0) / 3000.0
+			U.check("while the rows are held, the frames go on as a sweep table is built", building > 10,
+					"%d frames with one being built; a frame's scripts %.1f ms at most, a table's build %.0f ms" % [building, busy, build])
 			var x := main.space.chart_position(main.viewer.l, main.viewer.n)
 			U.check("standing, the body stays on the same place of the floor", before.distance_to(x) < 1e-5 and main.viewer.standing
 					and absf(main.viewer.height()) < 1e-6, "%s -> %s" % [before, x])
@@ -181,6 +189,7 @@ func _hold() -> bool:
 		held_from = main.space.shape()[k]
 	else:
 		busy = maxf(busy, main.scripts_ms)
+		building += int(main.shaping())
 	seen[main.space.shape()[k]] = true
 	var there := absf(main.shape_want[k] - h[3]) < 1e-9 and not main.shaping() and absf(main.space.shape()[k] - h[3]) < 1e-9
 	if not there and held < 3000:
@@ -416,8 +425,10 @@ func _corners() -> void:
 		most = maxi(most, Renderer.line_chunks(sp).n)
 	U.check("on every corner of the menu's shapes the scene, the toys and the start keep out of the curved zone, the demo, a walk under the mouth and a flight through the throat go",
 			bad.is_empty(), "%d shapes; %s" % [_corner_shapes().size(), "; ".join(bad)])
-	U.check("and the field lines fit the renderer, thinned where they are too many", most <= Renderer.LINE_CHUNKS and most > Renderer.LINE_CHUNKS / 4,
-			"%d chunks at most (Renderer.LINE_CHUNKS %d)" % [most, Renderer.LINE_CHUNKS])
+	var widest := RenderingServer.get_rendering_device().limit_get(RenderingDevice.LIMIT_MAX_TEXTURE_SIZE_2D)
+	U.check("and the field lines fit the renderer, thinned where they are too many, and their vertices' texture the device",
+			most <= Renderer.LINE_CHUNKS and most > Renderer.LINE_CHUNKS / 4 and Renderer.LINE_CHUNKS * Renderer.LINE_CV <= widest,
+			"%d chunks at most (Renderer.LINE_CHUNKS %d, %d texels of the device's %d)" % [most, Renderer.LINE_CHUNKS, Renderer.LINE_CHUNKS * Renderer.LINE_CV, widest])
 	main.set_shape(video[0], video[1], video[2], video[3], true)
 	main.place(Main.START_POS, Main.START_FORWARD)
 

@@ -106,10 +106,13 @@ const LINE_WIDTH := 0.03        # half a line's width, m
 const LINE_STEPS := 5           # a chunk of a line (line_chunks): its steps, its arrows at most, its vertices
 const LINE_ARROWS := 2
 const LINE_CV := 2 * (LINE_STEPS + 1) + 3 * LINE_ARROWS
-# chunks at most (ZoneSections' texture of their vertices: LINE_CV texels a chunk in one row, 16384
-# wide at this many). The video's throat's lines at 80 m are about half; a wide throat hung high
-# has more, and then every second, third... of them is drawn (line_chunks)
-const LINE_CHUNKS := 1024
+# chunks at most: ZoneSections' texture of their vertices has LINE_CV texels a chunk in one row, and
+# LINE_TEXELS is as wide as a texture is taken to get (wider, its creation fails and no line is
+# drawn; tests/shape_test.gd checks it against the device's limit). The video's throat's lines at
+# 80 m are about half of these; a wide throat hung high has more, and then every second, third... of
+# them is drawn (line_chunks)
+const LINE_TEXELS := 16384
+const LINE_CHUNKS := LINE_TEXELS / LINE_CV
 const ARROW_GAP := 1.0          # m along a line between its arrows
 const ARROW_LENGTH := 0.24      # m
 const ARROW_HALF := 0.12        # half an arrow's width, m
