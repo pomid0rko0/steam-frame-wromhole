@@ -919,13 +919,16 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 			dir = 1.0;
 		}
 		// The leg, the ray above the floor at xa: its nodes one after another, the cubic's lowest
-		// point between two nodes above (mode 1), Newton's steps once a point under the floor is
-		// known (mode 2), all through one working out of the leg's point (the program holds it once).
+		// point between the last point above and the next node (mode 1: if it is above too, it is the
+		// last point above, and the node is worked out again from it), Newton's steps once a point
+		// under the floor is known (mode 2), all through one working out of the leg's point (the
+		// program holds it once, and few numbers through it: the fewer, the more pixels the GPU keeps
+		// going at once, tools/adreno_stats.sh).
 		int n = clamp(int(ceil(abs(xb - xa) * max(1.0 / GEO_FLOOR_DX, 2.0 * g.f0.x / GEO_FLOOR_DPSI))), 1, GEO_FLOOR_NODES);
 		float hx = (xb - xa) / float(n);
 		int i = 0, mode = 0;        // i: the node being worked out; in mode 2 Newton's steps left
-		float x = xa, x0 = xa, x1 = xa;   // the last node above and the one after it; in mode 2 the bracket
-		vec2 h0 = vec2(0.0), h1 = vec2(0.0), se = vec2(0.0);
+		float x = xa, x0 = xa, x1 = xa;   // x0: the last point above (its height and rate h0); x1: in mode 2 the bracket's other end
+		vec2 h0 = vec2(0.0), se = vec2(0.0);
 		float psi = pb, way = wb;
 		bool met = false;
 		for (int it = 0; it < 2 * GEO_FLOOR_NODES + GEO_FLOOR_ITERS + 2; it++) {
@@ -955,10 +958,6 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 			}
 			bool under = hk.x <= 0.0;
 			bool node = mode == 0;
-			if (node) {
-				x1 = x;
-				h1 = hk;
-			}
 			mode = 0;
 			if (i > 0 && (under || node)) {
 				// from x0 (above) to x: the cubic through both
@@ -979,7 +978,7 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 					continue;
 				}
 				if (d0 < 0.0 && d1 > 0.0) {
-					// both nodes above and the cubic turns up between them: its lowest point
+					// both above and the cubic turns up between them: its lowest point
 					float den = c2 + sqrt(max(c2 * c2 - 3.0 * c3 * d0, 0.0));
 					float tm = den > 0.0 ? -d0 / den : 2.0;
 					if (tm > 0.0 && tm < 1.0 && h0.x + tm * (d0 + tm * (c2 + tm * c3)) < GEO_FLOOR_DIP) {
@@ -989,10 +988,10 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 					}
 				}
 			}
-			// on to the next node from the last one
-			x0 = x1;
-			h0 = h1;
-			i++;
+			// above the floor here: on to the next node (from the cubic's lowest point: to the same one)
+			x0 = x;
+			h0 = hk;
+			if (node) i++;
 			if (i > n) break;
 			x = i == n ? xb : xa + hx * float(i);
 		}
