@@ -295,7 +295,7 @@ func empty() -> void:
 		h.pull = null
 
 
-## The space changed under them (the throat's length, main.set_length): a toy being pulled stays
+## The space changed under them (the throat's shape, main.set_shape): a toy being pulled stays
 ## where it is, its flight worked out in the space before.
 func drop_pulls() -> void:
 	for h in list:

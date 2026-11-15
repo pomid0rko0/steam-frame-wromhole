@@ -123,6 +123,25 @@ func add_cube(l: float, n: Vector3, U: Vector4, F: Array, w: Vector3, half: floa
 	return c
 
 
+## The space's shape changed (WormholeSpace.set_shape; from: its shape() before): every ball and cube
+## goes with its part of the space (WormholeSpace.carried), its velocity and axes with it, and is
+## awake: gravity is another now, and what held it still may not.
+func reshaped(from: PackedFloat64Array) -> void:
+	for b in balls:
+		var c := space.carried(b.l, b.n, [b.U], from)
+		b.l = c[0]
+		b.n = c[1]
+		b.U = c[2][0]
+		b.still = 0.0
+	for q in cubes:
+		var c := space.carried(q.l, q.n, [q.U] + q.F, from)
+		q.l = c[0]
+		q.n = c[1]
+		q.U = c[2][0]
+		q.F = (c[2] as Array).slice(1)
+		q.still = 0.0
+
+
 ## Makes room for a new ball or cube: the oldest one goes, unless a hand holds it.
 static func _drop_oldest(list: Array) -> void:
 	for i in list.size():

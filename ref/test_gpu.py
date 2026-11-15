@@ -78,7 +78,7 @@ import in_box  # noqa: F401 (first: on the Frame, into tools/box.sh's container)
 import numpy as np
 import moderngl
 from scipy import optimize
-from geo import Space, shoot, plane_rhs, app_profile, app_lift, leave
+from geo import Space, shoot, plane_rhs, app_profile, app_lift, lift_of, leave
 from scipy import integrate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -130,7 +130,11 @@ INC = INC.replace('if (i >= GEO_ITERS + nbad) break;', 'if (i >= GEO_ITERS + nba
 NB, NV = 256, 64            # WormholeSpace.SWEEP_NB, SWEEP_NV
 PROFILES = {'the app': app_profile(), 'h = R': (3.0, 1.0, 1.0), 'crease, h < R': (3.0, 0.4, 1.0),
             'long, h = 41': (3.0, 41.0, 1.0)}
-LIFT = app_lift()           # the floor at z = -LIFT (every profile's zone, radius Rout = 4 m, above it)
+# other throats instead, to try the method on: WH_PROFILES="rho0,h,R;rho0,h,R;..." in the environment
+if os.environ.get('WH_PROFILES'):
+    PROFILES = {q: tuple(float(x) for x in q.split(',')) for q in os.environ['WH_PROFILES'].split(';')}
+# the floor at z = -LIFT, under the curved zone: a throat's own (piece_checks sets it: lift_of)
+LIFT = app_lift()
 # the limits: radians of sweep (with a share of the sweep for long rays round the photon sphere),
 # radians of direction (the headset's pixel is about 1e-3: half a pixel 5e-4), metres; a ray's length
 # only orders bodies in depth and hazes the floor: a share of it
@@ -1930,8 +1934,10 @@ def piece_checks(index, piece):
     of its own (seeded by the throat and the piece)."""
     ctx = moderngl.create_standalone_context(backend='egl', require=430)
     rng = np.random.default_rng([index, [p for _, p in PIECES].index(piece)])
+    global LIFT
     name, prof = list(PROFILES.items())[index]
     S = Space(*prof)
+    LIFT = lift_of(S.rho0, S.R)
     S.t0, S.t1 = S.t_of_b(0.0), S.t_of_b(S.Rout)
     gpu = Gpu(ctx, S)
     if piece == 'profile':

@@ -40,13 +40,13 @@ extends Node3D
 ## (Monado rejects grip_surface/pose on Touch). Which profile SteamVR gave is in the log
 ## (_log_profiles): in the headset it is our Frame profile.
 
-# the video's throat (docs/geometry.md, «Пространство»); its cylinder's length the menu changes
-# (set_length) and keeps for the next start
+# the video's throat (docs/geometry.md, «Пространство»): the shape at the first start; the menu's
+# rows change it (set_shape) and keep it for the next
 const THROAT_RADIUS := 3.0
 const HALF_LENGTH := 5.0
 const FILLET := 1.0
 const LENGTH := 2.0 * (HALF_LENGTH - FILLET)   # m: the video's cylinder
-const LIFT := 5.0                   # m: the throat's centre above the floor (above the curved zone's radius, 4 m)
+const LIFT := 5.0                   # m: the throat's centre above the floor
 const WALK_SPEED := 1.5             # metres per second at full stick
 const RUN_SPEED := 4.0
 const FLY_SPEED := 4.0              # flying: metres per second at full stick or trigger
@@ -117,6 +117,11 @@ var started_us := 0
 const WARM_FOVEATION := [0, 1]
 var warm := 0                   # frames of it done
 var _head_pose: Array = [0.0, Vector3.RIGHT, []]   # the head this frame: [l, n, frame] (the speed check's cube)
+# the shape asked for (set_shape), as WormholeSpace.shape gives one: the space's own, but for a
+# radius or a fillet whose sweep table is still being built
+var shape_want := WormholeSpace.fit(THROAT_RADIUS, LENGTH, FILLET, LIFT)
+var _shape_task := -1           # WorkerThreadPool's task building a sweep table (_shape_build), -1 none
+var _shape_built := []          # what it built: [radius, fillet, WormholeSpace.sweep_table's]
 
 
 func _ready() -> void:
@@ -149,8 +154,9 @@ func _ready() -> void:
 	else:
 		xr = null
 	var target: Viewport = xr_view if in_xr else get_viewport()
-	space.set_length(Menu.saved_length(LENGTH))
-	print("throat: ", length_text())
+	shape_want = Menu.saved_shape(shape_want)
+	space.set_shape(shape_want[0], shape_want[1], shape_want[2], shape_want[3])
+	print("throat: ", shape_text())
 
 	origin = XROrigin3D.new()
 	host.add_child(origin)
@@ -244,6 +250,7 @@ func _add_controllers() -> void:
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	started_us = t0
+	_shape_ready()
 	if await_pose and not camera.transform.is_equal_approx(Transform3D.IDENTITY):
 		# the first tracked pose: face the start direction from where the head actually is
 		await_pose = false
@@ -460,25 +467,99 @@ func set_fall(on: bool, say := false) -> void:
 		menu.notice("полёт: " + Menu.FALLS[0 if on else 1])
 
 
-## The throat's cylinder's length, m (WormholeSpace.set_length), each frame the menu's row changes
-## it: what stands in the space goes with its part of it (WormholeSpace.carried_l), the body and the
-## toys (their velocities and axes as they were); a toy being pulled is let be, the hands' motion
-## forgotten; the stereo check's scene, built of points of R^4, is built again.
-func set_length(cylinder: float) -> void:
-	var Lc0 := space.Lc
-	space.set_length(cylinder)
-	if space.Lc == Lc0:
+## The throat's shape (WormholeSpace.fit's nearest to it), m: its radius, its cylinder's length,
+## its fillet's radius, its centre over the floor; each frame a row of the menu changes it. With the
+## radius and the fillet as they are it takes effect at once. Another radius or fillet needs its
+## sweep table, built off the main thread (_shape_build: a WormholeSpace of its own, tenths of a
+## second on the headset) while the frames go on with the shape as it was; when it is ready the
+## whole shape takes effect in one frame (_shape_ready, _take_shape) with the length and the lift
+## asked for by then, and the next table is started if the shape asked for has moved on. now: built
+## here and in effect at return (the speed check, the tests).
+func set_shape(radius: float, cylinder: float, fillet: float, lift: float, now := false) -> void:
+	shape_want = WormholeSpace.fit(radius, cylinder, fillet, lift)
+	var w := shape_want
+	var same := w[0] == space.rho0 and w[2] == space.fillet
+	if now:
+		if _shape_task >= 0:
+			WorkerThreadPool.wait_for_task_completion(_shape_task)
+			_shape_task = -1
+		_take_shape(w[0], w[1], w[2], w[3], {} if same else WormholeSpace.of(w).sweep_table())
+	elif _shape_task >= 0:
+		pass                            # _shape_ready goes on from there
+	elif same:
+		_take_shape(w[0], w[1], w[2], w[3], {})
+	else:
+		_shape_start()
+
+
+func set_length(cylinder: float, now := false) -> void:
+	set_shape(shape_want[0], cylinder, shape_want[2], shape_want[3], now)
+
+
+func set_radius(radius: float, now := false) -> void:
+	set_shape(radius, shape_want[1], shape_want[2], shape_want[3], now)
+
+
+func set_fillet(fillet: float, now := false) -> void:
+	set_shape(shape_want[0], shape_want[1], fillet, shape_want[3], now)
+
+
+func set_lift(lift: float, now := false) -> void:
+	set_shape(shape_want[0], shape_want[1], shape_want[2], lift, now)
+
+
+## The shape asked for is not yet the space's: its sweep table is being built.
+func shaping() -> bool:
+	return _shape_task >= 0
+
+
+func _shape_start() -> void:
+	_shape_built = []
+	_shape_task = WorkerThreadPool.add_task(_shape_build.bind(shape_want.duplicate()), false, "throat shape")
+
+
+## On a worker thread: reads nothing of the app's, only makes new things.
+func _shape_build(s: PackedFloat64Array) -> void:
+	_shape_built = [s[0], s[2], WormholeSpace.of(s).sweep_table()]
+
+
+## Each frame: a sweep table built (_shape_build) puts its radius and fillet into effect, unless the
+## shape asked for is back at the space's own; then the next one's, if the shape asked for has moved
+## on meanwhile.
+func _shape_ready() -> void:
+	if _shape_task < 0 or not WorkerThreadPool.is_task_completed(_shape_task):
 		return
-	var st := viewer.get_state()
-	st[0] = space.carried_l(st[0], Lc0)
-	viewer.set_state(st)
-	for b in toys.world.balls:
-		b.l = space.carried_l(b.l, Lc0)
-	for c in toys.world.cubes:
-		c.l = space.carried_l(c.l, Lc0)
+	WorkerThreadPool.wait_for_task_completion(_shape_task)
+	_shape_task = -1
+	var w := shape_want
+	if w[0] == space.rho0 and w[2] == space.fillet:
+		_take_shape(w[0], w[1], w[2], w[3], {})
+		return
+	# the lift asked for is over the floor's limit for the radius and fillet asked for; these may be wider
+	var s := WormholeSpace.fit(_shape_built[0], w[1], _shape_built[1], w[3])
+	_take_shape(s[0], s[1], s[2], s[3], _shape_built[2])
+	if w[0] != s[0] or w[2] != s[2]:
+		_shape_start()
+
+
+## A shape in effect, this frame (table: its sweep table if the radius or the fillet is another,
+## WormholeSpace.sweep_table's): the space takes it, and what stands in the space goes with its part of
+## it (WormholeSpace.carried): the body (Viewer.after_shape), the toys with their velocities and axes
+## (BallWorld.reshaped); a toy being pulled is let be, the hands' motion forgotten; the renderer takes
+## all that is built for the shape (Renderer.set_space); the stereo check's scene, built of points of
+## R^4, is built again.
+func _take_shape(radius: float, cylinder: float, fillet: float, lift: float, table: Dictionary) -> void:
+	var from := space.shape()
+	var height := camera.transform.origin.y
+	var kept := viewer.before_shape(height)
+	space.set_shape(radius, cylinder, fillet, lift)
+	if space.shape() == from and table.is_empty():
+		return
+	viewer.after_shape(kept, from, height)
+	toys.world.reshaped(from)
 	hands.drop_pulls()
 	hands.forget_motion()
-	renderer.set_length()
+	renderer.set_space(table)
 	if overlay:
 		for c in overlay.get_children():
 			c.free()
@@ -486,11 +567,18 @@ func set_length(cylinder: float) -> void:
 	elif toys.enabled:
 		draw_toys()
 	_update_chart_map()
+	menu.refresh()
 
 
-func length_text() -> String:
-	return "cylinder %.2f m, the curved zone %.2f m through, worlds %.2f m apart in R^4" \
-			% [2.0 * space.Lc, 2.0 * space.L, 2.0 * space.h]
+func _exit_tree() -> void:
+	if _shape_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_shape_task)
+		_shape_task = -1
+
+
+func shape_text() -> String:
+	return "radius %.2f m, cylinder %.2f m, fillet %.2f m, centre %.2f m over the floor; the curved zone %.2f m through, its radius %.2f m, worlds %.2f m apart in R^4" \
+			% [space.rho0, 2.0 * space.Lc, space.fillet, space.lift, 2.0 * space.L, space.Rout, 2.0 * space.h]
 
 
 func set_smooth_turn(on: bool) -> void:

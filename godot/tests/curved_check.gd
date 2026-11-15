@@ -23,7 +23,7 @@ const U := preload("res://tests/util.gd")
 # centre 9 m out; at the curved zone's edge; in A's fillet; in the throat looking along it and
 # sideways; out in universe B looking back at the mouth; far off, a control; under the mouth looking
 # up into it; on the menu's longest throat (the bodies of the space carried with it, as stretching
-# it carries them: WormholeSpace.carried_l), where a body's images past the meshes' (the tail,
+# it carries them: WormholeSpace.carried), where a body's images past the meshes' (the tail,
 # zone_tail.gdshader) are many pixels wide: in it sideways, at the start (crf9 and crf10 also with
 # foveation, as the headset draws its floor and the tail: crf10's seen through the throat); on one of MID, in A's
 # fillet looking in; and on one with no cylinder (h = R, the menu's shortest: no tail), in the
@@ -173,13 +173,15 @@ func _bodies() -> void:
 	for c: Array in NEAR_AXIS_CUBES:
 		_near_axis_cube(sp, hp, head, c, cpos, axes, ccol)
 	# the space's bodies stand where they would on the video's throat stretched to this one
-	var lc0 := 0.5 * main.LENGTH
+	var video := WormholeSpace.fit(Main.THROAT_RADIUS, Main.LENGTH, Main.FILLET, Main.LIFT)
 	for b: Array in WORLD_BALLS + ([EDGE_BALL] if _fov() else []):
-		pos.append(sp.embed(sp.carried_l(b[0], lc0), (b[1] as Vector3).normalized()))
+		var at := sp.carried(b[0], (b[1] as Vector3).normalized(), [], video)
+		pos.append(sp.embed(at[0], at[1]))
 		col.append(Vector4(4.0, 0.0, 0.0, b[2]))
 	for c: Array in WORLD_CUBES:
-		var n: Vector3 = (c[1] as Vector3).normalized()
-		var cl := sp.carried_l(c[0], lc0)
+		var at := sp.carried(c[0], (c[1] as Vector3).normalized(), [], video)
+		var n: Vector3 = at[1]
+		var cl: float = at[0]
 		var C := sp.embed(cl, n)
 		var e1 := _normal_to(n)
 		var e2 := n.cross(e1)

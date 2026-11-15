@@ -118,7 +118,7 @@ func _init() -> void:
 	enabled = false
 
 
-## The space and its table (Renderer.upload_space): the shaders' g_prof, g_prof2, g_tabx, g_tab,
+## The space and its table (Renderer._profile): the shaders' g_prof, g_prof2, g_tabx, g_tab,
 ## and (g_lift, g_beta).
 func set_space(prof: Vector4, prof2: Vector4, tabx: Vector4, tab: Texture2D, floor_: Vector2) -> void:
 	_mutex.lock()

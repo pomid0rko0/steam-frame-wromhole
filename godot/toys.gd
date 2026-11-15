@@ -9,9 +9,12 @@ extends RefCounted
 ## anywhere. A moment after the start a cube and a ball are thrown from chest height: the cube lands
 ## in front of the mouth and slides to a stop, the ball flies up into the mouth, through the throat,
 ## and comes out in universe B, where it lands on the floor. Then a ball is dropped into the throat's
-## top (DROP_AT). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
-## charts (WormholeSpace's top: the floor at z = 0) and keep out of the curved zone and scene.json's
-## objects.
+## top (drop_at). The reset (main._turns_and_reset) puts it all back and does it again. Places are in
+## charts (WormholeSpace's top: the floor at z = 0) and keep out of scene.json's objects and of the
+## curved zone, whatever the throat's shape (WormholeSpace.fit): those at rest lie on the floor, no
+## higher than WormholeSpace.FLOOR_CLEAR, under which the zone never comes; the throws start 9 m out
+## at chest height. The ball's throw is tuned on the video's throat (THROW) and aimed as much higher
+## as another throat hangs: through one of another radius or fillet it may not go.
 ##
 ## The line of sight from the head at the start (HEAD_HEIGHT over START_POS) through the throat's
 ## centre is a radial geodesic: it goes on in universe B at the same direction n from the centre,
@@ -23,7 +26,7 @@ extends RefCounted
 ## The drop: along the axis over the throat's centre the potential is even in l (docs/gravity.md,
 ## «Сквозь горло»): dropped straight there, a ball falls through the throat into universe B, rises over
 ## B's mouth as high as it fell from, falls back and so on, A and B by turns. That way is unstable
-## across: DROP_AT is 20 cm off it, and the ball, through to B and rising there, tips off the throat's
+## across: the drop is 20 cm off it (DROP_OFF), and the ball, through to B and rising there, tips off the throat's
 ## top and falls past B's mouth onto B's floor, and the floor's push rolls it away from under the
 ## mouth (tests/physics_test.gd, 7).
 
@@ -35,7 +38,13 @@ const GLOW := Color(1.0, 0.55, 0.1)     # a toy a hand aims at or pulls is drawn
 const GLOW_NEAR := Color(0.2, 0.85, 1.0)  # or toward this, if its own colour is near GLOW
 const LAUNCH_DELAY := 1.5       # s after the start or a reset: the throw
 const DROP_DELAY := 6.5         # and the drop, late enough that the throw knocks nothing dropped (tests/physics_test.gd, 7)
-const DROP_AT := Vector3(0.0, -0.2, 10.5)   # chart A: 1.5 m over the curved zone, 20 cm off the throat's axis
+const DROP_OFF := Vector3(0.0, -0.2, 1.5)   # chart A, from the curved zone's top: 1.5 m over it, 20 cm off the throat's axis
+# the ball's throw, chart A: from where, and the velocity that takes it through the video's throat,
+# whose centre is THROW_LIFT over the floor: THROW_TIME s on its way there
+const THROW_FROM := Vector3(9.0, -2.0, 1.4)
+const THROW := Vector3(-10.0, 3.5, 9.5)
+const THROW_LIFT := 5.0
+const THROW_TIME := 0.9
 const DROP_RADIUS := 0.35       # m
 const DROP_COLOR := Color(0.95, 0.95, 0.97)
 # at rest, chart A: balls [x, y, radius] (in front, 8.5 m off the point under the throat's centre,
@@ -112,16 +121,22 @@ func throw() -> Array[BallWorld.Body]:
 		F.append(WormholeSpace.vector_from_chart(1.0, p[1], ax))
 	var cube := world.add_cube(p[0], p[1], WormholeSpace.vector_from_chart(1.0, p[1], Vector3(-2.8, -0.55, 1.0)),
 			F, Vector3(2.5, -3.0, 1.5), 0.25, CUBE_COLORS[1])
-	var q := space.point_from_chart(1.0, Vector3(9.0, -2.0, 1.4))
-	var ball := world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], Vector3(-10.0, 3.5, 9.5)), 0.25, BALL_COLORS[5])
+	var q := space.point_from_chart(1.0, THROW_FROM)
+	var v := THROW + Vector3(0.0, 0.0, (space.lift - THROW_LIFT) / THROW_TIME)
+	var ball := world.add(q[0], q[1], WormholeSpace.vector_from_chart(1.0, q[1], v), 0.25, BALL_COLORS[5])
 	print("toys: thrown")
 	var out: Array[BallWorld.Body] = [cube, ball]
 	return out
 
 
+## Where the drop starts, chart A: DROP_OFF from the curved zone's top.
+func drop_at() -> Vector3:
+	return DROP_OFF + Vector3(0.0, 0.0, space.lift + space.Rout)
+
+
 ## A white ball let go over the throat's top (this file's top).
 func drop() -> BallWorld.Ball:
-	var p := space.point_from_chart(1.0, DROP_AT)
+	var p := space.point_from_chart(1.0, drop_at())
 	print("toys: a ball dropped into the throat's top")
 	return world.add(p[0], p[1], Vector4.ZERO, DROP_RADIUS, DROP_COLOR)
 

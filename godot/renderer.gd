@@ -231,7 +231,8 @@ func _ready() -> void:
 		m.shader = SCENE_SHADER
 		m.set_shader_parameter("sheet", side)
 		scene_mats.append(m)
-	upload_space()
+	_table(space.sweep_table())
+	_profile()
 	floor_quad = MeshInstance3D.new()
 	var q := QuadMesh.new()
 	q.size = Vector2(2.0, 2.0)
@@ -383,15 +384,18 @@ func materials() -> Array[ShaderMaterial]:
 	return out
 
 
-## The throat's shape and what is built for it (WormholeSpace.set_profile's list): the profile,
-## the sweep table, the floor's lift and gravity there. Slow in GDScript: not per frame.
-func upload_space() -> void:
-	var tab := space.sweep_table()
-	_sweep_tex = ImageTexture.create_from_image(tab.image)
+## The sweep table (WormholeSpace.sweep_table's, slow in GDScript: built off the main thread when
+## the shape changes, main.set_shape) into the texture every shader has, in place: the compositor's
+## passes hold that texture.
+func _table(tab: Dictionary) -> void:
+	if _sweep_tex == null:
+		_sweep_tex = ImageTexture.create_from_image(tab.image)
+	else:
+		_sweep_tex.update(tab.image)
 	_sweep_axes = tab.axes
-	_profile()
 
 
+## The profile, the table's axes, the lift and gravity's numbers to every shader.
 func _profile() -> void:
 	# gravity on a fillet for the gravity view's floor in the zone (look.gdshaderinc, look_grav_at)
 	var gt := space.gravity_table()
@@ -426,12 +430,19 @@ func set_lift() -> void:
 		_lines_start()
 
 
-## The throat's length changed (WormholeSpace.set_length), a frame at a time while it is being
-## changed: the profile and gravity's numbers to every shader (the sweep table is the same), the
-## tail on or off, and the field lines built anew off the main thread (a WormholeSpace of their own:
-## a few tenths of a second), shown again when they are (_lines_ready).
-func set_length() -> void:
+## The space's shape changed (WormholeSpace.set_shape), a frame at a time while a row of the menu
+## changes it: all that is built for it, this frame. table: the new radius' and fillet's sweep table
+## (WormholeSpace.sweep_table's; none: they are the same, and so is it); the profile, the lift and
+## gravity's numbers to every shader, the scene's objects in the lens list (they stand in the charts,
+## the throat's centre lift over their floor), the tail on or off, and the field lines built anew off
+## the main thread (a WormholeSpace of their own: a few tenths of a second), shown again when they
+## are (_lines_ready).
+func set_space(table := {}) -> void:
+	if not table.is_empty():
+		_table(table)
 	_profile()
+	_lens_statics()
+	_upload_lens(_lens_toys[0], _lens_toys[1])
 	_tail_on = zone_count != Vector2i.ZERO and space.Lc > 0.0
 	_tail_visible()
 	_lines_want = true
@@ -447,14 +458,13 @@ var _lines_built := []          # what it built: [line_chunks']
 
 func _lines_start() -> void:
 	_lines_want = false
-	var shape := Vector4(space.rho0, space.h, space.fillet, space.lift)
 	_lines_built = []
-	_lines_task = WorkerThreadPool.add_task(_lines_build.bind(shape), false, "field lines")
+	_lines_task = WorkerThreadPool.add_task(_lines_build.bind(space.shape()), false, "field lines")
 
 
 ## On a worker thread: reads nothing of the app's, only makes new things.
-func _lines_build(shape: Vector4) -> void:
-	_lines_built = [line_chunks(WormholeSpace.new(shape.x, shape.y, shape.z, shape.w))]
+func _lines_build(shape: PackedFloat64Array) -> void:
+	_lines_built = [line_chunks(WormholeSpace.of(shape))]
 
 
 func _exit_tree() -> void:
@@ -958,7 +968,7 @@ static func _append(st: SurfaceTool, mesh: PrimitiveMesh, xf: Transform3D, color
 
 ## The gravity view's field lines with their arrows (docs/gravity.md, «Показ»; the constants
 ## LINE_* and ARROW_*) of the space sp, in chunks (nothing but sp is read, so they are built off the
-## main thread when the throat's length changes: main.set_length): LINE_STEPS steps of a line, LINE_CV
+## main thread when the throat's shape changes: set_space): LINE_STEPS steps of a line, LINE_CV
 ## vertices each (line_mesh: its strip, then up to LINE_ARROWS arrows; a chunk's last ones repeated
 ## where it has fewer). Each with its outline (_line_chunks). Returns n: the chunks; in: a vertex's
 ## point (l, n.y, n.z) and 1 for an arrow's, 0 for the line's (ZoneSections' LINES works out where it
