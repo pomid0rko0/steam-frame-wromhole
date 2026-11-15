@@ -900,9 +900,10 @@ GeoFloor geo_floor_on_leg(float side, float psi, float way, vec2 se) {
 // floor before it leaves the zone; 2 if it meets the floor on its straight way to the zone (an eye
 // outside: the flat floor, on the line from the eye); 1 if in the zone, at f.
 // First what costs little: no floor in the zone at all (|lift| >= Rout), none in the ray's plane (the
-// floor is 1 / A as far from the centre there, A = |z|), and the ray's angles in the zone short of
-// those at which the floor is in it (the zone's edge is above the floor within To = acos(-lift / (A
-// Rout)) of the plane's highest direction).
+// floor is 1 / A as far from the centre there, A = |z|), and, the throat's centre over the floor, the
+// ray's angles in the zone short of those at which the floor is in it: further than To = acos(-lift /
+// (A Rout)) from the plane's highest direction (the centre under the floor, it is in the zone within
+// To of it, where the ray comes in).
 int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, float gap, float sigma, float turn, out GeoFloor f) {
 	f.psi = 0.0;
 	f.l = el;
@@ -929,7 +930,7 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 	if (abs(c) >= 1.0) return 0;
 	float To = geo_acos(c);
 	float d = mod(geo_atan2(z.y, z.x) + To - base, 2.0 * GEO_PI);
-	if (d > turn - base && d < 2.0 * To) return 0;
+	if (g_lift >= 0.0 && d > turn - base && d < 2.0 * To) return 0;
 	GeoLeg g = geo_leg(b, sigma);
 	if (g.span <= 0.0) return 0;
 	bool passes = sigma < g_prof2.y;

@@ -989,8 +989,11 @@ def floor_reference(S, X, lift, d=0.0):
     l, _, phi = sol.y_events[0][0]
     way = float(sol.t_events[0][0])
     if abs(l) >= S.L:
-        # out in a flat universe: before the zone, or (a hair before the event's end) just out of it
-        return (2 if abs(X.el) >= S.L and way < 0.5 * res[2] and l * X.el > 0 else 0, phi, l, way)
+        # out in a flat universe: on the straight way to the zone (from an eye outside, sqrt(re^2 -
+        # b^2) - sqrt(Rout^2 - b^2) long), or (a hair before the ray's end) just out of the zone
+        bb = X.re * sa
+        before = abs(X.el) >= S.L and way <= np.sqrt(X.re ** 2 - bb ** 2) - np.sqrt(S.Rout ** 2 - bb ** 2)
+        return (2 if before else 0, phi, l, way)
     return (1, phi, l, way)
 
 
