@@ -1,9 +1,10 @@
 extends SceneTree
 ## A scene for tools/adreno_stats.sh --paths (not a test): the floor's shader (floor.gdshaderinc,
-## its ray's way out of the curved zone in geo.gdshaderinc's geo_exit and along the straight line
+## its ray's way across the curved zone in geo.gdshaderinc's geo_exit_rest and along the straight line
 ## after it in lens.gdshaderinc's lens_trace, pasted in for it) with each of its ways through forced
 ## by replacing its branches' conditions, drawn one at a time, so that the compiler gives each way's
-## statistics after a line "variant <name>". Each runs WAIT seconds, and the scene as it starts START
+## statistics after a line "variant <name>"; the last ones with FLOOR_ZONE defined, the floor looked
+## for in the curved zone too (geo_floor: its own ways are the ray's, not forced). Each runs WAIT seconds, and the scene as it starts START
 ## seconds before the first: Godot specialises a pipeline on a thread of its own, after the first
 ## draw. The lens list holds the scene's static objects and the demo's toys (the bodies' loop: a
 ## test of the ray's plane each, an intersection where it passes).
@@ -14,7 +15,7 @@ const U := preload("res://tests/util.gd")
 const START := 4.0
 const WAIT := 1.5
 # the branches' conditions, as written there
-const STRAIGHT := "if (!in_) return false;"
+const LENSED := "vec3 w = vec3(0.0);"     # after it the ray is made one through the zone or one past it
 const EYE_FLAT := "if (le >= L) {"
 const EYE_FILLET := "} else if (le > Lc) {"
 const FLOOR := "if (dir.z < 0.0) {"
@@ -32,23 +33,26 @@ func _initialize() -> void:
 	main.xr_name = "none"
 	main.toys.demo = false
 	root.add_child(main)
-	var lens := [[STRAIGHT, "if (false) return false;"]]
+	var lens := [[LENSED, LENSED + " lensed = true;"]]
+	var straight := [[LENSED, LENSED + " lensed = false;"]]
 	var eye_flat := [[EYE_FLAT, "if (true) {"]]
 	var eye_fillet := [[EYE_FLAT, "if (false) {"], [EYE_FILLET, "} else if (true) {"]]
 	var eye_cyl := [[EYE_FLAT, "if (false) {"], [EYE_FILLET, "} else if (false) {"]]
 	var floor_ := [[FLOOR, "if (true) {"], [BODY, "if (false) {"]]
 	var sky := [[FLOOR, "if (false) {"], [BODY, "if (false) {"]]
 	var body := [[BODY, "if (true) {"]]
-	_variant("straight: the floor", [[STRAIGHT, "if (true) return false;"], [FLOOR, "if (true) {"]])
-	_variant("straight: the sky", [[STRAIGHT, "if (true) return false;"], [FLOOR, "if (false) {"]])
+	_variant("straight: the floor", straight + [[FLOOR, "if (true) {"]])
+	_variant("straight: the sky", straight + [[FLOOR, "if (false) {"]])
 	_variant("through the zone: the floor, the eye in a flat universe", lens + eye_flat + floor_)
 	_variant("through the zone: the sky, the eye in a flat universe", lens + eye_flat + sky)
 	_variant("through the zone: a body, the eye in a flat universe", lens + eye_flat + body)
 	_variant("through the zone: the floor, the eye on the fillet", lens + eye_fillet + floor_)
 	_variant("through the zone: the floor, the eye on the cylinder", lens + eye_cyl + floor_)
+	_variant("the floor in the zone too: through the zone, the eye in a flat universe", lens + eye_flat + floor_, true)
+	_variant("the floor in the zone too: through the zone, the eye on the cylinder", lens + eye_cyl + floor_, true)
 
 
-func _variant(name: String, swaps: Array) -> void:
+func _variant(name: String, swaps: Array, zone := false) -> void:
 	var code := FileAccess.get_file_as_string("res://shaders/floor.gdshaderinc")
 	for f in ["geo", "lens"]:
 		var inc := "#include \"res://shaders/%s.gdshaderinc\"" % f
@@ -58,7 +62,7 @@ func _variant(name: String, swaps: Array) -> void:
 		assert(code.count(s[0]) == 1, "the floor's shader no longer has one '%s'" % s[0])
 		code = code.replace(s[0], s[1])
 	var sh := Shader.new()
-	sh.code = "shader_type spatial;\n" + code
+	sh.code = "shader_type spatial;\n" + ("#define FLOOR_ZONE\n" if zone else "") + code
 	names.append(name)
 	shaders.append(sh)
 

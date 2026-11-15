@@ -916,7 +916,7 @@ int geo_floor(float el, vec3 eye, vec3 en, vec3 t, float ca, float sa, float b, 
 	vec2 z = vec2(en.z, t.z);
 	bool outward = ca >= 0.0;
 	float base = 0.0, way0 = 0.0;
-	if (le >= L) {
+	if (le >= g_prof.w) {
 		// straight to the zone's edge: under the floor there, it met the flat floor on the way
 		float qR = sqrt(max((Rout - b) * (Rout + b), 0.0));
 		float q2 = sqrt(max(gap * (re + b), 0.0));
