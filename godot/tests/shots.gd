@@ -4,8 +4,10 @@ extends SceneTree
 ## it, level with it, close to it, from beside it, from far off, from inside its throat (looking
 ## along it and sideways) and from universe B, a few also with the speed check's cube before the eyes
 ## (bench.gd, NEAR_CUBE), the toys where the demo puts them.
-##   godot --path . --resolution 1280x720 -s res://tests/shots.gd -- out_prefix [gravity|arrows|zone] [names...]
-## zone: the toys away, bodies in the curved zone instead (ZONE_BODIES). Writes out_prefix_<place>.png.
+##   godot --path . --resolution 1280x720 -s res://tests/shots.gd -- out_prefix [gravity|arrows|zone] [lift=m] [names...]
+## zone: the toys away, bodies in the curved zone instead (ZONE_BODIES); lift: the throat's centre that
+## high over the floor (main.set_lift: lower than its curved zone's radius, the floor runs through
+## the zone), the places as they are. Writes out_prefix_<place>.png.
 
 const U := preload("res://tests/util.gd")
 
@@ -45,7 +47,7 @@ func _initialize() -> void:
 	root.add_child(main)
 	var args := OS.get_cmdline_user_args()
 	for a in args.slice(1):
-		if a != "gravity" and a != "arrows" and a != "zone":
+		if a != "gravity" and a != "arrows" and a != "zone" and not a.begins_with("lift="):
 			names.append(a)
 	if args.has("zone"):
 		main.toys.enabled = false
@@ -60,6 +62,9 @@ func _process(_delta: float) -> bool:
 			main.set_gravity_view(1)
 		if args.has("arrows"):
 			main.set_gravity_view(2)
+		for a in args:
+			if a.begins_with("lift="):
+				main.set_lift(float(a.trim_prefix("lift=")), true)
 		main.camera.position = Vector3(0.0, 1.6, 0.0)
 		main.camera.basis = Basis.IDENTITY
 		main.hold = true
