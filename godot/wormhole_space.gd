@@ -150,8 +150,10 @@ func set_shape(throat_radius: float, cylinder: float, fillet_radius: float, p_li
 ##   and the vectors' parts (U_l, u) as they were. It goes with the throat.
 ## - In a flat universe: at the same place of its chart, the vectors as the chart has them: what
 ##   stands on the floor stays there, what hangs over it keeps its height. A place the curved zone's
-##   ball now covers goes straight out from the throat's centre to the ball's edge. With the lift
-##   as it was n stays exactly.
+##   ball now covers is the chart's still (point_from_chart: the fillet's point of that radius and
+##   direction from the throat's centre, so what stood on the floor stands on it where it now bends),
+##   one nearer the centre than the throat the cylinder's end in its direction; the vectors as R^4's
+##   xyz has them, laid on the space there (project). With the lift as it was n stays exactly.
 func carried(l: float, n: Vector3, vecs: Array, from: PackedFloat64Array) -> Array:
 	var Lc0 := 0.5 * from[1]
 	var L0 := Lc0 + from[2] * PI / 2.0
@@ -162,22 +164,21 @@ func carried(l: float, n: Vector3, vecs: Array, from: PackedFloat64Array) -> Arr
 		return [signf(l) * (Lc + (al - Lc0) * fillet / from[2]), n, vecs.duplicate()]
 	var sg := -1.0 if l < 0.0 else 1.0
 	var rr := al - L0 + from[0] + from[2]
-	if lift == from[3]:
-		return [sg * (maxf(rr, Rout) - Rout + L), n, vecs.duplicate()]
+	if lift == from[3] and rr >= Rout:
+		return [sg * (rr - Rout + L), n, vecs.duplicate()]
 	# from the centre where it is now, in float64 (n's own digits are single)
 	var cx := rr * n.x
 	var cy := rr * n.y
 	var cz := rr * n.z + from[3] - lift
 	var rn := sqrt(cx * cx + cy * cy + cz * cz)
 	var nn := Vector3(cx / rn, cy / rn, cz / rn)
+	var nl := sg * l_of_r(rn)
 	var out := []
 	for U: Vector4 in vecs:
 		# as R^4's xyz has it in that sheet (a chart's mirror in x undone both ways)
 		var d := sg * U.x * n + Vector3(U.y, U.z, U.w)
-		var rad := d.dot(nn)
-		var u := d - rad * nn
-		out.append(Vector4(sg * rad, u.x, u.y, u.z))
-	return [sg * (maxf(rn, Rout) - Rout + L), nn, out]
+		out.append(project(nl, nn, Vector4(d.x, d.y, d.z, 0.0)) if rn < Rout else tangent(nn, Vector4(sg * d.dot(nn), d.x, d.y, d.z)))
+	return [nl, nn, out]
 
 
 func _theta(al: float) -> float:
